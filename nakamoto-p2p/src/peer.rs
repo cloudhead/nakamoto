@@ -17,10 +17,28 @@ pub const PROTOCOL_VERSION: u32 = 70012;
 pub const USER_AGENT: &'static str = "/nakamoto:0.0.0/";
 pub const MAX_MESSAGE_SIZE: usize = 6 * 1024;
 
+/// Bitcoin network.
+#[derive(Debug, Copy, Clone)]
+pub enum Network {
+    Mainnet,
+    Testnet,
+    Simnet,
+}
+
+impl Network {
+    fn magic(&self) -> u32 {
+        match self {
+            Self::Mainnet => bitcoin::Network::Bitcoin.magic(),
+            Self::Testnet => bitcoin::Network::Testnet.magic(),
+            Self::Simnet => 0x12141c16,
+        }
+    }
+}
+
 /// Peer config.
 #[derive(Debug, Copy, Clone)]
 pub struct Config {
-    pub network: bitcoin::Network,
+    pub network: Network,
     pub services: ServiceFlags,
     pub protocol_version: u32,
     pub relay: bool,
@@ -29,7 +47,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            network: bitcoin::Network::Testnet,
+            network: Network::Simnet,
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
             relay: false,
@@ -40,9 +58,9 @@ impl Default for Config {
 impl Config {
     pub fn port(&self) -> u16 {
         match self.network {
-            bitcoin::Network::Bitcoin => 8333,
-            bitcoin::Network::Testnet => 18333,
-            bitcoin::Network::Regtest => unimplemented!(),
+            Network::Mainnet => 8333,
+            Network::Testnet => 18333,
+            Network::Simnet => 18555,
         }
     }
 }
