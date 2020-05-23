@@ -1,4 +1,4 @@
-use std::io::{self, Write};
+use std::io::Write;
 use std::net;
 use std::ops;
 
@@ -10,6 +10,8 @@ use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
+
+use crate::error::Error;
 
 pub const PROTOCOL_VERSION: u32 = 70012;
 pub const USER_AGENT: &'static str = "/nakamoto:0.0.0/";
@@ -60,7 +62,7 @@ pub struct Peer {
 
 impl Peer {
     /// Connect to a peer given a remote address.
-    pub fn connect(addr: &str, config: &Config) -> io::Result<Self> {
+    pub fn connect(addr: &str, config: &Config) -> Result<Self, Error> {
         let stream = net::TcpStream::connect(addr)?;
         let address = stream.peer_addr()?;
         let local_address = stream.local_addr()?;
@@ -84,7 +86,7 @@ impl Peer {
     ///     3. Expect "verack" message.
     ///     4. Send "verack" message.
     ///
-    pub fn handshake(&mut self, start_height: i32) -> io::Result<()> {
+    pub fn handshake(&mut self, start_height: i32) -> Result<(), Error> {
         use std::time::*;
 
         let timestamp = SystemTime::now()
@@ -134,7 +136,7 @@ impl Peer {
         Ok(())
     }
 
-    pub fn write(&mut self, msg: RawNetworkMessage) -> io::Result<()> {
+    pub fn write(&mut self, msg: RawNetworkMessage) -> Result<(), Error> {
         let mut buf = [0u8; MAX_MESSAGE_SIZE];
 
         match msg.consensus_encode(&mut buf[..]) {
@@ -147,13 +149,13 @@ impl Peer {
                 );
                 trace!("{:#?}", msg);
 
-                self.conn.stream.write_all(&buf[..len])
+                self.conn.stream.write_all(&buf[..len]).map_err(Error::from)
             }
             Err(_) => unimplemented!(),
         }
     }
 
-    pub fn read(&mut self) -> io::Result<NetworkMessage> {
+    pub fn read(&mut self) -> Result<NetworkMessage, Error> {
         match self.conn.read_next::<RawNetworkMessage>() {
             Ok(msg) => {
                 debug!("Received {:?} from {}", msg.cmd(), self.address);
@@ -173,7 +175,7 @@ impl Peer {
         }
     }
 
-    pub fn sync(&mut self, _range: ops::Range<usize>) -> io::Result<Vec<()>> {
+    pub fn sync(&mut self, _range: ops::Range<usize>) -> Result<Vec<()>, Error> {
         unimplemented!()
     }
 }

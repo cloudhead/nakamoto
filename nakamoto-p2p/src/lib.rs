@@ -1,7 +1,7 @@
+pub mod error;
 pub mod peer;
 
 use log::*;
-use std::io;
 
 pub struct Network {
     peer_config: peer::Config,
@@ -12,7 +12,7 @@ impl Network {
         Self { peer_config }
     }
 
-    pub fn connect(&mut self, host: &str) -> io::Result<()> {
+    pub fn connect(&mut self, host: &str) -> Result<(), error::Error> {
         let addr = format!("{}:{}", host, self.peer_config.port());
         let mut p = peer::Peer::connect(&addr, &self.peer_config)?;
 
