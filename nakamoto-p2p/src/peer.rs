@@ -132,23 +132,20 @@ impl<R: Read + Write> Peer<R> {
             .unwrap()
             .as_secs() as i64;
 
-        self.write(RawNetworkMessage {
-            magic: self.config.network.magic(),
-            payload: NetworkMessage::Version(VersionMessage {
-                version: self.config.protocol_version,
-                services: self.config.services,
-                timestamp,
-                receiver: Address::new(
-                    &self.address,
-                    ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
-                ),
-                sender: Address::new(&self.local_address, ServiceFlags::NONE),
-                nonce: 0,
-                user_agent: USER_AGENT.to_owned(),
-                start_height,
-                relay: self.config.relay,
-            }),
-        })?;
+        self.write(NetworkMessage::Version(VersionMessage {
+            version: self.config.protocol_version,
+            services: self.config.services,
+            timestamp,
+            receiver: Address::new(
+                &self.address,
+                ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
+            ),
+            sender: Address::new(&self.local_address, ServiceFlags::NONE),
+            nonce: 0,
+            user_agent: USER_AGENT.to_owned(),
+            start_height,
+            relay: self.config.relay,
+        }))?;
 
         match self.read()? {
             NetworkMessage::Version(VersionMessage { .. }) => {
@@ -164,18 +161,19 @@ impl<R: Read + Write> Peer<R> {
             _ => todo!(),
         }
 
-        self.write(RawNetworkMessage {
-            magic: self.config.network.magic(),
-            payload: NetworkMessage::Verack,
-        })?;
+        self.write(NetworkMessage::Verack)?;
 
         debug!("Handshake with {} successful", self.address);
 
         Ok(())
     }
 
-    pub fn write(&mut self, msg: RawNetworkMessage) -> Result<(), Error> {
+    pub fn write(&mut self, msg: NetworkMessage) -> Result<(), Error> {
         let mut buf = [0u8; MAX_MESSAGE_SIZE];
+        let msg = RawNetworkMessage {
+            magic: self.config.network.magic(),
+            payload: msg,
+        };
 
         match msg.consensus_encode(&mut buf[..]) {
             Ok(len) => {
