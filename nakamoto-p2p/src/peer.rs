@@ -5,11 +5,15 @@ use std::ops;
 use log::*;
 
 use bitcoin::consensus::encode::Encodable;
+use bitcoin::hash_types::BlockHash;
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
+
+use bitcoin_hashes::sha256d;
 
 use crate::error::Error;
 
@@ -38,6 +42,38 @@ impl Network {
             Self::Testnet => bitcoin::Network::Testnet.magic(),
             Self::Simnet => 0x12141c16,
         }
+    }
+
+    fn genesis_hash(&self) -> BlockHash {
+        use bitcoin_hashes::Hash;
+
+        let hash: &[u8; 32] = match self {
+            #[rustfmt::skip]
+            Self::Mainnet => &[
+                0x6f, 0xe2, 0x8c, 0x0a, 0xb6, 0xf1, 0xb3, 0x72,
+                0xc1, 0xa6, 0xa2, 0x46, 0xae, 0x63, 0xf7, 0x4f,
+                0x93, 0x1e, 0x83, 0x65, 0xe1, 0x5a, 0x08, 0x9c,
+                0x68, 0xd6, 0x19, 0x00, 0x00, 0x00, 0x00, 0x00,
+            ],
+            #[rustfmt::skip]
+            Self::Testnet => &[
+                0x43, 0x49, 0x7f, 0xd7, 0xf8, 0x26, 0x95, 0x71,
+                0x08, 0xf4, 0xa3, 0x0f, 0xd9, 0xce, 0xc3, 0xae,
+                0xba, 0x79, 0x97, 0x20, 0x84, 0xe9, 0x0e, 0xad,
+                0x01, 0xea, 0x33, 0x09, 0x00, 0x00, 0x00, 0x00,
+            ],
+            #[rustfmt::skip]
+            Self::Simnet => &[
+                0xf6, 0x7a, 0xd7, 0x69, 0x5d, 0x9b, 0x66, 0x2a,
+                0x72, 0xff, 0x3d, 0x8e, 0xdb, 0xbb, 0x2d, 0xe0,
+                0xbf, 0xa6, 0x7b, 0x13, 0x97, 0x4b, 0xb9, 0x91,
+                0x0d, 0x11, 0x6d, 0x5c, 0xbd, 0x86, 0x3e, 0x68,
+            ],
+        };
+        BlockHash::from(
+            sha256d::Hash::from_slice(hash)
+                .expect("the genesis hash has the right number of bytes"),
+        )
     }
 }
 
