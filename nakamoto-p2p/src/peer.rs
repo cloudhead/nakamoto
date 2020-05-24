@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::net;
 use std::ops;
 
@@ -67,7 +67,7 @@ impl Config {
 
 /// A peer on the network.
 #[derive(Debug)]
-pub struct Peer {
+pub struct Peer<R: Read + Write> {
     /// Remote peer address.
     pub address: net::SocketAddr,
     /// Local peer address.
@@ -75,10 +75,10 @@ pub struct Peer {
     /// Peer configuration.
     pub config: Config,
     /// Peer connection.
-    conn: StreamReader<net::TcpStream>,
+    conn: StreamReader<R>,
 }
 
-impl Peer {
+impl Peer<net::TcpStream> {
     /// Connect to a peer given a remote address.
     pub fn connect(addr: &str, config: &Config) -> Result<Self, Error> {
         let stream = net::TcpStream::connect(addr)?;
@@ -93,6 +93,26 @@ impl Peer {
             address,
             local_address,
         })
+    }
+}
+
+impl<R: Read + Write> Peer<R> {
+    /// Create a new peer from a `io::Read` and an address pair.
+    pub fn new(
+        r: R,
+        local_address: net::SocketAddr,
+        address: net::SocketAddr,
+        config: &Config,
+    ) -> Self {
+        let conn = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
+        let config = config.clone();
+
+        Self {
+            config,
+            conn,
+            address,
+            local_address,
+        }
     }
 
     /// Establish a peer handshake. This must be called as soon as the peer is connected.
