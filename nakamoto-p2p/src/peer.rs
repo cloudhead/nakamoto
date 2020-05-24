@@ -136,12 +136,12 @@ impl Peer {
                 // TODO: Check services
                 // TODO: Check start_height
             }
-            _ => unimplemented!(),
+            _ => todo!(),
         }
 
         match self.read()? {
             NetworkMessage::Verack => {}
-            _ => unimplemented!(),
+            _ => todo!(),
         }
 
         self.write(RawNetworkMessage {
@@ -169,7 +169,7 @@ impl Peer {
 
                 self.conn.stream.write_all(&buf[..len]).map_err(Error::from)
             }
-            Err(_) => unimplemented!(),
+            Err(_) => todo!(),
         }
     }
 
@@ -179,21 +179,17 @@ impl Peer {
                 debug!("Received {:?} from {}", msg.cmd(), self.address);
                 trace!("{:#?}", msg);
 
-                match msg {
-                    RawNetworkMessage { magic, payload } => {
-                        if magic == self.config.network.magic() {
-                            Ok(payload)
-                        } else {
-                            unimplemented!()
-                        }
-                    }
+                if msg.magic == self.config.network.magic() {
+                    Ok(msg.payload)
+                } else {
+                    todo!()
                 }
             }
-            Err(_) => unimplemented!(),
+            Err(_) => todo!(),
         }
     }
 
     pub fn sync(&mut self, _range: ops::Range<usize>) -> Result<Vec<()>, Error> {
-        unimplemented!()
+        todo!()
     }
 }
