@@ -9,3 +9,4 @@ bitcoin = "0.23.0"
 log = "*"
 thiserror = "1.0"
 bitcoin_hashes = "0.7.6"
+nakamoto-chain = { path = "../nakamoto-chain" }

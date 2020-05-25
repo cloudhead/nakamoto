@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::net;
 use std::ops;
+use std::sync::{Arc, RwLock};
 
 use log::*;
 
@@ -14,6 +15,7 @@ use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
 
 use bitcoin_hashes::sha256d;
+use nakamoto_chain::blocktree::{BlockTree, Blockchain};
 
 use crate::error::Error;
 
@@ -36,15 +38,7 @@ pub enum Network {
 }
 
 impl Network {
-    fn magic(&self) -> u32 {
-        match self {
-            Self::Mainnet => bitcoin::Network::Bitcoin.magic(),
-            Self::Testnet => bitcoin::Network::Testnet.magic(),
-            Self::Simnet => 0x12141c16,
-        }
-    }
-
-    fn genesis_hash(&self) -> BlockHash {
+    pub fn genesis_hash(&self) -> BlockHash {
         use bitcoin_hashes::Hash;
 
         let hash: &[u8; 32] = match self {
@@ -74,6 +68,14 @@ impl Network {
             sha256d::Hash::from_slice(hash)
                 .expect("the genesis hash has the right number of bytes"),
         )
+    }
+
+    fn magic(&self) -> u32 {
+        match self {
+            Self::Mainnet => bitcoin::Network::Bitcoin.magic(),
+            Self::Testnet => bitcoin::Network::Testnet.magic(),
+            Self::Simnet => 0x12141c16,
+        }
     }
 }
 
@@ -249,7 +251,43 @@ impl<R: Read + Write> Peer<R> {
         }
     }
 
-    pub fn sync(&mut self, _range: ops::Range<usize>) -> Result<Vec<()>, Error> {
-        todo!()
+    pub fn sync<T: BlockTree>(
+        &mut self,
+        range: ops::Range<usize>,
+        tree: Arc<RwLock<T>>,
+    ) -> Result<(), Error> {
+        loop {
+            let get_headers = NetworkMessage::GetHeaders(GetHeadersMessage {
+                version: self.config.protocol_version,
+                // Starting hashes, highest heights first.
+                locator_hashes: vec![self.config.network.genesis_hash()],
+                // Using the zero hash means *fetch as many blocks as possible*.
+                stop_hash: BlockHash::default(),
+            });
+            self.write(get_headers)?;
+
+            match self.read()? {
+                NetworkMessage::Headers(headers) => {
+                    debug!("Received {} headers from {}", headers.len(), self.address);
+
+                    // TODO
+                    // Partially validate these block headers by ensuring that all fields follow
+                    // consensus rules and that the hash of the header is below the target
+                    // threshold according to the nBits field.
+
+                    let chain = Blockchain::try_from(headers)?;
+                    let length = chain.len();
+                    let mut tree = tree.write().expect("lock has not been poisoned");
+
+                    tree.insert_chain(chain);
+
+                    info!("Imported {} blocks from {}", length, self.address);
+                    info!("Chain height = {}, tip = {}", tree.height(), tree.tip());
+                }
+                _ => todo!(),
+            }
+            break;
+        }
+        Ok(())
     }
 }

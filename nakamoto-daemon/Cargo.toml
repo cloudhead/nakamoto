@@ -10,5 +10,6 @@ logging = ["fern"]
 
 [dependencies]
 nakamoto-p2p = { path = "../nakamoto-p2p" }
+nakamoto-chain = { path = "../nakamoto-chain" }
 fern = { version = "0.6", features = ["colored"], optional = true }
 log = "*"
