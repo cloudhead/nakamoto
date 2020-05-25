@@ -1,12 +1,16 @@
 use nakamoto_p2p as p2p;
 
-use fern;
-use fern::colors::{Color, ColoredLevelConfig};
 
 use log;
 
 fn main() {
+    #[cfg(fern)]
     {
+        use fern::{
+            self,
+            colors::{Color, ColoredLevelConfig},
+        };
+
         let colors = ColoredLevelConfig::new().info(Color::Green);
         fern::Dispatch::new()
             .format(move |out, message, record| {

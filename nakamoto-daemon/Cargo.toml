@@ -4,7 +4,11 @@ version = "0.1.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
 
+[features]
+default = []
+logging = ["fern"]
+
 [dependencies]
 nakamoto-p2p = { path = "../nakamoto-p2p" }
-fern = { version = "0.6", features = ["colored"] }
+fern = { version = "0.6", features = ["colored"], optional = true }
 log = "*"
