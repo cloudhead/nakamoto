@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 use log;
 
 fn main() {
-    #[cfg(fern)]
+    #[cfg(feature = "fern")]
     {
         use fern::{
             self,
