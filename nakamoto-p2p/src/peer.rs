@@ -271,6 +271,7 @@ impl<R: Read + Write> Peer<R> {
             });
             self.write(get_headers)?;
 
+            // TODO: Handle timeout.
             match self.read()? {
                 NetworkMessage::Headers(headers) if headers.len() > 0 => {
                     debug!("Received {} headers from {}", headers.len(), self.address);
@@ -282,12 +283,13 @@ impl<R: Read + Write> Peer<R> {
 
                     let chain = Chain::try_from(headers)?;
                     let length = chain.len();
-                    let mut tree = tree.write().expect("lock has not been poisoned");
-
-                    tree.insert_chain(chain);
+                    let (tip, height) = tree
+                        .write()
+                        .expect("lock has not been poisoned")
+                        .insert_chain(chain)?;
 
                     info!("Imported {} headers from {}", length, self.address);
-                    info!("Chain height = {}, tip = {}", tree.height(), tree.tip());
+                    info!("Chain height = {}, tip = {}", height, tip);
                 }
                 NetworkMessage::Headers(_) => {
                     info!("Finished synchronizing with {}", self.address);

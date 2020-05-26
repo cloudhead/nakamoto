@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 bitcoin = "0.23.0"
 thiserror = "1.0"
+nonempty = "0.5.0"

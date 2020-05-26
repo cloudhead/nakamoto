@@ -5,6 +5,7 @@ use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::util::hash::BitcoinHash;
 
+use nonempty::NonEmpty;
 use thiserror::Error;
 
 /// An error related to the block tree.
@@ -12,28 +13,52 @@ use thiserror::Error;
 pub enum Error {
     #[error("invalid chain")]
     InvalidChain,
+    #[error("empty chain")]
+    EmptyChain,
 }
 
 /// A valid hash-linked sequence of blocks.
 #[derive(Debug)]
-pub struct Chain(Vec<(BlockHash, BlockHeader)>);
+pub struct Chain(NonEmpty<(BlockHash, BlockHeader)>);
 
 impl Chain {
+    /// Create a `Chain` from a list of headers. Fails if the list is empty,
+    /// or the headers are not hash-linked.
     pub fn try_from(blks: Vec<BlockHeader>) -> Result<Self, Error> {
-        // TODO: Validate chain.
-        let chain = blks.into_iter().map(|h| (h.bitcoin_hash(), h)).collect();
+        let blks = NonEmpty::from_vec(blks).ok_or(Error::EmptyChain)?;
+        let head_hash = blks.head.bitcoin_hash();
+
+        let mut chain =
+            NonEmpty::from(((head_hash, blks.head), Vec::with_capacity(blks.tail.len())));
+        let mut tail = blks.tail.into_iter();
+        let mut prev_hash = head_hash;
+
+        while let Some(blk) = tail.next() {
+            if blk.prev_blockhash != prev_hash {
+                return Err(Error::InvalidChain);
+            }
+            let hash = blk.bitcoin_hash();
+
+            prev_hash = hash;
+            chain.push((hash, blk));
+        }
         Ok(Self(chain))
+    }
+
+    pub fn root(&self) -> (&BlockHash, &BlockHeader) {
+        let (hash, header) = self.0.first();
+        (hash, header)
     }
 }
 
-impl From<Chain> for Vec<(BlockHash, BlockHeader)> {
+impl From<Chain> for NonEmpty<(BlockHash, BlockHeader)> {
     fn from(Chain(blks): Chain) -> Self {
         blks
     }
 }
 
 impl Deref for Chain {
-    type Target = Vec<(BlockHash, BlockHeader)>;
+    type Target = NonEmpty<(BlockHash, BlockHeader)>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -42,13 +67,17 @@ impl Deref for Chain {
 
 /// A representation of all known blocks that keeps track of the longest chain.
 pub trait BlockTree {
+    /// Import a block into the block tree.
     fn insert_block(&mut self, hash: BlockHash, block: BlockHeader) -> Option<BlockHeader>;
-    fn insert_chain(&mut self, chain: Chain);
-
+    /// Import a chain into the block tree.
+    fn insert_chain(&mut self, chain: Chain) -> Result<(BlockHash, u64), Error>;
+    /// Get a block by its hash.
     fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader>;
-
+    /// Iterate over the longest chain, starting from the tip.
     fn chain(&self) -> ChainIter;
+    /// Return the height of the longest chain.
     fn height(&self) -> u64;
+    /// Return the tip of the longest chain.
     fn tip(&self) -> &BlockHash;
 }
 
@@ -82,10 +111,18 @@ impl BlockTree for BlockCache {
         }
     }
 
-    fn insert_chain(&mut self, chain: Chain) {
-        Vec::from(chain).into_iter().for_each(|(hash, header)| {
-            self.insert_block(hash, header);
-        })
+    fn insert_chain(&mut self, chain: Chain) -> Result<(BlockHash, u64), Error> {
+        NonEmpty::from(chain)
+            .into_iter()
+            .for_each(|(hash, header)| {
+                self.insert_block(hash, header);
+            });
+
+        // TODO: Validate target difficulty
+        // TODO: Validate proof of work
+        // TODO: Validate timestamp
+
+        Err(Error::InvalidChain)
     }
 
     /// Get a block by its hash.
