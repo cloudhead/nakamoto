@@ -16,9 +16,9 @@ pub enum Error {
 
 /// A valid hash-linked sequence of blocks.
 #[derive(Debug)]
-pub struct Blockchain(Vec<(BlockHash, BlockHeader)>);
+pub struct Chain(Vec<(BlockHash, BlockHeader)>);
 
-impl Blockchain {
+impl Chain {
     pub fn try_from(blks: Vec<BlockHeader>) -> Result<Self, Error> {
         // TODO: Validate chain.
         let chain = blks.into_iter().map(|h| (h.bitcoin_hash(), h)).collect();
@@ -26,13 +26,13 @@ impl Blockchain {
     }
 }
 
-impl From<Blockchain> for Vec<(BlockHash, BlockHeader)> {
-    fn from(Blockchain(blks): Blockchain) -> Self {
+impl From<Chain> for Vec<(BlockHash, BlockHeader)> {
+    fn from(Chain(blks): Chain) -> Self {
         blks
     }
 }
 
-impl Deref for Blockchain {
+impl Deref for Chain {
     type Target = Vec<(BlockHash, BlockHeader)>;
 
     fn deref(&self) -> &Self::Target {
@@ -43,7 +43,7 @@ impl Deref for Blockchain {
 /// A representation of all known blocks that keeps track of the longest chain.
 pub trait BlockTree {
     fn insert_block(&mut self, hash: BlockHash, block: BlockHeader) -> Option<BlockHeader>;
-    fn insert_chain(&mut self, chain: Blockchain);
+    fn insert_chain(&mut self, chain: Chain);
 
     fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader>;
 
@@ -82,7 +82,7 @@ impl BlockTree for BlockCache {
         }
     }
 
-    fn insert_chain(&mut self, chain: Blockchain) {
+    fn insert_chain(&mut self, chain: Chain) {
         Vec::from(chain).into_iter().for_each(|(hash, header)| {
             self.insert_block(hash, header);
         })

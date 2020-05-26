@@ -15,7 +15,7 @@ use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
 
 use bitcoin_hashes::sha256d;
-use nakamoto_chain::blocktree::{BlockTree, Blockchain};
+use nakamoto_chain::blocktree::{BlockTree, Chain};
 
 use crate::error::Error;
 
@@ -275,13 +275,13 @@ impl<R: Read + Write> Peer<R> {
                     // consensus rules and that the hash of the header is below the target
                     // threshold according to the nBits field.
 
-                    let chain = Blockchain::try_from(headers)?;
+                    let chain = Chain::try_from(headers)?;
                     let length = chain.len();
                     let mut tree = tree.write().expect("lock has not been poisoned");
 
                     tree.insert_chain(chain);
 
-                    info!("Imported {} blocks from {}", length, self.address);
+                    info!("Imported {} headers from {}", length, self.address);
                     info!("Chain height = {}, tip = {}", tree.height(), tree.tip());
                 }
                 _ => todo!(),
