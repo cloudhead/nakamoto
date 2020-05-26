@@ -257,17 +257,22 @@ impl<R: Read + Write> Peer<R> {
         tree: Arc<RwLock<T>>,
     ) -> Result<(), Error> {
         loop {
+            let tip = tree
+                .read()
+                .expect("lock has not been poisoned")
+                .tip()
+                .clone();
             let get_headers = NetworkMessage::GetHeaders(GetHeadersMessage {
                 version: self.config.protocol_version,
                 // Starting hashes, highest heights first.
-                locator_hashes: vec![self.config.network.genesis_hash()],
+                locator_hashes: vec![tip],
                 // Using the zero hash means *fetch as many blocks as possible*.
                 stop_hash: BlockHash::default(),
             });
             self.write(get_headers)?;
 
             match self.read()? {
-                NetworkMessage::Headers(headers) => {
+                NetworkMessage::Headers(headers) if headers.len() > 0 => {
                     debug!("Received {} headers from {}", headers.len(), self.address);
 
                     // TODO
@@ -284,9 +289,12 @@ impl<R: Read + Write> Peer<R> {
                     info!("Imported {} headers from {}", length, self.address);
                     info!("Chain height = {}, tip = {}", tree.height(), tree.tip());
                 }
+                NetworkMessage::Headers(_) => {
+                    info!("Finished synchronizing with {}", self.address);
+                    break;
+                }
                 _ => todo!(),
             }
-            break;
         }
         Ok(())
     }
