@@ -6,6 +6,7 @@ use std::sync::{Arc, RwLock};
 use log::*;
 
 use bitcoin::consensus::encode::Encodable;
+use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
@@ -68,6 +69,14 @@ impl Network {
             sha256d::Hash::from_slice(hash)
                 .expect("the genesis hash has the right number of bytes"),
         )
+    }
+
+    pub fn params(&self) -> Params {
+        match self {
+            Self::Mainnet => Params::new(bitcoin::Network::Bitcoin),
+            Self::Testnet => Params::new(bitcoin::Network::Testnet),
+            Self::Simnet => Params::new(bitcoin::Network::Testnet),
+        }
     }
 
     fn magic(&self) -> u32 {
@@ -290,6 +299,7 @@ impl<R: Read + Write> Peer<R> {
 
                     info!("Imported {} headers from {}", length, self.address);
                     info!("Chain height = {}, tip = {}", height, tip);
+                    // TODO: We can break here if we've received less than 2'000 headers.
                 }
                 NetworkMessage::Headers(_) => {
                     info!("Finished synchronizing with {}", self.address);

@@ -32,7 +32,9 @@ fn main() {
     log::info!("Initializing daemon..");
 
     let cfg = p2p::peer::Config::default();
-    let block_cache = Arc::new(RwLock::new(BlockCache::new(cfg.network.genesis_hash())));
+    let genesis = cfg.network.genesis_hash();
+    let params = cfg.network.params();
+    let block_cache = Arc::new(RwLock::new(BlockCache::new(genesis, params)));
     let mut net = p2p::Network::new(cfg, block_cache);
 
     net.connect("0.0.0.0").unwrap();

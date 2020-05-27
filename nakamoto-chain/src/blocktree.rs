@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::ops::Deref;
 
 use bitcoin::blockdata::block::BlockHeader;
+use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::util::hash::BitcoinHash;
 
@@ -87,15 +88,17 @@ pub struct BlockCache {
     headers: HashMap<BlockHash, BlockHeader>,
     tip: BlockHash,
     height: u64,
+    params: Params,
 }
 
 impl BlockCache {
-    /// Create a new `BlockCache` given the hash of the genesis block.
-    pub fn new(genesis: BlockHash) -> Self {
+    /// Create a new `BlockCache` given the hash of the genesis block, and consensus parameters.
+    pub fn new(genesis: BlockHash, params: Params) -> Self {
         Self {
             headers: HashMap::new(),
             tip: genesis,
             height: 0,
+            params,
         }
     }
 }
