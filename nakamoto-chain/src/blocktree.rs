@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::ops::Deref;
 
 use bitcoin::blockdata::block::BlockHeader;
@@ -9,165 +8,181 @@ use bitcoin::util::hash::BitcoinHash;
 use nonempty::NonEmpty;
 use thiserror::Error;
 
+/// Difficulty target of a block.
+type Target = bitcoin::util::uint::Uint256;
+
+/// Height of a block.
+type Height = u64;
+
+/// Block timestamp.
+type Time = u32;
+
 /// An error related to the block tree.
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("invalid block")]
+    InvalidBlock,
     #[error("invalid chain")]
     InvalidChain,
     #[error("empty chain")]
     EmptyChain,
-}
-
-/// A valid hash-linked sequence of blocks.
-#[derive(Debug)]
-pub struct Chain(NonEmpty<(BlockHash, BlockHeader)>);
-
-impl Chain {
-    /// Create a `Chain` from a list of headers. Fails if the list is empty,
-    /// or the headers are not hash-linked.
-    pub fn try_from(blks: Vec<BlockHeader>) -> Result<Self, Error> {
-        let blks = NonEmpty::from_vec(blks).ok_or(Error::EmptyChain)?;
-        let head_hash = blks.head.bitcoin_hash();
-
-        let mut chain =
-            NonEmpty::from(((head_hash, blks.head), Vec::with_capacity(blks.tail.len())));
-        let mut tail = blks.tail.into_iter();
-        let mut prev_hash = head_hash;
-
-        while let Some(blk) = tail.next() {
-            if blk.prev_blockhash != prev_hash {
-                return Err(Error::InvalidChain);
-            }
-            let hash = blk.bitcoin_hash();
-
-            prev_hash = hash;
-            chain.push((hash, blk));
-        }
-        Ok(Self(chain))
-    }
-
-    pub fn root(&self) -> (&BlockHash, &BlockHeader) {
-        let (hash, header) = self.0.first();
-        (hash, header)
-    }
-}
-
-impl From<Chain> for NonEmpty<(BlockHash, BlockHeader)> {
-    fn from(Chain(blks): Chain) -> Self {
-        blks
-    }
-}
-
-impl Deref for Chain {
-    type Target = NonEmpty<(BlockHash, BlockHeader)>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
+    #[error("bitcoin error")]
+    Bitcoin(#[from] bitcoin::util::Error),
 }
 
 /// A representation of all known blocks that keeps track of the longest chain.
 pub trait BlockTree {
-    /// Import a block into the block tree.
-    fn insert_block(&mut self, hash: BlockHash, block: BlockHeader) -> Option<BlockHeader>;
-    /// Import a chain into the block tree.
-    fn insert_chain(&mut self, chain: Chain) -> Result<(BlockHash, u64), Error>;
-    /// Get a block by its hash.
-    fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader>;
+    /// Import a chain of block headers into the block tree.
+    fn import_blocks(&mut self, chain: Vec<BlockHeader>) -> Result<(BlockHash, Height), Error>;
+    /// Get a block by height.
+    fn get_block_by_height(&self, height: Height) -> Option<&CachedBlock>;
     /// Iterate over the longest chain, starting from the tip.
-    fn chain(&self) -> ChainIter;
+    fn chain(&self) -> &NonEmpty<CachedBlock>;
     /// Return the height of the longest chain.
-    fn height(&self) -> u64;
+    fn height(&self) -> Height;
     /// Return the tip of the longest chain.
     fn tip(&self) -> &BlockHash;
+    /// Get the cached tip of the longest chain.
+    fn get_tip(&self) -> &CachedBlock;
+    /// Get the next target difficulty.
+    fn next_difficulty_target(&self, params: &Params) -> Target {
+        self.difficulty_target(self.height() + 1, params).unwrap()
+    }
+    /// Get the target difficulty at a certain block height.
+    fn difficulty_target(&self, height: Height, params: &Params) -> Option<Target> {
+        let block = self.get_block_by_height(height)?;
+        let time = block.time;
+
+        // Only adjust on set intervals. Otherwise return current target.
+        // Since the height is 0-indexed, we add `1` to check it against the interval.
+        if (height + 1) % params.difficulty_adjustment_interval() != 0 {
+            return Some(self.get_tip().target());
+        }
+
+        let last_adjustment_height =
+            height.saturating_sub(params.difficulty_adjustment_interval() - 1);
+        let last_adjustment_block = self.get_block_by_height(last_adjustment_height)?;
+        let last_adjustment_time = last_adjustment_block.header.time;
+
+        let mut actual_timespan = time - last_adjustment_time;
+
+        if actual_timespan < params.pow_target_timespan as Time / 4 {
+            actual_timespan = params.pow_target_timespan as Time / 4;
+        }
+        if actual_timespan > params.pow_target_timespan as Time * 4 {
+            actual_timespan = params.pow_target_timespan as Time * 4;
+        }
+
+        let mut target = block.target();
+        target = target.mul_u32(actual_timespan);
+        target = target / Target::from_u64(params.pow_target_timespan).unwrap();
+
+        // Ensure a difficulty floor.
+        if target > params.pow_limit {
+            target = params.pow_limit;
+        }
+
+        Some(target)
+    }
+}
+
+#[derive(Debug)]
+pub struct CachedBlock {
+    hash: BlockHash,
+    header: BlockHeader,
+}
+
+impl Deref for CachedBlock {
+    type Target = BlockHeader;
+
+    fn deref(&self) -> &Self::Target {
+        &self.header
+    }
 }
 
 /// An implementation of `BlockTree`.
 #[derive(Debug)]
 pub struct BlockCache {
-    headers: HashMap<BlockHash, BlockHeader>,
-    tip: BlockHash,
-    height: u64,
+    chain: NonEmpty<CachedBlock>,
     params: Params,
 }
 
 impl BlockCache {
-    /// Create a new `BlockCache` given the hash of the genesis block, and consensus parameters.
-    pub fn new(genesis: BlockHash, params: Params) -> Self {
+    /// Create a new `BlockCache` given the genesis block, and consensus parameters.
+    pub fn new(genesis: BlockHeader, params: Params) -> Self {
         Self {
-            headers: HashMap::new(),
-            tip: genesis,
-            height: 0,
+            chain: NonEmpty::new(CachedBlock {
+                hash: genesis.bitcoin_hash(),
+                header: genesis,
+            }),
             params,
+        }
+    }
+
+    fn insert_block(
+        &mut self,
+        hash: BlockHash,
+        header: BlockHeader,
+    ) -> Result<(BlockHash, Height), Error> {
+        let tip = self.get_tip();
+
+        if header.prev_blockhash == tip.hash {
+            // TODO: Validate timestamp.
+            let target = self.next_difficulty_target(&self.params);
+
+            match header.validate_pow(&target) {
+                Err(bitcoin::util::Error::BlockBadProofOfWork) => {
+                    return Err(Error::InvalidBlock);
+                }
+                Err(bitcoin::util::Error::BlockBadTarget) => {
+                    return Err(Error::InvalidBlock);
+                }
+                Err(err) => {
+                    return Err(Error::Bitcoin(err));
+                }
+                Ok(_) => {}
+            }
+
+            self.chain.push(CachedBlock { hash, header });
+
+            Ok((hash, self.height()))
+        } else {
+            todo!() // TODO: Should be an error.
         }
     }
 }
 
 impl BlockTree for BlockCache {
-    fn insert_block(&mut self, hash: BlockHash, block: BlockHeader) -> Option<BlockHeader> {
-        if block.prev_blockhash == self.tip {
-            self.height += 1;
-            self.tip = hash;
-            self.headers.insert(hash, block)
-        } else {
-            None
+    fn import_blocks(&mut self, chain: Vec<BlockHeader>) -> Result<(BlockHash, Height), Error> {
+        let chain = NonEmpty::from_vec(chain).ok_or(Error::EmptyChain)?;
+        let mut result = self.insert_block(chain.head.bitcoin_hash(), chain.head)?;
+
+        for header in chain.tail.into_iter() {
+            result = self.insert_block(header.bitcoin_hash(), header)?;
         }
+        Ok(result)
     }
 
-    fn insert_chain(&mut self, chain: Chain) -> Result<(BlockHash, u64), Error> {
-        NonEmpty::from(chain)
-            .into_iter()
-            .for_each(|(hash, header)| {
-                self.insert_block(hash, header);
-            });
-
-        // TODO: Validate target difficulty
-        // TODO: Validate proof of work
-        // TODO: Validate timestamp
-
-        Err(Error::InvalidChain)
+    fn get_block_by_height(&self, height: Height) -> Option<&CachedBlock> {
+        self.chain.get(height as usize)
     }
 
-    /// Get a block by its hash.
-    fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader> {
-        self.headers.get(hash)
+    fn get_tip(&self) -> &CachedBlock {
+        self.chain.last()
     }
 
     /// Iterate over the longest chain, starting from the tip.
-    fn chain(&self) -> ChainIter {
-        ChainIter {
-            next: self.tip,
-            headers: &self.headers,
-        }
+    fn chain(&self) -> &NonEmpty<CachedBlock> {
+        &self.chain
     }
 
     /// Return the height of the longest chain.
-    fn height(&self) -> u64 {
-        self.height
+    fn height(&self) -> Height {
+        self.chain.tail.len() as Height
     }
 
     /// Return the tip of the longest chain.
     fn tip(&self) -> &BlockHash {
-        &self.tip
-    }
-}
-
-/// An iterator over `BlockHash` values, starting from the tip of a chain.
-pub struct ChainIter<'a> {
-    next: BlockHash,
-    headers: &'a HashMap<BlockHash, BlockHeader>,
-}
-
-impl<'a> Iterator for ChainIter<'a> {
-    type Item = &'a BlockHeader;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self.headers.get(&self.next) {
-            Some(header) => {
-                self.next = header.prev_blockhash;
-                Some(header)
-            }
-            None => None,
-        }
+        &self.chain.last().hash
     }
 }

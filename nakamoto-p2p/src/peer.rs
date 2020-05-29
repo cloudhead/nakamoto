@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use log::*;
 
+use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode::Encodable;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
@@ -16,7 +17,7 @@ use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
 
 use bitcoin_hashes::sha256d;
-use nakamoto_chain::blocktree::{BlockTree, Chain};
+use nakamoto_chain::blocktree::BlockTree;
 
 use crate::error::Error;
 
@@ -39,6 +40,24 @@ pub enum Network {
 }
 
 impl Network {
+    /// ```
+    /// use nakamoto_p2p::peer::Network;
+    /// use bitcoin::util::hash::BitcoinHash;
+    ///
+    /// let network = Network::Mainnet;
+    /// let genesis = network.genesis();
+    ///
+    /// assert_eq!(network.genesis_hash(), genesis.bitcoin_hash());
+    /// ```
+    pub fn genesis(&self) -> BlockHeader {
+        let network = match self {
+            Self::Mainnet => bitcoin::Network::Bitcoin,
+            Self::Testnet => bitcoin::Network::Testnet,
+            Self::Simnet => bitcoin::Network::Testnet,
+        };
+        bitcoin::blockdata::constants::genesis_block(network).header
+    }
+
     pub fn genesis_hash(&self) -> BlockHash {
         use bitcoin_hashes::Hash;
 
@@ -172,10 +191,10 @@ impl<R: Read + Write> Peer<R> {
     ///
     /// The steps are:
     ///
-    ///     1. Send "version" message.
-    ///     2. Expect "version" message.
-    ///     3. Expect "verack" message.
-    ///     4. Send "verack" message.
+    ///   1. Send "version" message.
+    ///   2. Expect "version" message.
+    ///   3. Expect "verack" message.
+    ///   4. Send "verack" message.
     ///
     pub fn handshake(&mut self, start_height: i32) -> Result<(), Error> {
         use std::time::*;
@@ -290,12 +309,11 @@ impl<R: Read + Write> Peer<R> {
                     // consensus rules and that the hash of the header is below the target
                     // threshold according to the nBits field.
 
-                    let chain = Chain::try_from(headers)?;
-                    let length = chain.len();
+                    let length = headers.len();
                     let (tip, height) = tree
                         .write()
                         .expect("lock has not been poisoned")
-                        .insert_chain(chain)?;
+                        .import_blocks(headers)?;
 
                     info!("Imported {} headers from {}", length, self.address);
                     info!("Chain height = {}, tip = {}", height, tip);

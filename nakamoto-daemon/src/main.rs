@@ -8,10 +8,7 @@ use log;
 fn main() {
     #[cfg(feature = "fern")]
     {
-        use fern::{
-            self,
-            colors::{Color, ColoredLevelConfig},
-        };
+        use fern::colors::{Color, ColoredLevelConfig};
 
         let colors = ColoredLevelConfig::new().info(Color::Green);
         fern::Dispatch::new()
@@ -32,7 +29,7 @@ fn main() {
     log::info!("Initializing daemon..");
 
     let cfg = p2p::peer::Config::default();
-    let genesis = cfg.network.genesis_hash();
+    let genesis = cfg.network.genesis();
     let params = cfg.network.params();
     let block_cache = Arc::new(RwLock::new(BlockCache::new(genesis, params)));
     let mut net = p2p::Network::new(cfg, block_cache);
