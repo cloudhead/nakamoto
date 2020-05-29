@@ -8,3 +8,8 @@ edition = "2018"
 bitcoin = "0.23.0"
 thiserror = "1.0"
 nonempty = "0.5.0"
+
+[dev-dependencies]
+quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }
+quickcheck_macros = "0.9"
+rand = "*"

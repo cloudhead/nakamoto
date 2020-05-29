@@ -20,8 +20,10 @@ type Time = u32;
 /// An error related to the block tree.
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("invalid block")]
-    InvalidBlock,
+    #[error("invalid block proof-of-work")]
+    InvalidBlockPoW,
+    #[error("invalid block difficulty target: 0x{0:x}, expected 0x{1:x}")]
+    InvalidBlockTarget(u32, u32),
     #[error("invalid chain")]
     InvalidChain,
     #[error("empty chain")]
@@ -46,7 +48,7 @@ pub trait BlockTree {
     fn get_tip(&self) -> &CachedBlock;
     /// Get the next target difficulty.
     fn next_difficulty_target(&self, params: &Params) -> Target {
-        self.difficulty_target(self.height() + 1, params).unwrap()
+        self.difficulty_target(self.height(), params).unwrap()
     }
     /// Get the target difficulty at a certain block height.
     fn difficulty_target(&self, height: Height, params: &Params) -> Option<Target> {
@@ -132,10 +134,13 @@ impl BlockCache {
 
             match header.validate_pow(&target) {
                 Err(bitcoin::util::Error::BlockBadProofOfWork) => {
-                    return Err(Error::InvalidBlock);
+                    return Err(Error::InvalidBlockPoW);
                 }
                 Err(bitcoin::util::Error::BlockBadTarget) => {
-                    return Err(Error::InvalidBlock);
+                    return Err(Error::InvalidBlockTarget(
+                        header.bits,
+                        BlockHeader::compact_target_from_u256(&target),
+                    ));
                 }
                 Err(err) => {
                     return Err(Error::Bitcoin(err));
@@ -184,5 +189,144 @@ impl BlockTree for BlockCache {
     /// Return the tip of the longest chain.
     fn tip(&self) -> &BlockHash {
         &self.chain.last().hash
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::{BlockCache, BlockTree, Height, Target, Time};
+
+    use quickcheck::{self, Arbitrary, Gen, TestResult};
+    use quickcheck_macros::quickcheck;
+
+    use nonempty::NonEmpty;
+    use rand::Rng;
+
+    use bitcoin::blockdata::block::BlockHeader;
+    use bitcoin::consensus::params::Params;
+    use bitcoin::hash_types::{BlockHash, TxMerkleNode};
+    use bitcoin::util::hash::BitcoinHash;
+    use bitcoin::util::uint::Uint256;
+
+    // Lowest possible difficulty.
+    const TARGET: Uint256 = Uint256([
+        0xffffffffffffffffu64,
+        0xffffffffffffffffu64,
+        0xffffffffffffffffu64,
+        0x7fffffffffffffffu64,
+    ]);
+
+    #[derive(Clone)]
+    struct TestCase(NonEmpty<BlockHeader>);
+
+    impl Arbitrary for TestCase {
+        fn arbitrary<G: Gen>(g: &mut G) -> TestCase {
+            let height = g.gen_range(0, 256);
+            Self(arbitrary_chain(height, g))
+        }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            let Self(chain) = self;
+            let mut shrunk = Vec::new();
+
+            if let Some((_, rest)) = chain.tail.split_last() {
+                shrunk.push(Self(NonEmpty::from((chain.head, rest.to_vec()))));
+            }
+            Box::new(shrunk.into_iter())
+        }
+    }
+
+    impl std::fmt::Debug for TestCase {
+        fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            write!(fmt, "\n")?;
+
+            for (height, header) in self.0.iter().enumerate() {
+                writeln!(
+                    fmt,
+                    "#{:03} {} time={:05} bits={:x} nonce={}",
+                    height,
+                    header.bitcoin_hash(),
+                    header.time,
+                    header.bits,
+                    header.nonce
+                )?;
+            }
+            Ok(())
+        }
+    }
+
+    fn arbitrary_header<G: Gen>(
+        prev_blockhash: BlockHash,
+        prev_time: Time,
+        target: &Target,
+        g: &mut G,
+    ) -> BlockHeader {
+        let delta = u32::arbitrary(g);
+
+        let time = if delta == 0 {
+            prev_time
+        } else if delta < prev_time && g.gen_bool(1. / 100.) {
+            // Small probability that this block's timestamp is in the past.
+            g.gen_range(prev_time.saturating_sub(delta), prev_time)
+        } else {
+            g.gen_range(prev_time, prev_time + delta)
+        };
+
+        let bits = BlockHeader::compact_target_from_u256(&target);
+
+        let mut header = BlockHeader {
+            version: 1,
+            time,
+            nonce: 0,
+            bits,
+            merkle_root: TxMerkleNode::default(),
+            prev_blockhash,
+        };
+
+        let target = header.target();
+        while header.validate_pow(&target).is_err() {
+            header.nonce += 1;
+        }
+
+        header
+    }
+
+    fn arbitrary_chain<G: Gen>(height: Height, g: &mut G) -> NonEmpty<BlockHeader> {
+        let mut prev_time = 0; // Epoch.
+        let mut prev_hash = BlockHash::default();
+
+        let genesis = arbitrary_header(prev_hash, prev_time, &TARGET, g);
+        let mut chain = NonEmpty::new(genesis);
+
+        prev_hash = genesis.bitcoin_hash();
+        prev_time = genesis.time;
+
+        for _ in 0..height {
+            let header = arbitrary_header(prev_hash, prev_time, &TARGET, g);
+            prev_time = header.time;
+            prev_hash = header.bitcoin_hash();
+
+            chain.push(header);
+        }
+        chain
+    }
+
+    #[quickcheck]
+    fn test_block_import(TestCase(chain): TestCase) -> TestResult {
+        let params = Params {
+            pow_limit: TARGET,
+            pow_target_timespan: 12 * 60 * 60, // 12 hours.
+            ..Params::new(bitcoin::Network::Bitcoin)
+        };
+        let mut cache = BlockCache::new(chain.head, params);
+
+        if chain.tail.is_empty() {
+            return TestResult::discard();
+        }
+
+        match cache.import_blocks(chain.tail) {
+            Ok(_) => TestResult::passed(),
+            Err(err) => TestResult::error(err.to_string()),
+        }
     }
 }
