@@ -30,8 +30,8 @@ pub enum Error {
     EmptyChain,
     #[error("block ignored: {0}")]
     BlockIgnored(BlockHash),
-    #[error("block import aborted: {0} ({1} block(s) imported)")]
-    BlockImportAborted(Box<Self>, usize),
+    #[error("block import aborted at height {2}: {0} ({1} block(s) imported)")]
+    BlockImportAborted(Box<Self>, usize, Height),
     #[error("bitcoin error")]
     Bitcoin(#[from] bitcoin::util::Error),
 }
@@ -159,7 +159,7 @@ impl BlockCache {
 
             Ok((hash, self.height()))
         } else {
-            todo!() // TODO: Should be an error.
+            Err(Error::BlockIgnored(hash))
         }
     }
 }
@@ -174,7 +174,7 @@ impl BlockTree for BlockCache {
         for (i, header) in chain.enumerate() {
             match self.insert_block(header.bitcoin_hash(), header) {
                 Ok(r) => result = Some(r),
-                Err(err) => return Err(Error::BlockImportAborted(err.into(), i)),
+                Err(err) => return Err(Error::BlockImportAborted(err.into(), i, self.height())),
             }
         }
         Ok(result.unwrap_or((*self.tip(), self.height())))

@@ -15,6 +15,7 @@ use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
+use bitcoin::util::hash::BitcoinHash;
 
 use bitcoin_hashes::sha256d;
 use nakamoto_chain::blocktree::BlockTree;
@@ -312,8 +313,15 @@ impl<R: Read + Write> Peer<R> {
 
             // TODO: Handle timeout.
             match self.read()? {
-                NetworkMessage::Headers(headers) if headers.len() > 0 => {
+                NetworkMessage::Headers(headers) => {
                     debug!("Received {} headers from {}", headers.len(), self.address);
+
+                    if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
+                        debug!("Range = {}..{}", first.bitcoin_hash(), last.bitcoin_hash());
+                    } else {
+                        info!("Finished synchronizing with {}", self.address);
+                        break;
+                    }
 
                     // TODO
                     // Partially validate these block headers by ensuring that all fields follow
@@ -321,17 +329,13 @@ impl<R: Read + Write> Peer<R> {
                     // threshold according to the nBits field.
 
                     let length = headers.len();
-                    let mut headers = headers.into_iter();
-
-                    // Skip the first header, since we already have it.
-                    headers.next();
 
                     // TODO: Handle case where we partially import blocks, eg. the first `n`.
 
                     match tree
                         .write()
                         .expect("lock has not been poisoned")
-                        .import_blocks(headers)
+                        .import_blocks(headers.into_iter())
                     {
                         Ok((tip, height)) => {
                             info!("Imported {} headers from {}", length, self.address);
@@ -343,10 +347,6 @@ impl<R: Read + Write> Peer<R> {
                             return Err(Error::from(err));
                         }
                     }
-                }
-                NetworkMessage::Headers(_) => {
-                    info!("Finished synchronizing with {}", self.address);
-                    break;
                 }
                 _ => todo!(),
             }
