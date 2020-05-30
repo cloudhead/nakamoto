@@ -314,11 +314,6 @@ impl<R: Read + Write> Peer<R> {
                         break;
                     }
 
-                    // TODO
-                    // Partially validate these block headers by ensuring that all fields follow
-                    // consensus rules and that the hash of the header is below the target
-                    // threshold according to the nBits field.
-
                     let length = headers.len();
 
                     // TODO: Handle case where we partially import blocks, eg. the first `n`.

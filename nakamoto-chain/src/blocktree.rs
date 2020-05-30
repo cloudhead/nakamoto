@@ -54,31 +54,34 @@ pub trait BlockTree {
     fn height(&self) -> Height;
     /// Return the tip of the longest chain.
     fn tip(&self) -> &BlockHash;
+    /// Return the genesis block header.
+    fn genesis(&self) -> &CachedBlock;
     /// Get the cached tip of the longest chain.
     fn get_tip(&self) -> &CachedBlock;
     /// Get the next target difficulty.
     fn next_difficulty_target(&self, params: &Params) -> Bits {
-        // TODO: Pass in the previous block, and if `None`, use pow_limit.
-        self.difficulty_target(self.height(), params).unwrap()
+        self.difficulty_target(self.get_tip(), params)
     }
     /// Get the target difficulty at a certain block height.
-    fn difficulty_target(&self, height: Height, params: &Params) -> Option<Bits> {
-        let block = self.get_block_by_height(height)?;
-        let time = block.time;
+    fn difficulty_target(&self, tip: &CachedBlock, params: &Params) -> Bits {
+        let time = tip.time;
 
         // Only adjust on set intervals. Otherwise return current target.
         // Since the height is 0-indexed, we add `1` to check it against the interval.
-        if (height + 1) % params.difficulty_adjustment_interval() != 0 {
-            return Some(self.get_tip().bits);
+        if (tip.height + 1) % params.difficulty_adjustment_interval() != 0 {
+            return tip.bits;
         }
 
-        let last_adjustment_height =
-            height.saturating_sub(params.difficulty_adjustment_interval() - 1);
-        let last_adjustment_block = self.get_block_by_height(last_adjustment_height)?;
+        let last_adjustment_height = tip
+            .height
+            .saturating_sub(params.difficulty_adjustment_interval() - 1);
+        let last_adjustment_block = self
+            .get_block_by_height(last_adjustment_height)
+            .unwrap_or(self.genesis());
         let last_adjustment_time = last_adjustment_block.header.time;
 
         if params.no_pow_retargeting {
-            return Some(last_adjustment_block.bits);
+            return last_adjustment_block.bits;
         }
 
         let actual_timespan = time - last_adjustment_time;
@@ -90,7 +93,7 @@ pub trait BlockTree {
             adjusted_timespan = params.pow_target_timespan as Time * 4;
         }
 
-        let mut target = block.target();
+        let mut target = tip.target();
         target = target.mul_u32(adjusted_timespan);
         target = target / Target::from_u64(params.pow_target_timespan).unwrap();
 
@@ -99,12 +102,13 @@ pub trait BlockTree {
             target = params.pow_limit;
         }
 
-        Some(BlockHeader::compact_target_from_u256(&target))
+        BlockHeader::compact_target_from_u256(&target)
     }
 }
 
 #[derive(Debug)]
 pub struct CachedBlock {
+    height: Height,
     hash: BlockHash,
     header: BlockHeader,
 }
@@ -129,6 +133,7 @@ impl BlockCache {
     pub fn new(genesis: BlockHeader, params: Params) -> Self {
         Self {
             chain: NonEmpty::new(CachedBlock {
+                height: 0,
                 hash: genesis.bitcoin_hash(),
                 header: genesis,
             }),
@@ -180,7 +185,12 @@ impl BlockCache {
                 Ok(_) => {}
             }
 
-            self.chain.push(CachedBlock { hash, header });
+            let height = tip.height + 1;
+            self.chain.push(CachedBlock {
+                height,
+                hash,
+                header,
+            });
 
             Ok((hash, self.height()))
         } else {
@@ -231,6 +241,10 @@ impl BlockTree for BlockCache {
 
     fn get_tip(&self) -> &CachedBlock {
         self.chain.last()
+    }
+
+    fn genesis(&self) -> &CachedBlock {
+        self.chain.first()
     }
 
     /// Iterate over the longest chain, starting from the tip.
