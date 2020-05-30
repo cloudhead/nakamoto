@@ -73,6 +73,10 @@ pub trait BlockTree {
         let last_adjustment_block = self.get_block_by_height(last_adjustment_height)?;
         let last_adjustment_time = last_adjustment_block.header.time;
 
+        if params.no_pow_retargeting {
+            return Some(last_adjustment_block.target());
+        }
+
         let mut actual_timespan = time - last_adjustment_time;
 
         if actual_timespan < params.pow_target_timespan as Time / 4 {

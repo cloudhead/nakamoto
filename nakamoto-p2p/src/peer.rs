@@ -106,7 +106,7 @@ impl Network {
         match self {
             Self::Mainnet => Params::new(bitcoin::Network::Bitcoin),
             Self::Testnet => Params::new(bitcoin::Network::Testnet),
-            Self::Simnet => Params::new(bitcoin::Network::Testnet),
+            Self::Simnet => Params::new(bitcoin::Network::Regtest),
         }
     }
 
