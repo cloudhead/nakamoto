@@ -31,6 +31,9 @@ fn main() {
     let cfg = p2p::peer::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
+
+    log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
+
     let block_cache = Arc::new(RwLock::new(BlockCache::new(genesis, params)));
     let mut net = p2p::Network::new(cfg, block_cache);
 

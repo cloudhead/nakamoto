@@ -50,12 +50,23 @@ impl Network {
     /// assert_eq!(network.genesis_hash(), genesis.bitcoin_hash());
     /// ```
     pub fn genesis(&self) -> BlockHeader {
-        let network = match self {
-            Self::Mainnet => bitcoin::Network::Bitcoin,
-            Self::Testnet => bitcoin::Network::Testnet,
-            Self::Simnet => bitcoin::Network::Testnet,
-        };
-        bitcoin::blockdata::constants::genesis_block(network).header
+        use bitcoin::blockdata::constants;
+        use bitcoin::Network;
+
+        match self {
+            Self::Mainnet => constants::genesis_block(Network::Bitcoin).header,
+            Self::Testnet => constants::genesis_block(Network::Testnet).header,
+            Self::Simnet => BlockHeader {
+                version: 1,
+                prev_blockhash: Default::default(),
+                merkle_root: constants::genesis_block(bitcoin::Network::Bitcoin)
+                    .header
+                    .merkle_root,
+                time: 1401292357, // 2014-05-28 15:52:37 +0000 UTC
+                bits: 0x207fffff,
+                nonce: 2,
+            },
+        }
     }
 
     pub fn genesis_hash(&self) -> BlockHash {
