@@ -292,7 +292,7 @@ impl<R: Read + Write> Peer<R> {
 
     pub fn sync<T: BlockTree>(
         &mut self,
-        range: ops::Range<usize>,
+        _range: ops::Range<usize>,
         tree: Arc<RwLock<T>>,
     ) -> Result<(), Error> {
         loop {
@@ -321,14 +321,28 @@ impl<R: Read + Write> Peer<R> {
                     // threshold according to the nBits field.
 
                     let length = headers.len();
-                    let (tip, height) = tree
+                    let mut headers = headers.into_iter();
+
+                    // Skip the first header, since we already have it.
+                    headers.next();
+
+                    // TODO: Handle case where we partially import blocks, eg. the first `n`.
+
+                    match tree
                         .write()
                         .expect("lock has not been poisoned")
-                        .import_blocks(headers)?;
-
-                    info!("Imported {} headers from {}", length, self.address);
-                    info!("Chain height = {}, tip = {}", height, tip);
-                    // TODO: We can break here if we've received less than 2'000 headers.
+                        .import_blocks(headers)
+                    {
+                        Ok((tip, height)) => {
+                            info!("Imported {} headers from {}", length, self.address);
+                            info!("Chain height = {}, tip = {}", height, tip);
+                            // TODO: We can break here if we've received less than 2'000 headers.
+                        }
+                        Err(err) => {
+                            error!("Error importing headers: {}", err);
+                            return Err(Error::from(err));
+                        }
+                    }
                 }
                 NetworkMessage::Headers(_) => {
                     info!("Finished synchronizing with {}", self.address);

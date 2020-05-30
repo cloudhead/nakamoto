@@ -11,5 +11,5 @@ pub enum Error {
     Io(#[from] io::Error),
 
     #[error("chain validation error: {0}")]
-    ChainValidation(#[from] blocktree::Error),
+    BlockImport(#[from] blocktree::Error),
 }

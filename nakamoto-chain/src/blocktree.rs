@@ -28,6 +28,10 @@ pub enum Error {
     InvalidChain,
     #[error("empty chain")]
     EmptyChain,
+    #[error("block ignored: {0}")]
+    BlockIgnored(BlockHash),
+    #[error("block import aborted: {0} ({1} block(s) imported)")]
+    BlockImportAborted(Box<Self>, usize),
     #[error("bitcoin error")]
     Bitcoin(#[from] bitcoin::util::Error),
 }
@@ -35,7 +39,10 @@ pub enum Error {
 /// A representation of all known blocks that keeps track of the longest chain.
 pub trait BlockTree {
     /// Import a chain of block headers into the block tree.
-    fn import_blocks(&mut self, chain: Vec<BlockHeader>) -> Result<(BlockHash, Height), Error>;
+    fn import_blocks<I: Iterator<Item = BlockHeader>>(
+        &mut self,
+        chain: I,
+    ) -> Result<(BlockHash, Height), Error>;
     /// Get a block by height.
     fn get_block_by_height(&self, height: Height) -> Option<&CachedBlock>;
     /// Iterate over the longest chain, starting from the tip.
@@ -158,14 +165,19 @@ impl BlockCache {
 }
 
 impl BlockTree for BlockCache {
-    fn import_blocks(&mut self, chain: Vec<BlockHeader>) -> Result<(BlockHash, Height), Error> {
-        let chain = NonEmpty::from_vec(chain).ok_or(Error::EmptyChain)?;
-        let mut result = self.insert_block(chain.head.bitcoin_hash(), chain.head)?;
+    fn import_blocks<I: Iterator<Item = BlockHeader>>(
+        &mut self,
+        chain: I,
+    ) -> Result<(BlockHash, Height), Error> {
+        let mut result = None;
 
-        for header in chain.tail.into_iter() {
-            result = self.insert_block(header.bitcoin_hash(), header)?;
+        for (i, header) in chain.enumerate() {
+            match self.insert_block(header.bitcoin_hash(), header) {
+                Ok(r) => result = Some(r),
+                Err(err) => return Err(Error::BlockImportAborted(err.into(), i)),
+            }
         }
-        Ok(result)
+        Ok(result.unwrap_or((*self.tip(), self.height())))
     }
 
     fn get_block_by_height(&self, height: Height) -> Option<&CachedBlock> {
@@ -324,7 +336,7 @@ mod test {
             return TestResult::discard();
         }
 
-        match cache.import_blocks(chain.tail) {
+        match cache.import_blocks(chain.tail.into_iter()) {
             Ok(_) => TestResult::passed(),
             Err(err) => TestResult::error(err.to_string()),
         }
