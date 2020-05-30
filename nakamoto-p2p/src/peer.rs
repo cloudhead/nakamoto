@@ -36,8 +36,8 @@ pub enum Network {
     Mainnet,
     /// Bitcoin Testnet.
     Testnet,
-    /// Private simulation network, used for development.
-    Simnet,
+    /// Bitcoin regression test net.
+    Regtest,
 }
 
 impl Network {
@@ -57,16 +57,7 @@ impl Network {
         match self {
             Self::Mainnet => constants::genesis_block(Network::Bitcoin).header,
             Self::Testnet => constants::genesis_block(Network::Testnet).header,
-            Self::Simnet => BlockHeader {
-                version: 1,
-                prev_blockhash: Default::default(),
-                merkle_root: constants::genesis_block(bitcoin::Network::Bitcoin)
-                    .header
-                    .merkle_root,
-                time: 1401292357, // 2014-05-28 15:52:37 +0000 UTC
-                bits: 0x207fffff,
-                nonce: 2,
-            },
+            Self::Regtest => constants::genesis_block(Network::Regtest).header,
         }
     }
 
@@ -89,11 +80,11 @@ impl Network {
                 0x01, 0xea, 0x33, 0x09, 0x00, 0x00, 0x00, 0x00,
             ],
             #[rustfmt::skip]
-            Self::Simnet => &[
-                0xf6, 0x7a, 0xd7, 0x69, 0x5d, 0x9b, 0x66, 0x2a,
-                0x72, 0xff, 0x3d, 0x8e, 0xdb, 0xbb, 0x2d, 0xe0,
-                0xbf, 0xa6, 0x7b, 0x13, 0x97, 0x4b, 0xb9, 0x91,
-                0x0d, 0x11, 0x6d, 0x5c, 0xbd, 0x86, 0x3e, 0x68,
+            Self::Regtest => &[
+                0x06, 0x22, 0x6e, 0x46, 0x11, 0x1a, 0x0b, 0x59,
+                0xca, 0xaf, 0x12, 0x60, 0x43, 0xeb, 0x5b, 0xbf,
+                0x28, 0xc3, 0x4f, 0x3a, 0x5e, 0x33, 0x2a, 0x1f,
+                0xc7, 0xb2, 0xb7, 0x3c, 0xf1, 0x88, 0x91, 0x0f,
             ],
         };
         BlockHash::from(
@@ -106,7 +97,7 @@ impl Network {
         match self {
             Self::Mainnet => Params::new(bitcoin::Network::Bitcoin),
             Self::Testnet => Params::new(bitcoin::Network::Testnet),
-            Self::Simnet => Params::new(bitcoin::Network::Regtest),
+            Self::Regtest => Params::new(bitcoin::Network::Regtest),
         }
     }
 
@@ -114,7 +105,7 @@ impl Network {
         match self {
             Self::Mainnet => bitcoin::Network::Bitcoin.magic(),
             Self::Testnet => bitcoin::Network::Testnet.magic(),
-            Self::Simnet => 0x12141c16,
+            Self::Regtest => bitcoin::Network::Regtest.magic(),
         }
     }
 }
@@ -131,7 +122,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            network: Network::Simnet,
+            network: Network::Mainnet,
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
             relay: false,
@@ -144,7 +135,7 @@ impl Config {
         match self.network {
             Network::Mainnet => 8333,
             Network::Testnet => 18333,
-            Network::Simnet => 18555,
+            Network::Regtest => 18334,
         }
     }
 }
@@ -287,7 +278,7 @@ impl<R: Read + Write> Peer<R> {
                     todo!()
                 }
             }
-            Err(_) => todo!(),
+            Err(err) => panic!(err.to_string()),
         }
     }
 

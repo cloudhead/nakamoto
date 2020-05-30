@@ -11,6 +11,9 @@ use thiserror::Error;
 /// Difficulty target of a block.
 type Target = bitcoin::util::uint::Uint256;
 
+/// Compact difficulty bits (target) of a block.
+type Bits = u32;
+
 /// Height of a block.
 type Height = u64;
 
@@ -22,8 +25,8 @@ type Time = u32;
 pub enum Error {
     #[error("invalid block proof-of-work")]
     InvalidBlockPoW,
-    #[error("invalid block difficulty target: 0x{0:x}, expected 0x{1:x}")]
-    InvalidBlockTarget(u32, u32),
+    #[error("invalid block difficulty target: {0}, expected {1}")]
+    InvalidBlockTarget(Target, Target),
     #[error("invalid chain")]
     InvalidChain,
     #[error("empty chain")]
@@ -54,18 +57,19 @@ pub trait BlockTree {
     /// Get the cached tip of the longest chain.
     fn get_tip(&self) -> &CachedBlock;
     /// Get the next target difficulty.
-    fn next_difficulty_target(&self, params: &Params) -> Target {
+    fn next_difficulty_target(&self, params: &Params) -> Bits {
+        // TODO: Pass in the previous block, and if `None`, use pow_limit.
         self.difficulty_target(self.height(), params).unwrap()
     }
     /// Get the target difficulty at a certain block height.
-    fn difficulty_target(&self, height: Height, params: &Params) -> Option<Target> {
+    fn difficulty_target(&self, height: Height, params: &Params) -> Option<Bits> {
         let block = self.get_block_by_height(height)?;
         let time = block.time;
 
         // Only adjust on set intervals. Otherwise return current target.
         // Since the height is 0-indexed, we add `1` to check it against the interval.
         if (height + 1) % params.difficulty_adjustment_interval() != 0 {
-            return Some(self.get_tip().target());
+            return Some(self.get_tip().bits);
         }
 
         let last_adjustment_height =
@@ -74,20 +78,20 @@ pub trait BlockTree {
         let last_adjustment_time = last_adjustment_block.header.time;
 
         if params.no_pow_retargeting {
-            return Some(last_adjustment_block.target());
+            return Some(last_adjustment_block.bits);
         }
 
-        let mut actual_timespan = time - last_adjustment_time;
+        let actual_timespan = time - last_adjustment_time;
+        let mut adjusted_timespan = actual_timespan;
 
         if actual_timespan < params.pow_target_timespan as Time / 4 {
-            actual_timespan = params.pow_target_timespan as Time / 4;
-        }
-        if actual_timespan > params.pow_target_timespan as Time * 4 {
-            actual_timespan = params.pow_target_timespan as Time * 4;
+            adjusted_timespan = params.pow_target_timespan as Time / 4;
+        } else if actual_timespan > params.pow_target_timespan as Time * 4 {
+            adjusted_timespan = params.pow_target_timespan as Time * 4;
         }
 
         let mut target = block.target();
-        target = target.mul_u32(actual_timespan);
+        target = target.mul_u32(adjusted_timespan);
         target = target / Target::from_u64(params.pow_target_timespan).unwrap();
 
         // Ensure a difficulty floor.
@@ -95,7 +99,7 @@ pub trait BlockTree {
             target = params.pow_limit;
         }
 
-        Some(target)
+        Some(BlockHeader::compact_target_from_u256(&target))
     }
 }
 
@@ -140,18 +144,35 @@ impl BlockCache {
         let tip = self.get_tip();
 
         if header.prev_blockhash == tip.hash {
-            // TODO: Validate timestamp.
-            let target = self.next_difficulty_target(&self.params);
+            let bits = if self.params.allow_min_difficulty_blocks {
+                if header.time > tip.time + self.params.pow_target_spacing as Time * 2 {
+                    BlockHeader::compact_target_from_u256(&self.params.pow_limit)
+                } else {
+                    let pow_limit = BlockHeader::compact_target_from_u256(&self.params.pow_limit);
+                    let mut bits = self.get_tip().bits;
 
+                    for (height, header) in self.chain.tail.iter().enumerate().rev() {
+                        if height as Height % self.params.difficulty_adjustment_interval() == 0
+                            || header.bits != pow_limit
+                        {
+                            bits = header.bits;
+                            break;
+                        }
+                    }
+                    bits
+                }
+            } else {
+                self.next_difficulty_target(&self.params)
+            };
+
+            // TODO: Validate timestamp.
+            let target = BlockCache::target_from_bits(bits);
             match header.validate_pow(&target) {
                 Err(bitcoin::util::Error::BlockBadProofOfWork) => {
                     return Err(Error::InvalidBlockPoW);
                 }
                 Err(bitcoin::util::Error::BlockBadTarget) => {
-                    return Err(Error::InvalidBlockTarget(
-                        header.bits,
-                        BlockHeader::compact_target_from_u256(&target),
-                    ));
+                    return Err(Error::InvalidBlockTarget(header.target(), target));
                 }
                 Err(err) => {
                     return Err(Error::Bitcoin(err));
@@ -164,6 +185,26 @@ impl BlockCache {
             Ok((hash, self.height()))
         } else {
             Err(Error::BlockIgnored(hash))
+        }
+    }
+
+    // Convert a compact difficulty representation to 256-bits.
+    // Taken from `BlockHeader::target` from the `bitcoin` library.
+    fn target_from_bits(bits: u32) -> Target {
+        let (mant, expt) = {
+            let unshifted_expt = bits >> 24;
+            if unshifted_expt <= 3 {
+                ((bits & 0xFFFFFF) >> (8 * (3 - unshifted_expt as usize)), 0)
+            } else {
+                (bits & 0xFFFFFF, 8 * ((bits >> 24) - 3))
+            }
+        };
+
+        // The mantissa is signed but may not be negative
+        if mant > 0x7FFFFF {
+            Default::default()
+        } else {
+            Target::from_u64(mant as u64).unwrap() << (expt as usize)
         }
     }
 }
