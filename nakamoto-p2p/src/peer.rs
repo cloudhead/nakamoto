@@ -1,3 +1,4 @@
+use std::fmt;
 use std::io::{Read, Write};
 use std::net;
 use std::ops;
@@ -159,6 +160,10 @@ impl Connection<net::TcpStream> {
     /// Connect to a peer given a remote address.
     pub fn new(addr: &net::SocketAddr, config: Config) -> Result<Self, Error> {
         let sock = net::TcpStream::connect(addr)?;
+
+        sock.set_read_timeout(Some(IDLE_TIMEOUT))?;
+        sock.set_write_timeout(Some(IDLE_TIMEOUT))?;
+
         let address = sock.peer_addr()?;
         let local_address = sock.local_addr()?;
         let raw = StreamReader::new(sock, Some(MAX_MESSAGE_SIZE));
@@ -174,21 +179,9 @@ impl Connection<net::TcpStream> {
             height,
         })
     }
-
-    pub fn run<T: BlockTree>(&mut self, block_cache: Arc<RwLock<T>>) -> Result<(), Error> {
-        debug!("{}: Connected", self.address);
-        trace!("{}: {:#?}", self.address, self);
-
-        let height = block_cache.read().expect("lock is not poisoned").height();
-
-        self.handshake(height)?;
-        self.sync(0..1, block_cache)?;
-
-        Ok(())
-    }
 }
 
-impl<R: Read + Write> Connection<R> {
+impl<R: Read + Write + fmt::Debug> Connection<R> {
     /// Create a new peer from a `io::Read` and an address pair.
     pub fn from(
         r: R,
@@ -209,6 +202,18 @@ impl<R: Read + Write> Connection<R> {
             address,
             local_address,
         }
+    }
+
+    pub fn run<T: BlockTree>(&mut self, block_cache: Arc<RwLock<T>>) -> Result<(), Error> {
+        debug!("{}: Connected", self.address);
+        trace!("{}: {:#?}", self.address, self);
+
+        let height = block_cache.read().expect("lock is not poisoned").height();
+
+        self.handshake(height)?;
+        self.sync(0..1, block_cache)?;
+
+        Ok(())
     }
 
     /// Establish a peer handshake. This must be called as soon as the peer is connected.
@@ -267,6 +272,7 @@ impl<R: Read + Write> Connection<R> {
         }
 
         self.write(NetworkMessage::Verack)?;
+        self.state = State::Handshaked;
 
         debug!("{}: Handshake successful", self.address);
 
@@ -290,7 +296,10 @@ impl<R: Read + Write> Connection<R> {
                 );
                 trace!("{}: {:#?}", self.address, msg);
 
-                self.raw.stream.write_all(&buf[..len]).map_err(Error::from)
+                self.raw.stream.write_all(&buf[..len])?;
+                self.raw.stream.flush()?;
+
+                Ok(())
             }
             Err(err) => panic!(err.to_string()),
         }
