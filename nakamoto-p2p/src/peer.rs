@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use std::net;
 use std::ops;
 use std::sync::{Arc, RwLock};
+use std::time;
 
 use log::*;
 
@@ -28,6 +29,12 @@ pub const PROTOCOL_VERSION: u32 = 70012;
 pub const USER_AGENT: &'static str = "/nakamoto:0.0.0/";
 /// Maximum peer-to-peer message size.
 pub const MAX_MESSAGE_SIZE: usize = 6 * 1024;
+/// Duration of inactivity before timing out a peer.
+pub const IDLE_TIMEOUT: time::Duration = time::Duration::from_secs(60 * 5);
+/// Duration of inactivity before timing out a peer during handshake.
+pub const HANDSHAKE_TIMEOUT: time::Duration = time::Duration::from_secs(30);
+/// How long to wait between sending pings.
+pub const PING_INTERVAL: time::Duration = time::Duration::from_secs(60);
 
 /// Bitcoin network.
 #[derive(Debug, Copy, Clone)]
@@ -120,51 +127,77 @@ impl Config {
     }
 }
 
-/// A peer on the network.
+/// Peer connection state.
 #[derive(Debug)]
-pub struct Peer<R: Read + Write> {
+pub enum State {
+    /// The peer is connected, but no handshake has taken place.
+    Connected,
+    /// The peer handshake has been successful.
+    Handshaked,
+    /// The peer has disconnected. If this was caused by an error, the error is included.
+    Disconnected(Option<Error>),
+}
+
+/// A peer connection.
+#[derive(Debug)]
+pub struct Connection<R: Read + Write> {
     /// Remote peer address.
     pub address: net::SocketAddr,
     /// Local peer address.
     pub local_address: net::SocketAddr,
     /// Peer configuration.
     pub config: Config,
-    /// Peer connection.
-    conn: StreamReader<R>,
+    /// Peer connection state.
+    pub state: State,
+    /// Underling peer connection.
+    raw: StreamReader<R>,
 }
 
-impl Peer<net::TcpStream> {
+impl Connection<net::TcpStream> {
     /// Connect to a peer given a remote address.
-    pub fn connect(addr: &net::SocketAddr, config: &Config) -> Result<Self, Error> {
-        let stream = net::TcpStream::connect(addr)?;
-        let address = stream.peer_addr()?;
-        let local_address = stream.local_addr()?;
-        let config = config.clone();
-        let conn = StreamReader::new(stream, Some(MAX_MESSAGE_SIZE));
+    pub fn new(addr: &net::SocketAddr, config: Config) -> Result<Self, Error> {
+        let sock = net::TcpStream::connect(addr)?;
+        let address = sock.peer_addr()?;
+        let local_address = sock.local_addr()?;
+        let raw = StreamReader::new(sock, Some(MAX_MESSAGE_SIZE));
+        let state = State::Connected;
 
         Ok(Self {
+            state,
             config,
-            conn,
+            raw,
             address,
             local_address,
         })
     }
+
+    pub fn run<T: BlockTree>(&mut self, block_cache: Arc<RwLock<T>>) -> Result<(), Error> {
+        debug!("Connected to {}", self.address);
+        trace!("{:#?}", self);
+
+        self.handshake(0)?;
+        self.sync(0..1, block_cache)?;
+
+        Ok(())
+    }
 }
 
-impl<R: Read + Write> Peer<R> {
+impl<R: Read + Write> Connection<R> {
     /// Create a new peer from a `io::Read` and an address pair.
-    pub fn new(
+    pub fn from(
         r: R,
         local_address: net::SocketAddr,
         address: net::SocketAddr,
         config: &Config,
     ) -> Self {
-        let conn = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
+        let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
         let config = config.clone();
+        let state = State::Connected;
 
         Self {
+            state,
             config,
-            conn,
+            raw,
             address,
             local_address,
         }
@@ -240,14 +273,14 @@ impl<R: Read + Write> Peer<R> {
                 );
                 trace!("{:#?}", msg);
 
-                self.conn.stream.write_all(&buf[..len]).map_err(Error::from)
+                self.raw.stream.write_all(&buf[..len]).map_err(Error::from)
             }
-            Err(_) => todo!(),
+            Err(err) => panic!(err.to_string()),
         }
     }
 
     pub fn read(&mut self) -> Result<NetworkMessage, Error> {
-        match self.conn.read_next::<RawNetworkMessage>() {
+        match self.raw.read_next::<RawNetworkMessage>() {
             Ok(msg) => {
                 debug!("Received {:?} from {}", msg.cmd(), self.address);
                 trace!("{:#?}", msg);
@@ -295,8 +328,6 @@ impl<R: Read + Write> Peer<R> {
                     }
 
                     let length = headers.len();
-
-                    // TODO: Handle case where we partially import blocks, eg. the first `n`.
 
                     match tree
                         .write()

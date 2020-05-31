@@ -38,11 +38,10 @@ fn main() {
     log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
 
     let block_cache = Arc::new(RwLock::new(BlockCache::new(genesis, params)));
-    let mut net = p2p::Network::new(cfg, block_cache);
+    let net = p2p::Network::new(cfg, block_cache);
 
-    net.connect(
-        opts.connect
-            .expect("a peer must be specified with `--connect`"),
-    )
-    .unwrap();
+    net.connect(&[opts
+        .connect
+        .expect("a peer must be specified with `--connect`")])
+        .unwrap();
 }
