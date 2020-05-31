@@ -1,4 +1,5 @@
 use nakamoto_chain::blocktree::BlockCache;
+use nakamoto_daemon::Options;
 use nakamoto_p2p as p2p;
 
 use std::sync::{Arc, RwLock};
@@ -6,6 +7,8 @@ use std::sync::{Arc, RwLock};
 use log;
 
 fn main() {
+    let opts = Options::from_env();
+
     #[cfg(feature = "fern")]
     {
         use fern::colors::{Color, ColoredLevelConfig};
@@ -20,7 +23,7 @@ fn main() {
                     message
                 ))
             })
-            .level(log::LevelFilter::Trace)
+            .level(opts.log)
             .chain(std::io::stderr())
             .apply()
             .unwrap();
@@ -37,5 +40,9 @@ fn main() {
     let block_cache = Arc::new(RwLock::new(BlockCache::new(genesis, params)));
     let mut net = p2p::Network::new(cfg, block_cache);
 
-    net.connect("0.0.0.0").unwrap();
+    net.connect(
+        opts.connect
+            .expect("a peer must be specified with `--connect`"),
+    )
+    .unwrap();
 }

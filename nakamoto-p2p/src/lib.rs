@@ -1,8 +1,9 @@
 pub mod error;
 pub mod peer;
 
-use nakamoto_chain::blocktree::BlockCache;
+use nakamoto_chain::blocktree::{BlockCache, BlockTree};
 
+use std::net;
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -21,8 +22,7 @@ impl Network {
         }
     }
 
-    pub fn connect(&mut self, host: &str) -> Result<(), error::Error> {
-        let addr = format!("{}:{}", host, self.peer_config.port());
+    pub fn connect(&mut self, addr: net::SocketAddr) -> Result<(), error::Error> {
         let mut p = peer::Peer::connect(&addr, &self.peer_config)?;
 
         debug!("Connected to {}", p.address);

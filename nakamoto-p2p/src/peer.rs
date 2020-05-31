@@ -155,7 +155,7 @@ pub struct Peer<R: Read + Write> {
 
 impl Peer<net::TcpStream> {
     /// Connect to a peer given a remote address.
-    pub fn connect(addr: &str, config: &Config) -> Result<Self, Error> {
+    pub fn connect(addr: &net::SocketAddr, config: &Config) -> Result<Self, Error> {
         let stream = net::TcpStream::connect(addr)?;
         let address = stream.peer_addr()?;
         let local_address = stream.local_addr()?;
