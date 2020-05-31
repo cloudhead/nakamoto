@@ -40,8 +40,5 @@ fn main() {
     let block_cache = Arc::new(RwLock::new(BlockCache::new(genesis, params)));
     let net = p2p::Network::new(cfg, block_cache);
 
-    net.connect(&[opts
-        .connect
-        .expect("a peer must be specified with `--connect`")])
-        .unwrap();
+    net.connect(opts.connect.as_slice()).unwrap();
 }

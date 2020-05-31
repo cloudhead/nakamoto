@@ -31,6 +31,8 @@ impl Peer<net::TcpStream> {
     ) -> Result<(), error::Error> {
         use std::collections::hash_map::Entry;
 
+        debug!("Connecting to {}...", &addr);
+
         let conn = peer::Connection::new(&addr, config)?;
         let addr = conn.address;
 

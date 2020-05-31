@@ -6,8 +6,8 @@ use argh::FromArgs;
 /// A Bitcoin light client.
 pub struct Options {
     #[argh(option)]
-    /// connect to the specified peer
-    pub connect: Option<net::SocketAddr>,
+    /// connect to the specified peers only
+    pub connect: Vec<net::SocketAddr>,
 
     #[argh(switch)]
     /// use the bitcoin test network (default: false)
