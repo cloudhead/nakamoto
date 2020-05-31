@@ -19,7 +19,7 @@ use bitcoin::network::stream_reader::StreamReader;
 use bitcoin::util::hash::BitcoinHash;
 
 use bitcoin_hashes::sha256d;
-use nakamoto_chain::blocktree::BlockTree;
+use nakamoto_chain::blocktree::{BlockTree, Height};
 
 use crate::error::Error;
 
@@ -149,6 +149,8 @@ pub struct Connection<R: Read + Write> {
     pub config: Config,
     /// Peer connection state.
     pub state: State,
+    /// The peer's best height.
+    pub height: Height,
     /// Underling peer connection.
     raw: StreamReader<R>,
 }
@@ -161,6 +163,7 @@ impl Connection<net::TcpStream> {
         let local_address = sock.local_addr()?;
         let raw = StreamReader::new(sock, Some(MAX_MESSAGE_SIZE));
         let state = State::Connected;
+        let height = 0;
 
         Ok(Self {
             state,
@@ -168,6 +171,7 @@ impl Connection<net::TcpStream> {
             raw,
             address,
             local_address,
+            height,
         })
     }
 
@@ -175,7 +179,9 @@ impl Connection<net::TcpStream> {
         debug!("{}: Connected", self.address);
         trace!("{}: {:#?}", self.address, self);
 
-        self.handshake(0)?;
+        let height = block_cache.read().expect("lock is not poisoned").height();
+
+        self.handshake(height)?;
         self.sync(0..1, block_cache)?;
 
         Ok(())
@@ -193,8 +199,10 @@ impl<R: Read + Write> Connection<R> {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
         let config = config.clone();
         let state = State::Connected;
+        let height = 0;
 
         Self {
+            height,
             state,
             config,
             raw,
@@ -212,13 +220,15 @@ impl<R: Read + Write> Connection<R> {
     ///   3. Expect "verack" message.
     ///   4. Send "verack" message.
     ///
-    pub fn handshake(&mut self, start_height: i32) -> Result<(), Error> {
+    pub fn handshake(&mut self, height: Height) -> Result<(), Error> {
         use std::time::*;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
+
+        let start_height = height as i32;
 
         self.write(NetworkMessage::Version(VersionMessage {
             version: self.config.protocol_version,
@@ -236,7 +246,14 @@ impl<R: Read + Write> Connection<R> {
         }))?;
 
         match self.read()? {
-            NetworkMessage::Version(VersionMessage { .. }) => {
+            NetworkMessage::Version(VersionMessage { start_height, .. }) => {
+                if height > start_height as Height + 1 {
+                    // We're ahead of this peer by more than one block, which means
+                    // we won't be getting much from it. Abort.
+                    todo!();
+                }
+                self.height = start_height as Height;
+
                 // TODO: Check version
                 // TODO: Check services
                 // TODO: Check start_height
@@ -340,6 +357,8 @@ impl<R: Read + Write> Connection<R> {
                         .import_blocks(headers.into_iter())
                     {
                         Ok((tip, height)) => {
+                            self.height = height;
+
                             info!("Imported {} headers from {}", length, self.address);
                             info!("Chain height = {}, tip = {}", height, tip);
                             // TODO: We can break here if we've received less than 2'000 headers.

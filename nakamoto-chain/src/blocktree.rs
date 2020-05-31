@@ -9,16 +9,16 @@ use nonempty::NonEmpty;
 use thiserror::Error;
 
 /// Difficulty target of a block.
-type Target = bitcoin::util::uint::Uint256;
+pub type Target = bitcoin::util::uint::Uint256;
 
 /// Compact difficulty bits (target) of a block.
-type Bits = u32;
+pub type Bits = u32;
 
 /// Height of a block.
-type Height = u64;
+pub type Height = u64;
 
 /// Block timestamp.
-type Time = u32;
+pub type Time = u32;
 
 /// An error related to the block tree.
 #[derive(Debug, Error)]
