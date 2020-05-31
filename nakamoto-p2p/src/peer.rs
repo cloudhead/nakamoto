@@ -40,6 +40,16 @@ pub enum Network {
     Regtest,
 }
 
+impl From<Network> for bitcoin::Network {
+    fn from(value: Network) -> Self {
+        match value {
+            Network::Mainnet => Self::Bitcoin,
+            Network::Testnet => Self::Testnet,
+            Network::Regtest => Self::Regtest,
+        }
+    }
+}
+
 impl Network {
     /// ```
     /// use nakamoto_p2p::peer::Network;
@@ -52,13 +62,8 @@ impl Network {
     /// ```
     pub fn genesis(&self) -> BlockHeader {
         use bitcoin::blockdata::constants;
-        use bitcoin::Network;
 
-        match self {
-            Self::Mainnet => constants::genesis_block(Network::Bitcoin).header,
-            Self::Testnet => constants::genesis_block(Network::Testnet).header,
-            Self::Regtest => constants::genesis_block(Network::Regtest).header,
-        }
+        constants::genesis_block((*self).into()).header
     }
 
     pub fn genesis_hash(&self) -> BlockHash {
@@ -77,19 +82,11 @@ impl Network {
     }
 
     pub fn params(&self) -> Params {
-        match self {
-            Self::Mainnet => Params::new(bitcoin::Network::Bitcoin),
-            Self::Testnet => Params::new(bitcoin::Network::Testnet),
-            Self::Regtest => Params::new(bitcoin::Network::Regtest),
-        }
+        Params::new((*self).into())
     }
 
     fn magic(&self) -> u32 {
-        match self {
-            Self::Mainnet => bitcoin::Network::Bitcoin.magic(),
-            Self::Testnet => bitcoin::Network::Testnet.magic(),
-            Self::Regtest => bitcoin::Network::Regtest.magic(),
-        }
+        bitcoin::Network::from(*self).magic()
     }
 }
 
