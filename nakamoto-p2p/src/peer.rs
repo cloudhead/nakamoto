@@ -154,6 +154,8 @@ pub struct Connection<R: Read + Write> {
     pub height: Height,
     /// Underling peer connection.
     raw: StreamReader<R>,
+    /// Last time we heard from this peer.
+    last_active: time::Instant,
 }
 
 impl Connection<net::TcpStream> {
@@ -169,6 +171,7 @@ impl Connection<net::TcpStream> {
         let raw = StreamReader::new(sock, Some(MAX_MESSAGE_SIZE));
         let state = State::Connected;
         let height = 0;
+        let last_active = time::Instant::now();
 
         Ok(Self {
             state,
@@ -177,6 +180,7 @@ impl Connection<net::TcpStream> {
             address,
             local_address,
             height,
+            last_active,
         })
     }
 }
@@ -193,6 +197,7 @@ impl<R: Read + Write + fmt::Debug> Connection<R> {
         let config = config.clone();
         let state = State::Connected;
         let height = 0;
+        let last_active = time::Instant::now();
 
         Self {
             height,
@@ -201,6 +206,7 @@ impl<R: Read + Write + fmt::Debug> Connection<R> {
             raw,
             address,
             local_address,
+            last_active,
         }
     }
 
@@ -310,6 +316,8 @@ impl<R: Read + Write + fmt::Debug> Connection<R> {
             Ok(msg) => {
                 debug!("{}: Received {:?}", self.address, msg.cmd());
                 trace!("{}: {:#?}", self.address, msg);
+
+                self.last_active = time::Instant::now();
 
                 if msg.magic == self.config.network.magic() {
                     Ok(msg.payload)
