@@ -172,8 +172,8 @@ impl Connection<net::TcpStream> {
     }
 
     pub fn run<T: BlockTree>(&mut self, block_cache: Arc<RwLock<T>>) -> Result<(), Error> {
-        debug!("Connected to {}", self.address);
-        trace!("{:#?}", self);
+        debug!("{}: Connected", self.address);
+        trace!("{}: {:#?}", self.address, self);
 
         self.handshake(0)?;
         self.sync(0..1, block_cache)?;
@@ -251,7 +251,7 @@ impl<R: Read + Write> Connection<R> {
 
         self.write(NetworkMessage::Verack)?;
 
-        debug!("Handshake with {} successful", self.address);
+        debug!("{}: Handshake successful", self.address);
 
         Ok(())
     }
@@ -266,12 +266,12 @@ impl<R: Read + Write> Connection<R> {
         match msg.consensus_encode(&mut buf[..]) {
             Ok(len) => {
                 debug!(
-                    "Sending {:?} message ({} bytes) to {}",
+                    "{}: Sending {:?} message ({} bytes)",
+                    self.address,
                     msg.cmd(),
                     len,
-                    self.address
                 );
-                trace!("{:#?}", msg);
+                trace!("{}: {:#?}", self.address, msg);
 
                 self.raw.stream.write_all(&buf[..len]).map_err(Error::from)
             }
@@ -282,8 +282,8 @@ impl<R: Read + Write> Connection<R> {
     pub fn read(&mut self) -> Result<NetworkMessage, Error> {
         match self.raw.read_next::<RawNetworkMessage>() {
             Ok(msg) => {
-                debug!("Received {:?} from {}", msg.cmd(), self.address);
-                trace!("{:#?}", msg);
+                debug!("{}: Received {:?}", self.address, msg.cmd());
+                trace!("{}: {:#?}", self.address, msg);
 
                 if msg.magic == self.config.network.magic() {
                     Ok(msg.payload)
@@ -318,12 +318,17 @@ impl<R: Read + Write> Connection<R> {
             // TODO: Handle timeout.
             match self.read()? {
                 NetworkMessage::Headers(headers) => {
-                    debug!("Received {} headers from {}", headers.len(), self.address);
+                    debug!("{}: Received {} headers", self.address, headers.len());
 
                     if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
-                        debug!("Range = {}..{}", first.bitcoin_hash(), last.bitcoin_hash());
+                        trace!(
+                            "{}: Range = {}..{}",
+                            self.address,
+                            first.bitcoin_hash(),
+                            last.bitcoin_hash()
+                        );
                     } else {
-                        info!("Finished synchronizing with {}", self.address);
+                        info!("{}: Finished synchronizing", self.address);
                         break;
                     }
 
