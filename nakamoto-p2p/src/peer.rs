@@ -1,7 +1,6 @@
 use std::fmt;
 use std::io::{Read, Write};
 use std::net;
-use std::ops;
 use std::sync::{mpsc, Arc, RwLock};
 use std::time;
 
@@ -223,10 +222,13 @@ impl<R: Read + Write + fmt::Debug> Connection<R> {
         block_cache: Arc<RwLock<T>>,
         _events: mpsc::Sender<Event>,
     ) -> Result<(), Error> {
-        let height = block_cache.read().expect("lock is not poisoned").height();
+        let (tip, height) = {
+            let cache = block_cache.read().expect("lock is not poisoned");
+            (*cache.tip(), cache.height())
+        };
 
         self.handshake(height)?;
-        self.sync(0..1, block_cache)?;
+        self.sync(&[tip], block_cache)?;
 
         Ok(())
     }
@@ -340,19 +342,18 @@ impl<R: Read + Write + fmt::Debug> Connection<R> {
 
     pub fn sync<T: BlockTree>(
         &mut self,
-        _range: ops::Range<usize>,
+        locator_hashes: &[BlockHash],
         tree: Arc<RwLock<T>>,
     ) -> Result<(), Error> {
+        if locator_hashes.is_empty() {
+            return Ok(());
+        }
         loop {
-            let tip = tree
-                .read()
-                .expect("lock has not been poisoned")
-                .tip()
-                .clone();
+            let locator_hashes = locator_hashes.to_vec();
             let get_headers = NetworkMessage::GetHeaders(GetHeadersMessage {
                 version: self.config.protocol_version,
                 // Starting hashes, highest heights first.
-                locator_hashes: vec![tip],
+                locator_hashes,
                 // Using the zero hash means *fetch as many blocks as possible*.
                 stop_hash: BlockHash::default(),
             });
