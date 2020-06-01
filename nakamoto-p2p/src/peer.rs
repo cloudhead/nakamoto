@@ -2,7 +2,7 @@ use std::fmt;
 use std::io::{Read, Write};
 use std::net;
 use std::ops;
-use std::sync::{Arc, RwLock};
+use std::sync::{mpsc, Arc, RwLock};
 use std::time;
 
 use log::*;
@@ -96,6 +96,14 @@ impl Network {
     fn magic(&self) -> u32 {
         bitcoin::Network::from(*self).magic()
     }
+}
+
+/// Peer event, used to notify peer manager.
+#[derive(Debug)]
+pub enum Event {
+    Connected(net::SocketAddr),
+    Handshaked(net::SocketAddr),
+    Disconnected(net::SocketAddr),
 }
 
 /// Peer config.
@@ -210,10 +218,11 @@ impl<R: Read + Write + fmt::Debug> Connection<R> {
         }
     }
 
-    pub fn run<T: BlockTree>(&mut self, block_cache: Arc<RwLock<T>>) -> Result<(), Error> {
-        debug!("{}: Connected", self.address);
-        trace!("{}: {:#?}", self.address, self);
-
+    pub fn run<T: BlockTree>(
+        &mut self,
+        block_cache: Arc<RwLock<T>>,
+        _events: mpsc::Sender<Event>,
+    ) -> Result<(), Error> {
         let height = block_cache.read().expect("lock is not poisoned").height();
 
         self.handshake(height)?;
@@ -349,7 +358,6 @@ impl<R: Read + Write + fmt::Debug> Connection<R> {
             });
             self.write(get_headers)?;
 
-            // TODO: Handle timeout.
             match self.read()? {
                 NetworkMessage::Headers(headers) => {
                     debug!("{}: Received {} headers", self.address, headers.len());

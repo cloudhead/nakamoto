@@ -16,4 +16,7 @@ pub enum Error {
 
     #[error("chain validation error: {0}")]
     BlockImport(#[from] blocktree::Error),
+
+    #[error("not connected to the peer network")]
+    NotConnected,
 }

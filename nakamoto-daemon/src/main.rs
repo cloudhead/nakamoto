@@ -2,6 +2,7 @@ use nakamoto_chain::blocktree::BlockCache;
 use nakamoto_daemon::Options;
 use nakamoto_p2p as p2p;
 
+use std::process;
 use std::sync::{Arc, RwLock};
 
 use log;
@@ -38,7 +39,12 @@ fn main() {
     log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
 
     let block_cache = Arc::new(RwLock::new(BlockCache::new(genesis, params)));
-    let net = p2p::Network::new(cfg, block_cache);
+    let mut net = p2p::Network::new(cfg, block_cache);
+
+    if opts.connect.is_empty() {
+        log::error!("at least one peer must be supplied using `--connect`");
+        process::exit(1);
+    }
 
     net.connect(opts.connect.as_slice()).unwrap();
 }
