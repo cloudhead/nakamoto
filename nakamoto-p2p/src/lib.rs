@@ -106,10 +106,8 @@ impl Network {
             let addr = addr.clone();
             let tx = tx.clone();
 
-            let handle = thread::spawn(move || match Peer::run(addr, config, cache, peers, tx) {
-                Ok(result) => return Ok(result),
-                Err(err) => panic!(err.to_string()),
-            });
+            let handle = thread::spawn(move || Peer::run(addr, config, cache, peers, tx));
+
             spawned.push(handle);
         }
         // We don't need this transmitting end, since we've supplied all transmitters to peers.
@@ -120,6 +118,7 @@ impl Network {
 
             match event {
                 Ok(peer::Event::Connected(peer)) => {
+                    self.disconnected.remove(&peer);
                     self.connected.insert(peer);
                 }
                 Ok(peer::Event::Handshaked(peer)) => {
