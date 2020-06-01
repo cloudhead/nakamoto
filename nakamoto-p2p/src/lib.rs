@@ -27,6 +27,22 @@ struct Peer<R: Read + Write> {
 }
 
 impl Peer<net::TcpStream> {
+    /// Connect to a peer given a remote address.
+    pub fn dial(
+        addr: &net::SocketAddr,
+        config: peer::Config,
+    ) -> Result<peer::Connection<net::TcpStream>, error::Error> {
+        let sock = net::TcpStream::connect(addr)?;
+
+        sock.set_read_timeout(Some(peer::IDLE_TIMEOUT))?;
+        sock.set_write_timeout(Some(peer::IDLE_TIMEOUT))?;
+
+        let address = sock.peer_addr()?;
+        let local_address = sock.local_addr()?;
+
+        Ok(peer::Connection::from(sock, local_address, address, config))
+    }
+
     fn run(
         addr: net::SocketAddr,
         config: peer::Config,
@@ -38,7 +54,7 @@ impl Peer<net::TcpStream> {
 
         debug!("Connecting to {}...", &addr);
 
-        let conn = peer::Connection::new(&addr, config)?;
+        let conn = Self::dial(&addr, config)?;
         let addr = conn.address;
 
         debug!("Connected to {}", &addr);

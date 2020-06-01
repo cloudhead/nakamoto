@@ -165,43 +165,15 @@ pub struct Connection<R: Read + Write> {
     last_active: time::Instant,
 }
 
-impl Connection<net::TcpStream> {
-    /// Connect to a peer given a remote address.
-    pub fn new(addr: &net::SocketAddr, config: Config) -> Result<Self, Error> {
-        let sock = net::TcpStream::connect(addr)?;
-
-        sock.set_read_timeout(Some(IDLE_TIMEOUT))?;
-        sock.set_write_timeout(Some(IDLE_TIMEOUT))?;
-
-        let address = sock.peer_addr()?;
-        let local_address = sock.local_addr()?;
-        let raw = StreamReader::new(sock, Some(MAX_MESSAGE_SIZE));
-        let state = State::Connected;
-        let height = 0;
-        let last_active = time::Instant::now();
-
-        Ok(Self {
-            state,
-            config,
-            raw,
-            address,
-            local_address,
-            height,
-            last_active,
-        })
-    }
-}
-
 impl<R: Read + Write + fmt::Debug> Connection<R> {
     /// Create a new peer from a `io::Read` and an address pair.
     pub fn from(
         r: R,
         local_address: net::SocketAddr,
         address: net::SocketAddr,
-        config: &Config,
+        config: Config,
     ) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
-        let config = config.clone();
         let state = State::Connected;
         let height = 0;
         let last_active = time::Instant::now();
