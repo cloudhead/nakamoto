@@ -1,4 +1,3 @@
-use std::fmt;
 use std::io::{Read, Write};
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};
@@ -148,7 +147,7 @@ pub enum State {
 
 /// A peer connection.
 #[derive(Debug)]
-pub struct Connection<R: Read + Write> {
+pub struct Connection<R: Read> {
     /// Remote peer address.
     pub address: net::SocketAddr,
     /// Local peer address.
@@ -165,7 +164,7 @@ pub struct Connection<R: Read + Write> {
     last_active: time::Instant,
 }
 
-impl<R: Read + Write + fmt::Debug> Connection<R> {
+impl<R: Read + Write> Connection<R> {
     /// Create a new peer from a `io::Read` and an address pair.
     pub fn from(
         r: R,

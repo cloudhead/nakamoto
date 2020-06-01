@@ -4,7 +4,6 @@ pub mod peer;
 use nakamoto_chain::blocktree::{BlockCache, BlockTree, Height};
 
 use std::collections::{HashMap, HashSet};
-use std::fmt;
 use std::io::{Read, Write};
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};
@@ -20,9 +19,9 @@ pub const PEER_CONNECTION_THRESHOLD: usize = 3;
 type Peers<R> = HashMap<PeerId, Peer<R>>;
 
 /// A TCP-backed peer.
-struct Peer<R: Read + Write>(peer::Connection<R>);
+struct Peer<R: Read>(peer::Connection<R>);
 
-impl<R: Read + Write + fmt::Debug> Peer<R> {
+impl<R: Read + Write> Peer<R> {
     fn run(
         addr: net::SocketAddr,
         peer: peer::Connection<R>,
@@ -101,9 +100,9 @@ pub enum NetworkState {
     Synced,
 }
 
-pub struct Network {
+pub struct Network<R: Read> {
     peer_config: peer::Config,
-    peers: Arc<RwLock<Peers<net::TcpStream>>>,
+    peers: Arc<RwLock<Peers<R>>>,
     block_cache: Arc<RwLock<BlockCache>>,
     state: NetworkState,
 
@@ -112,7 +111,7 @@ pub struct Network {
     disconnected: HashSet<PeerId>,
 }
 
-impl Network {
+impl<R: Read + Write> Network<R> {
     pub fn new(peer_config: peer::Config, block_cache: Arc<RwLock<BlockCache>>) -> Self {
         let peers = Arc::new(RwLock::new(Peers::new()));
         let state = NetworkState::Connecting;
@@ -128,6 +127,29 @@ impl Network {
         }
     }
 
+    /// Start initial block header sync.
+    pub fn initial_sync(&mut self, peer: PeerId) {
+        // TODO: Notify peer that it should sync.
+        self.state = NetworkState::InitialSync(peer);
+    }
+
+    /// Check whether or not we are in sync with the network.
+    pub fn is_synced(&self) -> Result<bool, error::Error> {
+        let cache = self.block_cache.read().expect("lock is not poisoned");
+        let height = cache.height();
+
+        let peers = self.peers.read().expect("lock is not poisoned");
+
+        // TODO: Make sure we only consider connected peers?
+        if let Some(peer_height) = peers.values().map(|p| p.height()).min() {
+            Ok(height >= peer_height || peer_height - height <= SYNC_THRESHOLD)
+        } else {
+            Err(error::Error::NotConnected)
+        }
+    }
+}
+
+impl Network<net::TcpStream> {
     pub fn connect(&mut self, addrs: &[net::SocketAddr]) -> Result<Vec<()>, error::Error> {
         let (tx, rx) = mpsc::channel();
         let mut spawned = Vec::new();
@@ -192,26 +214,5 @@ impl Network {
             .into_iter()
             .flat_map(thread::JoinHandle::join)
             .collect()
-    }
-
-    /// Start initial block header sync.
-    pub fn initial_sync(&mut self, peer: PeerId) {
-        // TODO: Notify peer that it should sync.
-        self.state = NetworkState::InitialSync(peer);
-    }
-
-    /// Check whether or not we are in sync with the network.
-    pub fn is_synced(&self) -> Result<bool, error::Error> {
-        let cache = self.block_cache.read().expect("lock is not poisoned");
-        let height = cache.height();
-
-        let peers = self.peers.read().expect("lock is not poisoned");
-
-        // TODO: Make sure we only consider connected peers?
-        if let Some(peer_height) = peers.values().map(|p| p.height()).min() {
-            Ok(height >= peer_height || peer_height - height <= SYNC_THRESHOLD)
-        } else {
-            Err(error::Error::NotConnected)
-        }
     }
 }
