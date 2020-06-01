@@ -16,9 +16,13 @@ pub const SYNC_THRESHOLD: Height = 144;
 /// Minimum number of peers to be connected to.
 pub const PEER_CONNECTION_THRESHOLD: usize = 3;
 
+/// Identifies a peer.
+pub type PeerId = net::SocketAddr;
+
+/// A mapping between peer identifiers and peers.
 type Peers<R> = HashMap<PeerId, Peer<R>>;
 
-/// A TCP-backed peer.
+/// A network peer.
 struct Peer<R: Read>(peer::Connection<R>);
 
 impl<R: Read + Write> Peer<R> {
@@ -47,9 +51,6 @@ impl<R: Read + Write> Peer<R> {
         self.0.height
     }
 }
-
-/// Identifies a peer.
-pub type PeerId = net::SocketAddr;
 
 impl Peer<net::TcpStream> {
     /// Connect to a peer given a remote address.
@@ -147,26 +148,8 @@ impl<R: Read + Write> Network<R> {
             Err(error::Error::NotConnected)
         }
     }
-}
 
-impl Network<net::TcpStream> {
-    pub fn connect(&mut self, addrs: &[net::SocketAddr]) -> Result<Vec<()>, error::Error> {
-        let (tx, rx) = mpsc::channel();
-        let mut spawned = Vec::new();
-
-        for addr in addrs.iter() {
-            let cache = self.block_cache.clone();
-            let config = self.peer_config.clone();
-            let peers = self.peers.clone();
-            let addr = addr.clone();
-            let tx = tx.clone();
-
-            let handle = thread::spawn(move || Peer::thread(addr, config, cache, peers, tx));
-
-            spawned.push(handle);
-        }
-        drop(tx); // All transmitters have been given to peers.
-
+    pub fn listen(&mut self, rx: mpsc::Receiver<peer::Event>) -> Result<(), error::Error> {
         loop {
             let event = rx.recv_timeout(peer::PING_INTERVAL);
 
@@ -209,6 +192,29 @@ impl Network<net::TcpStream> {
                 }
             }
         }
+        Ok(())
+    }
+}
+
+impl Network<net::TcpStream> {
+    pub fn connect(&mut self, addrs: &[net::SocketAddr]) -> Result<Vec<()>, error::Error> {
+        let (tx, rx) = mpsc::channel();
+        let mut spawned = Vec::with_capacity(addrs.len());
+
+        for addr in addrs.iter() {
+            let cache = self.block_cache.clone();
+            let config = self.peer_config.clone();
+            let peers = self.peers.clone();
+            let addr = addr.clone();
+            let tx = tx.clone();
+
+            let handle = thread::spawn(move || Peer::thread(addr, config, cache, peers, tx));
+
+            spawned.push(handle);
+        }
+        drop(tx); // All transmitters have been given to peers.
+
+        self.listen(rx)?;
 
         spawned
             .into_iter()
