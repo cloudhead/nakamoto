@@ -4,6 +4,7 @@ pub mod peer;
 use nakamoto_chain::blocktree::{BlockCache, BlockTree, Height};
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::io::{Read, Write};
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};
@@ -18,13 +19,38 @@ pub const PEER_CONNECTION_THRESHOLD: usize = 3;
 
 type Peers<R> = HashMap<PeerId, Peer<R>>;
 
+/// A TCP-backed peer.
+struct Peer<R: Read + Write>(peer::Connection<R>);
+
+impl<R: Read + Write + fmt::Debug> Peer<R> {
+    fn run(
+        addr: net::SocketAddr,
+        peer: peer::Connection<R>,
+        cache: Arc<RwLock<BlockCache>>,
+        peers: Arc<RwLock<Peers<R>>>,
+        events: mpsc::Sender<peer::Event>,
+    ) -> Result<(), error::Error> {
+        use std::collections::hash_map::Entry;
+
+        let mut peers = peers.write().expect("lock has not been poisoned");
+
+        match peers.entry(addr) {
+            Entry::Vacant(v) => {
+                let Peer(ref mut peer) = v.insert(Peer(peer));
+                peer.run(cache, events)?;
+            }
+            Entry::Occupied(_) => {}
+        }
+        Ok(())
+    }
+
+    fn height(&self) -> Height {
+        self.0.height
+    }
+}
+
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
-
-/// Peer state.
-struct Peer<R: Read + Write> {
-    conn: peer::Connection<R>,
-}
 
 impl Peer<net::TcpStream> {
     /// Connect to a peer given a remote address.
@@ -43,15 +69,13 @@ impl Peer<net::TcpStream> {
         Ok(peer::Connection::from(sock, local_address, address, config))
     }
 
-    fn run(
+    fn thread(
         addr: net::SocketAddr,
         config: peer::Config,
         cache: Arc<RwLock<BlockCache>>,
         peers: Arc<RwLock<Peers<net::TcpStream>>>,
         events: mpsc::Sender<peer::Event>,
     ) -> Result<(), error::Error> {
-        use std::collections::hash_map::Entry;
-
         debug!("Connecting to {}...", &addr);
 
         let conn = Self::dial(&addr, config)?;
@@ -60,15 +84,8 @@ impl Peer<net::TcpStream> {
         debug!("Connected to {}", &addr);
         trace!("{:#?}", conn);
 
-        let mut peers = peers.write().expect("lock has not been poisoned");
+        Peer::run(addr, conn, cache, peers, events)?;
 
-        match peers.entry(addr) {
-            Entry::Vacant(v) => {
-                let peer = v.insert(Peer { conn });
-                peer.conn.run(cache, events)?;
-            }
-            Entry::Occupied(_) => {}
-        }
         debug!("Disconnected from {}", &addr);
 
         Ok(())
@@ -122,12 +139,11 @@ impl Network {
             let addr = addr.clone();
             let tx = tx.clone();
 
-            let handle = thread::spawn(move || Peer::run(addr, config, cache, peers, tx));
+            let handle = thread::spawn(move || Peer::thread(addr, config, cache, peers, tx));
 
             spawned.push(handle);
         }
-        // We don't need this transmitting end, since we've supplied all transmitters to peers.
-        drop(tx);
+        drop(tx); // All transmitters have been given to peers.
 
         loop {
             let event = rx.recv_timeout(peer::PING_INTERVAL);
@@ -192,7 +208,7 @@ impl Network {
         let peers = self.peers.read().expect("lock is not poisoned");
 
         // TODO: Make sure we only consider connected peers?
-        if let Some(peer_height) = peers.values().map(|p| p.conn.height).min() {
+        if let Some(peer_height) = peers.values().map(|p| p.height()).min() {
             Ok(height >= peer_height || peer_height - height <= SYNC_THRESHOLD)
         } else {
             Err(error::Error::NotConnected)
