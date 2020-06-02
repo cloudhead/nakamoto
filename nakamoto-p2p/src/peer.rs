@@ -319,8 +319,9 @@ impl<R: Read + Write> Connection<R> {
         if locator_hashes.is_empty() {
             return Ok(());
         }
+        let mut locator_hashes = locator_hashes.to_vec();
+
         loop {
-            let locator_hashes = locator_hashes.to_vec();
             let get_headers = NetworkMessage::GetHeaders(GetHeadersMessage {
                 version: self.config.protocol_version,
                 // Starting hashes, highest heights first.
@@ -355,6 +356,7 @@ impl<R: Read + Write> Connection<R> {
                     {
                         Ok((tip, height)) => {
                             self.height = height;
+                            locator_hashes = vec![tip];
 
                             info!("Imported {} headers from {}", length, self.address);
                             info!("Chain height = {}, tip = {}", height, tip);
