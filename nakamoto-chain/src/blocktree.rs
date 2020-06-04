@@ -52,12 +52,17 @@ pub trait BlockTree {
     fn chain(&self) -> &NonEmpty<CachedBlock>;
     /// Return the height of the longest chain.
     fn height(&self) -> Height;
-    /// Return the tip of the longest chain.
-    fn tip(&self) -> &BlockHash;
-    /// Return the genesis block header.
-    fn genesis(&self) -> &CachedBlock;
     /// Get the cached tip of the longest chain.
     fn get_tip(&self) -> &CachedBlock;
+    /// Return the tip of the longest chain.
+    fn tip(&self) -> &BlockHash {
+        &self.get_tip().hash
+    }
+    /// Return the genesis block header.
+    fn genesis(&self) -> &CachedBlock {
+        self.get_block_by_height(0)
+            .expect("the genesis block is always present")
+    }
     /// Get the next difficulty given a block height, time and bits.
     fn next_difficulty_target(
         &self,
@@ -265,17 +270,19 @@ impl BlockTree for BlockCache {
 
 #[cfg(test)]
 mod test {
-    use super::{BlockCache, BlockTree, Height, Target, Time};
+    use super::{BlockTree, CachedBlock, Height, Target, Time};
 
-    use quickcheck::{self, Arbitrary, Gen, TestResult};
-    use quickcheck_macros::quickcheck;
+    use std::collections::BTreeMap;
 
     use nonempty::NonEmpty;
+    use quickcheck::{self, Arbitrary, Gen};
     use rand::Rng;
 
     use bitcoin::blockdata::block::BlockHeader;
+    use bitcoin::blockdata::constants;
     use bitcoin::consensus::params::Params;
     use bitcoin::hash_types::{BlockHash, TxMerkleNode};
+
     use bitcoin::util::hash::BitcoinHash;
     use bitcoin::util::uint::Uint256;
 
@@ -286,6 +293,72 @@ mod test {
         0xffffffffffffffffu64,
         0x7fffffffffffffffu64,
     ]);
+    // Target block time.
+    const TARGET_BLOCKTIME: Time = 10 * 60;
+
+    #[derive(Debug)]
+    struct TestCache {
+        headers: BTreeMap<Height, CachedBlock>,
+        height: Height,
+    }
+
+    impl TestCache {
+        fn new(genesis: BlockHeader) -> Self {
+            let mut headers = BTreeMap::new();
+            let height = 0;
+
+            headers.insert(
+                height,
+                CachedBlock {
+                    height,
+                    hash: genesis.bitcoin_hash(),
+                    header: genesis,
+                },
+            );
+            Self { headers, height }
+        }
+
+        fn insert(&mut self, height: Height, header: BlockHeader) {
+            assert!(height > self.height);
+            assert!(!self.headers.contains_key(&height));
+
+            let hash = header.bitcoin_hash();
+            self.headers.insert(
+                height,
+                CachedBlock {
+                    hash,
+                    height,
+                    header,
+                },
+            );
+            self.height = height;
+        }
+    }
+
+    impl BlockTree for TestCache {
+        fn import_blocks<I: Iterator<Item = BlockHeader>>(
+            &mut self,
+            _chain: I,
+        ) -> Result<(BlockHash, Height), super::Error> {
+            unimplemented!()
+        }
+
+        fn get_block_by_height(&self, height: Height) -> Option<&CachedBlock> {
+            self.headers.get(&height)
+        }
+
+        fn get_tip(&self) -> &CachedBlock {
+            self.headers.get(&self.height).unwrap()
+        }
+
+        fn height(&self) -> Height {
+            self.height
+        }
+
+        fn chain(&self) -> &NonEmpty<CachedBlock> {
+            unimplemented!()
+        }
+    }
 
     #[derive(Clone)]
     struct TestCase(NonEmpty<BlockHeader>);
@@ -332,7 +405,7 @@ mod test {
         target: &Target,
         g: &mut G,
     ) -> BlockHeader {
-        let delta = u32::arbitrary(g);
+        let delta = g.gen_range(TARGET_BLOCKTIME / 2, TARGET_BLOCKTIME * 2);
 
         let time = if delta == 0 {
             prev_time
@@ -382,22 +455,35 @@ mod test {
         chain
     }
 
-    #[quickcheck]
-    fn test_block_import(TestCase(chain): TestCase) -> TestResult {
-        let params = Params {
-            pow_limit: TARGET,
-            pow_target_timespan: 12 * 60 * 60, // 12 hours.
-            ..Params::new(bitcoin::Network::Bitcoin)
-        };
-        let mut cache = BlockCache::new(chain.head, params);
+    // Test our difficulty validation against values from the bitcoin main chain.
+    #[test]
+    fn test_bitcoin_difficulty() {
+        use crate::tests;
 
-        if chain.tail.is_empty() {
-            return TestResult::discard();
-        }
+        let network = bitcoin::Network::Bitcoin;
+        let genesis = constants::genesis_block(network).header;
+        let params = Params::new(network);
 
-        match cache.import_blocks(chain.tail.into_iter()) {
-            Ok(_) => TestResult::passed(),
-            Err(err) => TestResult::error(err.to_string()),
+        let mut cache = TestCache::new(genesis);
+
+        for (height, time, bits, next_time, next_bits) in tests::TARGETS.iter().cloned() {
+            let next_target = cache.next_difficulty_target(height, time, bits, &params);
+
+            assert_eq!(next_target, next_bits);
+            assert_eq!((height + 1) % params.difficulty_adjustment_interval(), 0);
+
+            // We store the retargeting blocks, since they are used in the difficulty calculation.
+            cache.insert(
+                height + 1,
+                BlockHeader {
+                    version: 1,
+                    time: next_time,
+                    bits: next_bits,
+                    merkle_root: Default::default(),
+                    prev_blockhash: Default::default(),
+                    nonce: 0,
+                },
+            );
         }
     }
 }
