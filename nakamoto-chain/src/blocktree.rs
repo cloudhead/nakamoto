@@ -58,23 +58,22 @@ pub trait BlockTree {
     fn genesis(&self) -> &CachedBlock;
     /// Get the cached tip of the longest chain.
     fn get_tip(&self) -> &CachedBlock;
-    /// Get the next target difficulty.
-    fn next_difficulty_target(&self, params: &Params) -> Bits {
-        self.difficulty_target(self.get_tip(), params)
-    }
-    /// Get the target difficulty at a certain block height.
-    fn difficulty_target(&self, tip: &CachedBlock, params: &Params) -> Bits {
-        let time = tip.time;
-
+    /// Get the next difficulty given a block height, time and bits.
+    fn next_difficulty_target(
+        &self,
+        last_height: Height,
+        last_time: Time,
+        last_bits: Bits,
+        params: &Params,
+    ) -> Bits {
         // Only adjust on set intervals. Otherwise return current target.
         // Since the height is 0-indexed, we add `1` to check it against the interval.
-        if (tip.height + 1) % params.difficulty_adjustment_interval() != 0 {
-            return tip.bits;
+        if (last_height + 1) % params.difficulty_adjustment_interval() != 0 {
+            return last_bits;
         }
 
-        let last_adjustment_height = tip
-            .height
-            .saturating_sub(params.difficulty_adjustment_interval() - 1);
+        let last_adjustment_height =
+            last_height.saturating_sub(params.difficulty_adjustment_interval() - 1);
         let last_adjustment_block = self
             .get_block_by_height(last_adjustment_height)
             .unwrap_or(self.genesis());
@@ -84,7 +83,7 @@ pub trait BlockTree {
             return last_adjustment_block.bits;
         }
 
-        let actual_timespan = time - last_adjustment_time;
+        let actual_timespan = last_time - last_adjustment_time;
         let mut adjusted_timespan = actual_timespan;
 
         if actual_timespan < params.pow_target_timespan as Time / 4 {
@@ -93,7 +92,8 @@ pub trait BlockTree {
             adjusted_timespan = params.pow_target_timespan as Time * 4;
         }
 
-        let mut target = tip.target();
+        let mut target = BlockCache::target_from_bits(last_bits);
+
         target = target.mul_u32(adjusted_timespan);
         target = target / Target::from_u64(params.pow_target_timespan).unwrap();
 
@@ -167,7 +167,7 @@ impl BlockCache {
                     bits
                 }
             } else {
-                self.next_difficulty_target(&self.params)
+                self.next_difficulty_target(tip.height, tip.time, tip.bits, &self.params)
             };
 
             // TODO: Validate timestamp.
