@@ -21,7 +21,7 @@ pub type Height = u64;
 pub type Time = u32;
 
 /// An error related to the block tree.
-#[derive(Debug, Error)]
+#[derive(Debug, Error, PartialEq, Eq)]
 pub enum Error {
     #[error("invalid block proof-of-work")]
     InvalidBlockPoW,
@@ -35,8 +35,6 @@ pub enum Error {
     BlockMissing(BlockHash),
     #[error("block import aborted at height {2}: {0} ({1} block(s) imported)")]
     BlockImportAborted(Box<Self>, usize, Height),
-    #[error("bitcoin error")]
-    Bitcoin(#[from] bitcoin::util::Error),
 }
 
 /// A representation of all known blocks that keeps track of the longest chain.
@@ -111,7 +109,7 @@ pub trait BlockTree {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CachedBlock {
     height: Height,
     hash: BlockHash,
@@ -127,7 +125,7 @@ impl Deref for CachedBlock {
 }
 
 /// An implementation of `BlockTree`.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BlockCache {
     chain: NonEmpty<CachedBlock>,
     params: Params,
@@ -146,11 +144,9 @@ impl BlockCache {
         }
     }
 
-    fn insert_block(
-        &mut self,
-        hash: BlockHash,
-        header: BlockHeader,
-    ) -> Result<(BlockHash, Height), Error> {
+    // Insert a block into the tree.
+    fn insert_block(&mut self, header: BlockHeader) -> Result<(BlockHash, Height), Error> {
+        let hash = header.bitcoin_hash();
         let tip = self.get_tip();
 
         if header.prev_blockhash == tip.hash {
@@ -184,9 +180,7 @@ impl BlockCache {
                 Err(bitcoin::util::Error::BlockBadTarget) => {
                     return Err(Error::InvalidBlockTarget(header.target(), target));
                 }
-                Err(err) => {
-                    return Err(Error::Bitcoin(err));
-                }
+                Err(_) => unreachable!(),
                 Ok(_) => {}
             }
 
@@ -232,11 +226,12 @@ impl BlockTree for BlockCache {
         let mut result = None;
 
         for (i, header) in chain.enumerate() {
-            match self.insert_block(header.bitcoin_hash(), header) {
+            match self.insert_block(header) {
                 Ok(r) => result = Some(r),
                 Err(err) => return Err(Error::BlockImportAborted(err.into(), i, self.height())),
             }
         }
+
         Ok(result.unwrap_or((*self.tip(), self.height())))
     }
 
@@ -270,12 +265,14 @@ impl BlockTree for BlockCache {
 
 #[cfg(test)]
 mod test {
-    use super::{BlockTree, CachedBlock, Height, Target, Time};
+    use super::{BlockCache, BlockTree, CachedBlock, Error, Height, Target, Time};
 
     use std::collections::BTreeMap;
+    use std::iter;
 
     use nonempty::NonEmpty;
     use quickcheck::{self, Arbitrary, Gen};
+    use quickcheck_macros::quickcheck;
     use rand::Rng;
 
     use bitcoin::blockdata::block::BlockHeader;
@@ -293,8 +290,10 @@ mod test {
         0xffffffffffffffffu64,
         0x7fffffffffffffffu64,
     ]);
-    // Target block time.
-    const TARGET_BLOCKTIME: Time = 10 * 60;
+    // Target block time (1 minute).
+    const TARGET_SPACING: Time = 60;
+    // Target time span (1 hour).
+    const TARGET_TIMESPAN: Time = 60 * 60;
 
     #[derive(Debug)]
     struct TestCache {
@@ -361,20 +360,26 @@ mod test {
     }
 
     #[derive(Clone)]
-    struct TestCase(NonEmpty<BlockHeader>);
+    struct TestCase {
+        chain: NonEmpty<BlockHeader>,
+    }
 
     impl Arbitrary for TestCase {
         fn arbitrary<G: Gen>(g: &mut G) -> TestCase {
-            let height = g.gen_range(0, 256);
-            Self(arbitrary_chain(height, g))
+            let height = g.gen_range(1, (TARGET_TIMESPAN / TARGET_SPACING) * 4) as Height;
+            Self {
+                chain: arbitrary_chain(height, g),
+            }
         }
 
         fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-            let Self(chain) = self;
+            let Self { chain } = self;
             let mut shrunk = Vec::new();
 
             if let Some((_, rest)) = chain.tail.split_last() {
-                shrunk.push(Self(NonEmpty::from((chain.head, rest.to_vec()))));
+                shrunk.push(Self {
+                    chain: NonEmpty::from((chain.head, rest.to_vec())),
+                });
             }
             Box::new(shrunk.into_iter())
         }
@@ -384,7 +389,7 @@ mod test {
         fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
             write!(fmt, "\n")?;
 
-            for (height, header) in self.0.iter().enumerate() {
+            for (height, header) in self.chain.iter().enumerate() {
                 writeln!(
                     fmt,
                     "#{:03} {} time={:05} bits={:x} nonce={}",
@@ -405,7 +410,7 @@ mod test {
         target: &Target,
         g: &mut G,
     ) -> BlockHeader {
-        let delta = g.gen_range(TARGET_BLOCKTIME / 2, TARGET_BLOCKTIME * 2);
+        let delta = g.gen_range(TARGET_SPACING / 2, TARGET_SPACING * 2);
 
         let time = if delta == 0 {
             prev_time
@@ -453,6 +458,79 @@ mod test {
             chain.push(header);
         }
         chain
+    }
+
+    #[derive(Clone)]
+    struct BlockImport(BlockCache, BlockHeader);
+
+    impl std::fmt::Debug for BlockImport {
+        fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            let BlockImport(_, header) = self;
+            write!(fmt, "{:#?}", header)
+        }
+    }
+
+    impl quickcheck::Arbitrary for BlockImport {
+        fn arbitrary<G: Gen>(g: &mut G) -> BlockImport {
+            let network = bitcoin::Network::Regtest;
+            let genesis = constants::genesis_block(network).header;
+            let params = Params::new(network);
+            let cache = BlockCache::new(genesis, params);
+            let header =
+                arbitrary_header(genesis.bitcoin_hash(), genesis.time, &genesis.target(), g);
+
+            cache
+                .clone()
+                .import_blocks(iter::once(header))
+                .expect("the header is valid");
+
+            Self(cache, header)
+        }
+    }
+
+    #[quickcheck]
+    fn prop_block_missing(import: BlockImport) -> bool {
+        let BlockImport(mut cache, header) = import;
+        let prev_blockhash = constants::genesis_block(bitcoin::Network::Testnet)
+            .header
+            .bitcoin_hash();
+
+        let header = BlockHeader {
+            prev_blockhash,
+            ..header
+        };
+
+        cache.insert_block(header).err() == Some(Error::BlockMissing(prev_blockhash))
+    }
+
+    #[quickcheck]
+    fn prop_invalid_block_target(import: BlockImport) -> bool {
+        let BlockImport(mut cache, header) = import;
+        let genesis = cache.genesis().clone();
+
+        let header = BlockHeader {
+            bits: genesis.bits - 1,
+            ..header
+        };
+
+        cache.insert_block(header).err()
+            == Some(Error::InvalidBlockTarget(
+                BlockCache::target_from_bits(genesis.bits - 1),
+                genesis.target(),
+            ))
+    }
+
+    #[quickcheck]
+    fn prop_invalid_block_pow(import: BlockImport) -> bool {
+        let BlockImport(mut cache, header) = import;
+        let mut header = header.clone();
+
+        // Find an *invalid* nonce.
+        while header.validate_pow(&header.target()).is_ok() {
+            header.nonce += 1;
+        }
+
+        cache.insert_block(header).err() == Some(Error::InvalidBlockPoW)
     }
 
     // Test our difficulty validation against values from the bitcoin main chain.
