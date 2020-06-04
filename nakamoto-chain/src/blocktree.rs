@@ -31,8 +31,8 @@ pub enum Error {
     InvalidChain,
     #[error("empty chain")]
     EmptyChain,
-    #[error("block ignored: {0}")]
-    BlockIgnored(BlockHash),
+    #[error("block missing: {0}")]
+    BlockMissing(BlockHash),
     #[error("block import aborted at height {2}: {0} ({1} block(s) imported)")]
     BlockImportAborted(Box<Self>, usize, Height),
     #[error("bitcoin error")]
@@ -199,7 +199,7 @@ impl BlockCache {
 
             Ok((hash, self.height()))
         } else {
-            Err(Error::BlockIgnored(hash))
+            Err(Error::BlockMissing(header.prev_blockhash))
         }
     }
 
