@@ -9,6 +9,10 @@ use log::*;
 use crate::{error, peer};
 use crate::{Network, Peer, Peers};
 
+/// Stack size for spawned threads, in bytes.
+/// Since we're creating a thread per peer, we want to keep the stack size small.
+const THREAD_STACK_SIZE: usize = 1024 * 1024;
+
 impl Peer<net::TcpStream> {
     /// Connect to a peer given a remote address.
     pub fn dial(
@@ -61,7 +65,10 @@ impl Network<net::TcpStream> {
             let addr = addr.clone();
             let tx = tx.clone();
 
-            let handle = thread::spawn(move || Peer::thread(addr, config, cache, peers, tx));
+            let handle = thread::Builder::new()
+                .name(addr.to_string())
+                .stack_size(THREAD_STACK_SIZE)
+                .spawn(move || Peer::thread(addr, config, cache, peers, tx))?;
 
             spawned.push(handle);
         }
