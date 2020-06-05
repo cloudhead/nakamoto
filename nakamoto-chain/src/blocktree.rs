@@ -544,19 +544,19 @@ mod test {
 
         let mut cache = TestCache::new(genesis);
 
-        for (height, time, bits, next_time, next_bits) in tests::TARGETS.iter().cloned() {
-            let next_target = cache.next_difficulty_target(height, time, bits, &params);
+        for (height, prev_time, prev_bits, time, bits) in tests::TARGETS.iter().cloned() {
+            let target = cache.next_difficulty_target(height - 1, prev_time, prev_bits, &params);
 
-            assert_eq!(next_target, next_bits);
-            assert_eq!((height + 1) % params.difficulty_adjustment_interval(), 0);
+            assert_eq!(height % params.difficulty_adjustment_interval(), 0);
+            assert_eq!(target, bits);
 
             // We store the retargeting blocks, since they are used in the difficulty calculation.
             cache.insert(
-                height + 1,
+                height,
                 BlockHeader {
                     version: 1,
-                    time: next_time,
-                    bits: next_bits,
+                    time,
+                    bits,
                     merkle_root: Default::default(),
                     prev_blockhash: Default::default(),
                     nonce: 0,
