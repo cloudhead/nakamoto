@@ -13,4 +13,5 @@ nonempty = "0.5.0"
 [dev-dependencies]
 quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }
 quickcheck_macros = "0.9"
+tempfile = "3"
 rand = "*"
