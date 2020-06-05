@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 bitcoin = "0.23.0"
+bitcoin_hashes = "0.7.6"
 thiserror = "1.0"
 nonempty = "0.5.0"
 

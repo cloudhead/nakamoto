@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::ops::Deref;
 
 use bitcoin::blockdata::block::BlockHeader;
@@ -7,6 +8,8 @@ use bitcoin::util::hash::BitcoinHash;
 
 use nonempty::NonEmpty;
 use thiserror::Error;
+
+use crate::checkpoints;
 
 /// Difficulty target of a block.
 pub type Target = bitcoin::util::uint::Uint256;
@@ -27,6 +30,8 @@ pub enum Error {
     InvalidBlockPoW,
     #[error("invalid block difficulty target: {0}, expected {1}")]
     InvalidBlockTarget(Target, Target),
+    #[error("invalid checkpoint block hash {0} at height {1}")]
+    InvalidBlockHash(BlockHash, Height),
     #[error("invalid chain")]
     InvalidChain,
     #[error("empty chain")]
@@ -128,12 +133,16 @@ impl Deref for CachedBlock {
 #[derive(Debug, Clone)]
 pub struct BlockCache {
     chain: NonEmpty<CachedBlock>,
+    checkpoints: HashMap<Height, BlockHash>,
     params: Params,
 }
 
 impl BlockCache {
     /// Create a new `BlockCache` given the genesis block, and consensus parameters.
     pub fn new(genesis: BlockHeader, params: Params) -> Self {
+        // TODO: This should come from somewhere else.
+        let checkpoints = checkpoints::checkpoints();
+
         Self {
             chain: NonEmpty::new(CachedBlock {
                 height: 0,
@@ -141,6 +150,7 @@ impl BlockCache {
                 header: genesis,
             }),
             params,
+            checkpoints,
         }
     }
 
@@ -148,6 +158,7 @@ impl BlockCache {
     fn insert_block(&mut self, header: BlockHeader) -> Result<(BlockHash, Height), Error> {
         let hash = header.bitcoin_hash();
         let tip = self.get_tip();
+        let height = tip.height + 1;
 
         if header.prev_blockhash == tip.hash {
             let bits = if self.params.allow_min_difficulty_blocks {
@@ -184,7 +195,13 @@ impl BlockCache {
                 Ok(_) => {}
             }
 
-            let height = tip.height + 1;
+            // Validate against block checkpoints.
+            if let Some(checkpoint) = self.checkpoints.get(&height) {
+                if &hash != checkpoint {
+                    return Err(Error::InvalidBlockHash(hash, height));
+                }
+            }
+
             self.chain.push(CachedBlock {
                 height,
                 hash,
