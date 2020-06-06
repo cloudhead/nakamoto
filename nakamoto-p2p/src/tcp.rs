@@ -1,3 +1,4 @@
+use nakamoto_chain::block::store::Store;
 use nakamoto_chain::blocktree::BlockCache;
 
 use std::net;
@@ -30,10 +31,10 @@ impl Peer<net::TcpStream> {
         Ok(peer::Connection::from(sock, local_address, address, config))
     }
 
-    fn thread(
+    fn thread<S: Store>(
         addr: net::SocketAddr,
         config: peer::Config,
-        cache: Arc<RwLock<BlockCache>>,
+        cache: Arc<RwLock<BlockCache<S>>>,
         peers: Arc<RwLock<Peers<net::TcpStream>>>,
         events: mpsc::Sender<peer::Event>,
     ) -> Result<(), error::Error> {
@@ -53,7 +54,7 @@ impl Peer<net::TcpStream> {
     }
 }
 
-impl Network<net::TcpStream> {
+impl<S: Store + Sync + Send + 'static> Network<S, net::TcpStream> {
     pub fn connect(&mut self, addrs: &[net::SocketAddr]) -> Result<Vec<()>, error::Error> {
         let (tx, rx) = mpsc::channel();
         let mut spawned = Vec::with_capacity(addrs.len());

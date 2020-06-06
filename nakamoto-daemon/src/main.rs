@@ -1,7 +1,11 @@
+use nakamoto_chain::block::store;
+use nakamoto_chain::block::store::io::FileStore;
 use nakamoto_chain::blocktree::BlockCache;
 use nakamoto_daemon::Options;
 use nakamoto_p2p as p2p;
 
+use std::io;
+use std::path::Path;
 use std::process;
 use std::sync::{Arc, RwLock};
 
@@ -38,7 +42,22 @@ fn main() {
 
     log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
 
-    let block_cache = Arc::new(RwLock::new(BlockCache::new(genesis, params)));
+    let path = Path::new("headers.db");
+    let store = match FileStore::create(path, genesis) {
+        Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
+            log::info!("Found existing store {:?}", path);
+            FileStore::open(path).unwrap()
+        }
+        Err(err) => panic!(err.to_string()),
+        Ok(store) => {
+            log::info!("Initializing new block store {:?}", path);
+            store
+        }
+    };
+    log::info!("Loading blocks from store..");
+
+    let cache = BlockCache::from(store, params).unwrap();
+    let block_cache = Arc::new(RwLock::new(cache));
     let mut net = p2p::Network::new(cfg, block_cache);
 
     if opts.connect.is_empty() {

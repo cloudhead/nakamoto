@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io;
 use std::ops::Deref;
 
 use bitcoin::blockdata::block::BlockHeader;
@@ -9,6 +10,7 @@ use bitcoin::util::hash::BitcoinHash;
 use nonempty::NonEmpty;
 use thiserror::Error;
 
+use crate::block::store::{self, Store};
 use crate::checkpoints;
 
 /// Difficulty target of a block.
@@ -24,7 +26,7 @@ pub type Height = u64;
 pub type Time = u32;
 
 /// An error related to the block tree.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum Error {
     #[error("invalid block proof-of-work")]
     InvalidBlockPoW,
@@ -40,6 +42,8 @@ pub enum Error {
     BlockMissing(BlockHash),
     #[error("block import aborted at height {2}: {0} ({1} block(s) imported)")]
     BlockImportAborted(Box<Self>, usize, Height),
+    #[error("storage error: {0}")]
+    Store(#[from] store::Error),
 }
 
 /// A representation of all known blocks that keeps track of the longest chain.
@@ -100,7 +104,7 @@ pub trait BlockTree {
             adjusted_timespan = params.pow_target_timespan as Time * 4;
         }
 
-        let mut target = BlockCache::target_from_bits(last_bits);
+        let mut target = target_from_bits(last_bits);
 
         target = target.mul_u32(adjusted_timespan);
         target = target / Target::from_u64(params.pow_target_timespan).unwrap();
@@ -131,19 +135,39 @@ impl Deref for CachedBlock {
 
 /// An implementation of `BlockTree`.
 #[derive(Debug, Clone)]
-pub struct BlockCache {
+pub struct BlockCache<S: Store> {
     chain: NonEmpty<CachedBlock>,
     checkpoints: HashMap<Height, BlockHash>,
     params: Params,
+    store: S,
 }
 
-impl BlockCache {
-    /// Create a new `BlockCache` given the genesis block, and consensus parameters.
-    pub fn new(genesis: BlockHeader, params: Params) -> Self {
+impl<S: Store> BlockCache<S> {
+    /// Create a new `BlockCache` from a `Store` and consensus parameters.
+    pub fn from(store: S, params: Params) -> Result<Self, Error> {
         // TODO: This should come from somewhere else.
         let checkpoints = checkpoints::checkpoints();
+        let genesis = store.genesis()?;
 
-        Self {
+        let mut chain = NonEmpty::new(CachedBlock {
+            height: 0,
+            hash: genesis.bitcoin_hash(),
+            header: genesis,
+        });
+
+        for height in 1.. {
+            match store.get(height) {
+                Ok(header) => chain.push(CachedBlock {
+                    height,
+                    hash: header.bitcoin_hash(),
+                    header,
+                }),
+                Err(store::Error::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(err) => return Err(Error::from(err)),
+            }
+        }
+
+        Ok(Self {
             chain: NonEmpty::new(CachedBlock {
                 height: 0,
                 hash: genesis.bitcoin_hash(),
@@ -151,7 +175,8 @@ impl BlockCache {
             }),
             params,
             checkpoints,
-        }
+            store,
+        })
     }
 
     // Insert a block into the tree.
@@ -183,7 +208,7 @@ impl BlockCache {
             };
 
             // TODO: Validate timestamp.
-            let target = BlockCache::target_from_bits(bits);
+            let target = target_from_bits(bits);
             match header.validate_pow(&target) {
                 Err(bitcoin::util::Error::BlockBadProofOfWork) => {
                     return Err(Error::InvalidBlockPoW);
@@ -213,29 +238,9 @@ impl BlockCache {
             Err(Error::BlockMissing(header.prev_blockhash))
         }
     }
-
-    // Convert a compact difficulty representation to 256-bits.
-    // Taken from `BlockHeader::target` from the `bitcoin` library.
-    fn target_from_bits(bits: u32) -> Target {
-        let (mant, expt) = {
-            let unshifted_expt = bits >> 24;
-            if unshifted_expt <= 3 {
-                ((bits & 0xFFFFFF) >> (8 * (3 - unshifted_expt as usize)), 0)
-            } else {
-                (bits & 0xFFFFFF, 8 * ((bits >> 24) - 3))
-            }
-        };
-
-        // The mantissa is signed but may not be negative
-        if mant > 0x7FFFFF {
-            Default::default()
-        } else {
-            Target::from_u64(mant as u64).unwrap() << (expt as usize)
-        }
-    }
 }
 
-impl BlockTree for BlockCache {
+impl<S: Store> BlockTree for BlockCache<S> {
     fn import_blocks<I: Iterator<Item = BlockHeader>>(
         &mut self,
         chain: I,
@@ -280,9 +285,29 @@ impl BlockTree for BlockCache {
     }
 }
 
+// Convert a compact difficulty representation to 256-bits.
+// Taken from `BlockHeader::target` from the `bitcoin` library.
+fn target_from_bits(bits: u32) -> Target {
+    let (mant, expt) = {
+        let unshifted_expt = bits >> 24;
+        if unshifted_expt <= 3 {
+            ((bits & 0xFFFFFF) >> (8 * (3 - unshifted_expt as usize)), 0)
+        } else {
+            (bits & 0xFFFFFF, 8 * ((bits >> 24) - 3))
+        }
+    };
+
+    // The mantissa is signed but may not be negative
+    if mant > 0x7FFFFF {
+        Default::default()
+    } else {
+        Target::from_u64(mant as u64).unwrap() << (expt as usize)
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::{BlockCache, BlockTree, CachedBlock, Error, Height, Target, Time};
+    use super::{store, BlockCache, BlockTree, CachedBlock, Error, Height, Target, Time};
 
     use std::collections::BTreeMap;
     use std::iter;
@@ -478,7 +503,7 @@ mod test {
     }
 
     #[derive(Clone)]
-    struct BlockImport(BlockCache, BlockHeader);
+    struct BlockImport(BlockCache<store::Dummy>, BlockHeader);
 
     impl std::fmt::Debug for BlockImport {
         fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -492,7 +517,8 @@ mod test {
             let network = bitcoin::Network::Regtest;
             let genesis = constants::genesis_block(network).header;
             let params = Params::new(network);
-            let cache = BlockCache::new(genesis, params);
+            let store = store::Dummy(genesis);
+            let cache = BlockCache::from(store, params).unwrap();
             let header =
                 arbitrary_header(genesis.bitcoin_hash(), genesis.time, &genesis.target(), g);
 
@@ -517,7 +543,10 @@ mod test {
             ..header
         };
 
-        cache.insert_block(header).err() == Some(Error::BlockMissing(prev_blockhash))
+        matches! {
+            cache.insert_block(header).err(),
+            Some(Error::BlockMissing(hash)) if hash == prev_blockhash
+        }
     }
 
     #[quickcheck]
@@ -525,16 +554,19 @@ mod test {
         let BlockImport(mut cache, header) = import;
         let genesis = cache.genesis().clone();
 
+        assert!(cache.clone().insert_block(header).is_ok());
+
         let header = BlockHeader {
             bits: genesis.bits - 1,
             ..header
         };
 
-        cache.insert_block(header).err()
-            == Some(Error::InvalidBlockTarget(
-                BlockCache::target_from_bits(genesis.bits - 1),
-                genesis.target(),
-            ))
+        matches! {
+            cache.insert_block(header).err(),
+            Some(Error::InvalidBlockTarget(actual, expected))
+                if actual == super::target_from_bits(genesis.bits - 1)
+                    && expected == genesis.target()
+        }
     }
 
     #[quickcheck]
@@ -547,7 +579,10 @@ mod test {
             header.nonce += 1;
         }
 
-        cache.insert_block(header).err() == Some(Error::InvalidBlockPoW)
+        matches! {
+            cache.insert_block(header).err(),
+            Some(Error::InvalidBlockPoW)
+        }
     }
 
     // Test our difficulty validation against values from the bitcoin main chain.

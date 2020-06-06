@@ -2,6 +2,7 @@ pub mod error;
 pub mod peer;
 pub mod tcp;
 
+use nakamoto_chain::block::store::Store;
 use nakamoto_chain::blocktree::{BlockCache, BlockTree, Height};
 
 use std::collections::{HashMap, HashSet};
@@ -26,10 +27,10 @@ type Peers<R> = HashMap<PeerId, Peer<R>>;
 struct Peer<R: Read>(peer::Connection<R>);
 
 impl<R: Read + Write> Peer<R> {
-    fn run(
+    fn run<S: Store>(
         addr: net::SocketAddr,
         peer: peer::Connection<R>,
-        cache: Arc<RwLock<BlockCache>>,
+        cache: Arc<RwLock<BlockCache<S>>>,
         peers: Arc<RwLock<Peers<R>>>,
         events: mpsc::Sender<peer::Event>,
     ) -> Result<(), error::Error> {
@@ -61,10 +62,10 @@ pub enum NetworkState {
     Synced,
 }
 
-pub struct Network<R: Read> {
+pub struct Network<S: Store, R: Read> {
     peer_config: peer::Config,
     peers: Arc<RwLock<Peers<R>>>,
-    block_cache: Arc<RwLock<BlockCache>>,
+    block_cache: Arc<RwLock<BlockCache<S>>>,
     state: NetworkState,
 
     connected: HashSet<PeerId>,
@@ -72,8 +73,8 @@ pub struct Network<R: Read> {
     disconnected: HashSet<PeerId>,
 }
 
-impl<R: Read + Write> Network<R> {
-    pub fn new(peer_config: peer::Config, block_cache: Arc<RwLock<BlockCache>>) -> Self {
+impl<S: Store, R: Read + Write> Network<S, R> {
+    pub fn new(peer_config: peer::Config, block_cache: Arc<RwLock<BlockCache<S>>>) -> Self {
         let peers = Arc::new(RwLock::new(Peers::new()));
         let state = NetworkState::Connecting;
 
@@ -102,6 +103,7 @@ impl<R: Read + Write> Network<R> {
         let peers = self.peers.read().expect("lock is not poisoned");
 
         // TODO: Make sure we only consider connected peers?
+        // TODO: Check actual block hashes once we are caught up on height.
         if let Some(peer_height) = peers.values().map(|p| p.height()).min() {
             Ok(height >= peer_height || peer_height - height <= SYNC_THRESHOLD)
         } else {
