@@ -14,6 +14,8 @@ pub enum Error {
     Io(#[from] std::io::Error),
     #[error("error decoding block: {0}")]
     Decoding(#[from] encode::Error),
+    #[error("error: the store data is corrupt")]
+    Corruption,
 }
 
 pub trait Store: fmt::Debug {
@@ -31,6 +33,8 @@ pub trait Store: fmt::Debug {
     fn sync(&mut self) -> Result<(), Error>;
     /// Iterate over all headers in the store.
     fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>>;
+    /// Return the number of headers in the store.
+    fn len(&self) -> Result<usize, Error>;
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +72,11 @@ impl Store for Dummy {
     /// Iterate over all headers in the store.
     fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>> {
         Box::new(std::iter::once(Ok((0, self.0))))
+    }
+
+    /// Return the number of headers in the store.
+    fn len(&self) -> Result<usize, Error> {
+        Ok(1)
     }
 }
 
@@ -200,6 +209,19 @@ pub mod io {
                 Err(err) => Box::new(iter::once(Err(Error::Io(err)))),
             }
         }
+
+        /// Return the number of headers in the store.
+        fn len(&self) -> Result<usize, Error> {
+            let meta = self.file.metadata()?;
+            let len = meta.len();
+
+            assert!(len <= usize::MAX as u64);
+
+            if len as usize % HEADER_SIZE != 0 {
+                return Err(Error::Corruption);
+            }
+            Ok(len as usize / HEADER_SIZE)
+        }
     }
 
     #[cfg(test)]
@@ -243,6 +265,7 @@ pub mod io {
                 store.get(0).is_err(),
                 "when the store is empty, there is nothing to `get`"
             );
+            assert_eq!(store.len().unwrap(), 0);
 
             let count = 32;
             let header = BlockHeader {
@@ -261,6 +284,7 @@ pub mod io {
                 let height = store.put(iter).unwrap();
 
                 assert_eq!(height, headers.len() as Height - 1);
+                assert_eq!(store.len().unwrap(), headers.len());
 
                 for (i, h) in headers.iter().enumerate() {
                     assert_eq!(&store.get(i as Height).unwrap(), h);
@@ -283,6 +307,7 @@ pub mod io {
                     &store.get(h + 1).is_err(),
                     "after the rollback, we can't access blocks passed `h`"
                 );
+                assert_eq!(store.len().unwrap(), h as usize + 1);
 
                 // We can now overwrite the block at position `h + 1`.
                 let header = BlockHeader {

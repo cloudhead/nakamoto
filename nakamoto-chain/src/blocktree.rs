@@ -149,14 +149,18 @@ impl<S: Store> BlockCache<S> {
         // TODO: This should come from somewhere else.
         let checkpoints = checkpoints::checkpoints();
         let genesis = store.genesis()?;
+        let length = store.len()?;
         let orphans = HashMap::new();
 
-        let mut chain = NonEmpty::new(CachedBlock {
-            height: 0,
-            hash: genesis.bitcoin_hash(),
-            header: genesis,
-        });
-        let mut headers = HashMap::new();
+        let mut chain = NonEmpty::from((
+            CachedBlock {
+                height: 0,
+                hash: genesis.bitcoin_hash(),
+                header: genesis,
+            },
+            Vec::with_capacity(length - 1),
+        ));
+        let mut headers = HashMap::with_capacity(length);
 
         for result in store.iter() {
             let (height, header) = result?;
@@ -171,11 +175,7 @@ impl<S: Store> BlockCache<S> {
         }
 
         Ok(Self {
-            chain: NonEmpty::new(CachedBlock {
-                height: 0,
-                hash: genesis.bitcoin_hash(),
-                header: genesis,
-            }),
+            chain,
             headers,
             orphans,
             params,
