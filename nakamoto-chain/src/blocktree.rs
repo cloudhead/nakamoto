@@ -315,8 +315,12 @@ fn target_from_bits(bits: u32) -> Target {
 mod test {
     use super::{store, BlockCache, BlockTree, CachedBlock, Error, Height, Target, Time};
 
+    use crate::block::store::io::FileStore;
+    use crate::block::store::Store;
+
     use std::collections::BTreeMap;
     use std::iter;
+    use std::path::Path;
 
     use nonempty::NonEmpty;
     use quickcheck::{self, Arbitrary, Gen};
@@ -620,6 +624,39 @@ mod test {
                     nonce: 0,
                 },
             );
+        }
+    }
+
+    // Test that we're correctly loading headers from the header store.
+    #[test]
+    fn test_from_store() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/data/headers.bin");
+        let store = FileStore::open(path).unwrap();
+
+        let store_headers = store.iter().collect::<Result<Vec<_>, _>>().unwrap();
+
+        let network = bitcoin::Network::Bitcoin;
+        let params = Params::new(network);
+
+        let cache = BlockCache::from(store, params).unwrap();
+        let cache_headers = cache
+            .chain()
+            // TODO: Also test genesis, once we have it in the store.
+            .tail
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (i as Height, h.header))
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            store_headers, cache_headers,
+            "all stored headers figure in the cache"
+        );
+
+        // Make sure all cached headers are also in the `headers` map.
+        for (height, header) in store_headers.iter() {
+            let result = cache.headers.get(&header.bitcoin_hash());
+            assert_eq!(result, Some(height));
         }
     }
 }
