@@ -21,18 +21,16 @@ pub trait Store: fmt::Debug {
     fn genesis(&self) -> Result<BlockHeader, Error> {
         self.get(0)
     }
-
     /// Append a batch of consecutive block headers to the end of the chain.
     fn put<I: Iterator<Item = BlockHeader>>(&mut self, headers: I) -> Result<Height, Error>;
-
     /// Get the block at the given height.
     fn get(&self, height: Height) -> Result<BlockHeader, Error>;
-
     /// Rollback the chain to the given height.
     fn rollback(&mut self, height: Height) -> Result<(), Error>;
-
     /// Synchronize the changes to disk.
     fn sync(&mut self) -> Result<(), Error>;
+    /// Iterate over all headers in the store.
+    fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>>;
 }
 
 #[derive(Debug, Clone)]
@@ -66,6 +64,11 @@ impl Store for Dummy {
     fn sync(&mut self) -> Result<(), Error> {
         Ok(())
     }
+
+    /// Iterate over all headers in the store.
+    fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>> {
+        Box::new(std::iter::once(Ok((0, self.0))))
+    }
 }
 
 pub mod io {
@@ -94,6 +97,42 @@ pub mod io {
             pos += header.consensus_encode(&mut stream)? as u64;
         }
         Ok(pos / HEADER_SIZE as u64 - 1)
+    }
+
+    fn get<S: Seek + Read>(mut stream: S, height: Height) -> Result<BlockHeader, Error> {
+        let mut buf = [0; HEADER_SIZE];
+
+        stream.seek(io::SeekFrom::Start(height * HEADER_SIZE as u64))?;
+        stream.read_exact(&mut buf)?;
+
+        BlockHeader::consensus_decode(&buf[..]).map_err(Error::from)
+    }
+
+    /// An iterator over block headers in a file.
+    pub struct Iter {
+        height: Height,
+        file: File,
+    }
+
+    impl Iterator for Iter {
+        type Item = Result<(Height, BlockHeader), Error>;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            let height = self.height;
+
+            match get(&mut self.file, height) {
+                // If we hit this branch, it's because we're trying to read passed the end
+                // of the file, which means there are no further headers remaining.
+                Err(Error::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => None,
+                // If another kind of error occurs, we want to yield it to the caller, so
+                // that it can be propagated.
+                Err(err) => Some(Err(err)),
+                Ok(header) => {
+                    self.height = height + 1;
+                    Some(Ok((height, header)))
+                }
+            }
+        }
     }
 
     /// A `Store` backed by a single file.
@@ -134,15 +173,10 @@ pub mod io {
         /// Get the block at the given height. Returns `io::ErrorKind::UnexpectedEof` if
         /// the height is not found.
         fn get(&self, height: Height) -> Result<BlockHeader, Error> {
-            let mut buf = [0; HEADER_SIZE];
-
             // Clone so this function doesn't have to take a `&mut self`.
             let mut file = self.file.try_clone()?;
 
-            file.seek(io::SeekFrom::Start(height * HEADER_SIZE as u64))?;
-            file.read_exact(&mut buf)?;
-
-            BlockHeader::consensus_decode(&buf[..]).map_err(Error::from)
+            get(&mut file, height)
         }
 
         /// Rollback the chain to the given height. Behavior is undefined if  the given
@@ -156,6 +190,15 @@ pub mod io {
         /// Flush changes to disk.
         fn sync(&mut self) -> Result<(), Error> {
             self.file.sync_data().map_err(Error::from)
+        }
+
+        /// Iterate over all headers in the store.
+        fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>> {
+            // Clone so this function doesn't have to take a `&mut self`.
+            match self.file.try_clone() {
+                Ok(file) => Box::new(Iter { height: 0, file }),
+                Err(err) => Box::new(iter::once(Err(Error::Io(err)))),
+            }
         }
     }
 
@@ -195,7 +238,6 @@ pub mod io {
         fn test_put_get_batch() {
             let tmp = tempfile::tempdir().unwrap();
             let mut store = FileStore::open(tmp.path().join("headers.db")).unwrap();
-            let mut headers = Vec::new();
 
             assert!(
                 store.get(0).is_err(),
@@ -211,12 +253,12 @@ pub mod io {
                 time: 1842918273,
                 nonce: 0,
             };
-
-            (0..count).for_each(|i| headers.push(BlockHeader { nonce: i, ..header }));
+            let iter = (0..count).map(|i| BlockHeader { nonce: i, ..header });
+            let headers = iter.clone().collect::<Vec<_>>();
 
             // Put all headers into the store and check that we can retrieve them.
             {
-                let height = store.put(headers.clone().into_iter()).unwrap();
+                let height = store.put(iter).unwrap();
 
                 assert_eq!(height, headers.len() as Height - 1);
 
@@ -258,6 +300,32 @@ pub mod io {
                 assert_eq!(store.get(0).unwrap(), headers[0]);
                 assert_eq!(store.get(1).unwrap(), headers[1]);
                 assert_eq!(store.get(h).unwrap(), headers[h as usize]);
+            }
+        }
+
+        #[test]
+        fn test_iter() {
+            let tmp = tempfile::tempdir().unwrap();
+            let mut store = FileStore::open(tmp.path().join("headers.db")).unwrap();
+
+            let count = 32;
+            let header = BlockHeader {
+                version: 1,
+                prev_blockhash: Default::default(),
+                merkle_root: Default::default(),
+                bits: 0x2ffffff,
+                time: 1842918273,
+                nonce: 0,
+            };
+            let iter = (0..count).map(|i| BlockHeader { nonce: i, ..header });
+            let headers = iter.clone().collect::<Vec<_>>();
+
+            store.put(iter).unwrap();
+
+            for result in store.iter() {
+                let (height, header) = result.unwrap();
+
+                assert_eq!(header, headers[height as usize]);
             }
         }
     }

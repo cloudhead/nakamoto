@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::io;
 use std::ops::Deref;
 
 use bitcoin::blockdata::block::BlockHeader;
@@ -155,16 +154,14 @@ impl<S: Store> BlockCache<S> {
             header: genesis,
         });
 
-        for height in 1.. {
-            match store.get(height) {
-                Ok(header) => chain.push(CachedBlock {
-                    height,
-                    hash: header.bitcoin_hash(),
-                    header,
-                }),
-                Err(store::Error::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => break,
-                Err(err) => return Err(Error::from(err)),
-            }
+        for result in store.iter() {
+            let (height, header) = result?;
+
+            chain.push(CachedBlock {
+                height,
+                hash: header.bitcoin_hash(),
+                header,
+            });
         }
 
         Ok(Self {
