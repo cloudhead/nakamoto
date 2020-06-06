@@ -4,6 +4,7 @@ use crate::blocktree::Height;
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode;
+use nonempty::NonEmpty;
 use thiserror::Error;
 
 use std::fmt;
@@ -38,29 +39,43 @@ pub trait Store: fmt::Debug {
 }
 
 #[derive(Debug, Clone)]
-pub struct Dummy(pub BlockHeader);
+pub struct Memory(NonEmpty<BlockHeader>);
 
-impl Store for Dummy {
+impl Memory {
+    pub fn new(chain: NonEmpty<BlockHeader>) -> Self {
+        Self(chain)
+    }
+}
+
+impl Store for Memory {
     /// Get the genesis block.
     fn genesis(&self) -> Result<BlockHeader, Error> {
-        Ok(self.0)
+        Ok(self.0.first().clone())
     }
 
     /// Append a batch of consecutive block headers to the end of the chain.
-    fn put<I: Iterator<Item = BlockHeader>>(&mut self, _headers: I) -> Result<Height, Error> {
-        Ok(0)
+    fn put<I: Iterator<Item = BlockHeader>>(&mut self, headers: I) -> Result<Height, Error> {
+        self.0.tail.extend(headers);
+        Ok(self.0.len() as Height - 1)
     }
 
     /// Get the block at the given height.
-    fn get(&self, _height: Height) -> Result<BlockHeader, Error> {
-        Err(Error::Io(std::io::Error::new(
-            std::io::ErrorKind::UnexpectedEof,
-            "unexpected end of file",
-        )))
+    fn get(&self, height: Height) -> Result<BlockHeader, Error> {
+        match self.0.get(height as usize) {
+            Some(header) => Ok(header.clone()),
+            None => Err(Error::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "unexpected end of file",
+            ))),
+        }
     }
 
     /// Rollback the chain to the given height.
-    fn rollback(&mut self, _height: Height) -> Result<(), Error> {
+    fn rollback(&mut self, height: Height) -> Result<(), Error> {
+        match height {
+            0 => self.0.tail.clear(),
+            h => self.0.tail.truncate(h as usize + 1),
+        }
         Ok(())
     }
 
@@ -71,12 +86,18 @@ impl Store for Dummy {
 
     /// Iterate over all headers in the store.
     fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>> {
-        Box::new(std::iter::once(Ok((0, self.0))))
+        Box::new(
+            self.0
+                .clone()
+                .into_iter()
+                .enumerate()
+                .map(|(i, h)| Ok((i as Height, h))),
+        )
     }
 
     /// Return the number of headers in the store.
     fn len(&self) -> Result<usize, Error> {
-        Ok(1)
+        Ok(self.0.len())
     }
 }
 

@@ -509,7 +509,7 @@ mod test {
     }
 
     #[derive(Clone)]
-    struct BlockImport(BlockCache<store::Dummy>, BlockHeader);
+    struct BlockImport(BlockCache<store::Memory>, BlockHeader);
 
     impl std::fmt::Debug for BlockImport {
         fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -523,7 +523,7 @@ mod test {
             let network = bitcoin::Network::Regtest;
             let genesis = constants::genesis_block(network).header;
             let params = Params::new(network);
-            let store = store::Dummy(genesis);
+            let store = store::Memory::new(NonEmpty::new(genesis));
             let cache = BlockCache::from(store, params).unwrap();
             let header =
                 arbitrary_header(genesis.bitcoin_hash(), genesis.time, &genesis.target(), g);
