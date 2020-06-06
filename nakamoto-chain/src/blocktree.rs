@@ -136,6 +136,8 @@ impl Deref for CachedBlock {
 #[derive(Debug, Clone)]
 pub struct BlockCache<S: Store> {
     chain: NonEmpty<CachedBlock>,
+    headers: HashMap<BlockHash, Height>,
+    orphans: HashMap<BlockHash, BlockHeader>,
     checkpoints: HashMap<Height, BlockHash>,
     params: Params,
     store: S,
@@ -147,21 +149,25 @@ impl<S: Store> BlockCache<S> {
         // TODO: This should come from somewhere else.
         let checkpoints = checkpoints::checkpoints();
         let genesis = store.genesis()?;
+        let orphans = HashMap::new();
 
         let mut chain = NonEmpty::new(CachedBlock {
             height: 0,
             hash: genesis.bitcoin_hash(),
             header: genesis,
         });
+        let mut headers = HashMap::new();
 
         for result in store.iter() {
             let (height, header) = result?;
+            let hash = header.bitcoin_hash();
 
             chain.push(CachedBlock {
                 height,
-                hash: header.bitcoin_hash(),
+                hash,
                 header,
             });
+            headers.insert(hash, height);
         }
 
         Ok(Self {
@@ -170,14 +176,16 @@ impl<S: Store> BlockCache<S> {
                 hash: genesis.bitcoin_hash(),
                 header: genesis,
             }),
+            headers,
+            orphans,
             params,
             checkpoints,
             store,
         })
     }
 
-    // Insert a block into the tree.
-    fn insert_block(&mut self, header: BlockHeader) -> Result<(BlockHash, Height), Error> {
+    /// Import a block into the tree. Performs header validation.
+    fn import_block(&mut self, header: BlockHeader) -> Result<(BlockHash, Height), Error> {
         let hash = header.bitcoin_hash();
         let tip = self.get_tip();
         let height = tip.height + 1;
@@ -229,6 +237,7 @@ impl<S: Store> BlockCache<S> {
                 hash,
                 header,
             });
+            self.headers.insert(hash, height);
 
             Ok((hash, self.height()))
         } else {
@@ -245,7 +254,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
         let mut result = None;
 
         for (i, header) in chain.enumerate() {
-            match self.insert_block(header) {
+            match self.import_block(header) {
                 Ok(r) => result = Some(r),
                 Err(err) => return Err(Error::BlockImportAborted(err.into(), i, self.height())),
             }
@@ -541,7 +550,7 @@ mod test {
         };
 
         matches! {
-            cache.insert_block(header).err(),
+            cache.import_block(header).err(),
             Some(Error::BlockMissing(hash)) if hash == prev_blockhash
         }
     }
@@ -551,7 +560,7 @@ mod test {
         let BlockImport(mut cache, header) = import;
         let genesis = cache.genesis().clone();
 
-        assert!(cache.clone().insert_block(header).is_ok());
+        assert!(cache.clone().import_block(header).is_ok());
 
         let header = BlockHeader {
             bits: genesis.bits - 1,
@@ -559,7 +568,7 @@ mod test {
         };
 
         matches! {
-            cache.insert_block(header).err(),
+            cache.import_block(header).err(),
             Some(Error::InvalidBlockTarget(actual, expected))
                 if actual == super::target_from_bits(genesis.bits - 1)
                     && expected == genesis.target()
@@ -577,7 +586,7 @@ mod test {
         }
 
         matches! {
-            cache.insert_block(header).err(),
+            cache.import_block(header).err(),
             Some(Error::InvalidBlockPoW)
         }
     }
