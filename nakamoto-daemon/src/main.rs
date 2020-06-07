@@ -1,5 +1,4 @@
 use nakamoto_chain::block::store;
-use nakamoto_chain::block::store::io::FileStore;
 use nakamoto_chain::blocktree::BlockCache;
 use nakamoto_daemon::Options;
 use nakamoto_p2p as p2p;
@@ -43,10 +42,10 @@ fn main() {
     log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
 
     let path = Path::new("headers.db");
-    let store = match FileStore::create(path, genesis) {
+    let store = match store::File::create(path, genesis) {
         Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
             log::info!("Found existing store {:?}", path);
-            FileStore::open(path).unwrap()
+            store::File::open(path).unwrap()
         }
         Err(err) => panic!(err.to_string()),
         Ok(store) => {

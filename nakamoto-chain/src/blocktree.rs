@@ -313,10 +313,9 @@ fn target_from_bits(bits: u32) -> Target {
 
 #[cfg(test)]
 mod test {
-    use super::{store, BlockCache, BlockTree, CachedBlock, Error, Height, Target, Time};
+    use super::{BlockCache, BlockTree, CachedBlock, Error, Height, Target, Time};
 
-    use crate::block::store::io::FileStore;
-    use crate::block::store::Store;
+    use crate::block::store::{self, Store};
 
     use std::collections::BTreeMap;
     use std::iter;
@@ -631,7 +630,7 @@ mod test {
     #[test]
     fn test_from_store() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/data/headers.bin");
-        let store = FileStore::open(path).unwrap();
+        let store = store::File::open(path).unwrap();
 
         let store_headers = store.iter().collect::<Result<Vec<_>, _>>().unwrap();
 
