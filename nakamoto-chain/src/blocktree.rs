@@ -164,7 +164,9 @@ impl<S: Store> BlockCache<S> {
         ));
         let mut headers = HashMap::with_capacity(length);
 
-        for result in store.iter() {
+        // Insert genesis in the headers map, but skip it during iteration.
+        headers.insert(chain.head.hash, 0);
+        for result in store.iter().skip(1) {
             let (height, header) = result?;
             let hash = header.bitcoin_hash();
 
@@ -649,13 +651,12 @@ mod test {
         let cache = BlockCache::from(store, params).unwrap();
         let cache_headers = cache
             .chain()
-            // TODO: Also test genesis, once we have it in the store.
-            .tail
             .iter()
             .enumerate()
             .map(|(i, h)| (i as Height, h.header))
             .collect::<Vec<_>>();
 
+        assert_eq!(store_headers.len(), cache_headers.len());
         assert_eq!(
             store_headers, cache_headers,
             "all stored headers figure in the cache"
