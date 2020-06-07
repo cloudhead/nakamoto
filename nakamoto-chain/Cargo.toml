@@ -15,4 +15,4 @@ log = "0.4"
 quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }
 quickcheck_macros = "0.9"
 tempfile = "3"
-rand = "*"
+rand = "0.7"

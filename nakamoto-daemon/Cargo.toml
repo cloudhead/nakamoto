@@ -13,4 +13,4 @@ nakamoto-p2p = { path = "../nakamoto-p2p" }
 nakamoto-chain = { path = "../nakamoto-chain" }
 argh = "0.1.3"
 fern = { version = "0.6", features = ["colored"], optional = true }
-log = "*"
+log = "0.4"

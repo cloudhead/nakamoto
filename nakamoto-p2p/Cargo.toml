@@ -6,7 +6,7 @@ edition = "2018"
 
 [dependencies]
 bitcoin = "0.23.0"
-log = "*"
+log = "0.4"
 thiserror = "1.0"
 bitcoin_hashes = "0.7.6"
 nakamoto-chain = { path = "../nakamoto-chain" }
