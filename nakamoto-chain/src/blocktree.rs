@@ -33,6 +33,8 @@ pub enum Error {
     InvalidBlockTarget(Target, Target),
     #[error("invalid checkpoint block hash {0} at height {1}")]
     InvalidBlockHash(BlockHash, Height),
+    #[error("duplicate block {0}")]
+    DuplicateBlock(BlockHash),
     #[error("invalid chain")]
     InvalidChain,
     #[error("empty chain")]
@@ -188,9 +190,9 @@ impl<S: Store> BlockCache<S> {
     fn import_block(&mut self, header: BlockHeader) -> Result<(BlockHash, Height), Error> {
         let hash = header.bitcoin_hash();
         let tip = self.get_tip();
-        let height = tip.height + 1;
 
         if header.prev_blockhash == tip.hash {
+            let height = tip.height + 1;
             let bits = if self.params.allow_min_difficulty_blocks {
                 if header.time > tip.time + self.params.pow_target_spacing as Time * 2 {
                     BlockHeader::compact_target_from_u256(&self.params.pow_limit)
@@ -240,7 +242,12 @@ impl<S: Store> BlockCache<S> {
             self.headers.insert(hash, height);
 
             Ok((hash, self.height()))
+        } else if self.headers.contains_key(&hash) {
+            Err(Error::DuplicateBlock(hash))
         } else {
+            if self.orphans.insert(hash, header).is_some() {
+                return Err(Error::DuplicateBlock(hash));
+            }
             Err(Error::BlockMissing(header.prev_blockhash))
         }
     }
@@ -256,6 +263,8 @@ impl<S: Store> BlockTree for BlockCache<S> {
         for (i, header) in chain.enumerate() {
             match self.import_block(header) {
                 Ok(r) => result = Some(r),
+                Err(Error::DuplicateBlock(hash)) => log::debug!("Duplicate block {}", hash),
+                Err(Error::BlockMissing(hash)) => log::debug!("Missing block {}", hash),
                 Err(err) => return Err(Error::BlockImportAborted(err.into(), i, self.height())),
             }
         }
