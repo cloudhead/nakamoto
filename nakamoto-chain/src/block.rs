@@ -10,6 +10,9 @@ use std::ops::Deref;
 /// Difficulty target of a block.
 pub type Target = bitcoin::util::uint::Uint256;
 
+/// Block work.
+pub type Work = bitcoin::util::uint::Uint256;
+
 /// Compact difficulty bits (target) of a block.
 pub type Bits = u32;
 

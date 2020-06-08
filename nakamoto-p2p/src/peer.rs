@@ -195,7 +195,9 @@ impl<R: Read + Write> Connection<R> {
     ) -> Result<(), Error> {
         let (tip, height) = {
             let cache = block_cache.read().expect("lock is not poisoned");
-            (*cache.tip(), cache.height())
+            let (hash, _) = cache.tip();
+
+            (hash, cache.height())
         };
 
         self.handshake(height)?;

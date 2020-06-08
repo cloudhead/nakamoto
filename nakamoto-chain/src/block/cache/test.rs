@@ -1,9 +1,10 @@
 use super::{BlockCache, BlockTree, Error};
 
 use crate::block::store::{self, Store};
-use crate::block::{self, CachedBlock, Height, Target, Time};
+use crate::block::tree::Branch;
+use crate::block::{self, Height, Target, Time};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::iter;
 use std::path::Path;
 
@@ -33,46 +34,120 @@ const TARGET_SPACING: Time = 60;
 const TARGET_TIMESPAN: Time = 60 * 60;
 
 #[derive(Debug)]
-struct TestCache {
-    headers: BTreeMap<Height, CachedBlock>,
+pub struct Cache {
+    headers: HashMap<BlockHash, BlockHeader>,
+    chain: NonEmpty<BlockHeader>,
+    tip: BlockHash,
+    genesis: BlockHash,
+}
+
+impl Cache {
+    pub fn new(genesis: BlockHeader) -> Self {
+        let mut headers = HashMap::new();
+        let hash = genesis.bitcoin_hash();
+        let chain = NonEmpty::new(genesis);
+
+        headers.insert(hash, genesis);
+
+        Self {
+            headers,
+            chain,
+            tip: hash,
+            genesis: hash,
+        }
+    }
+
+    fn branch(&self, tip: &BlockHash) -> Option<NonEmpty<BlockHeader>> {
+        let mut headers = VecDeque::new();
+        let mut tip = *tip;
+
+        while let Some(header) = self.headers.get(&tip) {
+            tip = header.prev_blockhash;
+            headers.push_front(*header);
+        }
+        NonEmpty::from_vec(Vec::from(headers))
+    }
+
+    fn longest_chain(&self) -> NonEmpty<BlockHeader> {
+        let mut branches = Vec::new();
+
+        for tip in self.headers.keys() {
+            if let Some(branch) = self.branch(tip) {
+                branches.push(branch);
+            }
+        }
+
+        branches
+            .into_iter()
+            .max_by(|a, b| Branch(a).work().cmp(&Branch(b).work()))
+            .unwrap()
+    }
+}
+
+impl BlockTree for Cache {
+    fn import_blocks<I: Iterator<Item = BlockHeader>>(
+        &mut self,
+        chain: I,
+    ) -> Result<(BlockHash, Height), Error> {
+        for header in chain {
+            self.headers.insert(header.bitcoin_hash(), header);
+        }
+        self.chain = self.longest_chain();
+
+        Ok((self.chain.last().bitcoin_hash(), self.height()))
+    }
+
+    fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {
+        self.chain.get(height as usize)
+    }
+
+    fn tip(&self) -> (BlockHash, BlockHeader) {
+        let tip = self.chain.last();
+        (tip.bitcoin_hash(), *tip)
+    }
+
+    fn height(&self) -> Height {
+        self.chain.len() as Height - 1
+    }
+
+    fn chain(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
+        let iter = self
+            .chain
+            .clone()
+            .into_iter()
+            .enumerate()
+            .map(|(i, h)| (i as Height, h));
+
+        Box::new(iter)
+    }
+}
+
+#[derive(Debug)]
+struct HeightCache {
+    headers: BTreeMap<Height, BlockHeader>,
     height: Height,
 }
 
-impl TestCache {
+impl HeightCache {
     fn new(genesis: BlockHeader) -> Self {
         let mut headers = BTreeMap::new();
         let height = 0;
-        let hash = genesis.bitcoin_hash();
 
-        headers.insert(
-            height,
-            CachedBlock {
-                height,
-                hash,
-                header: genesis,
-            },
-        );
+        headers.insert(height, genesis);
+
         Self { headers, height }
     }
 
-    fn insert(&mut self, height: Height, header: BlockHeader) {
+    fn import(&mut self, height: Height, header: BlockHeader) {
         assert!(height > self.height);
         assert!(!self.headers.contains_key(&height));
 
-        let hash = header.bitcoin_hash();
-        self.headers.insert(
-            height,
-            CachedBlock {
-                hash,
-                height,
-                header,
-            },
-        );
+        self.headers.insert(height, header);
         self.height = height;
     }
 }
 
-impl BlockTree for TestCache {
+impl BlockTree for HeightCache {
     fn import_blocks<I: Iterator<Item = BlockHeader>>(
         &mut self,
         _chain: I,
@@ -80,19 +155,20 @@ impl BlockTree for TestCache {
         unimplemented!()
     }
 
-    fn get_block_by_height(&self, height: Height) -> Option<&CachedBlock> {
+    fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {
         self.headers.get(&height)
     }
 
-    fn get_tip(&self) -> &CachedBlock {
-        self.headers.get(&self.height).unwrap()
+    fn tip(&self) -> (BlockHash, BlockHeader) {
+        let header = self.headers.get(&self.height).unwrap();
+        (header.bitcoin_hash(), *header)
     }
 
     fn height(&self) -> Height {
         self.height
     }
 
-    fn chain(&self) -> &NonEmpty<CachedBlock> {
+    fn chain(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
         unimplemented!()
     }
 }
@@ -289,7 +365,7 @@ fn test_bitcoin_difficulty() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
 
-    let mut cache = TestCache::new(genesis);
+    let mut cache = HeightCache::new(genesis);
 
     for (height, prev_time, prev_bits, time, bits) in tests::TARGETS.iter().cloned() {
         let target = cache.next_difficulty_target(height - 1, prev_time, prev_bits, &params);
@@ -298,7 +374,7 @@ fn test_bitcoin_difficulty() {
         assert_eq!(target, bits);
 
         // We store the retargeting blocks, since they are used in the difficulty calculation.
-        cache.insert(
+        cache.import(
             height,
             BlockHeader {
                 version: 1,
@@ -324,12 +400,7 @@ fn test_from_store() {
     let params = Params::new(network);
 
     let cache = BlockCache::from(store, params).unwrap();
-    let cache_headers = cache
-        .chain()
-        .iter()
-        .enumerate()
-        .map(|(i, h)| (i as Height, h.header))
-        .collect::<Vec<_>>();
+    let cache_headers = cache.chain().collect::<Vec<_>>();
 
     assert_eq!(store_headers.len(), cache_headers.len());
     assert_eq!(

@@ -73,7 +73,7 @@ impl<S: Store> BlockCache<S> {
     /// Import a block into the tree. Performs header validation.
     fn import_block(&mut self, header: BlockHeader) -> Result<(BlockHash, Height), Error> {
         let hash = header.bitcoin_hash();
-        let tip = self.get_tip();
+        let tip = self.chain.last();
 
         if header.prev_blockhash == tip.hash {
             let height = tip.height + 1;
@@ -82,7 +82,7 @@ impl<S: Store> BlockCache<S> {
                     BlockHeader::compact_target_from_u256(&self.params.pow_limit)
                 } else {
                     let pow_limit = BlockHeader::compact_target_from_u256(&self.params.pow_limit);
-                    let mut bits = self.get_tip().bits;
+                    let mut bits = tip.bits;
 
                     for (height, header) in self.chain.tail.iter().enumerate().rev() {
                         if height as Height % self.params.difficulty_adjustment_interval() == 0
@@ -153,33 +153,35 @@ impl<S: Store> BlockTree for BlockCache<S> {
             }
         }
 
-        Ok(result.unwrap_or((*self.tip(), self.height())))
+        Ok(result.unwrap_or((self.chain.last().hash, self.height())))
     }
 
-    fn get_block_by_height(&self, height: Height) -> Option<&CachedBlock> {
-        self.chain.get(height as usize)
+    fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {
+        self.chain.get(height as usize).map(|b| &b.header)
     }
 
-    fn get_tip(&self) -> &CachedBlock {
-        self.chain.last()
+    fn tip(&self) -> (BlockHash, BlockHeader) {
+        (self.chain.last().hash, self.chain.last().header)
     }
 
-    fn genesis(&self) -> &CachedBlock {
-        self.chain.first()
+    fn genesis(&self) -> &BlockHeader {
+        &self.chain.first().header
     }
 
     /// Iterate over the longest chain, starting from the tip.
-    fn chain(&self) -> &NonEmpty<CachedBlock> {
-        &self.chain
+    fn chain(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
+        // TODO: Don't copy the whole chain!
+        Box::new(
+            self.chain
+                .clone()
+                .into_iter()
+                .enumerate()
+                .map(|(i, h)| (i as Height, h.header)),
+        )
     }
 
     /// Return the height of the longest chain.
     fn height(&self) -> Height {
         self.chain.tail.len() as Height
-    }
-
-    /// Return the tip of the longest chain.
-    fn tip(&self) -> &BlockHash {
-        &self.chain.last().hash
     }
 }

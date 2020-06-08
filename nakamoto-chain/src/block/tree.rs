@@ -6,7 +6,7 @@ use nonempty::NonEmpty;
 use thiserror::Error;
 
 use crate::block::store;
-use crate::block::{self, Bits, CachedBlock, Height, Target, Time};
+use crate::block::{self, Bits, Height, Target, Time, Work};
 
 /// An error related to the block tree.
 #[derive(Debug, Error)]
@@ -31,6 +31,19 @@ pub enum Error {
     Store(#[from] store::Error),
 }
 
+#[derive(Debug, Clone)]
+pub struct Branch<'a>(pub &'a NonEmpty<BlockHeader>);
+
+impl<'a> Branch<'a> {
+    pub fn work(&self) -> Work {
+        let mut work = Work::default();
+        for header in self.0.iter() {
+            work = work + header.work();
+        }
+        work
+    }
+}
+
 /// A representation of all known blocks that keeps track of the longest chain.
 pub trait BlockTree {
     /// Import a chain of block headers into the block tree.
@@ -39,19 +52,15 @@ pub trait BlockTree {
         chain: I,
     ) -> Result<(BlockHash, Height), Error>;
     /// Get a block by height.
-    fn get_block_by_height(&self, height: Height) -> Option<&CachedBlock>;
-    /// Iterate over the longest chain, starting from the tip.
-    fn chain(&self) -> &NonEmpty<CachedBlock>;
+    fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader>;
+    /// Iterate over the longest chain, starting from genesis.
+    fn chain(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>>;
     /// Return the height of the longest chain.
     fn height(&self) -> Height;
-    /// Get the cached tip of the longest chain.
-    fn get_tip(&self) -> &CachedBlock;
-    /// Return the tip of the longest chain.
-    fn tip(&self) -> &BlockHash {
-        &self.get_tip().hash
-    }
+    /// Get the tip of the longest chain.
+    fn tip(&self) -> (BlockHash, BlockHeader);
     /// Return the genesis block header.
-    fn genesis(&self) -> &CachedBlock {
+    fn genesis(&self) -> &BlockHeader {
         self.get_block_by_height(0)
             .expect("the genesis block is always present")
     }
@@ -74,7 +83,7 @@ pub trait BlockTree {
         let last_adjustment_block = self
             .get_block_by_height(last_adjustment_height)
             .unwrap_or(self.genesis());
-        let last_adjustment_time = last_adjustment_block.header.time;
+        let last_adjustment_time = last_adjustment_block.time;
 
         if params.no_pow_retargeting {
             return last_adjustment_block.bits;
