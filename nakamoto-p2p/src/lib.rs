@@ -3,7 +3,7 @@ pub mod peer;
 pub mod tcp;
 
 use nakamoto_chain::block::store::Store;
-use nakamoto_chain::blocktree::{BlockCache, BlockTree, Height};
+use nakamoto_chain::block::{cache::BlockCache, tree::BlockTree, Height};
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};

@@ -18,7 +18,7 @@ use bitcoin::network::stream_reader::StreamReader;
 use bitcoin::util::hash::BitcoinHash;
 
 use bitcoin_hashes::sha256d;
-use nakamoto_chain::blocktree::{BlockTree, Height};
+use nakamoto_chain::block::{tree::BlockTree, Height};
 
 use crate::error::Error;
 

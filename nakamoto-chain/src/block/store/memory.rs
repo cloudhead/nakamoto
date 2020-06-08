@@ -1,7 +1,7 @@
 use bitcoin::blockdata::block::BlockHeader;
 use nonempty::NonEmpty;
 
-use crate::blocktree::Height;
+use crate::block::Height;
 
 use super::{Error, Store};
 

@@ -1,4 +1,4 @@
-use crate::blocktree::Height;
+use crate::block::Height;
 use bitcoin::hash_types::BlockHash;
 use bitcoin_hashes::hex::FromHex;
 

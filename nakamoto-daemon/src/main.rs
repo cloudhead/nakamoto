@@ -1,5 +1,5 @@
+use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
-use nakamoto_chain::blocktree::BlockCache;
 use nakamoto_daemon::Options;
 use nakamoto_p2p as p2p;
 

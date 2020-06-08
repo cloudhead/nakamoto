@@ -3,7 +3,7 @@ use std::time;
 
 use thiserror::Error;
 
-use nakamoto_chain::blocktree;
+use nakamoto_chain::block::tree;
 
 /// An error occuring in peer-to-peer networking code.
 #[derive(Error, Debug)]
@@ -15,7 +15,7 @@ pub enum Error {
     Timeout(time::Duration),
 
     #[error("chain validation error: {0}")]
-    BlockImport(#[from] blocktree::Error),
+    BlockImport(#[from] tree::Error),
 
     #[error("not connected to the peer network")]
     NotConnected,

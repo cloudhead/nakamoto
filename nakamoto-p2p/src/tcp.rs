@@ -1,5 +1,5 @@
+use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store::Store;
-use nakamoto_chain::blocktree::BlockCache;
 
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};

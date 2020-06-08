@@ -6,7 +6,7 @@ pub mod memory;
 pub use io::File;
 pub use memory::Memory;
 
-use crate::blocktree::Height;
+use crate::block::Height;
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode;

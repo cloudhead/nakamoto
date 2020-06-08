@@ -6,7 +6,7 @@ use std::path::Path;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode::{Decodable, Encodable};
 
-use crate::blocktree::Height;
+use crate::block::Height;
 
 use super::{Error, Store};
 
