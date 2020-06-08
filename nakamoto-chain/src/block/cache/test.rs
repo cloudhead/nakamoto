@@ -174,36 +174,36 @@ impl BlockTree for HeightCache {
 }
 
 #[derive(Clone)]
-struct TestCase {
-    chain: NonEmpty<BlockHeader>,
+struct OrderedHeaders {
+    headers: NonEmpty<BlockHeader>,
 }
 
-impl Arbitrary for TestCase {
-    fn arbitrary<G: Gen>(g: &mut G) -> TestCase {
+impl Arbitrary for OrderedHeaders {
+    fn arbitrary<G: Gen>(g: &mut G) -> OrderedHeaders {
         let height = g.gen_range(1, (TARGET_TIMESPAN / TARGET_SPACING) * 4) as Height;
         Self {
-            chain: arbitrary_chain(height, g),
+            headers: arbitrary_chain(height, g),
         }
     }
 
     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        let Self { chain } = self;
+        let Self { headers } = self;
         let mut shrunk = Vec::new();
 
-        if let Some((_, rest)) = chain.tail.split_last() {
+        if let Some((_, rest)) = headers.tail.split_last() {
             shrunk.push(Self {
-                chain: NonEmpty::from((chain.head, rest.to_vec())),
+                headers: NonEmpty::from((headers.head, rest.to_vec())),
             });
         }
         Box::new(shrunk.into_iter())
     }
 }
 
-impl std::fmt::Debug for TestCase {
+impl std::fmt::Debug for OrderedHeaders {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "\n")?;
 
-        for (height, header) in self.chain.iter().enumerate() {
+        for (height, header) in self.headers.iter().enumerate() {
             writeln!(
                 fmt,
                 "#{:03} {} time={:05} bits={:x} nonce={}",
@@ -413,4 +413,19 @@ fn test_from_store() {
         let result = cache.headers.get(&header.bitcoin_hash());
         assert_eq!(result, Some(height));
     }
+}
+
+#[quickcheck]
+fn prop_cache_import_ordered(input: OrderedHeaders) -> bool {
+    let OrderedHeaders { headers } = input;
+    let mut cache = Cache::new(headers.head);
+    let tip = *headers.last();
+
+    cache.import_blocks(headers.tail.iter().cloned()).unwrap();
+
+    cache.genesis() == &headers.head
+        && cache.tip() == (tip.bitcoin_hash(), tip)
+        && cache
+            .chain()
+            .all(|(i, h)| headers.get(i as usize) == Some(&h))
 }
