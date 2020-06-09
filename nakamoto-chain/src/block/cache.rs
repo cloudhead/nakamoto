@@ -125,11 +125,7 @@ impl<S: Store> BlockCache<S> {
         }
     }
 
-    fn next_min_difficulty_target(
-        &self,
-        last_bits: Bits,
-        params: &Params,
-    ) -> Bits {
+    fn next_min_difficulty_target(&self, last_bits: Bits, params: &Params) -> Bits {
         let pow_limit = BlockHeader::compact_target_from_u256(&params.pow_limit);
         let mut bits = last_bits;
 
