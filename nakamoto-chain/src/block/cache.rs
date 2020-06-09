@@ -176,7 +176,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
     }
 
     /// Iterate over the longest chain, starting from the tip.
-    fn chain(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
         // TODO: Don't copy the whole chain!
         Box::new(
             self.chain

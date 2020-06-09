@@ -4,16 +4,15 @@ use crate::block::store::{self, Store};
 use crate::block::tree::Branch;
 use crate::block::{self, Height, Target, Time};
 
-use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::iter;
 use std::path::Path;
-use std::rc::Rc;
+use std::sync::{Arc, RwLock};
 
 use nonempty::NonEmpty;
-use quickcheck::{Arbitrary, Gen,QuickCheck};
-use quickcheck_macros::quickcheck;
 use quickcheck as qc;
+use quickcheck::{Arbitrary, Gen, QuickCheck};
+use quickcheck_macros::quickcheck;
 use rand::Rng;
 
 use bitcoin::blockdata::block::BlockHeader;
@@ -96,6 +95,7 @@ impl BlockTree for Cache {
             self.headers.insert(header.bitcoin_hash(), header);
         }
         self.chain = self.longest_chain();
+        self.tip = self.chain.last().bitcoin_hash();
 
         Ok((self.chain.last().bitcoin_hash(), self.height()))
     }
@@ -117,7 +117,7 @@ impl BlockTree for Cache {
         self.chain.len() as Height - 1
     }
 
-    fn chain(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
         let iter = self
             .chain
             .clone()
@@ -179,7 +179,7 @@ impl BlockTree for HeightCache {
         self.height
     }
 
-    fn chain(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
         unimplemented!()
     }
 }
@@ -374,7 +374,7 @@ impl std::fmt::Debug for BlockImport {
     }
 }
 
-impl qc::Arbitrary for BlockImport {
+impl Arbitrary for BlockImport {
     fn arbitrary<G: Gen>(g: &mut G) -> BlockImport {
         let network = bitcoin::Network::Regtest;
         let genesis = constants::genesis_block(network).header;
@@ -490,7 +490,7 @@ fn test_from_store() {
     let params = Params::new(network);
 
     let cache = BlockCache::from(store, params).unwrap();
-    let cache_headers = cache.chain().collect::<Vec<_>>();
+    let cache_headers = cache.iter().collect::<Vec<_>>();
 
     assert_eq!(store_headers.len(), cache_headers.len());
     assert_eq!(
@@ -517,18 +517,25 @@ fn prop_cache_import_ordered() {
         cache.genesis() == &headers.head
             && cache.tip() == (tip.bitcoin_hash(), tip)
             && cache
-                .chain()
+                .iter()
                 .all(|(i, h)| headers.get(i as usize) == Some(&h))
     }
     QuickCheck::with_gen(qc::StdGen::new(rand::thread_rng(), 16))
         .quickcheck(prop as fn(arbitrary::OrderedHeaders) -> bool);
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+struct TreeHeader {
+    header: BlockHeader,
+    height: Height,
+}
+
+#[derive(Clone)]
 struct Tree {
-    headers: Rc<RefCell<HashMap<BlockHash, BlockHeader>>>,
+    headers: Arc<RwLock<HashMap<BlockHash, TreeHeader>>>,
     genesis: BlockHeader,
     hash: BlockHash,
+    height: Height,
     time: Time,
 }
 
@@ -538,38 +545,63 @@ impl Tree {
         let hash = genesis.bitcoin_hash();
 
         Self {
-            headers: Rc::new(RefCell::new(headers)),
+            headers: Arc::new(RwLock::new(headers)),
             time: genesis.time,
+            height: 0,
             genesis,
             hash,
         }
     }
 
-    fn next(&self) -> Tree {
+    fn next(&self, g: &mut impl Rng) -> Tree {
+        let height = self.height + 1;
+        let nonce = g.gen::<u32>();
         let mut header = BlockHeader {
             version: 1,
             prev_blockhash: self.hash,
             merkle_root: Default::default(),
             bits: BlockHeader::compact_target_from_u256(&TARGET),
             time: self.time + TARGET_SPACING,
-            nonce: 0,
+            nonce,
         };
         self.solve(&mut header);
 
-        self.headers
-            .borrow_mut()
-            .insert(header.bitcoin_hash(), header);
+        let hash = header.bitcoin_hash();
+        self.headers.write().unwrap().insert(hash, TreeHeader { header, height });
 
         Tree {
+            hash,
+            height,
             headers: self.headers.clone(),
-            hash: header.bitcoin_hash(),
             time: header.time,
             genesis: self.genesis,
         }
     }
 
-    fn headers(&self) -> Vec<BlockHeader> {
-        self.headers.borrow().values().cloned().collect()
+    fn sample<G: Gen>(&self, g: &mut G) -> Tree {
+        let headers = self.headers.read().unwrap();
+        let ix = g.gen_range(0, headers.len());
+        let theader = headers.values().nth(ix).unwrap();
+
+        Tree {
+            height: theader.height,
+            hash: theader.header.bitcoin_hash(),
+            headers: self.headers.clone(),
+            time: theader.header.time,
+            genesis: self.genesis,
+        }
+    }
+
+    fn headers(&self) -> impl Iterator<Item = BlockHeader> {
+        self.headers
+            .read()
+            .unwrap()
+            .values()
+            .filter(|h| h.height >= self.height)
+            .cloned()
+            .map(|h| h.header)
+            .collect::<Vec<_>>()
+            .into_iter()
     }
 
     fn solve(&self, header: &mut BlockHeader) {
@@ -577,6 +609,58 @@ impl Tree {
         while header.validate_pow(&target).is_err() {
             header.nonce += 1;
         }
+    }
+}
+
+impl Arbitrary for Tree {
+    fn arbitrary<G: Gen>(g: &mut G) -> Tree {
+        let network = bitcoin::Network::Regtest;
+        let genesis = constants::genesis_block(network).header;
+        let height = g.gen_range(1, g.size() + 1);
+        let forks = g.gen_range(0, usize::min(g.size(), 8));
+
+        let mut tree = Tree::new(genesis);
+
+        // Generate trunk.
+        for _ in 0..height {
+            tree = tree.next(g);
+        }
+        // Generate forks.
+        for _ in 0..forks {
+            let mut fork = tree.sample(g);
+            let height = g.gen_range(1, g.size() + 1);
+
+            for _ in 0..height {
+                fork = fork.next(g);
+            }
+        }
+
+        tree
+    }
+}
+
+impl std::fmt::Debug for Tree {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(fmt, "\n")?;
+
+        fn fmt_header(fmt: &mut std::fmt::Formatter<'_>, header: &BlockHeader) -> Result<(), std::fmt::Error> {
+            writeln!(
+                fmt,
+                "{} {} time={:05} bits={:x} nonce={}",
+                header.bitcoin_hash(),
+                header.prev_blockhash,
+                header.time,
+                header.bits,
+                header.nonce
+            )
+        }
+
+        for header in self.headers() {
+            fmt_header(fmt, &header)?;
+        }
+        fmt_header(fmt, &self.genesis)?;
+
+        Ok(())
     }
 }
 
@@ -591,30 +675,69 @@ fn test_cache_import_unordered() {
         nonce: 0,
         time: 0,
     };
+    let mut cache = Cache::new(genesis);
+    let g = &mut rand::thread_rng();
+
     let a0 = Tree::new(genesis);
 
     // a0 <- a1 <- a2 <- a3 *
-    let a1 = a0.next();
-    let a2 = a1.next();
-    let a3 = a2.next();
+    let a1 = a0.next(g);
+    let a2 = a1.next(g);
+    let a3 = a2.next(g);
 
-    // a0 <- a1 <- a2 <- a3 *
-    //          <- b2 <- b3
-    let b2 = a1.next();
-    let b3 = b2.next();
+    cache.import_blocks(a1.headers()).unwrap();
+    assert_eq!(cache.tip, a3.hash);
 
     // a0 <- a1 <- a2 <- a3
-    //          <- b2 <- b3 <- b4 *
-    let b4 = b3.next();
+    //                 \
+    //                  <- b3 <- b4 *
+    let b3 = a2.next(g);
+    let b4 = b3.next(g);
 
-    let mut cache = Cache::new(genesis);
-    cache.import_blocks(a0.headers().into_iter()).unwrap();
+    cache.import_blocks(b3.headers()).unwrap();
+    assert_eq!(cache.tip, b4.hash);
 
-    let actual = cache
-        .chain()
-        .map(|(_, h)| h.bitcoin_hash())
-        .collect::<Vec<_>>();
-    let expected = vec![a0.hash, a1.hash, b2.hash, b3.hash, b4.hash];
+    //            <- c2 <- c3 <- c4 <- c5 *
+    //           /
+    // a0 <- a1 <- a2 <- a3
+    //                 \
+    //                  <- b3 <- b4
+    let c2 = a1.next(g);
+    let c3 = c2.next(g);
+    let c4 = c3.next(g);
+    let c5 = c4.next(g);
 
-    assert_eq!(actual, expected);
+    cache.import_blocks(c2.headers()).unwrap();
+    assert_eq!(cache.tip, c5.hash);
+
+    //                                <- d5 <- d6 *
+    //                               /
+    //            <- c2 <- c3 <- c4 <- c5
+    //           /
+    // a0 <- a1 <- a2 <- a3
+    //                 \
+    //                  <- b3 <- b4
+    let d5 = c4.next(g);
+    let d6 = d5.next(g);
+
+    let mut headers = a0.headers().collect::<Vec<_>>();
+    let mut rng = rand::thread_rng();
+    let len = headers.len();
+
+    // Expected longest chain.
+    let expected = vec![
+        a0.hash, a1.hash, c2.hash, c3.hash, c4.hash, d5.hash, d6.hash,
+    ];
+
+    for _ in 0..len * len {
+        use rand::seq::SliceRandom;
+
+        headers.shuffle(&mut rng);
+
+        cache.import_blocks(headers.iter().cloned()).unwrap();
+        assert_eq!(cache.tip, d6.hash);
+
+        let actual = cache.chain().map(|h| h.bitcoin_hash()).collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
 }
