@@ -30,10 +30,21 @@ pub enum Error {
     Store(#[from] store::Error),
 }
 
-#[derive(Debug, Clone)]
-pub struct Branch<'a>(pub &'a [BlockHeader]);
+/// A generic block header.
+pub trait Header {
+    fn work(&self) -> Work;
+}
 
-impl<'a> Branch<'a> {
+impl Header for BlockHeader {
+    fn work(&self) -> Work {
+        self.work()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Branch<'a, H: Header>(pub &'a [H]);
+
+impl<'a, H: Header> Branch<'a, H> {
     pub fn work(&self) -> Work {
         let mut work = Work::default();
         for header in self.0.iter() {

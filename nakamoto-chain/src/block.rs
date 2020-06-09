@@ -37,6 +37,12 @@ impl Deref for CachedBlock {
     }
 }
 
+impl tree::Header for CachedBlock {
+    fn work(&self) -> Work {
+        self.header.work()
+    }
+}
+
 // Convert a compact difficulty representation to 256-bits.
 // Taken from `BlockHeader::target` from the `bitcoin` library.
 fn target_from_bits(bits: u32) -> Target {
