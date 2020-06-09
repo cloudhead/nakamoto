@@ -4,13 +4,16 @@ use crate::block::store::{self, Store};
 use crate::block::tree::Branch;
 use crate::block::{self, Height, Target, Time};
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::iter;
 use std::path::Path;
+use std::rc::Rc;
 
 use nonempty::NonEmpty;
-use quickcheck::{self, Arbitrary, Gen};
+use quickcheck::{Arbitrary, Gen,QuickCheck};
 use quickcheck_macros::quickcheck;
+use quickcheck as qc;
 use rand::Rng;
 
 use bitcoin::blockdata::block::BlockHeader;
@@ -31,7 +34,7 @@ const TARGET: Uint256 = Uint256([
 // Target block time (1 minute).
 const TARGET_SPACING: Time = 60;
 // Target time span (1 hour).
-const TARGET_TIMESPAN: Time = 60 * 60;
+const _TARGET_TIMESPAN: Time = 60 * 60;
 
 #[derive(Debug)]
 pub struct Cache {
@@ -181,48 +184,127 @@ impl BlockTree for HeightCache {
     }
 }
 
-#[derive(Clone)]
-struct OrderedHeaders {
-    headers: NonEmpty<BlockHeader>,
-}
+mod arbitrary {
+    use super::*;
 
-impl Arbitrary for OrderedHeaders {
-    fn arbitrary<G: Gen>(g: &mut G) -> OrderedHeaders {
-        let height = g.gen_range(1, (TARGET_TIMESPAN / TARGET_SPACING) * 4) as Height;
-        Self {
-            headers: arbitrary_chain(height, g),
+    #[derive(Clone)]
+    pub struct OrderedHeaders {
+        pub headers: NonEmpty<BlockHeader>,
+    }
+
+    impl Arbitrary for OrderedHeaders {
+        fn arbitrary<G: Gen>(g: &mut G) -> OrderedHeaders {
+            let height = g.gen_range(1, g.size() + 1) as Height;
+            Self {
+                headers: arbitrary_chain(height, g),
+            }
+        }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            let Self { headers } = self;
+            let mut shrunk = Vec::new();
+
+            if let Some((_, rest)) = headers.tail.split_last() {
+                shrunk.push(Self {
+                    headers: NonEmpty::from((headers.head, rest.to_vec())),
+                });
+            }
+            Box::new(shrunk.into_iter())
         }
     }
 
-    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        let Self { headers } = self;
-        let mut shrunk = Vec::new();
+    impl std::fmt::Debug for OrderedHeaders {
+        fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            write!(fmt, "\n")?;
 
-        if let Some((_, rest)) = headers.tail.split_last() {
-            shrunk.push(Self {
-                headers: NonEmpty::from((headers.head, rest.to_vec())),
-            });
+            for (height, header) in self.headers.iter().enumerate() {
+                writeln!(
+                    fmt,
+                    "#{:03} {} time={:05} bits={:x} nonce={}",
+                    height,
+                    header.bitcoin_hash(),
+                    header.time,
+                    header.bits,
+                    header.nonce
+                )?;
+            }
+            Ok(())
         }
-        Box::new(shrunk.into_iter())
     }
-}
 
-impl std::fmt::Debug for OrderedHeaders {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(fmt, "\n")?;
+    #[derive(Clone)]
+    pub struct UnorderedHeaders {
+        pub headers: Vec<BlockHeader>,
+        pub genesis: BlockHeader,
+        pub tip: BlockHash,
+    }
 
-        for (height, header) in self.headers.iter().enumerate() {
-            writeln!(
-                fmt,
-                "#{:03} {} time={:05} bits={:x} nonce={}",
-                height,
-                header.bitcoin_hash(),
-                header.time,
-                header.bits,
-                header.nonce
-            )?;
+    impl UnorderedHeaders {
+        fn new(ordered: NonEmpty<BlockHeader>) -> Self {
+            let genesis = *ordered.first();
+            let tip = ordered.last().bitcoin_hash();
+            let headers = ordered.tail.clone();
+
+            UnorderedHeaders {
+                headers,
+                genesis,
+                tip,
+            }
         }
-        Ok(())
+
+        fn shuffle<G: Gen>(&mut self, g: &mut G) {
+            use rand::seq::SliceRandom;
+            self.headers.shuffle(g);
+        }
+    }
+
+    impl Arbitrary for UnorderedHeaders {
+        fn arbitrary<G: Gen>(g: &mut G) -> UnorderedHeaders {
+            let OrderedHeaders { headers: ordered } = OrderedHeaders::arbitrary(g);
+            let mut unordered = UnorderedHeaders::new(ordered);
+
+            unordered.shuffle(g);
+            unordered
+        }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            let mut shrunk = Vec::new();
+
+            if self.tip != self.genesis.bitcoin_hash() {
+                let mut unordered = self.clone();
+                let ix = unordered
+                    .headers
+                    .iter()
+                    .position(|h| h.bitcoin_hash() == self.tip)
+                    .unwrap();
+                let tip = unordered.headers[ix];
+
+                unordered.tip = tip.prev_blockhash;
+                unordered.headers.swap_remove(ix);
+
+                shrunk.push(unordered);
+            }
+
+            Box::new(shrunk.into_iter())
+        }
+    }
+
+    impl std::fmt::Debug for UnorderedHeaders {
+        fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+            write!(fmt, "\n")?;
+
+            for header in self.headers.iter() {
+                writeln!(
+                    fmt,
+                    "{} {} time={:05} bits={:x}",
+                    header.bitcoin_hash(),
+                    header.prev_blockhash,
+                    header.time,
+                    header.bits,
+                )?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -292,7 +374,7 @@ impl std::fmt::Debug for BlockImport {
     }
 }
 
-impl quickcheck::Arbitrary for BlockImport {
+impl qc::Arbitrary for BlockImport {
     fn arbitrary<G: Gen>(g: &mut G) -> BlockImport {
         let network = bitcoin::Network::Regtest;
         let genesis = constants::genesis_block(network).header;
@@ -423,17 +505,116 @@ fn test_from_store() {
     }
 }
 
-#[quickcheck]
-fn prop_cache_import_ordered(input: OrderedHeaders) -> bool {
-    let OrderedHeaders { headers } = input;
-    let mut cache = Cache::new(headers.head);
-    let tip = *headers.last();
+#[test]
+fn prop_cache_import_ordered() {
+    fn prop(input: arbitrary::OrderedHeaders) -> bool {
+        let arbitrary::OrderedHeaders { headers } = input;
+        let mut cache = Cache::new(headers.head);
+        let tip = *headers.last();
 
-    cache.import_blocks(headers.tail.iter().cloned()).unwrap();
+        cache.import_blocks(headers.tail.iter().cloned()).unwrap();
 
-    cache.genesis() == &headers.head
-        && cache.tip() == (tip.bitcoin_hash(), tip)
-        && cache
-            .chain()
-            .all(|(i, h)| headers.get(i as usize) == Some(&h))
+        cache.genesis() == &headers.head
+            && cache.tip() == (tip.bitcoin_hash(), tip)
+            && cache
+                .chain()
+                .all(|(i, h)| headers.get(i as usize) == Some(&h))
+    }
+    QuickCheck::with_gen(qc::StdGen::new(rand::thread_rng(), 16))
+        .quickcheck(prop as fn(arbitrary::OrderedHeaders) -> bool);
+}
+
+#[derive(Debug)]
+struct Tree {
+    headers: Rc<RefCell<HashMap<BlockHash, BlockHeader>>>,
+    genesis: BlockHeader,
+    hash: BlockHash,
+    time: Time,
+}
+
+impl Tree {
+    fn new(genesis: BlockHeader) -> Self {
+        let headers = HashMap::new();
+        let hash = genesis.bitcoin_hash();
+
+        Self {
+            headers: Rc::new(RefCell::new(headers)),
+            time: genesis.time,
+            genesis,
+            hash,
+        }
+    }
+
+    fn next(&self) -> Tree {
+        let mut header = BlockHeader {
+            version: 1,
+            prev_blockhash: self.hash,
+            merkle_root: Default::default(),
+            bits: BlockHeader::compact_target_from_u256(&TARGET),
+            time: self.time + TARGET_SPACING,
+            nonce: 0,
+        };
+        self.solve(&mut header);
+
+        self.headers
+            .borrow_mut()
+            .insert(header.bitcoin_hash(), header);
+
+        Tree {
+            headers: self.headers.clone(),
+            hash: header.bitcoin_hash(),
+            time: header.time,
+            genesis: self.genesis,
+        }
+    }
+
+    fn headers(&self) -> Vec<BlockHeader> {
+        self.headers.borrow().values().cloned().collect()
+    }
+
+    fn solve(&self, header: &mut BlockHeader) {
+        let target = header.target();
+        while header.validate_pow(&target).is_err() {
+            header.nonce += 1;
+        }
+    }
+}
+
+#[test]
+#[allow(unused_variables)]
+fn test_cache_import_unordered() {
+    let genesis = BlockHeader {
+        version: 1,
+        prev_blockhash: Default::default(),
+        merkle_root: Default::default(),
+        bits: BlockHeader::compact_target_from_u256(&TARGET),
+        nonce: 0,
+        time: 0,
+    };
+    let a0 = Tree::new(genesis);
+
+    // a0 <- a1 <- a2 <- a3 *
+    let a1 = a0.next();
+    let a2 = a1.next();
+    let a3 = a2.next();
+
+    // a0 <- a1 <- a2 <- a3 *
+    //          <- b2 <- b3
+    let b2 = a1.next();
+    let b3 = b2.next();
+
+    // a0 <- a1 <- a2 <- a3
+    //          <- b2 <- b3 <- b4 *
+    let b4 = b3.next();
+
+    let mut cache = Cache::new(genesis);
+    cache.import_blocks(a0.headers().into_iter()).unwrap();
+
+    let actual = cache
+        .chain()
+        .map(|(_, h)| h.bitcoin_hash())
+        .collect::<Vec<_>>();
+    let expected = vec![a0.hash, a1.hash, b2.hash, b3.hash, b4.hash];
+
+    assert_eq!(actual, expected);
 }
