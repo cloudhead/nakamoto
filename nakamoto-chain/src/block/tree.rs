@@ -2,7 +2,6 @@ use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 
-use nonempty::NonEmpty;
 use thiserror::Error;
 
 use crate::block::store;
@@ -32,7 +31,7 @@ pub enum Error {
 }
 
 #[derive(Debug, Clone)]
-pub struct Branch<'a>(pub &'a NonEmpty<BlockHeader>);
+pub struct Branch<'a>(pub &'a [BlockHeader]);
 
 impl<'a> Branch<'a> {
     pub fn work(&self) -> Work {

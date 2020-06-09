@@ -67,7 +67,13 @@ impl Cache {
             tip = header.prev_blockhash;
             headers.push_front(*header);
         }
-        NonEmpty::from_vec(Vec::from(headers))
+
+        match headers.pop_front() {
+            Some(root) if root.bitcoin_hash() == self.genesis => {
+                Some(NonEmpty::from((root, headers.into())))
+            }
+            _ => None,
+        }
     }
 
     fn longest_chain(&self) -> NonEmpty<BlockHeader> {
@@ -81,7 +87,7 @@ impl Cache {
 
         branches
             .into_iter()
-            .max_by(|a, b| Branch(a).work().cmp(&Branch(b).work()))
+            .max_by(|a, b| Branch(&a.tail).work().cmp(&Branch(&b.tail).work()))
             .unwrap()
     }
 }
@@ -567,7 +573,10 @@ impl Tree {
         self.solve(&mut header);
 
         let hash = header.bitcoin_hash();
-        self.headers.write().unwrap().insert(hash, TreeHeader { header, height });
+        self.headers
+            .write()
+            .unwrap()
+            .insert(hash, TreeHeader { header, height });
 
         Tree {
             hash,
@@ -643,7 +652,10 @@ impl std::fmt::Debug for Tree {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
         write!(fmt, "\n")?;
 
-        fn fmt_header(fmt: &mut std::fmt::Formatter<'_>, header: &BlockHeader) -> Result<(), std::fmt::Error> {
+        fn fmt_header(
+            fmt: &mut std::fmt::Formatter<'_>,
+            header: &BlockHeader,
+        ) -> Result<(), std::fmt::Error> {
             writeln!(
                 fmt,
                 "{} {} time={:05} bits={:x} nonce={}",
