@@ -14,7 +14,7 @@ use crate::block::store::Store;
 use crate::checkpoints;
 
 use crate::block::tree::{BlockTree, Error};
-use crate::block::{self, CachedBlock, Height, Time};
+use crate::block::{self, CachedBlock, Height, Time, Bits};
 
 /// An implementation of `BlockTree`.
 #[derive(Debug, Clone)]
@@ -81,18 +81,7 @@ impl<S: Store> BlockCache<S> {
                 if header.time > tip.time + self.params.pow_target_spacing as Time * 2 {
                     BlockHeader::compact_target_from_u256(&self.params.pow_limit)
                 } else {
-                    let pow_limit = BlockHeader::compact_target_from_u256(&self.params.pow_limit);
-                    let mut bits = tip.bits;
-
-                    for (height, header) in self.chain.tail.iter().enumerate().rev() {
-                        if height as Height % self.params.difficulty_adjustment_interval() == 0
-                            || header.bits != pow_limit
-                        {
-                            bits = header.bits;
-                            break;
-                        }
-                    }
-                    bits
+                    self.next_min_difficulty_target(tip.bits, &self.params)
                 }
             } else {
                 self.next_difficulty_target(tip.height, tip.time, tip.bits, &self.params)
@@ -134,6 +123,25 @@ impl<S: Store> BlockCache<S> {
             }
             Err(Error::BlockMissing(header.prev_blockhash))
         }
+    }
+
+    fn next_min_difficulty_target(
+        &self,
+        last_bits: Bits,
+        params: &Params,
+    ) -> Bits {
+        let pow_limit = BlockHeader::compact_target_from_u256(&params.pow_limit);
+        let mut bits = last_bits;
+
+        for (height, header) in self.chain.tail.iter().enumerate().rev() {
+            if height as Height % self.params.difficulty_adjustment_interval() == 0
+                || header.bits != pow_limit
+            {
+                bits = header.bits;
+                break;
+            }
+        }
+        bits
     }
 }
 
