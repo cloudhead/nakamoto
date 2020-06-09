@@ -51,6 +51,8 @@ pub trait BlockTree {
         &mut self,
         chain: I,
     ) -> Result<(BlockHash, Height), Error>;
+    /// Get a block by hash.
+    fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader>;
     /// Get a block by height.
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader>;
     /// Iterate over the longest chain, starting from genesis.

@@ -97,6 +97,10 @@ impl BlockTree for Cache {
         Ok((self.chain.last().bitcoin_hash(), self.height()))
     }
 
+    fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader> {
+        self.headers.get(hash)
+    }
+
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {
         self.chain.get(height as usize)
     }
@@ -152,6 +156,10 @@ impl BlockTree for HeightCache {
         &mut self,
         _chain: I,
     ) -> Result<(BlockHash, Height), super::Error> {
+        unimplemented!()
+    }
+
+    fn get_block(&self, _hash: &BlockHash) -> Option<&BlockHeader> {
         unimplemented!()
     }
 
