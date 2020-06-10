@@ -613,6 +613,24 @@ impl Tree {
             .into_iter()
     }
 
+    fn branch(&self, range: [&Tree; 2]) -> impl Iterator<Item = BlockHeader> {
+        let headers = self.headers.read().unwrap();
+        let mut blocks = VecDeque::new();
+
+        let [from, to] = range;
+        let mut tip = &to.hash;
+
+        while let Some(t) = headers.get(tip) {
+            blocks.push_front(t.header);
+            if tip == &from.hash {
+                break;
+            }
+            tip = &t.header.prev_blockhash;
+        }
+
+        blocks.into_iter()
+    }
+
     fn solve(&self, header: &mut BlockHeader) {
         let target = header.target();
         while header.validate_pow(&target).is_err() {
@@ -670,6 +688,63 @@ fn prop_cache_import_tree(tree: Tree) -> bool {
     model.import_blocks(headers.iter().cloned()).unwrap();
 
     real.tip() == model.tip()
+}
+
+#[test]
+fn test_cache_import_back_and_forth() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let mut cache = BlockCache::from(store, params).unwrap();
+
+    let g = &mut rand::thread_rng();
+
+    let a0 = Tree::new(genesis);
+
+    // a0 <- a1 <- a2 *
+    let a1 = a0.next(g);
+    let a2 = a1.next(g);
+
+    cache.import_blocks(a0.branch([&a1, &a2])).unwrap();
+    assert_eq!(cache.tip().0, a2.hash);
+
+    // a0 <- a1 <- a2
+    //           \
+    //            <- b2 <- b3 *
+    let b2 = a1.next(g);
+    let b3 = b2.next(g);
+
+    cache.import_blocks(a0.branch([&b2, &b3])).unwrap();
+    assert_eq!(cache.tip().0, b3.hash);
+
+    // a0 <- a1 <- a2 <- a3 <- a4 *
+    //           \
+    //            <- b2 <- b3
+    let a3 = a2.next(g);
+    let a4 = a3.next(g);
+
+    cache.import_blocks(a0.branch([&a3, &a4])).unwrap();
+    assert_eq!(cache.tip().0, a4.hash);
+
+    // a0 <- a1 <- a2 <- a3 <- a4
+    //           \
+    //            <- b2 <- b3 <- b4 <- b5 *
+    let b4 = b3.next(g);
+    let b5 = b4.next(g);
+
+    cache.import_blocks(a1.branch([&b4, &b5])).unwrap();
+    assert_eq!(cache.tip().0, b5.hash);
+}
+
+#[test]
+fn test_cache_import_longer_chain_with_less_difficulty() {
+    // TODO
+}
+
+#[test]
+fn test_cache_import_equal_difficulty_blocks() {
+    // TODO
 }
 
 #[test]
