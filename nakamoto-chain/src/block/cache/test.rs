@@ -650,44 +650,38 @@ impl Arbitrary for Tree {
 
 impl std::fmt::Debug for Tree {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(fmt, "\n")?;
-
-        fn fmt_header(
-            fmt: &mut std::fmt::Formatter<'_>,
-            header: &BlockHeader,
-        ) -> Result<(), std::fmt::Error> {
-            writeln!(
-                fmt,
-                "{} {} time={:05} bits={:x} nonce={}",
-                header.bitcoin_hash(),
-                header.prev_blockhash,
-                header.time,
-                header.bits,
-                header.nonce
-            )
-        }
-
-        for header in self.headers() {
-            fmt_header(fmt, &header)?;
-        }
-        fmt_header(fmt, &self.genesis)?;
-
-        Ok(())
+        write!(fmt, "{} height={}", self.hash, self.height)
     }
+}
+
+#[quickcheck]
+fn prop_cache_import_tree(tree: Tree) -> bool {
+    let headers = tree.headers().collect::<Vec<_>>();
+
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+
+    let mut real = BlockCache::from(store, params).unwrap();
+    let mut model = Cache::new(genesis);
+
+    real.import_blocks(headers.iter().cloned()).unwrap();
+    model.import_blocks(headers.iter().cloned()).unwrap();
+
+    real.tip() == model.tip()
 }
 
 #[test]
 #[allow(unused_variables)]
 fn test_cache_import_unordered() {
-    let genesis = BlockHeader {
-        version: 1,
-        prev_blockhash: Default::default(),
-        merkle_root: Default::default(),
-        bits: BlockHeader::compact_target_from_u256(&TARGET),
-        nonce: 0,
-        time: 0,
-    };
-    let mut cache = Cache::new(genesis);
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let mut cache = BlockCache::from(store, params).unwrap();
+    let mut model = Cache::new(genesis);
+
     let g = &mut rand::thread_rng();
 
     let a0 = Tree::new(genesis);
@@ -698,7 +692,7 @@ fn test_cache_import_unordered() {
     let a3 = a2.next(g);
 
     cache.import_blocks(a1.headers()).unwrap();
-    assert_eq!(cache.tip, a3.hash);
+    assert_eq!(cache.tip().0, a3.hash, "{:#?}", cache);
 
     // a0 <- a1 <- a2 <- a3
     //                 \
@@ -707,7 +701,7 @@ fn test_cache_import_unordered() {
     let b4 = b3.next(g);
 
     cache.import_blocks(b3.headers()).unwrap();
-    assert_eq!(cache.tip, b4.hash);
+    assert_eq!(cache.tip().0, b4.hash, "{:#?}", cache);
 
     //            <- c2 <- c3 <- c4 <- c5 *
     //           /
@@ -720,7 +714,7 @@ fn test_cache_import_unordered() {
     let c5 = c4.next(g);
 
     cache.import_blocks(c2.headers()).unwrap();
-    assert_eq!(cache.tip, c5.hash);
+    assert_eq!(cache.tip().0, c5.hash, "{:#?}", cache);
 
     //                                <- d5 <- d6 *
     //                               /
@@ -747,9 +741,15 @@ fn test_cache_import_unordered() {
         headers.shuffle(&mut rng);
 
         cache.import_blocks(headers.iter().cloned()).unwrap();
-        assert_eq!(cache.tip, d6.hash);
+        assert_eq!(cache.tip().0, d6.hash);
+
+        model.import_blocks(headers.iter().cloned()).unwrap();
+        assert_eq!(model.tip().0, d6.hash);
 
         let actual = cache.chain().map(|h| h.bitcoin_hash()).collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+
+        let actual = model.chain().map(|h| h.bitcoin_hash()).collect::<Vec<_>>();
         assert_eq!(actual, expected);
     }
 }

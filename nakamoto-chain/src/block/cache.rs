@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub mod test;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -13,8 +13,16 @@ use nonempty::NonEmpty;
 use crate::block::store::Store;
 use crate::checkpoints;
 
-use crate::block::tree::{BlockTree, Error};
-use crate::block::{self, CachedBlock, Height, Time, Bits};
+use crate::block::tree::{BlockTree, Branch, Error};
+use crate::block::{self, Bits, CachedBlock, Height, Time};
+
+/// A chain candidate, forking off the active chain.
+#[derive(Debug)]
+struct Candidate {
+    headers: Vec<BlockHeader>,
+    fork_height: Height,
+    fork_hash: BlockHash,
+}
 
 /// An implementation of `BlockTree`.
 #[derive(Debug, Clone)]
@@ -30,7 +38,8 @@ pub struct BlockCache<S: Store> {
 impl<S: Store> BlockCache<S> {
     /// Create a new `BlockCache` from a `Store` and consensus parameters.
     pub fn from(store: S, params: Params) -> Result<Self, Error> {
-        // TODO: This should come from somewhere else.
+        // TODO: This should come from somewhere else. Also, it shouldn't
+        // be used for networks other than Mainnet.
         let checkpoints = checkpoints::checkpoints();
         let genesis = store.genesis()?;
         let length = store.len()?;
@@ -75,6 +84,7 @@ impl<S: Store> BlockCache<S> {
         let hash = header.bitcoin_hash();
         let tip = self.chain.last();
 
+        // Block extends the active chain.
         if header.prev_blockhash == tip.hash {
             let height = tip.height + 1;
             let bits = if self.params.allow_min_difficulty_blocks {
@@ -106,22 +116,79 @@ impl<S: Store> BlockCache<S> {
                     return Err(Error::InvalidBlockHash(hash, height));
                 }
             }
-
-            self.chain.push(CachedBlock {
+            self.extend_chain(CachedBlock {
                 height,
                 hash,
                 header,
             });
-            self.headers.insert(hash, height);
-
-            Ok((hash, self.height()))
         } else if self.headers.contains_key(&hash) {
-            Err(Error::DuplicateBlock(hash))
+            return Err(Error::DuplicateBlock(hash));
+        } else if self.orphans.contains_key(&hash) {
+            return Err(Error::DuplicateBlock(hash));
         } else {
-            if self.orphans.insert(hash, header).is_some() {
-                return Err(Error::DuplicateBlock(hash));
+            self.orphans.insert(hash, header);
+        }
+
+        let candidates = self.chain_candidates();
+
+        if candidates.is_empty()
+            && !self.headers.contains_key(&header.prev_blockhash)
+            && !self.orphans.contains_key(&header.prev_blockhash)
+        {
+            return Err(Error::BlockMissing(header.prev_blockhash));
+        }
+
+        // TODO(perf): Skip overlapping branches.
+        for branch in candidates.iter() {
+            let candidate_work = Branch(&branch.headers).work();
+            let main_work = Branch(self.chain_suffix(branch.fork_height)).work();
+
+            // TODO: Validate branch before switching to it.
+            if candidate_work > main_work {
+                self.rollback(branch.fork_height);
+
+                for (i, header) in branch.headers.iter().enumerate() {
+                    self.extend_chain(CachedBlock {
+                        height: branch.fork_height + i as Height + 1,
+                        hash: header.bitcoin_hash(),
+                        header: *header,
+                    });
+                }
+            } else if candidate_work == main_work {
+                // TODO: Discriminate based on hash?
             }
-            Err(Error::BlockMissing(header.prev_blockhash))
+        }
+        Ok((self.chain.last().hash, self.height()))
+    }
+
+    fn chain_candidates(&self) -> Vec<Candidate> {
+        let mut branches = Vec::new();
+
+        for tip in self.orphans.keys() {
+            if let Some(branch) = self.branch(tip) {
+                branches.push(branch);
+            }
+        }
+        branches
+    }
+
+    fn branch(&self, tip: &BlockHash) -> Option<Candidate> {
+        let mut headers = VecDeque::new();
+        let mut tip = *tip;
+
+        while let Some(header) = self.orphans.get(&tip) {
+            tip = header.prev_blockhash;
+            headers.push_front(*header);
+        }
+
+        if let Some(height) = self.headers.get(&tip) {
+            Some(Candidate {
+                fork_height: *height,
+                fork_hash: tip,
+                headers: headers.into(),
+            })
+        } else {
+            None
         }
     }
 
@@ -138,6 +205,28 @@ impl<S: Store> BlockCache<S> {
             }
         }
         bits
+    }
+
+    /// Rollback active chain to the given height.
+    fn rollback(&mut self, height: Height) {
+        for block in self.chain.tail.drain(height as usize..) {
+            self.headers.remove(&block.hash);
+            self.orphans.insert(block.hash, block.header);
+        }
+    }
+
+    /// Extend the active chain with a block.
+    fn extend_chain(&mut self, blk: CachedBlock) {
+        assert_eq!(blk.header.prev_blockhash, self.chain.last().hash);
+
+        self.headers.insert(blk.hash, blk.height);
+        self.orphans.remove(&blk.hash);
+        self.chain.push(blk);
+    }
+
+    // TODO: Doctest.
+    fn chain_suffix(&self, height: Height) -> &[CachedBlock] {
+        &self.chain.tail[height as usize..]
     }
 }
 
