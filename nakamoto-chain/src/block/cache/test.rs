@@ -530,18 +530,11 @@ fn prop_cache_import_ordered() {
         .quickcheck(prop as fn(arbitrary::OrderedHeaders) -> bool);
 }
 
-#[derive(Debug, Clone)]
-struct TreeHeader {
-    header: BlockHeader,
-    height: Height,
-}
-
 #[derive(Clone)]
 struct Tree {
-    headers: Arc<RwLock<HashMap<BlockHash, TreeHeader>>>,
+    headers: Arc<RwLock<HashMap<BlockHash, BlockHeader>>>,
     genesis: BlockHeader,
     hash: BlockHash,
-    height: Height,
     time: Time,
 }
 
@@ -553,14 +546,12 @@ impl Tree {
         Self {
             headers: Arc::new(RwLock::new(headers)),
             time: genesis.time,
-            height: 0,
             genesis,
             hash,
         }
     }
 
     fn next(&self, g: &mut impl Rng) -> Tree {
-        let height = self.height + 1;
         let nonce = g.gen::<u32>();
         let mut header = BlockHeader {
             version: 1,
@@ -573,14 +564,10 @@ impl Tree {
         self.solve(&mut header);
 
         let hash = header.bitcoin_hash();
-        self.headers
-            .write()
-            .unwrap()
-            .insert(hash, TreeHeader { header, height });
+        self.headers.write().unwrap().insert(hash, header);
 
         Tree {
             hash,
-            height,
             headers: self.headers.clone(),
             time: header.time,
             genesis: self.genesis,
@@ -590,27 +577,23 @@ impl Tree {
     fn sample<G: Gen>(&self, g: &mut G) -> Tree {
         let headers = self.headers.read().unwrap();
         let ix = g.gen_range(0, headers.len());
-        let theader = headers.values().nth(ix).unwrap();
+        let header = headers.values().nth(ix).unwrap();
 
         Tree {
-            height: theader.height,
-            hash: theader.header.bitcoin_hash(),
+            hash: header.bitcoin_hash(),
             headers: self.headers.clone(),
-            time: theader.header.time,
+            time: header.time,
             genesis: self.genesis,
         }
     }
 
-    fn headers(&self) -> impl Iterator<Item = BlockHeader> {
+    fn headers(&self) -> Vec<BlockHeader> {
         self.headers
             .read()
             .unwrap()
             .values()
-            .filter(|h| h.height >= self.height)
             .cloned()
-            .map(|h| h.header)
             .collect::<Vec<_>>()
-            .into_iter()
     }
 
     fn branch(&self, range: [&Tree; 2]) -> impl Iterator<Item = BlockHeader> {
@@ -620,12 +603,12 @@ impl Tree {
         let [from, to] = range;
         let mut tip = &to.hash;
 
-        while let Some(t) = headers.get(tip) {
-            blocks.push_front(t.header);
+        while let Some(h) = headers.get(tip) {
+            blocks.push_front(*h);
             if tip == &from.hash {
                 break;
             }
-            tip = &t.header.prev_blockhash;
+            tip = &h.prev_blockhash;
         }
 
         blocks.into_iter()
@@ -668,13 +651,13 @@ impl Arbitrary for Tree {
 
 impl std::fmt::Debug for Tree {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(fmt, "{} height={}", self.hash, self.height)
+        write!(fmt, "{}", self.hash)
     }
 }
 
 #[quickcheck]
 fn prop_cache_import_tree(tree: Tree) -> bool {
-    let headers = tree.headers().collect::<Vec<_>>();
+    let headers = tree.headers();
 
     let network = bitcoin::Network::Regtest;
     let genesis = constants::genesis_block(network).header;
@@ -766,7 +749,7 @@ fn test_cache_import_unordered() {
     let a2 = a1.next(g);
     let a3 = a2.next(g);
 
-    cache.import_blocks(a1.headers()).unwrap();
+    cache.import_blocks(a0.branch([&a1, &a3])).unwrap();
     assert_eq!(cache.tip().0, a3.hash, "{:#?}", cache);
 
     // a0 <- a1 <- a2 <- a3
@@ -775,7 +758,7 @@ fn test_cache_import_unordered() {
     let b3 = a2.next(g);
     let b4 = b3.next(g);
 
-    cache.import_blocks(b3.headers()).unwrap();
+    cache.import_blocks(a0.branch([&b3, &b4])).unwrap();
     assert_eq!(cache.tip().0, b4.hash, "{:#?}", cache);
 
     //            <- c2 <- c3 <- c4 <- c5 *
@@ -788,7 +771,7 @@ fn test_cache_import_unordered() {
     let c4 = c3.next(g);
     let c5 = c4.next(g);
 
-    cache.import_blocks(c2.headers()).unwrap();
+    cache.import_blocks(a0.branch([&c2, &c5])).unwrap();
     assert_eq!(cache.tip().0, c5.hash, "{:#?}", cache);
 
     //                                <- d5 <- d6 *
@@ -801,7 +784,7 @@ fn test_cache_import_unordered() {
     let d5 = c4.next(g);
     let d6 = d5.next(g);
 
-    let mut headers = a0.headers().collect::<Vec<_>>();
+    let mut headers = a0.headers();
     let mut rng = rand::thread_rng();
     let len = headers.len();
 
