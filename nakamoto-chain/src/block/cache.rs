@@ -6,6 +6,7 @@ use std::collections::{HashMap, VecDeque};
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::network::constants::Network;
 use bitcoin::util::hash::BitcoinHash;
 
 use nonempty::NonEmpty;
@@ -19,6 +20,7 @@ use crate::block::{self, Bits, CachedBlock, Height, Time};
 /// A chain candidate, forking off the active chain.
 #[derive(Debug)]
 struct Candidate {
+    tip: BlockHash,
     headers: Vec<BlockHeader>,
     fork_height: Height,
     fork_hash: BlockHash,
@@ -145,17 +147,18 @@ impl<S: Store> BlockCache<S> {
 
             // TODO: Validate branch before switching to it.
             if candidate_work > main_work {
-                self.rollback(branch.fork_height);
-
-                for (i, header) in branch.headers.iter().enumerate() {
-                    self.extend_chain(CachedBlock {
-                        height: branch.fork_height + i as Height + 1,
-                        hash: header.bitcoin_hash(),
-                        header: *header,
-                    });
+                self.switch_to_fork(branch);
+            } else if self.params.network != Network::Bitcoin {
+                if candidate_work == main_work {
+                    // Nb. We intend here to compare the hashes as integers, and pick the lowest
+                    // hash as the winner. However, the `PartialEq` on `BlockHash` is implemented on
+                    // the underlying `[u8]` array, and does something different (lexographical
+                    // comparison). Since this code isn't run on Mainnet, it's okay, as it serves
+                    // its purpose of being determinstic when choosing the active chain.
+                    if branch.tip < self.chain.last().hash {
+                        self.switch_to_fork(branch);
+                    }
                 }
-            } else if candidate_work == main_work {
-                // TODO: Discriminate based on hash?
             }
         }
         Ok((self.chain.last().hash, self.height()))
@@ -173,18 +176,21 @@ impl<S: Store> BlockCache<S> {
     }
 
     fn branch(&self, tip: &BlockHash) -> Option<Candidate> {
-        let mut headers = VecDeque::new();
-        let mut tip = *tip;
+        let tip = *tip;
 
-        while let Some(header) = self.orphans.get(&tip) {
-            tip = header.prev_blockhash;
+        let mut headers = VecDeque::new();
+        let mut cursor = tip;
+
+        while let Some(header) = self.orphans.get(&cursor) {
+            cursor = header.prev_blockhash;
             headers.push_front(*header);
         }
 
-        if let Some(height) = self.headers.get(&tip) {
+        if let Some(height) = self.headers.get(&cursor) {
             Some(Candidate {
+                tip,
                 fork_height: *height,
-                fork_hash: tip,
+                fork_hash: cursor,
                 headers: headers.into(),
             })
         } else {
@@ -212,6 +218,19 @@ impl<S: Store> BlockCache<S> {
         for block in self.chain.tail.drain(height as usize..) {
             self.headers.remove(&block.hash);
             self.orphans.insert(block.hash, block.header);
+        }
+    }
+
+    /// Activate a fork candidate.
+    fn switch_to_fork(&mut self, branch: &Candidate) {
+        self.rollback(branch.fork_height);
+
+        for (i, header) in branch.headers.iter().enumerate() {
+            self.extend_chain(CachedBlock {
+                height: branch.fork_height + i as Height + 1,
+                hash: header.bitcoin_hash(),
+                header: *header,
+            });
         }
     }
 

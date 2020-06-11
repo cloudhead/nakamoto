@@ -87,7 +87,19 @@ impl Cache {
 
         branches
             .into_iter()
-            .max_by(|a, b| Branch(&a.tail).work().cmp(&Branch(&b.tail).work()))
+            .max_by(|a, b| {
+                let a_work = Branch(&a.tail).work();
+                let b_work = Branch(&b.tail).work();
+
+                if a_work == b_work {
+                    let a_hash = a.last().bitcoin_hash();
+                    let b_hash = b.last().bitcoin_hash();
+
+                    b_hash.cmp(&a_hash)
+                } else {
+                    a_work.cmp(&b_work)
+                }
+            })
             .unwrap()
     }
 }
