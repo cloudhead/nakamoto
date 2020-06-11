@@ -544,7 +544,7 @@ fn prop_cache_import_ordered() {
 
 #[derive(Clone)]
 struct Tree {
-    headers: Arc<RwLock<HashMap<BlockHash, BlockHeader>>>,
+    headers: Arc<RwLock<BTreeMap<BlockHash, BlockHeader>>>,
     genesis: BlockHeader,
     hash: BlockHash,
     time: Time,
@@ -552,7 +552,7 @@ struct Tree {
 
 impl Tree {
     fn new(genesis: BlockHeader) -> Self {
-        let headers = HashMap::new();
+        let headers = BTreeMap::new();
         let hash = genesis.bitcoin_hash();
 
         Self {
@@ -659,11 +659,58 @@ impl Arbitrary for Tree {
 
         tree
     }
+
+    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+        let headers = self.headers.read().unwrap().clone();
+        let mut shrunk = Vec::new();
+
+        if headers.len() <= 1 {
+            return Box::new(std::iter::empty());
+        }
+
+        {
+            let mut headers = headers.clone();
+            if let Some(tip) = headers.remove(&self.hash) {
+                if let Some(prev) = headers.get(&tip.prev_blockhash) {
+                    shrunk.push(Self {
+                        time: prev.time,
+                        hash: tip.prev_blockhash,
+                        headers: Arc::new(RwLock::new(headers)),
+                        genesis: self.genesis,
+                    });
+                }
+            }
+        }
+
+        for i in 0..headers.len() {
+            if let Some(h) = headers.keys().nth(i) {
+                if h != &self.hash {
+                    let mut headers = headers.clone();
+                    headers.remove(h);
+
+                    shrunk.push(Self {
+                        time: self.time,
+                        hash: self.hash,
+                        headers: Arc::new(RwLock::new(headers)),
+                        genesis: self.genesis,
+                    });
+                }
+            }
+        }
+
+        Box::new(shrunk.into_iter())
+    }
 }
 
 impl std::fmt::Debug for Tree {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(fmt, "{}", self.hash)
+        write!(fmt, "\n")?;
+        writeln!(fmt, "hash: {:#?}", &self.hash)?;
+        writeln!(fmt, "genesis: {:#?}", &self.genesis)?;
+        writeln!(fmt, "time: {:#?}", &self.time)?;
+        writeln!(fmt, "headers: {:#?}", &self.headers())?;
+
+        Ok(())
     }
 }
 
