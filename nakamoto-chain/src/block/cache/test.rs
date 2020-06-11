@@ -780,12 +780,79 @@ fn test_cache_import_back_and_forth() {
 }
 
 #[test]
-fn test_cache_import_longer_chain_with_less_difficulty() {
-    // TODO
+fn test_cache_import_equal_difficulty_blocks() {
+    use bitcoin_hashes::hex::FromHex;
+    let mut headers = vec![
+        BlockHeader {
+            version: 1,
+            prev_blockhash: BlockHash::from_hex(
+                "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
+            )
+            .unwrap(),
+            merkle_root: Default::default(),
+            time: 1296688662,
+            bits: 545259519,
+            nonce: 3705677718,
+        },
+        BlockHeader {
+            version: 1,
+            prev_blockhash: BlockHash::from_hex(
+                "40e6856aba3aa0bab2ba97b5612dc22a485c3a583dc98a9f1cd1706dd858f623",
+            )
+            .unwrap(),
+            merkle_root: Default::default(),
+            time: 1296688722,
+            bits: 545259519,
+            nonce: 3581550584,
+        },
+        BlockHeader {
+            version: 1,
+            prev_blockhash: BlockHash::from_hex(
+                "40e6856aba3aa0bab2ba97b5612dc22a485c3a583dc98a9f1cd1706dd858f623",
+            )
+            .unwrap(),
+            merkle_root: Default::default(),
+            time: 1296688722,
+            bits: 545259519,
+            nonce: 3850925874,
+        },
+    ];
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+
+    let mut real = BlockCache::from(store.clone(), params.clone()).unwrap();
+    let mut model = Cache::new(genesis);
+
+    model.import_blocks(headers.iter().cloned()).unwrap();
+    real.import_blocks(headers.iter().cloned()).unwrap();
+
+    assert_eq!(real.tip(), model.tip());
+
+    let expected =
+        BlockHash::from_hex("79cdea612df7f65b541da8ff45913f472eb0bf9376e1b9e3cd2c6ce78f261954")
+            .unwrap();
+
+    assert_eq!(real.tip().0, expected);
+    assert_eq!(model.tip().0, expected);
+
+    // Swap the import order. Tip should be stable.
+
+    headers.swap(1, 2);
+
+    let mut real = BlockCache::from(store, params).unwrap();
+    let mut model = Cache::new(genesis);
+
+    model.import_blocks(headers.iter().cloned()).unwrap();
+    real.import_blocks(headers.iter().cloned()).unwrap();
+
+    assert_eq!(real.tip().0, expected);
+    assert_eq!(model.tip().0, expected);
 }
 
 #[test]
-fn test_cache_import_equal_difficulty_blocks() {
+fn test_cache_import_longer_chain_with_less_difficulty() {
     // TODO
 }
 
