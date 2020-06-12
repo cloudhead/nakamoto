@@ -608,6 +608,18 @@ impl Tree {
             .collect::<Vec<_>>()
     }
 
+    fn block(&self, tree: &Tree) -> BlockHeader {
+        if tree.hash == self.genesis.bitcoin_hash() {
+            return self.genesis;
+        }
+        self.headers
+            .read()
+            .unwrap()
+            .get(&tree.hash)
+            .cloned()
+            .unwrap()
+    }
+
     fn branch(&self, range: [&Tree; 2]) -> impl Iterator<Item = BlockHeader> {
         let headers = self.headers.read().unwrap();
         let mut blocks = VecDeque::new();
@@ -854,6 +866,57 @@ fn test_cache_import_equal_difficulty_blocks() {
 #[test]
 fn test_cache_import_longer_chain_with_less_difficulty() {
     // TODO
+}
+
+#[test]
+#[allow(unused_variables)]
+fn test_cache_import_duplicate() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let mut cache = BlockCache::from(store, params).unwrap();
+    let g = &mut rand::thread_rng();
+
+    let tree = Tree::new(genesis);
+    let a0 = tree.clone();
+
+    // a0 <- a1 <- a2 <- a3 *
+    let a1 = a0.next(g);
+    let a2 = a1.next(g);
+    let a3 = a2.next(g);
+
+    assert!(matches! {
+        cache.import_block(tree.block(&a1)), Ok(_)
+    });
+    assert!(matches! {
+        cache.import_block(tree.block(&a1)),
+        Err(Error::DuplicateBlock(h)) if h == a1.hash
+    });
+
+    assert!(matches! {
+        cache.import_block(tree.block(&a2)), Ok(_)
+    });
+    assert!(matches! {
+        cache.import_block(tree.block(&a2)), Err(Error::DuplicateBlock(_))
+    });
+
+    // a0 <- a1 <- a2 <- a3 *
+    //           \
+    //            <- b3
+    let b3 = a1.next(g);
+
+    assert!(matches! {
+        cache.import_block(tree.block(&b3)), Ok(_)
+    });
+    assert!(matches! {
+        cache.import_block(tree.block(&b3)),
+        Err(Error::DuplicateBlock(h)) if h == b3.hash
+    });
+    assert!(matches! {
+        cache.import_block(tree.block(&a0)),
+        Err(Error::DuplicateBlock(h)) if h == a0.hash
+    });
 }
 
 #[test]
