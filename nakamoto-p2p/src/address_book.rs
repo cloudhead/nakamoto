@@ -1,7 +1,9 @@
 //! Address book. Keeps track of known peers.
 use std::fmt;
-use std::io;
+use std::fs::File;
+use std::io::{self, prelude::*};
 use std::net;
+use std::path::Path;
 
 use crate::peer::Network;
 
@@ -35,5 +37,32 @@ impl AddressBook {
             }
             _ => todo!(),
         }
+    }
+
+    pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+        use std::io::BufReader;
+
+        let file = File::open(path)?;
+        let reader = BufReader::with_capacity(32, file);
+        let mut addrs = Vec::new();
+
+        for line in reader.lines() {
+            let line = line?;
+            let addr = line.parse().unwrap();
+
+            addrs.push(addr);
+        }
+
+        Ok(Self { addrs })
+    }
+
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
+        let mut f = File::create(path)?;
+
+        for addr in self.addrs.iter() {
+            writeln!(&mut f, "{}", addr)?;
+        }
+
+        Ok(())
     }
 }
