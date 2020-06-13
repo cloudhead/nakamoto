@@ -1,3 +1,4 @@
+pub mod address_book;
 pub mod error;
 pub mod peer;
 pub mod tcp;

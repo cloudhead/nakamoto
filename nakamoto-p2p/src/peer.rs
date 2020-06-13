@@ -57,6 +57,33 @@ impl From<Network> for bitcoin::Network {
 }
 
 impl Network {
+    pub fn port(&self) -> u16 {
+        match self {
+            Network::Mainnet => 8333,
+            Network::Testnet => 18333,
+            Network::Regtest => 18334,
+        }
+    }
+
+    /// DNS seeds. Used to bootstrap the client's address book.
+    pub fn seeds(&self) -> &[&str] {
+        match self {
+            Network::Mainnet => &[
+                "seed.bitcoin.sipa.be",          // Pieter Wuille
+                "dnsseed.bluematt.me",           // Matt Corallo
+                "dnsseed.bitcoin.dashjr.org",    // Luke Dashjr
+                "seed.bitcoinstats.com",         // Christian Decker
+                "seed.bitcoin.jonasschnelli.ch", // Jonas Schnelli
+                "seed.btc.petertodd.org",        // Peter Todd
+                "seed.bitcoin.sprovoost.nl",     // Sjors Provoost
+                "dnsseed.emzy.de",               // Stephan Oeste
+            ],
+            _ => &[],
+        }
+    }
+}
+
+impl Network {
     /// ```
     /// use nakamoto_p2p::peer::Network;
     /// use bitcoin::util::hash::BitcoinHash;
@@ -126,11 +153,7 @@ impl Default for Config {
 
 impl Config {
     pub fn port(&self) -> u16 {
-        match self.network {
-            Network::Mainnet => 8333,
-            Network::Testnet => 18333,
-            Network::Regtest => 18334,
-        }
+        self.network.port()
     }
 }
 
