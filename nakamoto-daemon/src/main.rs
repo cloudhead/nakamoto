@@ -2,6 +2,7 @@ use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_daemon::Options;
 use nakamoto_p2p as p2p;
+use nakamoto_p2p::address_book::AddressBook;
 
 use std::io;
 use std::path::Path;
@@ -73,10 +74,24 @@ fn main() {
     let block_cache = Arc::new(RwLock::new(cache));
     let mut net = p2p::Network::new(cfg, block_cache);
 
-    if opts.connect.is_empty() {
-        log::error!("at least one peer must be supplied using `--connect`");
-        process::exit(1);
-    }
+    let peers = if opts.connect.is_empty() {
+        match AddressBook::load("peers") {
+            Ok(peers) if peers.addrs.is_empty() => {
+                log::info!("Address book is empty. Trying DNS seeds..");
+                AddressBook::bootstrap(cfg.network).unwrap()
+            }
+            Ok(peers) => peers,
+            Err(err) => {
+                log::error!("Error loading address book: {}", err);
+                process::exit(1);
+            }
+        }
+    } else {
+        AddressBook::from(opts.connect.as_slice()).unwrap()
+    };
 
-    net.connect(opts.connect.as_slice()).unwrap();
+    log::info!("{} peer(s) found..", peers.addrs.len());
+    log::debug!("{:?}", peers.addrs);
+
+    net.connect(peers).unwrap();
 }

@@ -7,6 +7,7 @@ use std::thread;
 
 use log::*;
 
+use crate::address_book::AddressBook;
 use crate::{error, peer};
 use crate::{Network, Peer, Peers};
 
@@ -55,11 +56,11 @@ impl Peer<net::TcpStream> {
 }
 
 impl<S: Store + Sync + Send + 'static> Network<S, net::TcpStream> {
-    pub fn connect(&mut self, addrs: &[net::SocketAddr]) -> Result<Vec<()>, error::Error> {
+    pub fn connect(&mut self, peers: AddressBook) -> Result<Vec<()>, error::Error> {
         let (tx, rx) = mpsc::channel();
-        let mut spawned = Vec::with_capacity(addrs.len());
+        let mut spawned = Vec::with_capacity(peers.addrs.len());
 
-        for addr in addrs.iter() {
+        for addr in peers.addrs.iter() {
             let cache = self.block_cache.clone();
             let config = self.peer_config.clone();
             let peers = self.peers.clone();

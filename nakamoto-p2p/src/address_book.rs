@@ -43,13 +43,23 @@ impl AddressBook {
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         use std::io::BufReader;
 
-        let file = File::open(path)?;
-        let reader = BufReader::with_capacity(32, file);
         let mut addrs = Vec::new();
+
+        let file = match File::open(path) {
+            Ok(f) => f,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                return Ok(Self { addrs });
+            }
+            Err(err) => return Err(err),
+        };
+
+        let reader = BufReader::with_capacity(32, file);
 
         for line in reader.lines() {
             let line = line?;
-            let addr = line.parse().unwrap();
+            let addr = line.parse().map_err(|err: net::AddrParseError| {
+                io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+            })?;
 
             addrs.push(addr);
         }
@@ -77,7 +87,8 @@ mod test {
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("address-book");
 
-        assert!(AddressBook::load(&path).is_err());
+        let book = AddressBook::load(&path).unwrap();
+        assert!(book.addrs.is_empty());
 
         let book = AddressBook::from(&[
             ("143.25.122.51", 8333),
