@@ -650,8 +650,8 @@ impl Arbitrary for Tree {
     fn arbitrary<G: Gen>(g: &mut G) -> Tree {
         let network = bitcoin::Network::Regtest;
         let genesis = constants::genesis_block(network).header;
-        let height = g.gen_range(1, g.size() + 1);
-        let forks = g.gen_range(0, usize::min(g.size(), 8));
+        let height = g.gen_range(1, g.size() / 5 + 1);
+        let forks = g.gen_range(0, g.size() / 10);
 
         let mut tree = Tree::new(genesis);
 
@@ -662,7 +662,7 @@ impl Arbitrary for Tree {
         // Generate forks.
         for _ in 0..forks {
             let mut fork = tree.sample(g);
-            let height = g.gen_range(1, g.size() + 1);
+            let height = g.gen_range(1, g.size() / 5 + 1);
 
             for _ in 0..height {
                 fork = fork.next(g);
