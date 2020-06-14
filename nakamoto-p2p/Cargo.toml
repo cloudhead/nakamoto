@@ -11,3 +11,6 @@ thiserror = "1.0"
 bitcoin_hashes = "0.7.6"
 nakamoto-chain = { path = "../nakamoto-chain" }
 fastrand = "1.1"
+
+[dev-dependencies]
+tempfile = "3"

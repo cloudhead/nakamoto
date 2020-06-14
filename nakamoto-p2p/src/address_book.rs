@@ -7,6 +7,7 @@ use std::path::Path;
 
 use crate::peer::Network;
 
+#[derive(Debug, PartialEq)]
 pub struct AddressBook {
     pub addrs: Vec<net::SocketAddr>,
 }
@@ -64,5 +65,29 @@ impl AddressBook {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_save_and_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("address-book");
+
+        assert!(AddressBook::load(&path).is_err());
+
+        let book = AddressBook::from(&[
+            ("143.25.122.51", 8333),
+            ("231.45.72.2", 8334),
+            ("113.98.77.4", 8333),
+        ])
+        .unwrap();
+
+        book.save(&path).unwrap();
+
+        assert_eq!(AddressBook::load(&path).unwrap(), book);
     }
 }
