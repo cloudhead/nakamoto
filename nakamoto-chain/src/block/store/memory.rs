@@ -17,7 +17,7 @@ impl Memory {
 impl Store for Memory {
     /// Get the genesis block.
     fn genesis(&self) -> Result<BlockHeader, Error> {
-        Ok(self.0.first().clone())
+        Ok(*self.0.first())
     }
 
     /// Append a batch of consecutive block headers to the end of the chain.
@@ -29,7 +29,7 @@ impl Store for Memory {
     /// Get the block at the given height.
     fn get(&self, height: Height) -> Result<BlockHeader, Error> {
         match self.0.get(height as usize) {
-            Some(header) => Ok(header.clone()),
+            Some(header) => Ok(*header),
             None => Err(Error::Io(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "unexpected end of file",
