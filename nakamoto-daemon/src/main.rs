@@ -76,7 +76,7 @@ fn main() {
 
     let peers = if opts.connect.is_empty() {
         match AddressBook::load("peers") {
-            Ok(peers) if peers.addrs.is_empty() => {
+            Ok(peers) if peers.is_empty() => {
                 log::info!("Address book is empty. Trying DNS seeds..");
                 AddressBook::bootstrap(cfg.network).unwrap()
             }
@@ -90,8 +90,8 @@ fn main() {
         AddressBook::from(opts.connect.as_slice()).unwrap()
     };
 
-    log::info!("{} peer(s) found..", peers.addrs.len());
-    log::debug!("{:?}", peers.addrs);
+    log::info!("{} peer(s) found..", peers.len());
+    log::debug!("{:?}", peers);
 
     net.connect(peers).unwrap();
 }

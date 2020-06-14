@@ -58,9 +58,9 @@ impl Peer<net::TcpStream> {
 impl<S: Store + Sync + Send + 'static> Network<S, net::TcpStream> {
     pub fn connect(&mut self, peers: AddressBook) -> Result<Vec<()>, error::Error> {
         let (tx, rx) = mpsc::channel();
-        let mut spawned = Vec::with_capacity(peers.addrs.len());
+        let mut spawned = Vec::with_capacity(peers.len());
 
-        for addr in peers.addrs.iter() {
+        for addr in peers.iter() {
             let cache = self.block_cache.clone();
             let config = self.peer_config.clone();
             let peers = self.peers.clone();

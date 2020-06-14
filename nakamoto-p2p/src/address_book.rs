@@ -3,13 +3,14 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, prelude::*};
 use std::net;
+use std::ops::Deref;
 use std::path::Path;
 
 use crate::peer::Network;
 
 #[derive(Debug, PartialEq)]
 pub struct AddressBook {
-    pub addrs: Vec<net::SocketAddr>,
+    addrs: Vec<net::SocketAddr>,
 }
 
 impl AddressBook {
@@ -75,6 +76,14 @@ impl AddressBook {
         }
 
         Ok(())
+    }
+}
+
+impl Deref for AddressBook {
+    type Target = Vec<net::SocketAddr>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.addrs
     }
 }
 
