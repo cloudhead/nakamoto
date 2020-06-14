@@ -37,6 +37,7 @@ fn get<S: Seek + Read>(mut stream: S, height: Height) -> Result<BlockHeader, Err
 }
 
 /// An iterator over block headers in a file.
+#[derive(Debug)]
 pub struct Iter {
     height: Height,
     file: fs::File,

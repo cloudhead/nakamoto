@@ -22,7 +22,7 @@ pub type Height = u64;
 /// Block timestamp.
 pub type Time = u32;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct CachedBlock {
     height: Height,
     hash: BlockHash,
