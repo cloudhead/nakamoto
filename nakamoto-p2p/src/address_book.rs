@@ -18,7 +18,7 @@ impl AddressBook {
         let addrs = seeds
             .iter()
             .flat_map(|seed| match seed.to_socket_addrs() {
-                Ok(addrs) => addrs.into_iter().map(Ok).collect(),
+                Ok(addrs) => addrs.map(Ok).collect(),
                 Err(err) => vec![Err(err)],
             })
             .collect::<io::Result<_>>()?;

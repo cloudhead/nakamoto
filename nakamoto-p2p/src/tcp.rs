@@ -62,9 +62,9 @@ impl<S: Store + Sync + Send + 'static> Network<S, net::TcpStream> {
 
         for addr in peers.iter() {
             let cache = self.block_cache.clone();
-            let config = self.peer_config.clone();
+            let config = self.peer_config;
             let peers = self.peers.clone();
-            let addr = addr.clone();
+            let addr = *addr;
             let tx = tx.clone();
 
             let handle = thread::Builder::new()

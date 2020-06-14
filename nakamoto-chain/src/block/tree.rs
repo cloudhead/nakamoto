@@ -98,7 +98,7 @@ pub trait BlockTree {
             last_height.saturating_sub(params.difficulty_adjustment_interval() - 1);
         let last_adjustment_block = self
             .get_block_by_height(last_adjustment_height)
-            .unwrap_or(self.genesis());
+            .unwrap_or_else(|| self.genesis());
         let last_adjustment_time = last_adjustment_block.time;
 
         if params.no_pow_retargeting {

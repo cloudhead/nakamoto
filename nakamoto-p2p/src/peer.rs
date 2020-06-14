@@ -25,7 +25,7 @@ use crate::error::Error;
 /// Peer-to-peer protocol version.
 pub const PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
-pub const USER_AGENT: &'static str = "/nakamoto:0.0.0/";
+pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
 /// Maximum peer-to-peer message size.
 pub const MAX_MESSAGE_SIZE: usize = 6 * 1024;
 /// Duration of inactivity before timing out a peer.

@@ -123,9 +123,7 @@ impl<S: Store> BlockCache<S> {
                 hash,
                 header,
             });
-        } else if self.headers.contains_key(&hash) {
-            return Err(Error::DuplicateBlock(hash));
-        } else if self.orphans.contains_key(&hash) {
+        } else if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
             return Err(Error::DuplicateBlock(hash));
         } else {
             self.orphans.insert(hash, header);
