@@ -608,14 +608,14 @@ impl Tree {
             .collect::<Vec<_>>()
     }
 
-    fn block(&self, tree: &Tree) -> BlockHeader {
-        if tree.hash == self.genesis.bitcoin_hash() {
+    fn block(&self) -> BlockHeader {
+        if self.hash == self.genesis.bitcoin_hash() {
             return self.genesis;
         }
         self.headers
             .read()
             .unwrap()
-            .get(&tree.hash)
+            .get(&self.hash)
             .cloned()
             .unwrap()
     }
@@ -896,7 +896,7 @@ fn test_cache_import_with_checkpoints() {
         BlockCache::from(store.clone(), params.clone(), &[(1, Default::default())]).unwrap();
     assert!(
         matches! {
-            cache.import_block(tree.block(&a1)),
+            cache.import_block(a1.block()),
             Err(Error::InvalidBlockHash(hash, 1)) if hash == a1.hash
         },
         "An incorrect checkpoint at height 1 causes an error"
@@ -941,14 +941,14 @@ fn test_cache_import_fork_with_checkpoints() {
 
     assert!(
         matches! {
-            cache.import_block(a0.block(&b1)),
+            cache.import_block(b1.block()),
             Err(Error::InvalidBlockHeight(1))
         },
         "Can't fork passed the last checkpoint"
     );
     assert!(
         matches! {
-            cache.import_block(a0.block(&c2)),
+            cache.import_block(c2.block()),
             Err(Error::InvalidBlockHeight(2))
         },
         "Can't fork passed the last checkpoint"
@@ -1001,18 +1001,18 @@ fn test_cache_import_duplicate() {
     let a3 = a2.next(g);
 
     assert!(matches! {
-        cache.import_block(tree.block(&a1)), Ok(_)
+        cache.import_block(a1.block()), Ok(_)
     });
     assert!(matches! {
-        cache.import_block(tree.block(&a1)),
+        cache.import_block(a1.block()),
         Err(Error::DuplicateBlock(h)) if h == a1.hash
     });
 
     assert!(matches! {
-        cache.import_block(tree.block(&a2)), Ok(_)
+        cache.import_block(a2.block()), Ok(_)
     });
     assert!(matches! {
-        cache.import_block(tree.block(&a2)), Err(Error::DuplicateBlock(_))
+        cache.import_block(a2.block()), Err(Error::DuplicateBlock(_))
     });
 
     // a0 <- a1 <- a2 <- a3 *
@@ -1021,14 +1021,14 @@ fn test_cache_import_duplicate() {
     let b3 = a1.next(g);
 
     assert!(matches! {
-        cache.import_block(tree.block(&b3)), Ok(_)
+        cache.import_block(b3.block()), Ok(_)
     });
     assert!(matches! {
-        cache.import_block(tree.block(&b3)),
+        cache.import_block(b3.block()),
         Err(Error::DuplicateBlock(h)) if h == b3.hash
     });
     assert!(matches! {
-        cache.import_block(tree.block(&a0)),
+        cache.import_block(a0.block()),
         Err(Error::DuplicateBlock(h)) if h == a0.hash
     });
 }
