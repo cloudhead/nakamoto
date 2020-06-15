@@ -70,7 +70,8 @@ pub fn run(opts: Options) -> Result<(), Error> {
     };
     log::info!("Loading blocks from store..");
 
-    let cache = BlockCache::from(store, params)?;
+    let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
+    let cache = BlockCache::from(store, params, &checkpoints)?;
     let block_cache = Arc::new(RwLock::new(cache));
     let mut net = p2p::Network::new(cfg, block_cache);
 

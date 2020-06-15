@@ -16,6 +16,7 @@ use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
 use bitcoin::util::hash::BitcoinHash;
+use bitcoin_hashes::hex::FromHex;
 
 use bitcoin_hashes::sha256d;
 use nakamoto_chain::block::{tree::BlockTree, Height};
@@ -63,6 +64,25 @@ impl Network {
             Network::Testnet => 18333,
             Network::Regtest => 18334,
         }
+    }
+
+    /// Blockchain checkpoints.
+    pub fn checkpoints(&self) -> Box<dyn Iterator<Item = (Height, BlockHash)>> {
+        use crate::checkpoints;
+
+        let iter = match self {
+            Network::Mainnet => &checkpoints::MAINNET,
+            Network::Testnet => &checkpoints::TESTNET,
+            Network::Regtest => &checkpoints::REGTEST,
+        }
+        .iter()
+        .cloned()
+        .map(|(height, hash)| {
+            let hash = BlockHash::from_hex(hash).unwrap();
+            (height, hash)
+        });
+
+        Box::new(iter)
     }
 
     /// DNS seeds. Used to bootstrap the client's address book.

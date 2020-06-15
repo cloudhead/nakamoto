@@ -12,7 +12,6 @@ use bitcoin::util::hash::BitcoinHash;
 use nonempty::NonEmpty;
 
 use crate::block::store::Store;
-use crate::checkpoints;
 
 use crate::block::tree::{BlockTree, Branch, Error};
 use crate::block::{self, Bits, CachedBlock, Height, Time};
@@ -38,14 +37,16 @@ pub struct BlockCache<S: Store> {
 }
 
 impl<S: Store> BlockCache<S> {
-    /// Create a new `BlockCache` from a `Store` and consensus parameters.
-    pub fn from(store: S, params: Params) -> Result<Self, Error> {
-        // TODO: This should come from somewhere else. Also, it shouldn't
-        // be used for networks other than Mainnet.
-        let checkpoints = checkpoints::checkpoints();
+    /// Create a new `BlockCache` from a `Store`, consensus parameters, and checkpoints.
+    pub fn from(
+        store: S,
+        params: Params,
+        checkpoints: &[(Height, BlockHash)],
+    ) -> Result<Self, Error> {
         let genesis = store.genesis()?;
         let length = store.len()?;
         let orphans = HashMap::new();
+        let checkpoints = checkpoints.iter().cloned().collect();
 
         let mut chain = NonEmpty::from((
             CachedBlock {

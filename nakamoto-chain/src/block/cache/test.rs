@@ -398,7 +398,7 @@ impl Arbitrary for BlockImport {
         let genesis = constants::genesis_block(network).header;
         let params = Params::new(network);
         let store = store::Memory::new(NonEmpty::new(genesis));
-        let cache = BlockCache::from(store, params).unwrap();
+        let cache = BlockCache::from(store, params, &[]).unwrap();
         let header = arbitrary_header(genesis.bitcoin_hash(), genesis.time, &genesis.target(), g);
 
         cache
@@ -507,7 +507,7 @@ fn test_from_store() {
     let network = bitcoin::Network::Bitcoin;
     let params = Params::new(network);
 
-    let cache = BlockCache::from(store, params).unwrap();
+    let cache = BlockCache::from(store, params, &[]).unwrap();
     let cache_headers = cache.iter().collect::<Vec<_>>();
 
     assert_eq!(store_headers.len(), cache_headers.len());
@@ -735,7 +735,7 @@ fn prop_cache_import_tree(tree: Tree) -> bool {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
 
-    let mut real = BlockCache::from(store, params).unwrap();
+    let mut real = BlockCache::from(store, params, &[]).unwrap();
     let mut model = Cache::new(genesis);
 
     real.import_blocks(headers.iter().cloned()).unwrap();
@@ -750,7 +750,7 @@ fn test_cache_import_back_and_forth() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let mut cache = BlockCache::from(store, params).unwrap();
+    let mut cache = BlockCache::from(store, params, &[]).unwrap();
 
     let g = &mut rand::thread_rng();
 
@@ -834,7 +834,7 @@ fn test_cache_import_equal_difficulty_blocks() {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
 
-    let mut real = BlockCache::from(store.clone(), params.clone()).unwrap();
+    let mut real = BlockCache::from(store.clone(), params.clone(), &[]).unwrap();
     let mut model = Cache::new(genesis);
 
     model.import_blocks(headers.iter().cloned()).unwrap();
@@ -853,7 +853,7 @@ fn test_cache_import_equal_difficulty_blocks() {
 
     headers.swap(1, 2);
 
-    let mut real = BlockCache::from(store, params).unwrap();
+    let mut real = BlockCache::from(store, params, &[]).unwrap();
     let mut model = Cache::new(genesis);
 
     model.import_blocks(headers.iter().cloned()).unwrap();
@@ -875,7 +875,7 @@ fn test_cache_import_duplicate() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let mut cache = BlockCache::from(store, params).unwrap();
+    let mut cache = BlockCache::from(store, params, &[]).unwrap();
     let g = &mut rand::thread_rng();
 
     let tree = Tree::new(genesis);
@@ -926,7 +926,7 @@ fn test_cache_import_unordered() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let mut cache = BlockCache::from(store, params).unwrap();
+    let mut cache = BlockCache::from(store, params, &[]).unwrap();
     let mut model = Cache::new(genesis);
 
     let g = &mut rand::thread_rng();
