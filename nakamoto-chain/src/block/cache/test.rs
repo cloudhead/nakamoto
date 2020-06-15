@@ -910,6 +910,79 @@ fn test_cache_import_with_checkpoints() {
 }
 
 #[test]
+fn test_cache_import_fork_with_checkpoints() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let g = &mut rand::thread_rng();
+
+    let a0 = Tree::new(genesis);
+
+    // a0 <- a1 <- [a2] <- a3 *
+    let a1 = a0.next(g);
+    let a2 = a1.next(g);
+    let a3 = a2.next(g);
+
+    // Prevent block `a2` from being reverted.
+    let checkpoints = &[(0, genesis.bitcoin_hash()), (2, a2.hash)];
+    let mut cache = BlockCache::from(store, params, checkpoints).unwrap();
+
+    cache.import_blocks(a0.branch([&a1, &a3])).unwrap();
+    assert_eq!(cache.tip().0, a3.hash, "{:#?}", cache);
+
+    //            <- c2
+    //           /
+    // a0 <- a1 <- [a2] <- a3 *
+    //    \
+    //     <- b1
+    let b1 = a0.next(g);
+    let c2 = a1.next(g);
+
+    assert!(
+        matches! {
+            cache.import_block(a0.block(&b1)),
+            Err(Error::InvalidBlockHeight(1))
+        },
+        "Can't fork passed the last checkpoint"
+    );
+    assert!(
+        matches! {
+            cache.import_block(a0.block(&c2)),
+            Err(Error::InvalidBlockHeight(2))
+        },
+        "Can't fork passed the last checkpoint"
+    );
+
+    //            <- c2 <- c3 <- c4
+    //           /
+    // a0 <- a1 <- [a2] <- a3 *
+    let c3 = c2.next(g);
+    let c4 = c3.next(g);
+
+    // Import more blocks starting from before the last checkpoint.
+    cache.import_blocks(a0.branch([&c3, &c4])).unwrap();
+    assert_eq!(
+        cache.tip().0,
+        a3.hash,
+        "We can import a longer chain, but it won't overtake the main chain"
+    );
+
+    // a0 <- a1 <- [a2] <- a3
+    //                  \
+    //                   <- b3 <- b4 *
+    let b3 = a2.next(g);
+    let b4 = b3.next(g);
+
+    cache.import_blocks(a0.branch([&b3, &b4])).unwrap();
+    assert_eq!(
+        cache.tip().0,
+        b4.hash,
+        "Forking after the last checkpoint is fine"
+    );
+}
+
+#[test]
 #[allow(unused_variables)]
 fn test_cache_import_duplicate() {
     let network = bitcoin::Network::Regtest;

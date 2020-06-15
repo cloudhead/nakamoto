@@ -1,7 +1,7 @@
 #[cfg(test)]
 pub mod test;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -31,7 +31,7 @@ pub struct BlockCache<S: Store> {
     chain: NonEmpty<CachedBlock>,
     headers: HashMap<BlockHash, Height>,
     orphans: HashMap<BlockHash, BlockHeader>,
-    checkpoints: HashMap<Height, BlockHash>,
+    checkpoints: BTreeMap<Height, BlockHash>,
     params: Params,
     store: S,
 }
@@ -127,6 +127,14 @@ impl<S: Store> BlockCache<S> {
         } else if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
             return Err(Error::DuplicateBlock(hash));
         } else {
+            if let Some(height) = self.headers.get(&header.prev_blockhash) {
+                // Don't accept any forks from the main chain, prior to the last checkpoint.
+                if *height < self.last_checkpoint() {
+                    return Err(Error::InvalidBlockHeight(*height + 1));
+                }
+            }
+            // TODO: The orphan set can grow indefinitely. We should at least validate the
+            // PoW to ensure cheap attacks aren't possible.
             self.orphans.insert(hash, header);
         }
 
@@ -186,15 +194,23 @@ impl<S: Store> BlockCache<S> {
         }
 
         if let Some(height) = self.headers.get(&cursor) {
-            Some(Candidate {
+            return Some(Candidate {
                 tip,
                 fork_height: *height,
                 fork_hash: cursor,
                 headers: headers.into(),
-            })
-        } else {
-            None
+            });
         }
+        None
+    }
+
+    fn last_checkpoint(&self) -> Height {
+        self.checkpoints
+            .iter()
+            .rev()
+            .next()
+            .map(|(height, _)| *height)
+            .unwrap_or(0)
     }
 
     fn next_min_difficulty_target(&self, last_bits: Bits, params: &Params) -> Bits {

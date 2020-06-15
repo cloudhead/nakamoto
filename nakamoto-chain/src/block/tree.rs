@@ -16,6 +16,8 @@ pub enum Error {
     InvalidBlockTarget(Target, Target),
     #[error("invalid checkpoint block hash {0} at height {1}")]
     InvalidBlockHash(BlockHash, Height),
+    #[error("block height {0} is prior to last checkpoint")]
+    InvalidBlockHeight(Height),
     #[error("duplicate block {0}")]
     DuplicateBlock(BlockHash),
     #[error("invalid chain")]
