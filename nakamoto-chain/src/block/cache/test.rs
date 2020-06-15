@@ -869,6 +869,47 @@ fn test_cache_import_longer_chain_with_less_difficulty() {
 }
 
 #[test]
+fn test_cache_import_with_checkpoints() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let g = &mut rand::thread_rng();
+
+    let tree = Tree::new(genesis);
+
+    // a0 <- a1 <- a2 <- a3 *
+    let a1 = tree.next(g);
+    let a2 = a1.next(g);
+    let a3 = a2.next(g);
+
+    let mut cache = BlockCache::from(store.clone(), params.clone(), &[]).unwrap();
+    cache.import_blocks(tree.branch([&a1, &a3])).unwrap();
+
+    let mut cache =
+        BlockCache::from(store.clone(), params.clone(), &[(32, Default::default())]).unwrap();
+    cache
+        .import_blocks(tree.branch([&a1, &a3]))
+        .expect("A checkpoint in the future cannot cause any error");
+
+    let mut cache =
+        BlockCache::from(store.clone(), params.clone(), &[(1, Default::default())]).unwrap();
+    assert!(
+        matches! {
+            cache.import_block(tree.block(&a1)),
+            Err(Error::InvalidBlockHash(hash, 1)) if hash == a1.hash
+        },
+        "An incorrect checkpoint at height 1 causes an error"
+    );
+
+    let mut cache =
+        BlockCache::from(store.clone(), params.clone(), &[(1, a1.hash), (2, a2.hash)]).unwrap();
+    cache
+        .import_blocks(tree.branch([&a1, &a2]))
+        .expect("Correct checkpoints cause no error");
+}
+
+#[test]
 #[allow(unused_variables)]
 fn test_cache_import_duplicate() {
     let network = bitcoin::Network::Regtest;
