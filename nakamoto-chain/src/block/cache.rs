@@ -119,11 +119,7 @@ impl<S: Store> BlockCache<S> {
                     return Err(Error::InvalidBlockHash(hash, height));
                 }
             }
-            self.extend_chain(CachedBlock {
-                height,
-                hash,
-                header,
-            });
+            self.extend_chain(height, hash, header);
         } else if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
             return Err(Error::DuplicateBlock(hash));
         } else {
@@ -241,21 +237,25 @@ impl<S: Store> BlockCache<S> {
         self.rollback(branch.fork_height);
 
         for (i, header) in branch.headers.iter().enumerate() {
-            self.extend_chain(CachedBlock {
-                height: branch.fork_height + i as Height + 1,
-                hash: header.bitcoin_hash(),
-                header: *header,
-            });
+            self.extend_chain(
+                branch.fork_height + i as Height + 1,
+                header.bitcoin_hash(),
+                *header,
+            );
         }
     }
 
     /// Extend the active chain with a block.
-    fn extend_chain(&mut self, blk: CachedBlock) {
-        assert_eq!(blk.header.prev_blockhash, self.chain.last().hash);
+    fn extend_chain(&mut self, height: Height, hash: BlockHash, header: BlockHeader) {
+        assert_eq!(header.prev_blockhash, self.chain.last().hash);
 
-        self.headers.insert(blk.hash, blk.height);
-        self.orphans.remove(&blk.hash);
-        self.chain.push(blk);
+        self.headers.insert(hash, height);
+        self.orphans.remove(&hash);
+        self.chain.push(CachedBlock {
+            height,
+            hash,
+            header,
+        });
     }
 
     // TODO: Doctest.
