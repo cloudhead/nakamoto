@@ -7,7 +7,7 @@ use argh::FromArgs;
 
 use nakamoto_chain as chain;
 use nakamoto_chain::block::cache::BlockCache;
-use nakamoto_chain::block::store;
+use nakamoto_chain::block::store::{self, Store};
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
 
@@ -23,6 +23,8 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error("Error loading address book: {0}")]
     AddressBook(io::Error),
+    #[error(transparent)]
+    BlockStore(#[from] store::Error),
 }
 
 #[derive(FromArgs)]
@@ -57,7 +59,7 @@ pub fn run(opts: Options) -> Result<(), Error> {
     log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
 
     let path = Path::new("headers.db");
-    let store = match store::File::create(path, genesis) {
+    let mut store = match store::File::create(path, genesis) {
         Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
             log::info!("Found existing store {:?}", path);
             store::File::open(path)?
@@ -69,6 +71,11 @@ pub fn run(opts: Options) -> Result<(), Error> {
         }
     };
     log::info!("Loading blocks from store..");
+
+    if store.check().is_err() {
+        log::warn!("Corruption detected in store, healing..");
+        store.heal()?;
+    }
 
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
     let cache = BlockCache::from(store, params, &checkpoints)?;

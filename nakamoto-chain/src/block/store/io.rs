@@ -142,12 +142,32 @@ impl Store for File {
         }
         Ok(len as usize / HEADER_SIZE)
     }
+
+    /// Check the file store integrity.
+    fn check(&self) -> Result<(), Error> {
+        self.len().map(|_| ())
+    }
+
+    /// Attempt to heal data corruption.
+    fn heal(&mut self) -> Result<(), Error> {
+        let meta = self.file.metadata()?;
+        let len = meta.len();
+
+        assert!(len <= usize::MAX as u64);
+
+        let extraneous = len as usize % HEADER_SIZE;
+        if extraneous != 0 {
+            self.file.set_len(len - extraneous as u64)?;
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{BlockHeader, File, Height, Store};
-    use std::iter;
+    use super::{BlockHeader, Error, File, Height, Store};
+    use std::{io, iter};
 
     #[test]
     fn test_put_get() {
@@ -272,5 +292,68 @@ mod test {
 
             assert_eq!(header, headers[height as usize]);
         }
+    }
+
+    #[test]
+    fn test_corrupt_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut store = File::open(tmp.path().join("headers.db")).unwrap();
+
+        store.check().expect("checking always works");
+        store.heal().expect("healing when there is no corruption");
+
+        let headers = &[
+            BlockHeader {
+                version: 1,
+                prev_blockhash: Default::default(),
+                merkle_root: Default::default(),
+                bits: 0x2ffffff,
+                time: 1842918273,
+                nonce: 312143,
+            },
+            BlockHeader {
+                version: 1,
+                prev_blockhash: Default::default(),
+                merkle_root: Default::default(),
+                bits: 0x1ffffff,
+                time: 1842918920,
+                nonce: 913716378,
+            },
+        ];
+        store.put(headers.iter().cloned()).unwrap();
+        store.check().unwrap();
+
+        assert_eq!(store.len().unwrap(), 2);
+
+        // Intentionally corrupt the file, by truncating it by 32 bytes.
+        store
+            .file
+            .set_len(headers.len() as u64 * super::HEADER_SIZE as u64 - 32)
+            .unwrap();
+
+        assert_eq!(
+            store.get(0).unwrap(),
+            headers[0],
+            "the first header is intact"
+        );
+
+        matches! {
+            store
+                .get(1)
+                .expect_err("the second header has been corrupted"),
+            Error::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof
+        };
+
+        store.len().expect_err("data is corrupted");
+        store.check().expect_err("data is corrupted");
+
+        store.heal().unwrap();
+        store.check().unwrap();
+
+        assert_eq!(
+            store.len().unwrap(),
+            1,
+            "the last (corrupted) header was removed"
+        );
     }
 }

@@ -66,4 +66,14 @@ impl Store for Memory {
     fn len(&self) -> Result<usize, Error> {
         Ok(self.0.len())
     }
+
+    /// Check data integrity.
+    fn check(&self) -> Result<(), Error> {
+        Ok(())
+    }
+
+    /// Heal data corruption.
+    fn heal(&mut self) -> Result<(), Error> {
+        Ok(())
+    }
 }

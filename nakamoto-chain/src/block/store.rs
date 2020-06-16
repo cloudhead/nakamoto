@@ -39,4 +39,8 @@ pub trait Store {
     fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>>;
     /// Return the number of headers in the store.
     fn len(&self) -> Result<usize, Error>;
+    /// Check the store integrity.
+    fn check(&self) -> Result<(), Error>;
+    /// Heal data corruption.
+    fn heal(&mut self) -> Result<(), Error>;
 }
