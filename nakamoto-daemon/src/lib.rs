@@ -74,7 +74,14 @@ pub fn run(opts: Options) -> Result<(), Error> {
 
     if store.check().is_err() {
         log::warn!("Corruption detected in store, healing..");
+        // Rollback store to the last valid header.
         store.heal()?;
+        // If, after healing, our store is empty (which could happen if the previous
+        // process terminated while writing the genesis header), we have to try to
+        // write it again.
+        if store.len()? == 0 {
+            store.put(std::iter::once(genesis))?;
+        }
     }
 
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
