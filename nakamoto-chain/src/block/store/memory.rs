@@ -16,8 +16,8 @@ impl Memory {
 
 impl Store for Memory {
     /// Get the genesis block.
-    fn genesis(&self) -> Result<BlockHeader, Error> {
-        Ok(*self.0.first())
+    fn genesis(&self) -> BlockHeader {
+        *self.0.first()
     }
 
     /// Append a batch of consecutive block headers to the end of the chain.

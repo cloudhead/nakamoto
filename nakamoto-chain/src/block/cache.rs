@@ -43,12 +43,12 @@ impl<S: Store> BlockCache<S> {
         params: Params,
         checkpoints: &[(Height, BlockHash)],
     ) -> Result<Self, Error> {
-        let genesis = store.genesis()?;
+        let genesis = store.genesis();
         let length = store.len()?;
         let orphans = HashMap::new();
         let checkpoints = checkpoints.iter().cloned().collect();
 
-        let mut chain = NonEmpty::from((
+        let chain = NonEmpty::from((
             CachedBlock {
                 height: 0,
                 hash: genesis.bitcoin_hash(),
@@ -57,29 +57,29 @@ impl<S: Store> BlockCache<S> {
             Vec::with_capacity(length - 1),
         ));
         let mut headers = HashMap::with_capacity(length);
-
         // Insert genesis in the headers map, but skip it during iteration.
         headers.insert(chain.head.hash, 0);
-        for result in store.iter().skip(1) {
-            let (height, header) = result?;
-            let hash = header.bitcoin_hash();
 
-            chain.push(CachedBlock {
-                height,
-                hash,
-                header,
-            });
-            headers.insert(hash, height);
-        }
-
-        Ok(Self {
+        let mut cache = Self {
             chain,
             headers,
             orphans,
             params,
             checkpoints,
             store,
-        })
+        };
+
+        for result in cache.store.iter().skip(1) {
+            let (height, header) = result?;
+            let hash = header.bitcoin_hash();
+
+            cache.extend_chain(height, hash, header);
+        }
+
+        assert_eq!(length, cache.chain.len());
+        assert_eq!(length, cache.headers.len());
+
+        Ok(cache)
     }
 
     /// Import a block into the tree. Performs header validation.

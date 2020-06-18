@@ -24,9 +24,7 @@ pub enum Error {
 
 pub trait Store {
     /// Get the genesis block.
-    fn genesis(&self) -> Result<BlockHeader, Error> {
-        self.get(0)
-    }
+    fn genesis(&self) -> BlockHeader;
     /// Append a batch of consecutive block headers to the end of the chain.
     fn put<I: Iterator<Item = BlockHeader>>(&mut self, headers: I) -> Result<Height, Error>;
     /// Get the block at the given height.

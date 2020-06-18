@@ -499,8 +499,9 @@ fn test_bitcoin_difficulty() {
 // Test that we're correctly loading headers from the header store.
 #[test]
 fn test_from_store() {
+    let genesis = constants::genesis_block(bitcoin::Network::Bitcoin).header;
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/data/headers.bin");
-    let store = store::File::open(path).unwrap();
+    let store = store::File::open(path, genesis).unwrap();
 
     let store_headers = store.iter().collect::<Result<Vec<_>, _>>().unwrap();
 

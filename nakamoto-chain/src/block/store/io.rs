@@ -23,14 +23,14 @@ fn put<S: Seek + Write, I: Iterator<Item = BlockHeader>>(
     for header in headers {
         pos += header.consensus_encode(&mut stream)? as u64;
     }
-    Ok(pos / HEADER_SIZE as u64 - 1)
+    Ok(pos / HEADER_SIZE as u64)
 }
 
 /// Get a block from the stream.
-fn get<S: Seek + Read>(mut stream: S, height: Height) -> Result<BlockHeader, Error> {
+fn get<S: Seek + Read>(mut stream: S, ix: u64) -> Result<BlockHeader, Error> {
     let mut buf = [0; HEADER_SIZE];
 
-    stream.seek(io::SeekFrom::Start(height * HEADER_SIZE as u64))?;
+    stream.seek(io::SeekFrom::Start(ix * HEADER_SIZE as u64))?;
     stream.read_exact(&mut buf)?;
 
     BlockHeader::consensus_decode(&buf[..]).map_err(Error::from)
@@ -49,7 +49,9 @@ impl Iterator for Iter {
     fn next(&mut self) -> Option<Self::Item> {
         let height = self.height;
 
-        match get(&mut self.file, height) {
+        assert!(height > 0);
+
+        match get(&mut self.file, height - 1) {
             // If we hit this branch, it's because we're trying to read passed the end
             // of the file, which means there are no further headers remaining.
             Err(Error::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => None,
@@ -68,32 +70,36 @@ impl Iterator for Iter {
 #[derive(Debug)]
 pub struct File {
     file: fs::File,
+    genesis: BlockHeader,
 }
 
 impl File {
-    pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
+    pub fn open<P: AsRef<Path>>(path: P, genesis: BlockHeader) -> io::Result<Self> {
         fs::OpenOptions::new()
             .create(true)
             .read(true)
             .append(true)
             .open(path)
-            .map(|file| Self { file })
+            .map(|file| Self { file, genesis })
     }
 
     pub fn create<P: AsRef<Path>>(path: P, genesis: BlockHeader) -> Result<Self, Error> {
-        let mut file = fs::OpenOptions::new()
+        let file = fs::OpenOptions::new()
             .create_new(true)
             .read(true)
             .append(true)
             .open(path)?;
 
-        put(&mut file, iter::once(genesis))?;
-
-        Ok(Self { file })
+        Ok(Self { file, genesis })
     }
 }
 
 impl Store for File {
+    /// Get the genesis block.
+    fn genesis(&self) -> BlockHeader {
+        self.genesis
+    }
+
     /// Append a block to the end of the file.
     fn put<I: Iterator<Item = BlockHeader>>(&mut self, headers: I) -> Result<Height, Error> {
         self::put(&mut self.file, headers)
@@ -102,17 +108,20 @@ impl Store for File {
     /// Get the block at the given height. Returns `io::ErrorKind::UnexpectedEof` if
     /// the height is not found.
     fn get(&self, height: Height) -> Result<BlockHeader, Error> {
-        // Clone so this function doesn't have to take a `&mut self`.
-        let mut file = self.file.try_clone()?;
-
-        get(&mut file, height)
+        if let Some(ix) = height.checked_sub(1) {
+            // Clone so this function doesn't have to take a `&mut self`.
+            let mut file = self.file.try_clone()?;
+            get(&mut file, ix)
+        } else {
+            Ok(self.genesis)
+        }
     }
 
-    /// Rollback the chain to the given height. Behavior is undefined if  the given
+    /// Rollback the chain to the given height. Behavior is undefined if the given
     /// height is not contained in the store.
     fn rollback(&mut self, height: Height) -> Result<(), Error> {
         self.file
-            .set_len((height + 1) * HEADER_SIZE as u64)
+            .set_len((height) * HEADER_SIZE as u64)
             .map_err(Error::from)
     }
 
@@ -125,7 +134,7 @@ impl Store for File {
     fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>> {
         // Clone so this function doesn't have to take a `&mut self`.
         match self.file.try_clone() {
-            Ok(file) => Box::new(Iter { height: 0, file }),
+            Ok(file) => Box::new(iter::once(Ok((0, self.genesis))).chain(Iter { height: 1, file })),
             Err(err) => Box::new(iter::once(Err(Error::Io(err)))),
         }
     }
@@ -140,7 +149,7 @@ impl Store for File {
         if len as usize % HEADER_SIZE != 0 {
             return Err(Error::Corruption);
         }
-        Ok(len as usize / HEADER_SIZE)
+        Ok(len as usize / HEADER_SIZE + 1)
     }
 
     /// Check the file store integrity.
@@ -167,50 +176,63 @@ impl Store for File {
 #[cfg(test)]
 mod test {
     use super::{BlockHeader, Error, File, Height, Store};
+    use bitcoin::util::hash::BitcoinHash;
     use std::{io, iter};
+
+    fn store(path: &str) -> File {
+        let tmp = tempfile::tempdir().unwrap();
+        let genesis = BlockHeader {
+            version: 1,
+            prev_blockhash: Default::default(),
+            merkle_root: Default::default(),
+            bits: 0x2ffffff,
+            time: 39123818,
+            nonce: 0,
+        };
+
+        File::open(tmp.path().join(path), genesis).unwrap()
+    }
 
     #[test]
     fn test_put_get() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut store = File::open(tmp.path().join("headers.db")).unwrap();
+        let mut store = store("headers.db");
 
         let header = BlockHeader {
             version: 1,
-            prev_blockhash: Default::default(),
+            prev_blockhash: store.genesis.bitcoin_hash(),
             merkle_root: Default::default(),
             bits: 0x2ffffff,
             time: 1842918273,
             nonce: 312143,
         };
 
+        assert_eq!(
+            store.get(0).unwrap(),
+            store.genesis,
+            "when the store is empty, we can `get` the genesis"
+        );
         assert!(
-            store.get(0).is_err(),
-            "when the store is empty, there is nothing to `get`"
+            store.get(1).is_err(),
+            "when the store is empty, we can't get height `1`"
         );
 
         let height = store.put(iter::once(header)).unwrap();
         store.sync().unwrap();
 
-        assert_eq!(height, 0);
+        assert_eq!(height, 1);
         assert_eq!(store.get(height).unwrap(), header);
-        assert!(store.get(1).is_err());
     }
 
     #[test]
     fn test_put_get_batch() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut store = File::open(tmp.path().join("headers.db")).unwrap();
+        let mut store = store("headers.db");
 
-        assert!(
-            store.get(0).is_err(),
-            "when the store is empty, there is nothing to `get`"
-        );
-        assert_eq!(store.len().unwrap(), 0);
+        assert_eq!(store.len().unwrap(), 1);
 
         let count = 32;
         let header = BlockHeader {
             version: 1,
-            prev_blockhash: Default::default(),
+            prev_blockhash: store.genesis().bitcoin_hash(),
             merkle_root: Default::default(),
             bits: 0x2ffffff,
             time: 1842918273,
@@ -223,15 +245,14 @@ mod test {
         {
             let height = store.put(iter).unwrap();
 
-            assert_eq!(height, headers.len() as Height - 1);
-            assert_eq!(store.len().unwrap(), headers.len());
+            assert_eq!(height, headers.len() as Height);
+            assert_eq!(store.len().unwrap(), headers.len() + 1); // Account for genesis.
 
             for (i, h) in headers.iter().enumerate() {
-                assert_eq!(&store.get(i as Height).unwrap(), h);
+                assert_eq!(&store.get(i as Height + 1).unwrap(), h);
             }
 
-            assert!(&store.get(32).is_err());
-            assert!(&store.get(64).is_err());
+            assert!(&store.get(32 + 1).is_err());
         }
 
         // Rollback and overwrite the history.
@@ -239,7 +260,7 @@ mod test {
             let h = headers.len() as Height / 2; // Some point `h` in the past.
 
             assert!(&store.get(h + 1).is_ok());
-            assert_eq!(store.get(h + 1).unwrap(), headers[h as usize + 1]);
+            assert_eq!(store.get(h + 1).unwrap(), headers[h as usize]);
 
             store.rollback(h).unwrap();
 
@@ -262,21 +283,20 @@ mod test {
             assert_eq!(store.get(height).unwrap(), header);
 
             // Blocks up to and including `h` are unaffected by the rollback.
-            assert_eq!(store.get(0).unwrap(), headers[0]);
-            assert_eq!(store.get(1).unwrap(), headers[1]);
-            assert_eq!(store.get(h).unwrap(), headers[h as usize]);
+            assert_eq!(store.get(0).unwrap(), store.genesis);
+            assert_eq!(store.get(1).unwrap(), headers[0]);
+            assert_eq!(store.get(h).unwrap(), headers[h as usize - 1]);
         }
     }
 
     #[test]
     fn test_iter() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut store = File::open(tmp.path().join("headers.db")).unwrap();
+        let mut store = store("headers.db");
 
         let count = 32;
         let header = BlockHeader {
             version: 1,
-            prev_blockhash: Default::default(),
+            prev_blockhash: store.genesis().bitcoin_hash(),
             merkle_root: Default::default(),
             bits: 0x2ffffff,
             time: 1842918273,
@@ -287,17 +307,20 @@ mod test {
 
         store.put(iter).unwrap();
 
-        for result in store.iter() {
+        let mut iter = store.iter();
+        assert_eq!(iter.next().unwrap().unwrap(), (0, store.genesis));
+
+        for (i, result) in iter.enumerate() {
             let (height, header) = result.unwrap();
 
-            assert_eq!(header, headers[height as usize]);
+            assert_eq!(i as u64 + 1, height);
+            assert_eq!(header, headers[height as usize - 1]);
         }
     }
 
     #[test]
     fn test_corrupt_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let mut store = File::open(tmp.path().join("headers.db")).unwrap();
+        let mut store = store("headers.db");
 
         store.check().expect("checking always works");
         store.heal().expect("healing when there is no corruption");
@@ -305,7 +328,7 @@ mod test {
         let headers = &[
             BlockHeader {
                 version: 1,
-                prev_blockhash: Default::default(),
+                prev_blockhash: store.genesis().bitcoin_hash(),
                 merkle_root: Default::default(),
                 bits: 0x2ffffff,
                 time: 1842918273,
@@ -323,7 +346,7 @@ mod test {
         store.put(headers.iter().cloned()).unwrap();
         store.check().unwrap();
 
-        assert_eq!(store.len().unwrap(), 2);
+        assert_eq!(store.len().unwrap(), 3);
 
         // Intentionally corrupt the file, by truncating it by 32 bytes.
         store
@@ -332,14 +355,14 @@ mod test {
             .unwrap();
 
         assert_eq!(
-            store.get(0).unwrap(),
+            store.get(1).unwrap(),
             headers[0],
             "the first header is intact"
         );
 
         matches! {
             store
-                .get(1)
+                .get(2)
                 .expect_err("the second header has been corrupted"),
             Error::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof
         };
@@ -352,7 +375,7 @@ mod test {
 
         assert_eq!(
             store.len().unwrap(),
-            1,
+            2,
             "the last (corrupted) header was removed"
         );
     }
