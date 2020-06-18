@@ -6,7 +6,7 @@ use std::net;
 use std::ops::Deref;
 use std::path::Path;
 
-use crate::peer::Network;
+use crate::peer;
 
 #[derive(Debug, PartialEq)]
 pub struct AddressBook {
@@ -26,9 +26,9 @@ impl AddressBook {
         Ok(Self { addrs })
     }
 
-    pub fn bootstrap(network: Network) -> io::Result<Self> {
+    pub fn bootstrap(network: peer::Network) -> io::Result<Self> {
         match network {
-            Network::Mainnet => {
+            peer::Network::Mainnet => {
                 let seeds = network
                     .seeds()
                     .iter()

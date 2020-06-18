@@ -5,9 +5,7 @@ use std::time;
 
 use log::*;
 
-use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode::Encodable;
-use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
@@ -16,12 +14,13 @@ use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
 use bitcoin::util::hash::BitcoinHash;
-use bitcoin_hashes::hex::FromHex;
 
-use bitcoin_hashes::sha256d;
 use nakamoto_chain::block::{tree::BlockTree, Height};
 
 use crate::error::Error;
+
+pub mod network;
+pub use network::Network;
 
 /// Peer-to-peer protocol version.
 pub const PROTOCOL_VERSION: u32 = 70012;
@@ -36,113 +35,6 @@ pub const HANDSHAKE_TIMEOUT: time::Duration = time::Duration::from_secs(30);
 /// How long to wait between sending pings.
 pub const PING_INTERVAL: time::Duration = time::Duration::from_secs(60);
 
-/// Bitcoin network.
-#[derive(Debug, Copy, Clone)]
-pub enum Network {
-    /// Bitcoin Mainnet.
-    Mainnet,
-    /// Bitcoin Testnet.
-    Testnet,
-    /// Bitcoin regression test net.
-    Regtest,
-}
-
-impl From<Network> for bitcoin::Network {
-    fn from(value: Network) -> Self {
-        match value {
-            Network::Mainnet => Self::Bitcoin,
-            Network::Testnet => Self::Testnet,
-            Network::Regtest => Self::Regtest,
-        }
-    }
-}
-
-impl Network {
-    pub fn port(&self) -> u16 {
-        match self {
-            Network::Mainnet => 8333,
-            Network::Testnet => 18333,
-            Network::Regtest => 18334,
-        }
-    }
-
-    /// Blockchain checkpoints.
-    pub fn checkpoints(&self) -> Box<dyn Iterator<Item = (Height, BlockHash)>> {
-        use crate::checkpoints;
-
-        let iter = match self {
-            Network::Mainnet => &checkpoints::MAINNET,
-            Network::Testnet => &checkpoints::TESTNET,
-            Network::Regtest => &checkpoints::REGTEST,
-        }
-        .iter()
-        .cloned()
-        .map(|(height, hash)| {
-            let hash = BlockHash::from_hex(hash).unwrap();
-            (height, hash)
-        });
-
-        Box::new(iter)
-    }
-
-    /// DNS seeds. Used to bootstrap the client's address book.
-    pub fn seeds(&self) -> &[&str] {
-        match self {
-            Network::Mainnet => &[
-                "seed.bitcoin.sipa.be",          // Pieter Wuille
-                "dnsseed.bluematt.me",           // Matt Corallo
-                "dnsseed.bitcoin.dashjr.org",    // Luke Dashjr
-                "seed.bitcoinstats.com",         // Christian Decker
-                "seed.bitcoin.jonasschnelli.ch", // Jonas Schnelli
-                "seed.btc.petertodd.org",        // Peter Todd
-                "seed.bitcoin.sprovoost.nl",     // Sjors Provoost
-                "dnsseed.emzy.de",               // Stephan Oeste
-            ],
-            _ => &[],
-        }
-    }
-}
-
-impl Network {
-    /// ```
-    /// use nakamoto_p2p::peer::Network;
-    /// use bitcoin::util::hash::BitcoinHash;
-    ///
-    /// let network = Network::Mainnet;
-    /// let genesis = network.genesis();
-    ///
-    /// assert_eq!(network.genesis_hash(), genesis.bitcoin_hash());
-    /// ```
-    pub fn genesis(&self) -> BlockHeader {
-        use bitcoin::blockdata::constants;
-
-        constants::genesis_block((*self).into()).header
-    }
-
-    pub fn genesis_hash(&self) -> BlockHash {
-        use bitcoin_hashes::Hash;
-        use nakamoto_chain::genesis;
-
-        let hash = match self {
-            Self::Mainnet => genesis::MAINNET,
-            Self::Testnet => genesis::TESTNET,
-            Self::Regtest => genesis::REGTEST,
-        };
-        BlockHash::from(
-            sha256d::Hash::from_slice(hash)
-                .expect("the genesis hash has the right number of bytes"),
-        )
-    }
-
-    pub fn params(&self) -> Params {
-        Params::new((*self).into())
-    }
-
-    fn magic(&self) -> u32 {
-        bitcoin::Network::from(*self).magic()
-    }
-}
-
 /// Peer event, used to notify peer manager.
 #[derive(Debug)]
 pub enum Event {
@@ -154,7 +46,7 @@ pub enum Event {
 /// Peer config.
 #[derive(Debug, Copy, Clone)]
 pub struct Config {
-    pub network: Network,
+    pub network: network::Network,
     pub services: ServiceFlags,
     pub protocol_version: u32,
     pub relay: bool,
@@ -163,7 +55,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            network: Network::Mainnet,
+            network: network::Network::Mainnet,
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
             relay: false,
