@@ -90,28 +90,8 @@ impl<S: Store> BlockCache<S> {
         // Block extends the active chain.
         if header.prev_blockhash == tip.hash {
             let height = tip.height + 1;
-            let bits = if self.params.allow_min_difficulty_blocks {
-                if header.time > tip.time + self.params.pow_target_spacing as Time * 2 {
-                    BlockHeader::compact_target_from_u256(&self.params.pow_limit)
-                } else {
-                    self.next_min_difficulty_target(tip.bits, &self.params)
-                }
-            } else {
-                self.next_difficulty_target(tip.height, tip.time, tip.bits, &self.params)
-            };
 
-            // TODO: Validate timestamp.
-            let target = block::target_from_bits(bits);
-            match header.validate_pow(&target) {
-                Err(bitcoin::util::Error::BlockBadProofOfWork) => {
-                    return Err(Error::InvalidBlockPoW);
-                }
-                Err(bitcoin::util::Error::BlockBadTarget) => {
-                    return Err(Error::InvalidBlockTarget(header.target(), target));
-                }
-                Err(_) => unreachable!(),
-                Ok(_) => {}
-            }
+            self.validate(&tip, &header)?;
 
             // Validate against block checkpoints.
             if let Some(checkpoint) = self.checkpoints.get(&height) {
@@ -172,7 +152,9 @@ impl<S: Store> BlockCache<S> {
 
         for tip in self.orphans.keys() {
             if let Some(branch) = self.branch(tip) {
-                branches.push(branch);
+                if self.validate_branch(&branch).is_ok() {
+                    branches.push(branch);
+                }
             }
         }
         branches
@@ -198,6 +180,57 @@ impl<S: Store> BlockCache<S> {
             });
         }
         None
+    }
+
+    fn validate_branch(&self, candidate: &Candidate) -> Result<(), Error> {
+        let fork_header = self
+            .get_block_by_height(candidate.fork_height)
+            .expect("the given candidate must fork from a known block");
+        let mut tip = CachedBlock {
+            height: candidate.fork_height,
+            hash: candidate.fork_hash,
+            header: *fork_header,
+        };
+
+        for header in candidate.headers.iter() {
+            self.validate(&tip, header)?;
+
+            tip = CachedBlock {
+                height: tip.height + 1,
+                hash: header.bitcoin_hash(),
+                header: *header,
+            };
+        }
+        Ok(())
+    }
+
+    fn validate(&self, tip: &CachedBlock, header: &BlockHeader) -> Result<(), Error> {
+        assert_eq!(tip.hash, header.prev_blockhash);
+
+        let bits = if self.params.allow_min_difficulty_blocks {
+            if header.time > tip.time + self.params.pow_target_spacing as Time * 2 {
+                BlockHeader::compact_target_from_u256(&self.params.pow_limit)
+            } else {
+                self.next_min_difficulty_target(tip.bits, &self.params)
+            }
+        } else {
+            self.next_difficulty_target(tip.height, tip.time, tip.bits, &self.params)
+        };
+
+        // TODO: Validate timestamp.
+        let target = block::target_from_bits(bits);
+        match header.validate_pow(&target) {
+            Err(bitcoin::util::Error::BlockBadProofOfWork) => {
+                return Err(Error::InvalidBlockPoW);
+            }
+            Err(bitcoin::util::Error::BlockBadTarget) => {
+                return Err(Error::InvalidBlockTarget(header.target(), target));
+            }
+            Err(_) => unreachable!(),
+            Ok(_) => {}
+        }
+
+        Ok(())
     }
 
     fn last_checkpoint(&self) -> Height {
