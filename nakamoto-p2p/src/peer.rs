@@ -1,3 +1,19 @@
+//! Peer protocol.
+//!
+//! The steps for an *outbound* handshake are:
+//!
+//!   1. Send "version" message.
+//!   2. Expect "version" message from remote.
+//!   3. Expect "verack" message from remote.
+//!   4. Send "verack" message.
+//!
+//! The steps for an *inbound* handshake are:
+//!
+//!   1. Expect "version" message from remote.
+//!   2. Send "version" message.
+//!   3. Send "verack" message.
+//!   4. Expect "verack" message from remote.
+//!
 use std::io::{Read, Write};
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};
@@ -70,14 +86,31 @@ impl Config {
 }
 
 /// Peer connection state.
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug, PartialOrd, PartialEq, Ord, Eq)]
 pub enum State {
     /// The peer is connected, but no handshake has taken place.
     Connected,
+    /// Received the remote "version".
+    VersionReceived,
+    /// Received the remote "verack".
+    VerackReceived,
     /// The peer handshake has been successful.
-    Handshaked,
+    Ready,
+    /// We are waiting for headers from the peer.
+    ExpectingHeaders,
+    /// We are listening for any non-requested message from the peer.
+    Listening,
     /// The peer has disconnected. If this was caused by an error, the error is included.
-    Disconnected(Option<Error>),
+    Disconnected,
+}
+
+/// Link direction of the peer connection.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Link {
+    /// Inbound conneciton.
+    Inbound,
+    /// Outbound connection.
+    Outbound,
 }
 
 /// A peer connection.
@@ -93,6 +126,8 @@ pub struct Connection<R: Read> {
     pub state: State,
     /// The peer's best height.
     pub height: Height,
+    /// Whether this is an inbound or outbound peer connection.
+    pub link: Link,
     /// Underling peer connection.
     raw: StreamReader<R>,
     /// Last time we heard from this peer.
@@ -105,6 +140,7 @@ impl<R: Read + Write> Connection<R> {
         r: R,
         local_address: net::SocketAddr,
         address: net::SocketAddr,
+        link: Link,
         config: Config,
     ) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
@@ -120,6 +156,7 @@ impl<R: Read + Write> Connection<R> {
             address,
             local_address,
             last_active,
+            link,
         }
     }
 
@@ -135,32 +172,97 @@ impl<R: Read + Write> Connection<R> {
             (hash, cache.height())
         };
 
-        self.handshake(height)?;
-        self.sync(&[tip], block_cache)?;
+        self.init(height)?;
 
+        loop {
+            while let Ok(inbound) = self.read() {
+                let outbound = self.receive(inbound);
+
+                for msg in outbound.into_iter() {
+                    self.write(msg)?;
+                }
+
+                if self.is_ready() {
+                    debug!("{}: Handshake successful", self.address);
+                    self.sync(&[tip], block_cache.clone())?;
+                }
+            }
+        }
+    }
+
+    pub fn transition(&mut self, state: State) {
+        debug!("{}: {:?} -> {:?}", self.address, self.state, state);
+        assert!(state > self.state);
+
+        self.state = state;
+    }
+
+    pub fn init(&mut self, height: Height) -> Result<(), Error> {
+        if self.link == Link::Outbound {
+            self.write(self.version(height))?;
+        }
         Ok(())
     }
 
-    /// Establish a peer handshake. This must be called as soon as the peer is connected.
-    ///
-    /// The steps are:
-    ///
-    ///   1. Send "version" message.
-    ///   2. Expect "version" message.
-    ///   3. Expect "verack" message.
-    ///   4. Send "verack" message.
-    ///
-    pub fn handshake(&mut self, height: Height) -> Result<(), Error> {
+    pub fn is_ready(&self) -> bool {
+        self.state == State::Ready
+    }
+
+    pub fn receive(&mut self, msg: NetworkMessage) -> Vec<NetworkMessage> {
+        let (state, responses) = match self.link {
+            Link::Inbound => match (&self.state, msg) {
+                (State::Connected, NetworkMessage::Version(version)) => {
+                    self.receive_version(version);
+                    (
+                        State::VersionReceived,
+                        vec![self.version(0), NetworkMessage::Verack],
+                    )
+                }
+                (State::VersionReceived, NetworkMessage::Verack) => (State::Ready, vec![]),
+                otherwise => todo!("{:?}", otherwise),
+            },
+            Link::Outbound => match (&self.state, msg) {
+                (State::Connected, NetworkMessage::Version(version)) => {
+                    self.receive_version(version);
+
+                    (State::VersionReceived, vec![])
+                }
+                (State::VersionReceived, NetworkMessage::Verack) => {
+                    (State::Ready, vec![NetworkMessage::Verack])
+                }
+                otherwise => todo!("{:?}", otherwise),
+            },
+        };
+        self.transition(state);
+
+        responses
+    }
+
+    fn receive_version(&mut self, VersionMessage { start_height, .. }: VersionMessage) {
+        let height = 0;
+
+        if height > start_height as Height + 1 {
+            // We're ahead of this peer by more than one block. Don't use it
+            // for IBD.
+            todo!();
+        }
+        self.height = start_height as Height;
+
+        // TODO: Check version
+        // TODO: Check services
+        // TODO: Check start_height
+    }
+
+    fn version(&self, start_height: Height) -> NetworkMessage {
         use std::time::*;
 
+        let start_height = start_height as i32;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as i64;
 
-        let start_height = height as i32;
-
-        self.write(NetworkMessage::Version(VersionMessage {
+        NetworkMessage::Version(VersionMessage {
             version: self.config.protocol_version,
             services: self.config.services,
             timestamp,
@@ -173,35 +275,7 @@ impl<R: Read + Write> Connection<R> {
             user_agent: USER_AGENT.to_owned(),
             start_height,
             relay: self.config.relay,
-        }))?;
-
-        match self.read()? {
-            NetworkMessage::Version(VersionMessage { start_height, .. }) => {
-                if height > start_height as Height + 1 {
-                    // We're ahead of this peer by more than one block, which means
-                    // we won't be getting much from it. Abort.
-                    todo!();
-                }
-                self.height = start_height as Height;
-
-                // TODO: Check version
-                // TODO: Check services
-                // TODO: Check start_height
-            }
-            _ => todo!(),
-        }
-
-        match self.read()? {
-            NetworkMessage::Verack => {}
-            _ => todo!(),
-        }
-
-        self.write(NetworkMessage::Verack)?;
-        self.state = State::Handshaked;
-
-        debug!("{}: Handshake successful", self.address);
-
-        Ok(())
+        })
     }
 
     pub fn write(&mut self, msg: NetworkMessage) -> Result<(), Error> {
@@ -244,7 +318,7 @@ impl<R: Read + Write> Connection<R> {
                     todo!()
                 }
             }
-            Err(err) => panic!(err.to_string()),
+            Err(err) => Err(err.into()),
         }
     }
 
@@ -307,6 +381,110 @@ impl<R: Read + Write> Connection<R> {
                 }
                 _ => todo!(),
             }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Config, Connection, Link};
+    use std::io;
+    use std::io::prelude::*;
+
+    use std::collections::VecDeque;
+    use std::sync::{Arc, Mutex};
+
+    type Queue = VecDeque<Vec<u8>>;
+    type Pair = (Socket, Socket);
+
+    struct Socket {
+        inbound: Arc<Mutex<Queue>>,
+        outbound: Arc<Mutex<Queue>>,
+    }
+
+    impl Socket {
+        fn pair() -> Pair {
+            let left = Arc::new(Mutex::new(Queue::new()));
+            let right = Arc::new(Mutex::new(Queue::new()));
+
+            (
+                Socket {
+                    inbound: left.clone(),
+                    outbound: right.clone(),
+                },
+                Socket {
+                    inbound: right,
+                    outbound: left,
+                },
+            )
+        }
+    }
+
+    struct Peer {
+        conn: Connection<Socket>,
+    }
+
+    impl Peer {
+        fn from(conn: Connection<Socket>) -> Self {
+            Self { conn }
+        }
+
+        fn init(&mut self, height: super::Height) -> Result<(), super::Error> {
+            self.conn.init(height)
+        }
+
+        fn tick(&mut self) -> Result<(), super::Error> {
+            while let Ok(inbound) = self.conn.read() {
+                let outbound = self.conn.receive(inbound);
+
+                for msg in outbound.into_iter() {
+                    self.conn.write(msg)?;
+                }
+            }
+            Ok(())
+        }
+    }
+
+    impl io::Read for Socket {
+        fn read(&mut self, mut buf: &mut [u8]) -> io::Result<usize> {
+            if let Some(msg) = self.inbound.lock().unwrap().pop_front() {
+                buf.write_all(msg.as_slice())?;
+                Ok(msg.len())
+            } else {
+                Ok(0)
+            }
+        }
+    }
+
+    impl io::Write for Socket {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.outbound.lock().unwrap().push_back(buf.to_vec());
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_handshake() -> Result<(), Box<dyn std::error::Error>> {
+        let cfg = Config::default();
+        let (a, b) = Socket::pair();
+
+        let a_addr = ([192, 168, 1, 2], 8333).into();
+        let b_addr = ([192, 168, 1, 3], 8333).into();
+
+        let mut alice = Peer::from(Connection::from(a, a_addr, b_addr, Link::Outbound, cfg));
+        let mut bob = Peer::from(Connection::from(b, b_addr, a_addr, Link::Inbound, cfg));
+
+        alice.init(0)?;
+        bob.init(0)?;
+
+        while !(alice.conn.is_ready() && bob.conn.is_ready()) {
+            alice.tick()?;
+            bob.tick()?;
         }
         Ok(())
     }

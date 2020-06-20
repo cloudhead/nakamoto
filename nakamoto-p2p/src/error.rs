@@ -1,3 +1,5 @@
+use bitcoin::consensus::encode;
+
 use std::io;
 use std::time;
 
@@ -16,6 +18,9 @@ pub enum Error {
 
     #[error("chain validation error: {0}")]
     BlockImport(#[from] tree::Error),
+
+    #[error("encode/decode error: {0}")]
+    Encode(#[from] encode::Error),
 
     #[error("not connected to the peer network")]
     NotConnected,

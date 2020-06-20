@@ -29,7 +29,13 @@ impl Peer<net::TcpStream> {
         let address = sock.peer_addr()?;
         let local_address = sock.local_addr()?;
 
-        Ok(peer::Connection::from(sock, local_address, address, config))
+        Ok(peer::Connection::from(
+            sock,
+            local_address,
+            address,
+            peer::Link::Outbound,
+            config,
+        ))
     }
 
     fn thread<S: Store>(
