@@ -984,7 +984,8 @@ fn test_cache_import_invalid_fork() {
     let b5 = b4.next(g);
     let b6 = b5.next(g);
 
-    cache.import_blocks(a0.branch([&b3, &b6])).unwrap();
+    cache.import_blocks(a0.branch([&b4, &b6])).unwrap();
+    cache.import_block(b3.block()).unwrap();
     assert_eq!(cache.tip().0, c4.hash, "Don't switch to invalid fork");
 }
 
