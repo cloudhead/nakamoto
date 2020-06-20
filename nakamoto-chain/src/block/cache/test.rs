@@ -587,6 +587,32 @@ impl Tree {
         }
     }
 
+    fn next_invalid(&self, g: &mut impl Rng) -> Tree {
+        let nonce = g.gen::<u32>();
+        let mut header = BlockHeader {
+            version: 1,
+            prev_blockhash: self.hash,
+            merkle_root: Default::default(),
+            bits: BlockHeader::compact_target_from_u256(&TARGET),
+            time: self.time + TARGET_SPACING,
+            nonce,
+        };
+        let target = header.target();
+        while !header.validate_pow(&target).is_err() {
+            header.nonce += 1;
+        }
+
+        let hash = header.bitcoin_hash();
+        self.headers.write().unwrap().insert(hash, header);
+
+        Tree {
+            hash,
+            headers: self.headers.clone(),
+            time: header.time,
+            genesis: self.genesis,
+        }
+    }
+
     fn sample<G: Gen>(&self, g: &mut G) -> Tree {
         let headers = self.headers.read().unwrap();
         let ix = g.gen_range(0, headers.len());
@@ -908,6 +934,58 @@ fn test_cache_import_with_checkpoints() {
     cache
         .import_blocks(tree.branch([&a1, &a2]))
         .expect("Correct checkpoints cause no error");
+}
+
+#[test]
+fn test_cache_import_invalid_fork() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let mut cache = BlockCache::from(store, params, &[]).unwrap();
+    let g = &mut rand::thread_rng();
+
+    let a0 = Tree::new(genesis);
+
+    // a0 <- a1 <- a2 <- a3 *
+    let a1 = a0.next(g);
+    let a2 = a1.next(g);
+    let a3 = a2.next(g);
+
+    cache.import_blocks(a0.branch([&a1, &a3])).unwrap();
+    assert_eq!(cache.tip().0, a3.hash);
+
+    //            <- c2 <- c3 <- c4 <- (c5)
+    //           /
+    // a0 <- a1 <- a2 <- a3 *
+    //
+    let c2 = a1.next(g);
+    let c3 = c2.next(g);
+    let c4 = c3.next(g);
+    let c5 = c4.next_invalid(g);
+
+    cache.import_blocks(a0.branch([&c3, &c5])).unwrap();
+    assert_eq!(cache.tip().0, a3.hash);
+
+    cache.import_block(c2.block()).unwrap();
+    assert_eq!(
+        cache.tip().0,
+        c4.hash,
+        "Switch to sub-fork, since the last block is invalid"
+    );
+
+    //            <- c2 <- c3 <- c4 *
+    //           /
+    // a0 <- a1 <- a2 <- a3
+    //                \
+    //                 <- (b3) <- b4 <- b5 <- b6
+    let b3 = a2.next_invalid(g);
+    let b4 = b3.next(g);
+    let b5 = b4.next(g);
+    let b6 = b5.next(g);
+
+    cache.import_blocks(a0.branch([&b3, &b6])).unwrap();
+    assert_eq!(cache.tip().0, c4.hash, "Don't switch to invalid fork");
 }
 
 #[test]
