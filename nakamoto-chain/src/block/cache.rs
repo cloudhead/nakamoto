@@ -92,13 +92,6 @@ impl<S: Store> BlockCache<S> {
             let height = tip.height + 1;
 
             self.validate(&tip, &header)?;
-
-            // Validate against block checkpoints.
-            if let Some(checkpoint) = self.checkpoints.get(&height) {
-                if &hash != checkpoint {
-                    return Err(Error::InvalidBlockHash(hash, height));
-                }
-            }
             self.extend_chain(height, hash, header);
         } else if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
             return Err(Error::DuplicateBlock(hash));
@@ -113,6 +106,8 @@ impl<S: Store> BlockCache<S> {
             // PoW to ensure cheap attacks aren't possible.
             self.orphans.insert(hash, header);
         }
+
+        // Activate the chain with the most work.
 
         let candidates = self.chain_candidates();
 
@@ -228,6 +223,17 @@ impl<S: Store> BlockCache<S> {
             }
             Err(_) => unreachable!(),
             Ok(_) => {}
+        }
+
+        // Validate against block checkpoints.
+        let height = tip.height + 1;
+
+        if let Some(checkpoint) = self.checkpoints.get(&height) {
+            let hash = header.bitcoin_hash();
+
+            if &hash != checkpoint {
+                return Err(Error::InvalidBlockHash(hash, height));
+            }
         }
 
         Ok(())
