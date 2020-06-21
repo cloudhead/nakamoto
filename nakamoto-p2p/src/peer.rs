@@ -17,7 +17,7 @@
 use std::io::{Read, Write};
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};
-use std::time;
+use std::time::{self, SystemTime, UNIX_EPOCH};
 
 use log::*;
 
@@ -50,6 +50,9 @@ pub const IDLE_TIMEOUT: time::Duration = time::Duration::from_secs(60 * 5);
 pub const HANDSHAKE_TIMEOUT: time::Duration = time::Duration::from_secs(30);
 /// How long to wait between sending pings.
 pub const PING_INTERVAL: time::Duration = time::Duration::from_secs(60);
+
+/// A time offset, in seconds.
+pub type TimeOffset = i64;
 
 /// Peer event, used to notify peer manager.
 #[derive(Debug)]
@@ -128,6 +131,9 @@ pub struct Connection<R: Read> {
     pub height: Height,
     /// Whether this is an inbound or outbound peer connection.
     pub link: Link,
+    /// An offset in seconds, between this peer's clock and ours.
+    /// A positive offset means the peer's clock is ahead of ours.
+    pub time_offset: TimeOffset,
     /// Underling peer connection.
     raw: StreamReader<R>,
     /// Last time we heard from this peer.
@@ -147,6 +153,7 @@ impl<R: Read + Write> Connection<R> {
         let state = State::Connected;
         let height = 0;
         let last_active = time::Instant::now();
+        let time_offset = 0;
 
         Self {
             height,
@@ -155,6 +162,7 @@ impl<R: Read + Write> Connection<R> {
             raw,
             address,
             local_address,
+            time_offset,
             last_active,
             link,
         }
@@ -238,8 +246,19 @@ impl<R: Read + Write> Connection<R> {
         responses
     }
 
-    fn receive_version(&mut self, VersionMessage { start_height, .. }: VersionMessage) {
+    fn receive_version(
+        &mut self,
+        VersionMessage {
+            start_height,
+            timestamp,
+            ..
+        }: VersionMessage,
+    ) {
         let height = 0;
+        let local_time = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
 
         if height > start_height as Height + 1 {
             // We're ahead of this peer by more than one block. Don't use it
@@ -247,6 +266,7 @@ impl<R: Read + Write> Connection<R> {
             todo!();
         }
         self.height = start_height as Height;
+        self.time_offset = timestamp - local_time;
 
         // TODO: Check version
         // TODO: Check services
@@ -254,8 +274,6 @@ impl<R: Read + Write> Connection<R> {
     }
 
     fn version(&self, start_height: Height) -> NetworkMessage {
-        use std::time::*;
-
         let start_height = start_height as i32;
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

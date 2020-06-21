@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};
+use std::time::SystemTime;
 
 use log::*;
 
@@ -111,6 +112,12 @@ impl<S: Store, R: Read + Write> Network<S, R> {
         } else {
             Err(error::Error::NotConnected)
         }
+    }
+
+    /// "Network-adjusted time" is the median of the timestamps returned by all nodes
+    /// connected to us.
+    pub fn network_adjusted_time(&self) -> SystemTime {
+        todo!()
     }
 
     pub fn listen(&mut self, rx: mpsc::Receiver<peer::Event>) -> Result<(), error::Error> {
