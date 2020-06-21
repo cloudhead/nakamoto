@@ -140,6 +140,24 @@ pub struct Connection<R: Read> {
     last_active: time::Instant,
 }
 
+impl<R: Read + Write> crate::Peer for Connection<R> {
+    fn run<T: BlockTree>(
+        &mut self,
+        cache: Arc<RwLock<T>>,
+        events: mpsc::Sender<Event>,
+    ) -> Result<(), Error> {
+        Connection::run(self, cache, events)
+    }
+
+    fn height(&self) -> Height {
+        self.height
+    }
+
+    fn time_offset(&self) -> TimeOffset {
+        self.time_offset
+    }
+}
+
 impl<R: Read + Write> Connection<R> {
     /// Create a new peer from a `io::Read` and an address pair.
     pub fn from(

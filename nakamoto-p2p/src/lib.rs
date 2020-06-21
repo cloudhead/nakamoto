@@ -4,11 +4,9 @@ pub mod error;
 pub mod peer;
 pub mod tcp;
 
-use nakamoto_chain::block::store::Store;
-use nakamoto_chain::block::{cache::BlockCache, tree::BlockTree, Height, Time};
+use nakamoto_chain::block::{tree::BlockTree, Height, Time};
 
 use std::collections::{HashMap, HashSet};
-use std::io::{Read, Write};
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};
 use std::time::{self, SystemTime, UNIX_EPOCH};
@@ -26,40 +24,38 @@ pub const MAX_TIME_ADJUSTMENT: time::Duration = time::Duration::from_secs(70 * 6
 pub type PeerId = net::SocketAddr;
 
 /// A mapping between peer identifiers and peers.
-type Peers<R> = HashMap<PeerId, Peer<R>>;
+type Peers<T> = HashMap<PeerId, T>;
 
-/// A network peer.
-struct Peer<R: Read>(peer::Connection<R>);
-
-impl<R: Read + Write> Peer<R> {
-    fn run<S: Store>(
-        addr: net::SocketAddr,
-        peer: peer::Connection<R>,
-        cache: Arc<RwLock<BlockCache<S>>>,
-        peers: Arc<RwLock<Peers<R>>>,
+pub trait Peer {
+    fn run<T: BlockTree>(
+        &mut self,
+        cache: Arc<RwLock<T>>,
         events: mpsc::Sender<peer::Event>,
-    ) -> Result<(), error::Error> {
-        use std::collections::hash_map::Entry;
+    ) -> Result<(), error::Error>;
 
-        let mut peers = peers.write().expect("lock has not been poisoned");
+    fn height(&self) -> Height;
+    fn time_offset(&self) -> peer::TimeOffset;
+}
 
-        match peers.entry(addr) {
-            Entry::Vacant(v) => {
-                let Peer(ref mut peer) = v.insert(Peer(peer));
-                peer.run(cache, events)?;
-            }
-            Entry::Occupied(_) => {}
+fn run<T: BlockTree, P: Peer>(
+    addr: net::SocketAddr,
+    peer: P,
+    cache: Arc<RwLock<T>>,
+    peers: Arc<RwLock<Peers<P>>>,
+    events: mpsc::Sender<peer::Event>,
+) -> Result<(), error::Error> {
+    use std::collections::hash_map::Entry;
+
+    let mut peers = peers.write().expect("lock has not been poisoned");
+
+    match peers.entry(addr) {
+        Entry::Vacant(v) => {
+            let peer = v.insert(peer);
+            peer.run(cache, events)?;
         }
-        Ok(())
+        Entry::Occupied(_) => {}
     }
-
-    fn height(&self) -> Height {
-        self.0.height
-    }
-
-    fn time_offset(&self) -> peer::TimeOffset {
-        self.0.time_offset
-    }
+    Ok(())
 }
 
 pub enum NetworkState {
@@ -71,10 +67,10 @@ pub enum NetworkState {
     Synced,
 }
 
-pub struct Network<S: Store, R: Read> {
+pub struct Network<T: BlockTree, P: Peer> {
     peer_config: peer::Config,
-    peers: Arc<RwLock<Peers<R>>>,
-    block_cache: Arc<RwLock<BlockCache<S>>>,
+    peers: Arc<RwLock<Peers<P>>>,
+    block_cache: Arc<RwLock<T>>,
     state: NetworkState,
 
     connected: HashSet<PeerId>,
@@ -82,8 +78,8 @@ pub struct Network<S: Store, R: Read> {
     disconnected: HashSet<PeerId>,
 }
 
-impl<S: Store, R: Read + Write> Network<S, R> {
-    pub fn new(peer_config: peer::Config, block_cache: Arc<RwLock<BlockCache<S>>>) -> Self {
+impl<T: BlockTree, P: Peer> Network<T, P> {
+    pub fn new(peer_config: peer::Config, block_cache: Arc<RwLock<T>>) -> Self {
         let peers = Arc::new(RwLock::new(Peers::new()));
         let state = NetworkState::Connecting;
 
