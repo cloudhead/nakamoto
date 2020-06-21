@@ -5,13 +5,13 @@ pub mod peer;
 pub mod tcp;
 
 use nakamoto_chain::block::store::Store;
-use nakamoto_chain::block::{cache::BlockCache, tree::BlockTree, Height};
+use nakamoto_chain::block::{cache::BlockCache, tree::BlockTree, Height, Time};
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::net;
 use std::sync::{mpsc, Arc, RwLock};
-use std::time::SystemTime;
+use std::time::{self, SystemTime, UNIX_EPOCH};
 
 use log::*;
 
@@ -19,6 +19,8 @@ use log::*;
 pub const SYNC_THRESHOLD: Height = 144;
 /// Minimum number of peers to be connected to.
 pub const PEER_CONNECTION_THRESHOLD: usize = 3;
+/// Maximum time adjustment between network and local time (70 minutes).
+pub const MAX_TIME_ADJUSTMENT: time::Duration = time::Duration::from_secs(70 * 60);
 
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
@@ -53,6 +55,10 @@ impl<R: Read + Write> Peer<R> {
 
     fn height(&self) -> Height {
         self.0.height
+    }
+
+    fn time_offset(&self) -> peer::TimeOffset {
+        self.0.time_offset
     }
 }
 
@@ -114,10 +120,33 @@ impl<S: Store, R: Read + Write> Network<S, R> {
         }
     }
 
-    /// "Network-adjusted time" is the median of the timestamps returned by all nodes
-    /// connected to us.
-    pub fn network_adjusted_time(&self) -> SystemTime {
-        todo!()
+    /// *Network-adjusted time* is the median timestamp of all connected peers.
+    /// Since we store only time offsets for each peer, the network-adjusted time is
+    /// the local time plus the median offset of all connected peers.
+    ///
+    /// Nb. Network time is never adjusted more than 70 minutes from local system time.
+    pub fn network_adjusted_time(&self) -> Time {
+        let local_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let peers = self.peers.read().expect("lock is not poisoned");
+
+        let mut offsets = peers.values().map(Peer::time_offset).collect::<Vec<_>>();
+        let count = offsets.len();
+
+        offsets.sort();
+
+        let median_offset = if count % 2 == 0 {
+            (offsets[count / 2 - 1] + offsets[count / 2]) / 2
+        } else {
+            offsets[count / 2]
+        };
+
+        let adjusted_time = if median_offset > 0 {
+            local_time + time::Duration::from_secs(median_offset as u64).min(MAX_TIME_ADJUSTMENT)
+        } else {
+            local_time - time::Duration::from_secs(-median_offset as u64).min(MAX_TIME_ADJUSTMENT)
+        };
+
+        adjusted_time.as_secs() as Time
     }
 
     pub fn listen(&mut self, rx: mpsc::Receiver<peer::Event>) -> Result<(), error::Error> {
