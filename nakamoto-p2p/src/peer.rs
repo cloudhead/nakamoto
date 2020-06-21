@@ -372,7 +372,7 @@ impl<R: Read + Write> Connection<R> {
             let get_headers = NetworkMessage::GetHeaders(GetHeadersMessage {
                 version: self.config.protocol_version,
                 // Starting hashes, highest heights first.
-                locator_hashes,
+                locator_hashes: locator_hashes.clone(),
                 // Using the zero hash means *fetch as many blocks as possible*.
                 stop_hash: BlockHash::default(),
             });
@@ -415,7 +415,7 @@ impl<R: Read + Write> Connection<R> {
                         }
                     }
                 }
-                _ => todo!(),
+                other => debug!("{}: Ignoring {} message", self.address, other.cmd()),
             }
         }
         Ok(())
