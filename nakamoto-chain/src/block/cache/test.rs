@@ -1,10 +1,9 @@
-use super::{BlockCache, BlockTree, Error};
+use super::{model, BlockCache, BlockTree, Error};
 
 use crate::block::store::{self, Store};
-use crate::block::tree::Branch;
 use crate::block::{self, Height, Target, Time};
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::iter;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -34,118 +33,6 @@ const TARGET: Uint256 = Uint256([
 const TARGET_SPACING: Time = 60;
 // Target time span (1 hour).
 const _TARGET_TIMESPAN: Time = 60 * 60;
-
-#[derive(Debug)]
-pub struct Cache {
-    headers: HashMap<BlockHash, BlockHeader>,
-    chain: NonEmpty<BlockHeader>,
-    tip: BlockHash,
-    genesis: BlockHash,
-}
-
-impl Cache {
-    pub fn new(genesis: BlockHeader) -> Self {
-        let mut headers = HashMap::new();
-        let hash = genesis.bitcoin_hash();
-        let chain = NonEmpty::new(genesis);
-
-        headers.insert(hash, genesis);
-
-        Self {
-            headers,
-            chain,
-            tip: hash,
-            genesis: hash,
-        }
-    }
-
-    fn branch(&self, tip: &BlockHash) -> Option<NonEmpty<BlockHeader>> {
-        let mut headers = VecDeque::new();
-        let mut tip = *tip;
-
-        while let Some(header) = self.headers.get(&tip) {
-            tip = header.prev_blockhash;
-            headers.push_front(*header);
-        }
-
-        match headers.pop_front() {
-            Some(root) if root.bitcoin_hash() == self.genesis => {
-                Some(NonEmpty::from((root, headers.into())))
-            }
-            _ => None,
-        }
-    }
-
-    fn longest_chain(&self) -> NonEmpty<BlockHeader> {
-        let mut branches = Vec::new();
-
-        for tip in self.headers.keys() {
-            if let Some(branch) = self.branch(tip) {
-                branches.push(branch);
-            }
-        }
-
-        branches
-            .into_iter()
-            .max_by(|a, b| {
-                let a_work = Branch(&a.tail).work();
-                let b_work = Branch(&b.tail).work();
-
-                if a_work == b_work {
-                    let a_hash = a.last().bitcoin_hash();
-                    let b_hash = b.last().bitcoin_hash();
-
-                    b_hash.cmp(&a_hash)
-                } else {
-                    a_work.cmp(&b_work)
-                }
-            })
-            .unwrap()
-    }
-}
-
-impl BlockTree for Cache {
-    fn import_blocks<I: Iterator<Item = BlockHeader>>(
-        &mut self,
-        chain: I,
-    ) -> Result<(BlockHash, Height), Error> {
-        for header in chain {
-            self.headers.insert(header.bitcoin_hash(), header);
-        }
-        self.chain = self.longest_chain();
-        self.tip = self.chain.last().bitcoin_hash();
-
-        Ok((self.chain.last().bitcoin_hash(), self.height()))
-    }
-
-    fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader> {
-        self.headers.get(hash)
-    }
-
-    fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {
-        self.chain.get(height as usize)
-    }
-
-    fn tip(&self) -> (BlockHash, BlockHeader) {
-        let tip = self.chain.last();
-        (tip.bitcoin_hash(), *tip)
-    }
-
-    fn height(&self) -> Height {
-        self.chain.len() as Height - 1
-    }
-
-    fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
-        let iter = self
-            .chain
-            .clone()
-            .into_iter()
-            .enumerate()
-            .map(|(i, h)| (i as Height, h));
-
-        Box::new(iter)
-    }
-}
 
 #[derive(Debug)]
 struct HeightCache {
@@ -528,7 +415,7 @@ fn test_from_store() {
 fn prop_cache_import_ordered() {
     fn prop(input: arbitrary::OrderedHeaders) -> bool {
         let arbitrary::OrderedHeaders { headers } = input;
-        let mut cache = Cache::new(headers.head);
+        let mut cache = model::Cache::new(headers.head);
         let tip = *headers.last();
 
         cache.import_blocks(headers.tail.iter().cloned()).unwrap();
@@ -763,7 +650,7 @@ fn prop_cache_import_tree(tree: Tree) -> bool {
     let store = store::Memory::new(NonEmpty::new(genesis));
 
     let mut real = BlockCache::from(store, params, &[]).unwrap();
-    let mut model = Cache::new(genesis);
+    let mut model = model::Cache::new(genesis);
 
     real.import_blocks(headers.iter().cloned()).unwrap();
     model.import_blocks(headers.iter().cloned()).unwrap();
@@ -862,7 +749,7 @@ fn test_cache_import_equal_difficulty_blocks() {
     let store = store::Memory::new(NonEmpty::new(genesis));
 
     let mut real = BlockCache::from(store.clone(), params.clone(), &[]).unwrap();
-    let mut model = Cache::new(genesis);
+    let mut model = model::Cache::new(genesis);
 
     model.import_blocks(headers.iter().cloned()).unwrap();
     real.import_blocks(headers.iter().cloned()).unwrap();
@@ -881,7 +768,7 @@ fn test_cache_import_equal_difficulty_blocks() {
     headers.swap(1, 2);
 
     let mut real = BlockCache::from(store, params, &[]).unwrap();
-    let mut model = Cache::new(genesis);
+    let mut model = model::Cache::new(genesis);
 
     model.import_blocks(headers.iter().cloned()).unwrap();
     real.import_blocks(headers.iter().cloned()).unwrap();
@@ -1121,7 +1008,7 @@ fn test_cache_import_unordered() {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
-    let mut model = Cache::new(genesis);
+    let mut model = model::Cache::new(genesis);
 
     let g = &mut rand::thread_rng();
 
