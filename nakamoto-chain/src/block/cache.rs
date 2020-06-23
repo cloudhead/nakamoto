@@ -112,11 +112,9 @@ impl<S: Store, K: Hash + Eq> BlockCache<S, K> {
     pub fn median_time_past(&self, height: Height) -> Time {
         assert!(height != 0, "height must be > 0");
 
-        const MEDIAN_TIME_SPAN: Height = 11;
+        let mut times = [0 as Time; time::MEDIAN_TIME_SPAN as usize];
 
-        let mut times = [0 as Time; MEDIAN_TIME_SPAN as usize];
-
-        let start = height.saturating_sub(MEDIAN_TIME_SPAN);
+        let start = height.saturating_sub(time::MEDIAN_TIME_SPAN);
         let end = height;
 
         for (i, blk) in self.range(start..end).enumerate() {
@@ -284,7 +282,8 @@ impl<S: Store, K: Hash + Eq> BlockCache<S, K> {
         }
 
         // A timestamp is accepted as valid if it is greater than the median timestamp of
-        // the previous 11 blocks, and less than the network-adjusted time + 2 hours.
+        // the previous MEDIAN_TIME_SPAN blocks, and less than the network-adjusted
+        // time + MAX_FUTURE_BLOCK_TIME.
         if header.time <= self.median_time_past(height) {
             return Err(Error::InvalidTimestamp(header.time, Ordering::Less));
         }

@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::Time;
+use super::{Height, Time};
 
 /// Maximum time adjustment between network and local time (70 minutes).
 pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
@@ -10,6 +10,10 @@ pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
 /// Maximum a block timestamp can exceed the network-adjusted time before
 /// it is considered invalid (2 hours).
 pub const MAX_FUTURE_BLOCK_TIME: Time = 60 * 60 * 2;
+
+/// Number of previous blocks to look at when determining the median
+/// block time.
+pub const MEDIAN_TIME_SPAN: Height = 11;
 
 /// Minimum number of samples before we adjust local time.
 pub const MIN_TIME_SAMPLES: usize = 5;
