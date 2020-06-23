@@ -24,4 +24,7 @@ pub enum Error {
 
     #[error("not connected to the peer network")]
     NotConnected,
+
+    #[error("send event error: {0}")]
+    SendEvent(String),
 }

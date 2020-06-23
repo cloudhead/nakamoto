@@ -189,7 +189,7 @@ impl<R: Read + Write> Connection<R> {
     pub fn run<T: BlockTree>(
         &mut self,
         block_cache: Arc<RwLock<T>>,
-        _events: mpsc::Sender<Event>,
+        events: mpsc::Sender<Event>,
     ) -> Result<(), Error> {
         let (tip, height) = {
             let cache = block_cache.read().expect("lock is not poisoned");
@@ -210,6 +210,11 @@ impl<R: Read + Write> Connection<R> {
 
                 if self.is_ready() {
                     debug!("{}: Handshake successful", self.address);
+
+                    events
+                        .send(Event::Handshaked(self.address, self.time_offset))
+                        .map_err(|e| Error::SendEvent(e.to_string()))?;
+
                     self.sync(&[tip], block_cache.clone())?;
                 }
             }
@@ -273,6 +278,9 @@ impl<R: Read + Write> Connection<R> {
         }: VersionMessage,
     ) {
         let height = 0;
+        // TODO: I'm not sure we should be getting the system time here.
+        // It may be a better idea _not_ to store the time offset locally,
+        // and instead send the remote time back to the network controller.
         let local_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
