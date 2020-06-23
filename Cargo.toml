@@ -1,6 +1,20 @@
+[package]
+name = "nakamoto-daemon"
+version = "0.1.0"
+authors = ["Alexis Sellier <self@cloudhead.io>"]
+edition = "2018"
+
 [workspace]
 members = [
   "nakamoto-p2p",
   "nakamoto-chain",
-  "nakamoto-daemon",
+  "nakamoto-node",
 ]
+
+[dependencies]
+nakamoto-node = { path = "./nakamoto-node" }
+argh = "0.1.3"
+fern = { version = "0.6", features = ["colored"] }
+atty = { version = "0.2" }
+thiserror = "1.0"
+log = "0.4"

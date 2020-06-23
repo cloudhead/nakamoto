@@ -1,9 +1,31 @@
-use nakamoto_daemon::Options;
+use argh::FromArgs;
+use std::net;
+
+#[derive(FromArgs)]
+/// A Bitcoin light client.
+pub struct Options {
+    #[argh(option)]
+    /// connect to the specified peers only
+    pub connect: Vec<net::SocketAddr>,
+
+    #[argh(switch)]
+    /// use the bitcoin test network (default: false)
+    pub testnet: bool,
+
+    #[argh(option, default = "log::LevelFilter::Info")]
+    /// log level (default: info)
+    pub log: log::LevelFilter,
+}
+
+impl Options {
+    pub fn from_env() -> Self {
+        argh::from_env()
+    }
+}
 
 fn main() {
     let opts = Options::from_env();
 
-    #[cfg(feature = "logging")]
     {
         use atty::Stream;
         use fern::colors::{Color, ColoredLevelConfig};
@@ -37,7 +59,7 @@ fn main() {
             .unwrap();
     }
 
-    if let Err(err) = nakamoto_daemon::run(opts) {
+    if let Err(err) = nakamoto_node::run(&opts.connect) {
         log::error!("{}", err);
         std::process::exit(1);
     }

@@ -3,8 +3,6 @@ use std::net;
 use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 
-use argh::FromArgs;
-
 use nakamoto_chain as chain;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store::{self, Store};
@@ -28,29 +26,7 @@ pub enum Error {
     BlockStore(#[from] store::Error),
 }
 
-#[derive(FromArgs)]
-/// A Bitcoin light client.
-pub struct Options {
-    #[argh(option)]
-    /// connect to the specified peers only
-    pub connect: Vec<net::SocketAddr>,
-
-    #[argh(switch)]
-    /// use the bitcoin test network (default: false)
-    pub testnet: bool,
-
-    #[argh(option, default = "log::LevelFilter::Info")]
-    /// log level (default: info)
-    pub log: log::LevelFilter,
-}
-
-impl Options {
-    pub fn from_env() -> Self {
-        argh::from_env()
-    }
-}
-
-pub fn run(opts: Options) -> Result<(), Error> {
+pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::info!("Initializing daemon..");
 
     let cfg = p2p::peer::Config::default();
@@ -84,7 +60,7 @@ pub fn run(opts: Options) -> Result<(), Error> {
     let block_cache = Arc::new(RwLock::new(cache));
     let mut net = p2p::Network::new(cfg, block_cache, clock);
 
-    let peers = if opts.connect.is_empty() {
+    let peers = if connect.is_empty() {
         match AddressBook::load("peers") {
             Ok(peers) if peers.is_empty() => {
                 log::info!("Address book is empty. Trying DNS seeds..");
@@ -96,7 +72,7 @@ pub fn run(opts: Options) -> Result<(), Error> {
             }
         }
     } else {
-        AddressBook::from(opts.connect.as_slice())?
+        AddressBook::from(connect)?
     };
 
     log::info!("{} peer(s) found..", peers.len());
