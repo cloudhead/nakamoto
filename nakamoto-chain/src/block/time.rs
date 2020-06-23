@@ -41,6 +41,12 @@ pub struct AdjustedTime<K> {
     offset: TimeOffset,
 }
 
+impl<K: Hash + Eq> Default for AdjustedTime<K> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<K: Hash + Eq> AdjustedTime<K> {
     pub fn new() -> Self {
         let offset = 0;
