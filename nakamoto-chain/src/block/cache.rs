@@ -84,6 +84,42 @@ impl<S: Store> BlockCache<S> {
         Ok(cache)
     }
 
+    /// Iterate over a range of blocks.
+    pub fn range<'a>(
+        &'a self,
+        range: std::ops::Range<Height>,
+    ) -> impl Iterator<Item = &CachedBlock> + 'a {
+        self.chain
+            .iter()
+            .skip(range.start as usize)
+            .take((range.end - range.start) as usize)
+    }
+
+    /// Get the median time past for the blocks leading up to the given height.
+    ///
+    /// Panics if height is `0`.
+    ///
+    pub fn median_time_past(&self, height: Height) -> Time {
+        assert!(height != 0, "height must be > 0");
+
+        const MEDIAN_TIME_SPAN: Height = 11;
+
+        let mut times = [0 as Time; MEDIAN_TIME_SPAN as usize];
+
+        let start = height.saturating_sub(MEDIAN_TIME_SPAN);
+        let end = height;
+
+        for (i, blk) in self.range(start..end).enumerate() {
+            times[i] = blk.time;
+        }
+
+        // Gracefully handle the case where `height` < `MEDIUM_TIME_SPAN`.
+        let available = &mut times[0..(end - start) as usize];
+
+        available.sort();
+        available[available.len() / 2]
+    }
+
     /// Import a block into the tree. Performs header validation.
     fn import_block(&mut self, header: BlockHeader) -> Result<(BlockHash, Height), Error> {
         let hash = header.bitcoin_hash();

@@ -412,6 +412,26 @@ fn test_from_store() {
 }
 
 #[test]
+fn test_median_time_past() {
+    let network = bitcoin::Network::Bitcoin;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/data/headers.bin");
+    let store = store::File::open(path, genesis).unwrap();
+
+    let cache = BlockCache::from(store, params, &[]).unwrap();
+    let headers = cache.iter().map(|(_, h)| h).collect::<Vec<_>>();
+
+    assert_eq!(cache.median_time_past(1), genesis.time);
+    assert_eq!(cache.median_time_past(2), headers[1].time);
+    assert_eq!(cache.median_time_past(3), headers[1].time);
+    assert_eq!(cache.median_time_past(4), headers[2].time);
+    assert_eq!(cache.median_time_past(11), headers[5].time);
+    assert_eq!(cache.median_time_past(13), headers[7].time);
+}
+
+#[test]
 fn prop_cache_import_ordered() {
     fn prop(input: arbitrary::OrderedHeaders) -> bool {
         let arbitrary::OrderedHeaders { headers } = input;

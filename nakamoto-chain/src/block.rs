@@ -1,5 +1,6 @@
 pub mod cache;
 pub mod store;
+pub mod time;
 pub mod tree;
 
 pub use bitcoin::blockdata::block::BlockHeader;
