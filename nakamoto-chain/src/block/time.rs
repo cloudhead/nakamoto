@@ -64,6 +64,9 @@ impl<K: Hash + Eq> AdjustedTime<K> {
         // Another quirk of this implementation is that the actual number of samples can
         // reach `MAX_TIME_SAMPLES + 1`, since there is always an initial `0` sample with
         // no associated source.
+        //
+        // Finally, we never remove sources. Even after peers disconnect. This is congruent
+        // with Bitcoin Core behavior. I'm not sure why that is.
         if self.sources.len() == MAX_TIME_SAMPLES {
             return;
         }

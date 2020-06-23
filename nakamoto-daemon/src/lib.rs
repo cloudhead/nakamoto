@@ -79,10 +79,10 @@ pub fn run(opts: Options) -> Result<(), Error> {
     }
 
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
-    let adjusted_time = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
-    let cache = BlockCache::from(store, params, &checkpoints, adjusted_time)?;
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let cache = BlockCache::from(store, params, &checkpoints, clock.clone())?;
     let block_cache = Arc::new(RwLock::new(cache));
-    let mut net = p2p::Network::new(cfg, block_cache);
+    let mut net = p2p::Network::new(cfg, block_cache, clock);
 
     let peers = if opts.connect.is_empty() {
         match AddressBook::load("peers") {

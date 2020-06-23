@@ -58,7 +58,7 @@ pub type TimeOffset = i64;
 #[derive(Debug)]
 pub enum Event {
     Connected(net::SocketAddr),
-    Handshaked(net::SocketAddr),
+    Handshaked(net::SocketAddr, TimeOffset),
     Disconnected(net::SocketAddr),
 }
 

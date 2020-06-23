@@ -4,11 +4,11 @@ pub mod error;
 pub mod peer;
 pub mod tcp;
 
-use nakamoto_chain::block::{tree::BlockTree, Height};
+use nakamoto_chain::block::{time::AdjustedTime, tree::BlockTree, Height};
 
 use std::collections::{HashMap, HashSet};
 use std::net;
-use std::sync::{mpsc, Arc, RwLock};
+use std::sync::{mpsc, Arc, Mutex, RwLock};
 
 use log::*;
 
@@ -71,6 +71,7 @@ pub struct Network<T: BlockTree, P: Peer> {
     peers: Arc<RwLock<Peers<P>>>,
     block_cache: Arc<RwLock<T>>,
     state: NetworkState,
+    adjusted_time: Arc<Mutex<AdjustedTime<net::SocketAddr>>>,
 
     connected: HashSet<PeerId>,
     handshaked: HashSet<PeerId>,
@@ -78,7 +79,11 @@ pub struct Network<T: BlockTree, P: Peer> {
 }
 
 impl<T: BlockTree, P: Peer> Network<T, P> {
-    pub fn new(peer_config: peer::Config, block_cache: Arc<RwLock<T>>) -> Self {
+    pub fn new(
+        peer_config: peer::Config,
+        block_cache: Arc<RwLock<T>>,
+        adjusted_time: Arc<Mutex<AdjustedTime<net::SocketAddr>>>,
+    ) -> Self {
         let peers = Arc::new(RwLock::new(Peers::new()));
         let state = NetworkState::Connecting;
 
@@ -87,6 +92,7 @@ impl<T: BlockTree, P: Peer> Network<T, P> {
             peer_config,
             peers,
             block_cache,
+            adjusted_time,
             connected: HashSet::new(),
             handshaked: HashSet::new(),
             disconnected: HashSet::new(),
@@ -124,8 +130,12 @@ impl<T: BlockTree, P: Peer> Network<T, P> {
                     self.disconnected.remove(&peer);
                     self.connected.insert(peer);
                 }
-                Ok(peer::Event::Handshaked(peer)) => {
+                Ok(peer::Event::Handshaked(peer, offset)) => {
                     self.handshaked.insert(peer);
+                    self.adjusted_time
+                        .lock()
+                        .expect("lock is not poisoned")
+                        .add_sample(peer, offset);
                 }
                 Ok(peer::Event::Disconnected(peer)) => {
                     self.connected.remove(&peer);
