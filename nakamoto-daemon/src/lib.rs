@@ -1,13 +1,14 @@
 use std::io;
 use std::net;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use argh::FromArgs;
 
 use nakamoto_chain as chain;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store::{self, Store};
+use nakamoto_chain::block::time::AdjustedTime;
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
 
@@ -78,7 +79,8 @@ pub fn run(opts: Options) -> Result<(), Error> {
     }
 
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
-    let cache = BlockCache::from(store, params, &checkpoints)?;
+    let adjusted_time = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let cache = BlockCache::from(store, params, &checkpoints, adjusted_time)?;
     let block_cache = Arc::new(RwLock::new(cache));
     let mut net = p2p::Network::new(cfg, block_cache);
 

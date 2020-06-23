@@ -3,7 +3,10 @@ pub mod model;
 #[cfg(test)]
 pub mod test;
 
+use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::hash::Hash;
+use std::sync::{Arc, Mutex};
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -16,7 +19,11 @@ use nonempty::NonEmpty;
 use crate::block::store::Store;
 
 use crate::block::tree::{BlockTree, Branch, Error};
-use crate::block::{self, Bits, CachedBlock, Height, Time};
+use crate::block::{
+    self,
+    time::{self, AdjustedTime},
+    Bits, CachedBlock, Height, Time,
+};
 
 /// A chain candidate, forking off the active chain.
 #[derive(Debug)]
@@ -29,21 +36,23 @@ struct Candidate {
 
 /// An implementation of `BlockTree`.
 #[derive(Debug, Clone)]
-pub struct BlockCache<S: Store> {
+pub struct BlockCache<S: Store, K> {
     chain: NonEmpty<CachedBlock>,
     headers: HashMap<BlockHash, Height>,
     orphans: HashMap<BlockHash, BlockHeader>,
     checkpoints: BTreeMap<Height, BlockHash>,
+    adjusted_time: Arc<Mutex<AdjustedTime<K>>>,
     params: Params,
     store: S,
 }
 
-impl<S: Store> BlockCache<S> {
+impl<S: Store, K: Hash + Eq> BlockCache<S, K> {
     /// Create a new `BlockCache` from a `Store`, consensus parameters, and checkpoints.
     pub fn from(
         store: S,
         params: Params,
         checkpoints: &[(Height, BlockHash)],
+        adjusted_time: Arc<Mutex<AdjustedTime<K>>>,
     ) -> Result<Self, Error> {
         let genesis = store.genesis();
         let length = store.len()?;
@@ -69,6 +78,7 @@ impl<S: Store> BlockCache<S> {
             params,
             checkpoints,
             store,
+            adjusted_time,
         };
 
         for result in cache.store.iter().skip(1) {
@@ -250,7 +260,6 @@ impl<S: Store> BlockCache<S> {
             self.next_difficulty_target(tip.height, tip.time, tip.bits, &self.params)
         };
 
-        // TODO: Validate timestamp.
         let target = block::target_from_bits(bits);
         match header.validate_pow(&target) {
             Err(bitcoin::util::Error::BlockBadProofOfWork) => {
@@ -274,7 +283,23 @@ impl<S: Store> BlockCache<S> {
             }
         }
 
+        // A timestamp is accepted as valid if it is greater than the median timestamp of
+        // the previous 11 blocks, and less than the network-adjusted time + 2 hours.
+        if header.time <= self.median_time_past(height) {
+            return Err(Error::InvalidTimestamp(header.time, Ordering::Less));
+        }
+        if header.time > self.adjusted_time() + time::MAX_FUTURE_BLOCK_TIME {
+            return Err(Error::InvalidTimestamp(header.time, Ordering::Greater));
+        }
+
         Ok(())
+    }
+
+    fn adjusted_time(&self) -> Time {
+        self.adjusted_time
+            .lock()
+            .expect("the lock is not poisoned")
+            .get()
     }
 
     fn last_checkpoint(&self) -> Height {
@@ -341,7 +366,7 @@ impl<S: Store> BlockCache<S> {
     }
 }
 
-impl<S: Store> BlockTree for BlockCache<S> {
+impl<S: Store, K: Hash + Eq> BlockTree for BlockCache<S, K> {
     fn import_blocks<I: Iterator<Item = BlockHeader>>(
         &mut self,
         chain: I,

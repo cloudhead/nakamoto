@@ -1,12 +1,14 @@
 use super::{model, BlockCache, BlockTree, Error};
 
 use crate::block::store::{self, Store};
+use crate::block::time::AdjustedTime;
 use crate::block::{self, Height, Target, Time};
 
 use std::collections::{BTreeMap, VecDeque};
 use std::iter;
+use std::net;
 use std::path::Path;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use nonempty::NonEmpty;
 use quickcheck as qc;
@@ -223,9 +225,6 @@ fn arbitrary_header<G: Gen>(
 
     let time = if delta == 0 {
         prev_time
-    } else if delta < prev_time && g.gen_bool(1. / 100.) {
-        // Small probability that this block's timestamp is in the past.
-        g.gen_range(prev_time.saturating_sub(delta), prev_time)
     } else {
         g.gen_range(prev_time, prev_time + delta)
     };
@@ -270,7 +269,7 @@ fn arbitrary_chain<G: Gen>(height: Height, g: &mut G) -> NonEmpty<BlockHeader> {
 }
 
 #[derive(Clone)]
-struct BlockImport(BlockCache<store::Memory>, BlockHeader);
+struct BlockImport(BlockCache<store::Memory, net::SocketAddr>, BlockHeader);
 
 impl std::fmt::Debug for BlockImport {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
@@ -285,7 +284,8 @@ impl Arbitrary for BlockImport {
         let genesis = constants::genesis_block(network).header;
         let params = Params::new(network);
         let store = store::Memory::new(NonEmpty::new(genesis));
-        let cache = BlockCache::from(store, params, &[]).unwrap();
+        let clock = Arc::new(Mutex::new(AdjustedTime::new()));
+        let cache = BlockCache::from(store, params, &[], clock).unwrap();
         let header = arbitrary_header(genesis.bitcoin_hash(), genesis.time, &genesis.target(), g);
 
         cache
@@ -395,7 +395,8 @@ fn test_from_store() {
     let network = bitcoin::Network::Bitcoin;
     let params = Params::new(network);
 
-    let cache = BlockCache::from(store, params, &[]).unwrap();
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let cache = BlockCache::from(store, params, &[], clock).unwrap();
     let cache_headers = cache.iter().collect::<Vec<_>>();
 
     assert_eq!(store_headers.len(), cache_headers.len());
@@ -420,7 +421,8 @@ fn test_median_time_past() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/data/headers.bin");
     let store = store::File::open(path, genesis).unwrap();
 
-    let cache = BlockCache::from(store, params, &[]).unwrap();
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let cache = BlockCache::from(store, params, &[], clock).unwrap();
     let headers = cache.iter().map(|(_, h)| h).collect::<Vec<_>>();
 
     assert_eq!(cache.median_time_past(1), genesis.time);
@@ -669,7 +671,8 @@ fn prop_cache_import_tree(tree: Tree) -> bool {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
 
-    let mut real = BlockCache::from(store, params, &[]).unwrap();
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let mut real = BlockCache::from(store, params, &[], clock).unwrap();
     let mut model = model::Cache::new(genesis);
 
     real.import_blocks(headers.iter().cloned()).unwrap();
@@ -684,7 +687,8 @@ fn test_cache_import_back_and_forth() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let mut cache = BlockCache::from(store, params, &[]).unwrap();
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let mut cache = BlockCache::from(store, params, &[], clock).unwrap();
 
     let g = &mut rand::thread_rng();
 
@@ -767,8 +771,9 @@ fn test_cache_import_equal_difficulty_blocks() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
 
-    let mut real = BlockCache::from(store.clone(), params.clone(), &[]).unwrap();
+    let mut real = BlockCache::from(store.clone(), params.clone(), &[], clock.clone()).unwrap();
     let mut model = model::Cache::new(genesis);
 
     model.import_blocks(headers.iter().cloned()).unwrap();
@@ -787,7 +792,7 @@ fn test_cache_import_equal_difficulty_blocks() {
 
     headers.swap(1, 2);
 
-    let mut real = BlockCache::from(store, params, &[]).unwrap();
+    let mut real = BlockCache::from(store, params, &[], clock).unwrap();
     let mut model = model::Cache::new(genesis);
 
     model.import_blocks(headers.iter().cloned()).unwrap();
@@ -808,6 +813,7 @@ fn test_cache_import_with_checkpoints() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
     let g = &mut rand::thread_rng();
 
     let tree = Tree::new(genesis);
@@ -817,17 +823,27 @@ fn test_cache_import_with_checkpoints() {
     let a2 = a1.next(g);
     let a3 = a2.next(g);
 
-    let mut cache = BlockCache::from(store.clone(), params.clone(), &[]).unwrap();
+    let mut cache = BlockCache::from(store.clone(), params.clone(), &[], clock.clone()).unwrap();
     cache.import_blocks(tree.branch([&a1, &a3])).unwrap();
 
-    let mut cache =
-        BlockCache::from(store.clone(), params.clone(), &[(32, Default::default())]).unwrap();
+    let mut cache = BlockCache::from(
+        store.clone(),
+        params.clone(),
+        &[(32, Default::default())],
+        clock.clone(),
+    )
+    .unwrap();
     cache
         .import_blocks(tree.branch([&a1, &a3]))
         .expect("A checkpoint in the future cannot cause any error");
 
-    let mut cache =
-        BlockCache::from(store.clone(), params.clone(), &[(1, Default::default())]).unwrap();
+    let mut cache = BlockCache::from(
+        store.clone(),
+        params.clone(),
+        &[(1, Default::default())],
+        clock.clone(),
+    )
+    .unwrap();
     assert!(
         matches! {
             cache.import_block(a1.block()),
@@ -836,8 +852,13 @@ fn test_cache_import_with_checkpoints() {
         "An incorrect checkpoint at height 1 causes an error"
     );
 
-    let mut cache =
-        BlockCache::from(store.clone(), params.clone(), &[(1, a1.hash), (2, a2.hash)]).unwrap();
+    let mut cache = BlockCache::from(
+        store.clone(),
+        params.clone(),
+        &[(1, a1.hash), (2, a2.hash)],
+        clock,
+    )
+    .unwrap();
     cache
         .import_blocks(tree.branch([&a1, &a2]))
         .expect("Correct checkpoints cause no error");
@@ -849,7 +870,8 @@ fn test_cache_import_invalid_fork() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let mut cache = BlockCache::from(store, params, &[]).unwrap();
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let mut cache = BlockCache::from(store, params, &[], clock).unwrap();
     let g = &mut rand::thread_rng();
 
     let a0 = Tree::new(genesis);
@@ -902,6 +924,7 @@ fn test_cache_import_fork_with_checkpoints() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
     let g = &mut rand::thread_rng();
 
     let a0 = Tree::new(genesis);
@@ -913,7 +936,7 @@ fn test_cache_import_fork_with_checkpoints() {
 
     // Prevent block `a2` from being reverted.
     let checkpoints = &[(0, genesis.bitcoin_hash()), (2, a2.hash)];
-    let mut cache = BlockCache::from(store, params, checkpoints).unwrap();
+    let mut cache = BlockCache::from(store, params, checkpoints, clock).unwrap();
 
     cache.import_blocks(a0.branch([&a1, &a3])).unwrap();
     assert_eq!(cache.tip().0, a3.hash, "{:#?}", cache);
@@ -976,7 +999,8 @@ fn test_cache_import_duplicate() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let mut cache = BlockCache::from(store, params, &[]).unwrap();
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let mut cache = BlockCache::from(store, params, &[], clock).unwrap();
     let g = &mut rand::thread_rng();
 
     let tree = Tree::new(genesis);
@@ -1027,7 +1051,8 @@ fn test_cache_import_unordered() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let mut cache = BlockCache::from(store, params, &[]).unwrap();
+    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
+    let mut cache = BlockCache::from(store, params, &[], clock).unwrap();
     let mut model = model::Cache::new(genesis);
 
     let g = &mut rand::thread_rng();

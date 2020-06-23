@@ -18,6 +18,8 @@ pub enum Error {
     InvalidBlockHash(BlockHash, Height),
     #[error("block height {0} is prior to last checkpoint")]
     InvalidBlockHeight(Height),
+    #[error("block timestamp {0} is invalid")]
+    InvalidTimestamp(Time, std::cmp::Ordering),
     #[error("duplicate block {0}")]
     DuplicateBlock(BlockHash),
     #[error("invalid chain")]

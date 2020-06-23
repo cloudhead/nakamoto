@@ -4,7 +4,7 @@ pub mod error;
 pub mod peer;
 pub mod tcp;
 
-use nakamoto_chain::block::{tree::BlockTree, Height, Time};
+use nakamoto_chain::block::{tree::BlockTree, Height};
 
 use std::collections::{HashMap, HashSet};
 use std::net;

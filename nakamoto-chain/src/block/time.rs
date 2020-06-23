@@ -7,6 +7,10 @@ use super::Time;
 /// Maximum time adjustment between network and local time (70 minutes).
 pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
 
+/// Maximum a block timestamp can exceed the network-adjusted time before
+/// it is considered invalid (2 hours).
+pub const MAX_FUTURE_BLOCK_TIME: Time = 60 * 60 * 2;
+
 /// Minimum number of samples before we adjust local time.
 pub const MIN_TIME_SAMPLES: usize = 5;
 
@@ -34,14 +38,13 @@ pub struct AdjustedTime<K> {
 }
 
 impl<K: Hash + Eq> AdjustedTime<K> {
-    pub fn new(origin: K) -> Self {
+    pub fn new() -> Self {
         let offset = 0;
-
-        let mut sources = HashSet::with_capacity(MAX_TIME_SAMPLES);
-        sources.insert(origin);
 
         let mut samples = Vec::with_capacity(MAX_TIME_SAMPLES);
         samples.push(offset);
+
+        let sources = HashSet::with_capacity(MAX_TIME_SAMPLES);
 
         Self {
             sources,
@@ -57,6 +60,10 @@ impl<K: Hash + Eq> AdjustedTime<K> {
         // added to the list, while the set of sample sources keeps growing. This has the
         // advantage that as new peers are discovered, the network time can keep adjusting,
         // while old samples get discarded. Such behavior is found in `btcd`.
+        //
+        // Another quirk of this implementation is that the actual number of samples can
+        // reach `MAX_TIME_SAMPLES + 1`, since there is always an initial `0` sample with
+        // no associated source.
         if self.sources.len() == MAX_TIME_SAMPLES {
             return;
         }
@@ -127,8 +134,7 @@ mod tests {
 
     #[test]
     fn test_adjusted_time() {
-        let mut adjusted_time: AdjustedTime<SocketAddr> =
-            AdjustedTime::new(([127, 0, 0, 0], 8333).into());
+        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new();
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
         adjusted_time.add_sample(([127, 0, 0, 1], 8333).into(), 42);
@@ -168,8 +174,7 @@ mod tests {
             .unwrap()
             .as_secs() as Time;
 
-        let mut adjusted_time: AdjustedTime<SocketAddr> =
-            AdjustedTime::new(([127, 0, 0, 0], 8333).into());
+        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new();
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
         for i in 1..5 {
@@ -187,8 +192,7 @@ mod tests {
 
     #[test]
     fn test_adjusted_time_max_samples() {
-        let mut adjusted_time: AdjustedTime<SocketAddr> =
-            AdjustedTime::new(([127, 0, 0, 0], 8333).into());
+        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new();
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
         for i in 1..(MAX_TIME_SAMPLES / 2) {
@@ -207,9 +211,11 @@ mod tests {
         // There are 99 samples before, and 99 samples after.
         assert_eq!(adjusted_time.offset(), 0);
 
-        adjusted_time.add_sample(([127, 0, 0, 255], 8333).into(), 1);
+        adjusted_time.add_sample(([127, 0, 0, 253], 8333).into(), 1);
+        adjusted_time.add_sample(([127, 0, 0, 254], 8333).into(), 2);
+        adjusted_time.add_sample(([127, 0, 0, 255], 8333).into(), 3);
         assert_eq!(
-            adjusted_time.samples.len(),
+            adjusted_time.sources.len(),
             MAX_TIME_SAMPLES,
             "Adding a sample after the maximum is reached, has no effect"
         );
