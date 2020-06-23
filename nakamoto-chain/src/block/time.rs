@@ -48,6 +48,8 @@ impl<K: Hash + Eq> Default for AdjustedTime<K> {
 }
 
 impl<K: Hash + Eq> AdjustedTime<K> {
+    /// Create a new network-adjusted time tracker.
+    /// Starts with a single sample of zero.
     pub fn new() -> Self {
         let offset = 0;
 
@@ -115,10 +117,12 @@ impl<K: Hash + Eq> AdjustedTime<K> {
         };
     }
 
+    /// Get the median network time offset.
     pub fn offset(&self) -> TimeOffset {
         self.offset
     }
 
+    /// Get the network-adjusted time given a local time.
     pub fn from(&self, time: Time) -> Time {
         let adjustment = self.offset;
 
@@ -129,6 +133,7 @@ impl<K: Hash + Eq> AdjustedTime<K> {
         }
     }
 
+    /// Get the current network-adjusted time.
     pub fn get(&self) -> Time {
         let local_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
