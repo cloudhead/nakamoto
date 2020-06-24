@@ -139,6 +139,7 @@ impl<S: Store, K: Hash + Eq> BlockCache<S, K> {
 
             self.validate(&tip, &header)?;
             self.extend_chain(height, hash, header);
+            self.store.put(std::iter::once(header))?;
         } else if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
             return Err(Error::DuplicateBlock(hash));
         } else {
@@ -171,7 +172,7 @@ impl<S: Store, K: Hash + Eq> BlockCache<S, K> {
 
             // TODO: Validate branch before switching to it.
             if candidate_work > main_work {
-                self.switch_to_fork(branch);
+                self.switch_to_fork(branch)?;
             } else if self.params.network != Network::Bitcoin {
                 if candidate_work == main_work {
                     // Nb. We intend here to compare the hashes as integers, and pick the lowest
@@ -180,7 +181,7 @@ impl<S: Store, K: Hash + Eq> BlockCache<S, K> {
                     // comparison). Since this code isn't run on Mainnet, it's okay, as it serves
                     // its purpose of being determinstic when choosing the active chain.
                     if branch.tip < self.chain.last().hash {
-                        self.switch_to_fork(branch);
+                        self.switch_to_fork(branch)?;
                     }
                 }
             }
@@ -326,16 +327,19 @@ impl<S: Store, K: Hash + Eq> BlockCache<S, K> {
     }
 
     /// Rollback active chain to the given height.
-    fn rollback(&mut self, height: Height) {
+    fn rollback(&mut self, height: Height) -> Result<(), Error> {
         for block in self.chain.tail.drain(height as usize..) {
             self.headers.remove(&block.hash);
             self.orphans.insert(block.hash, block.header);
         }
+        self.store.rollback(height)?;
+
+        Ok(())
     }
 
     /// Activate a fork candidate.
-    fn switch_to_fork(&mut self, branch: &Candidate) {
-        self.rollback(branch.fork_height);
+    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<(), Error> {
+        self.rollback(branch.fork_height)?;
 
         for (i, header) in branch.headers.iter().enumerate() {
             self.extend_chain(
@@ -344,6 +348,9 @@ impl<S: Store, K: Hash + Eq> BlockCache<S, K> {
                 *header,
             );
         }
+        self.store.put(branch.headers.iter().cloned())?;
+
+        Ok(())
     }
 
     /// Extend the active chain with a block.
