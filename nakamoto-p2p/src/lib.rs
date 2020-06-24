@@ -26,20 +26,15 @@ pub type PeerId = net::SocketAddr;
 type Peers<T> = HashMap<PeerId, T>;
 
 pub trait Peer {
-    fn run<T: BlockTree>(
-        &mut self,
-        cache: Arc<RwLock<T>>,
-        events: mpsc::Sender<peer::Event>,
-    ) -> Result<(), error::Error>;
-
+    // TODO: The interface here should be `receive` or `tick`.
+    fn run(&mut self, events: mpsc::Sender<peer::Event>) -> Result<(), error::Error>;
     fn height(&self) -> Height;
     fn time_offset(&self) -> peer::TimeOffset;
 }
 
-fn run<T: BlockTree, P: Peer>(
+fn run<P: Peer>(
     addr: net::SocketAddr,
     peer: P,
-    cache: Arc<RwLock<T>>,
     peers: Arc<RwLock<Peers<P>>>,
     events: mpsc::Sender<peer::Event>,
 ) -> Result<(), error::Error> {
@@ -50,7 +45,7 @@ fn run<T: BlockTree, P: Peer>(
     match peers.entry(addr) {
         Entry::Vacant(v) => {
             let peer = v.insert(peer);
-            peer.run(cache, events)?;
+            peer.run(events)?;
         }
         Entry::Occupied(_) => {}
     }
@@ -71,7 +66,7 @@ pub struct Network<T: BlockTree, P: Peer> {
     peers: Arc<RwLock<Peers<P>>>,
     block_cache: Arc<RwLock<T>>,
     state: NetworkState,
-    adjusted_time: Arc<Mutex<AdjustedTime<net::SocketAddr>>>,
+    adjusted_time: Arc<Mutex<AdjustedTime<PeerId>>>,
 
     connected: HashSet<PeerId>,
     handshaked: HashSet<PeerId>,
@@ -82,7 +77,7 @@ impl<T: BlockTree, P: Peer> Network<T, P> {
     pub fn new(
         peer_config: peer::Config,
         block_cache: Arc<RwLock<T>>,
-        adjusted_time: Arc<Mutex<AdjustedTime<net::SocketAddr>>>,
+        adjusted_time: Arc<Mutex<AdjustedTime<PeerId>>>,
     ) -> Self {
         let peers = Arc::new(RwLock::new(Peers::new()));
         let state = NetworkState::Connecting;

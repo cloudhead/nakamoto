@@ -31,7 +31,7 @@ use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::stream_reader::StreamReader;
 use bitcoin::util::hash::BitcoinHash;
 
-use nakamoto_chain::block::{tree::BlockTree, Height};
+use nakamoto_chain::block::{tree::BlockTree, BlockHeader, Height};
 
 use crate::error::Error;
 
@@ -118,7 +118,7 @@ pub enum Link {
 
 /// A peer connection.
 #[derive(Debug)]
-pub struct Connection<R: Read> {
+pub struct Connection<R: Read, T> {
     /// Remote peer address.
     pub address: net::SocketAddr,
     /// Local peer address.
@@ -134,19 +134,17 @@ pub struct Connection<R: Read> {
     /// An offset in seconds, between this peer's clock and ours.
     /// A positive offset means the peer's clock is ahead of ours.
     pub time_offset: TimeOffset,
+    /// Block tree.
+    pub tree: Arc<RwLock<T>>,
     /// Underling peer connection.
     raw: StreamReader<R>,
     /// Last time we heard from this peer.
     last_active: time::Instant,
 }
 
-impl<R: Read + Write> crate::Peer for Connection<R> {
-    fn run<T: BlockTree>(
-        &mut self,
-        cache: Arc<RwLock<T>>,
-        events: mpsc::Sender<Event>,
-    ) -> Result<(), Error> {
-        Connection::run(self, cache, events)
+impl<R: Read + Write, T: BlockTree> crate::Peer for Connection<R, T> {
+    fn run(&mut self, events: mpsc::Sender<Event>) -> Result<(), Error> {
+        Connection::run(self, events)
     }
 
     fn height(&self) -> Height {
@@ -158,13 +156,14 @@ impl<R: Read + Write> crate::Peer for Connection<R> {
     }
 }
 
-impl<R: Read + Write> Connection<R> {
+impl<R: Read + Write, T: BlockTree> Connection<R, T> {
     /// Create a new peer from a `io::Read` and an address pair.
     pub fn from(
         r: R,
         local_address: net::SocketAddr,
         address: net::SocketAddr,
         link: Link,
+        tree: Arc<RwLock<T>>,
         config: Config,
     ) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
@@ -181,18 +180,15 @@ impl<R: Read + Write> Connection<R> {
             address,
             local_address,
             time_offset,
+            tree,
             last_active,
             link,
         }
     }
 
-    pub fn run<T: BlockTree>(
-        &mut self,
-        block_cache: Arc<RwLock<T>>,
-        events: mpsc::Sender<Event>,
-    ) -> Result<(), Error> {
+    pub fn run(&mut self, events: mpsc::Sender<Event>) -> Result<(), Error> {
         let (tip, height) = {
-            let cache = block_cache.read().expect("lock is not poisoned");
+            let cache = self.tree.read().expect("lock is not poisoned");
             let (hash, _) = cache.tip();
 
             (hash, cache.height())
@@ -215,7 +211,7 @@ impl<R: Read + Write> Connection<R> {
                         .send(Event::Handshaked(self.address, self.time_offset))
                         .map_err(|e| Error::SendEvent(e.to_string()))?;
 
-                    self.sync(&[tip], block_cache.clone())?;
+                    self.sync(&[tip])?;
                 }
             }
         }
@@ -261,6 +257,14 @@ impl<R: Read + Write> Connection<R> {
                 (State::VersionReceived, NetworkMessage::Verack) => {
                     (State::Ready, vec![NetworkMessage::Verack])
                 }
+                (State::Ready, NetworkMessage::Headers(headers)) => {
+                    match self.receive_headers(headers) {
+                        Ok(_) => {}
+                        Err(_) => {}
+                    }
+
+                    (State::Ready, vec![])
+                }
                 otherwise => todo!("{:?}", otherwise),
             },
         };
@@ -297,6 +301,47 @@ impl<R: Read + Write> Connection<R> {
         // TODO: Check version
         // TODO: Check services
         // TODO: Check start_height
+    }
+
+    fn receive_headers(
+        &mut self,
+        headers: Vec<BlockHeader>,
+    ) -> Result<Option<(BlockHash, Height)>, Error> {
+        debug!("{}: Received {} headers", self.address, headers.len());
+
+        if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
+            debug!(
+                "{}: Range = {}..{}",
+                self.address,
+                first.bitcoin_hash(),
+                last.bitcoin_hash()
+            );
+        } else {
+            info!("{}: Finished synchronizing", self.address);
+            return Ok(None);
+        }
+
+        let length = headers.len();
+
+        match self
+            .tree
+            .write()
+            .expect("lock has not been poisoned")
+            .import_blocks(headers.into_iter())
+        {
+            Ok((tip, height)) => {
+                self.height = height;
+
+                info!("Imported {} headers from {}", length, self.address);
+                info!("Chain height = {}, tip = {}", height, tip);
+                // TODO: We can break here if we've received less than 2'000 headers.
+                Ok(Some((tip, height)))
+            }
+            Err(err) => {
+                error!("Error importing headers: {}", err);
+                return Err(Error::from(err));
+            }
+        }
     }
 
     fn version(&self, start_height: Height) -> NetworkMessage {
@@ -366,11 +411,7 @@ impl<R: Read + Write> Connection<R> {
         }
     }
 
-    pub fn sync<T: BlockTree>(
-        &mut self,
-        locator_hashes: &[BlockHash],
-        tree: Arc<RwLock<T>>,
-    ) -> Result<(), Error> {
+    pub fn sync(&mut self, locator_hashes: &[BlockHash]) -> Result<(), Error> {
         if locator_hashes.is_empty() {
             return Ok(());
         }
@@ -387,42 +428,12 @@ impl<R: Read + Write> Connection<R> {
             self.write(get_headers)?;
 
             match self.read()? {
-                NetworkMessage::Headers(headers) => {
-                    debug!("{}: Received {} headers", self.address, headers.len());
-
-                    if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
-                        trace!(
-                            "{}: Range = {}..{}",
-                            self.address,
-                            first.bitcoin_hash(),
-                            last.bitcoin_hash()
-                        );
-                    } else {
-                        info!("{}: Finished synchronizing", self.address);
-                        break;
+                NetworkMessage::Headers(headers) => match self.receive_headers(headers)? {
+                    Some((tip, _)) => {
+                        locator_hashes = vec![tip];
                     }
-
-                    let length = headers.len();
-
-                    match tree
-                        .write()
-                        .expect("lock has not been poisoned")
-                        .import_blocks(headers.into_iter())
-                    {
-                        Ok((tip, height)) => {
-                            self.height = height;
-                            locator_hashes = vec![tip];
-
-                            info!("Imported {} headers from {}", length, self.address);
-                            info!("Chain height = {}, tip = {}", height, tip);
-                            // TODO: We can break here if we've received less than 2'000 headers.
-                        }
-                        Err(err) => {
-                            error!("Error importing headers: {}", err);
-                            return Err(Error::from(err));
-                        }
-                    }
-                }
+                    None => break,
+                },
                 other => debug!("{}: Ignoring {} message", self.address, other.cmd()),
             }
         }
@@ -437,7 +448,10 @@ mod tests {
     use std::io::prelude::*;
 
     use std::collections::VecDeque;
-    use std::sync::{Arc, Mutex};
+    use std::sync::{Arc, Mutex, RwLock};
+
+    use nakamoto_chain::block::cache::model;
+    use nakamoto_chain::block::BlockHeader;
 
     type Queue = VecDeque<Vec<u8>>;
     type Pair = (Socket, Socket);
@@ -466,11 +480,11 @@ mod tests {
     }
 
     struct Peer {
-        conn: Connection<Socket>,
+        conn: Connection<Socket, model::Cache>,
     }
 
     impl Peer {
-        fn from(conn: Connection<Socket>) -> Self {
+        fn from(conn: Connection<Socket, model::Cache>) -> Self {
             Self { conn }
         }
 
@@ -515,13 +529,36 @@ mod tests {
     #[test]
     fn test_handshake() -> Result<(), Box<dyn std::error::Error>> {
         let cfg = Config::default();
+        let genesis = BlockHeader {
+            version: 1,
+            prev_blockhash: Default::default(),
+            merkle_root: Default::default(),
+            nonce: 0,
+            time: 0,
+            bits: 0,
+        };
+        let cache = Arc::new(RwLock::new(model::Cache::new(genesis)));
         let (a, b) = Socket::pair();
 
         let a_addr = ([192, 168, 1, 2], 8333).into();
         let b_addr = ([192, 168, 1, 3], 8333).into();
 
-        let mut alice = Peer::from(Connection::from(a, a_addr, b_addr, Link::Outbound, cfg));
-        let mut bob = Peer::from(Connection::from(b, b_addr, a_addr, Link::Inbound, cfg));
+        let mut alice = Peer::from(Connection::from(
+            a,
+            a_addr,
+            b_addr,
+            Link::Outbound,
+            cache.clone(),
+            cfg,
+        ));
+        let mut bob = Peer::from(Connection::from(
+            b,
+            b_addr,
+            a_addr,
+            Link::Inbound,
+            cache,
+            cfg,
+        ));
 
         alice.init(0)?;
         bob.init(0)?;

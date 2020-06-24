@@ -53,6 +53,7 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
         log::warn!("Corruption detected in store, healing..");
         store.heal()?; // Rollback store to the last valid header.
     }
+    log::info!("Store height = {}", store.height()?);
 
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
     let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));

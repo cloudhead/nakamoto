@@ -152,6 +152,11 @@ impl Store for File {
         Ok(len as usize / HEADER_SIZE + 1)
     }
 
+    /// Return the block height of the store.
+    fn height(&self) -> Result<Height, Error> {
+        self.len().map(|n| n as Height - 1)
+    }
+
     /// Check the file store integrity.
     fn check(&self) -> Result<(), Error> {
         self.len().map(|_| ())

@@ -382,8 +382,8 @@ impl<S: Store, K: Hash + Eq> BlockTree for BlockCache<S, K> {
         for (i, header) in chain.enumerate() {
             match self.import_block(header) {
                 Ok(r) => result = Some(r),
-                Err(Error::DuplicateBlock(hash)) => log::debug!("Duplicate block {}", hash),
-                Err(Error::BlockMissing(hash)) => log::debug!("Missing block {}", hash),
+                Err(Error::DuplicateBlock(hash)) => log::trace!("Duplicate block {}", hash),
+                Err(Error::BlockMissing(hash)) => log::trace!("Missing block {}", hash),
                 Err(err) => return Err(Error::BlockImportAborted(err.into(), i, self.height())),
             }
         }

@@ -67,6 +67,11 @@ impl Store for Memory {
         Ok(self.0.len())
     }
 
+    /// Return the height of the store.
+    fn height(&self) -> Result<Height, Error> {
+        Ok(self.0.len() as Height - 1)
+    }
+
     /// Check data integrity.
     fn check(&self) -> Result<(), Error> {
         Ok(())
