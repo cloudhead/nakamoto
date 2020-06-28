@@ -131,7 +131,7 @@ pub mod protocol {
 
         /// Start initial block header sync.
         pub fn initial_sync(&mut self, peer: PeerId) -> Vec<(PeerId, NetworkMessage)> {
-            // TODO: Notify peer that it should sync.
+            // TODO: Notify peer that it should sync, by setting its `PeerState`.
             self.state = State::InitialSync(peer);
 
             let locator_hashes = self.locator_hashes();
@@ -139,15 +139,28 @@ pub mod protocol {
         }
 
         /// Check whether or not we are in sync with the network.
-        pub fn is_synced(&self) -> Result<bool, Error> {
-            let height = self.tree.height();
+        pub fn is_synced(&self) -> bool {
+            const DAY: time::Duration = time::Duration::from_secs(60 * 60 * 24);
 
-            // TODO: Make sure we only consider connected peers?
+            let height = self.tree.height();
+            let (_, tip) = self.tree.tip();
+
+            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            let elapsed = now - time::Duration::from_secs(tip.time as u64);
+
             // TODO: Check actual block hashes once we are caught up on height.
-            if let Some(peer_height) = self.peers.values().map(|p| p.height).min() {
-                Ok(height >= peer_height || peer_height - height <= SYNC_THRESHOLD)
+            if elapsed > DAY {
+                false
+            } else if let Some(peer_height) = self
+                .peers
+                .values()
+                .filter(|p| p.is_ready())
+                .map(|p| p.height)
+                .min()
+            {
+                height >= peer_height || peer_height - height <= SYNC_THRESHOLD
             } else {
-                Err(Error::NotConnected)
+                true
             }
         }
     }
@@ -244,6 +257,10 @@ pub mod protocol {
             }
         }
 
+        fn is_ready(&self) -> bool {
+            matches!(self.state, PeerState::Handshake(Handshake::Done) | PeerState::Synchronize(_))
+        }
+
         fn receive_version(
             &mut self,
             VersionMessage {
@@ -288,7 +305,7 @@ pub mod protocol {
 
     impl<T: BlockTree> Protocol<RawNetworkMessage> for Rpc<T> {
         fn step(&mut self, event: Event<RawNetworkMessage>) -> Vec<(PeerId, RawNetworkMessage)> {
-            let mut outbound = match event {
+            let outbound = match event {
                 Event::Connected {
                     addr,
                     local_addr,
@@ -297,7 +314,9 @@ pub mod protocol {
                     self.connect(addr, local_addr, link);
 
                     match link {
-                        Link::Outbound => vec![(addr, self.version(addr, local_addr, 0))],
+                        Link::Outbound => {
+                            vec![(addr, self.version(addr, local_addr, self.tree.height()))]
+                        }
                         Link::Inbound => vec![],
                     }
                 }
@@ -325,25 +344,6 @@ pub mod protocol {
                     vec![]
                 }
             };
-
-            // TODO: Should be triggered when idle, potentially by an `Idle` event.
-            if self.connected.len() >= PEER_CONNECTION_THRESHOLD {
-                match self.is_synced() {
-                    Ok(is_synced) => {
-                        if is_synced {
-                            self.state = State::Synced;
-                        } else {
-                            let ix = fastrand::usize(..self.connected.len());
-                            let peer = *self.connected.iter().nth(ix).unwrap();
-                            let msgs = self.initial_sync(peer);
-
-                            outbound.extend_from_slice(&msgs);
-                        }
-                    }
-                    Err(Error::NotConnected) => self.state = State::Connecting,
-                    Err(err) => panic!(err.to_string()),
-                }
-            }
 
             outbound
                 .into_iter()
@@ -410,7 +410,21 @@ pub mod protocol {
                     }
                 }
                 PeerState::Handshake(Handshake::Done) => {
-                    peer.state = PeerState::Synchronize(Synchronize::default());
+                    // TODO: Should be triggered when idle, potentially by an `Idle` event.
+                    if self.is_synced() {
+                        trace!("We are in sync with the network");
+
+                        self.state = State::Synced;
+                    } else if self.connected.len() >= PEER_CONNECTION_THRESHOLD {
+                        trace!("We are out of sync with the network");
+
+                        let ix = fastrand::usize(..self.connected.len());
+                        let p = *self.connected.iter().nth(ix).unwrap();
+
+                        return self.initial_sync(p);
+                    } else {
+                        trace!("We are out-of-sync, but not enough peers are connected");
+                    }
                 }
                 PeerState::Synchronize(_) => {
                     if let NetworkMessage::Headers(headers) = msg.payload {
@@ -771,6 +785,9 @@ pub mod reactor {
                     Command::Write(addr, msg) => {
                         let peer = peers.get_mut(&addr).unwrap();
 
+                        // TODO: Watch out for head-of-line blocking here!
+                        // TODO: We can't just set this to non-blocking, because
+                        // this will also affect the read-end.
                         match peer.write(msg) {
                             Ok(nbytes) => {
                                 events.send(Event::Sent(addr, nbytes))?;
@@ -873,6 +890,8 @@ pub mod reactor {
 
         let sock = net::TcpStream::connect(addr)?;
 
+        // TODO: We probably don't want the same timeouts for read and write.
+        // For _write_, we want something much shorter.
         sock.set_read_timeout(Some(IDLE_TIMEOUT))?;
         sock.set_write_timeout(Some(IDLE_TIMEOUT))?;
 
