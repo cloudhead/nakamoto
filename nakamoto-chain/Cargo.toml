@@ -12,6 +12,7 @@ nonempty = "0.5.0"
 log = "0.4"
 
 [dev-dependencies]
+nakamoto-test = { path = "../nakamoto-test" }
 quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }
 quickcheck_macros = "0.9"
 tempfile = "3"

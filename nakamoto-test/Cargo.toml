@@ -1,0 +1,10 @@
+[package]
+name = "nakamoto-test"
+version = "0.0.0"
+authors = ["Alexis Sellier <self@cloudhead.io>"]
+edition = "2018"
+
+[dependencies]
+nakamoto-chain = { path = "../nakamoto-chain" }
+bitcoin = "0.23"
+lazy_static = "1.4"

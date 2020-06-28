@@ -38,6 +38,31 @@ impl Cache {
         }
     }
 
+    pub fn from(chain: Vec<BlockHeader>) -> Self {
+        let chain = NonEmpty::from_vec(chain).unwrap();
+        let genesis = chain.head.bitcoin_hash();
+        let tip = chain.last().bitcoin_hash();
+
+        let mut headers = HashMap::new();
+        for h in chain.iter() {
+            headers.insert(h.bitcoin_hash(), *h);
+        }
+
+        Self {
+            headers,
+            chain,
+            tip,
+            genesis,
+        }
+    }
+
+    pub fn rollback(&mut self, height: Height) -> Result<(), Error> {
+        for block in self.chain.tail.drain(height as usize..) {
+            self.headers.remove(&block.bitcoin_hash());
+        }
+        Ok(())
+    }
+
     fn branch(&self, tip: &BlockHash) -> Option<NonEmpty<BlockHeader>> {
         let mut headers = VecDeque::new();
         let mut tip = *tip;

@@ -201,6 +201,7 @@ dependencies = [
  "bitcoin",
  "bitcoin_hashes",
  "log",
+ "nakamoto-test",
  "nonempty",
  "quickcheck",
  "quickcheck_macros",
@@ -244,6 +245,15 @@ dependencies = [
  "nakamoto-chain",
  "tempfile",
  "thiserror",
+]
+
+[[package]]
+name = "nakamoto-test"
+version = "0.0.0"
+dependencies = [
+ "bitcoin",
+ "lazy_static",
+ "nakamoto-chain",
 ]
 
 [[package]]

@@ -7,7 +7,6 @@ use crate::block::{self, Height, Target, Time};
 use std::collections::{BTreeMap, VecDeque};
 use std::iter;
 use std::net;
-use std::path::Path;
 use std::sync::{Arc, Mutex, RwLock};
 
 use nonempty::NonEmpty;
@@ -382,9 +381,7 @@ fn test_bitcoin_difficulty() {
 #[test]
 fn test_from_store() {
     let genesis = constants::genesis_block(bitcoin::Network::Bitcoin).header;
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/data/headers.bin");
-    let store = store::File::open(path, genesis).unwrap();
-
+    let store = store::File::open(&*nakamoto_test::headers::PATH, genesis).unwrap();
     let store_headers = store.iter().collect::<Result<Vec<_>, _>>().unwrap();
 
     let network = bitcoin::Network::Bitcoin;
@@ -412,9 +409,7 @@ fn test_median_time_past() {
     let network = bitcoin::Network::Bitcoin;
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
-
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/tests/data/headers.bin");
-    let store = store::File::open(path, genesis).unwrap();
+    let store = store::File::open(&*nakamoto_test::headers::PATH, genesis).unwrap();
 
     let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
     let cache = BlockCache::from(store, params, &[], clock).unwrap();
