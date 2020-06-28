@@ -37,38 +37,45 @@ pub mod protocol {
     /// A time offset, in seconds.
     pub type TimeOffset = i64;
 
-    #[derive(Debug)]
-    pub enum Event<T> {
-        Connected(net::SocketAddr, net::SocketAddr, Link),
-        Received(net::SocketAddr, T),
-        Sent(net::SocketAddr, usize),
-        Error(net::SocketAddr, Error),
+    /// A finite-state machine that can advance one step at a time, given an input event.
+    /// Parametrized over the message type.
+    pub trait Protocol<M> {
+        /// Process the next event and advance the state-machine by one step.
+        /// Returns messages destined for peers.
+        fn step(&mut self, event: Event<M>) -> Vec<(PeerId, M)>;
     }
 
-    pub trait Protocol<M> {
-        /// Process the next event and advance the protocol state-machine by one step.
-        fn step(&mut self, event: Event<M>) -> Vec<(net::SocketAddr, M)>;
+    /// A protocol event, parametrized over the network message type.
+    #[derive(Debug)]
+    pub enum Event<M> {
+        /// New connection with a peer.
+        Connected {
+            /// Remote peer id.
+            addr: PeerId,
+            /// Local peer id.
+            local_addr: PeerId,
+            /// Link direction.
+            link: Link,
+        },
+        /// Received a message from a remote peer.
+        Received(PeerId, M),
+        /// Sent a message to a remote peer, of the given size.
+        Sent(PeerId, usize),
+        /// Got an error trying to send or receive from the remote peer.
+        Error(PeerId, Error),
     }
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
-    #[derive(Debug)]
-    pub enum State {
-        /// Connecting to the network. Syncing hasn't started yet.
-        Connecting,
-        /// Initial syncing (IBD) has started with the designated peer.
-        InitialSync(PeerId),
-        /// We're in sync.
-        Synced,
-    }
-
+    /// An instantiation of `Protocol`, for the Bitcoin P2P network. Parametrized over the
+    /// block-tree.
     #[derive(Debug)]
     pub struct Rpc<T> {
-        /// Peers.
+        /// Peer states.
         pub peers: HashMap<PeerId, Peer>,
         /// Peer configuration.
         pub config: Config,
-        /// Protocol state machine.
+        /// Protocol state.
         pub state: State,
         /// Block tree.
         pub tree: T,
@@ -81,8 +88,19 @@ pub mod protocol {
         disconnected: HashSet<PeerId>,
     }
 
+    /// Protocol state.
+    #[derive(Debug)]
+    pub enum State {
+        /// Connecting to the network. Syncing hasn't started yet.
+        Connecting,
+        /// Initial syncing (IBD) has started with the designated peer.
+        InitialSync(PeerId),
+        /// We're in sync.
+        Synced,
+    }
+
     impl<T: BlockTree> Rpc<T> {
-        pub fn new(tree: T, clock: AdjustedTime<net::SocketAddr>, config: Config) -> Self {
+        pub fn new(tree: T, clock: AdjustedTime<PeerId>, config: Config) -> Self {
             Self {
                 peers: HashMap::new(),
                 config,
@@ -166,9 +184,10 @@ pub mod protocol {
         }
     }
 
+    /// Synchronization states.
     #[derive(Copy, Clone, Debug)]
     pub enum Synchronize {
-        // TODO: This should keep track of what height we're at.
+        // TODO: This should keep track of what hash we requested.
         RequestedHeaders,
         HeadersReceived,
         Done,
@@ -180,12 +199,14 @@ pub mod protocol {
         }
     }
 
+    /// State of a remote peer.
     #[derive(Debug)]
     pub enum PeerState {
         Handshake(Handshake),
         Synchronize(Synchronize),
     }
 
+    /// A remote peer.
     #[derive(Debug)]
     pub struct Peer {
         /// Remote peer address.
@@ -266,12 +287,13 @@ pub mod protocol {
     }
 
     impl<T: BlockTree> Protocol<RawNetworkMessage> for Rpc<T> {
-        fn step(
-            &mut self,
-            event: Event<RawNetworkMessage>,
-        ) -> Vec<(net::SocketAddr, RawNetworkMessage)> {
+        fn step(&mut self, event: Event<RawNetworkMessage>) -> Vec<(PeerId, RawNetworkMessage)> {
             let mut outbound = match event {
-                Event::Connected(addr, local_addr, link) => {
+                Event::Connected {
+                    addr,
+                    local_addr,
+                    link,
+                } => {
                     self.connect(addr, local_addr, link);
 
                     match link {
@@ -304,7 +326,7 @@ pub mod protocol {
                 }
             };
 
-            // TODO: Should be triggered when idle.
+            // TODO: Should be triggered when idle, potentially by an `Idle` event.
             if self.connected.len() >= PEER_CONNECTION_THRESHOLD {
                 match self.is_synced() {
                     Ok(is_synced) => {
@@ -341,9 +363,9 @@ pub mod protocol {
     impl<T: BlockTree> Rpc<T> {
         pub fn receive(
             &mut self,
-            addr: net::SocketAddr,
+            addr: PeerId,
             msg: RawNetworkMessage,
-        ) -> Vec<(net::SocketAddr, NetworkMessage)> {
+        ) -> Vec<(PeerId, NetworkMessage)> {
             debug!("{}: Received {:?}", addr, msg.cmd());
 
             if msg.magic != self.config.network.magic() {
@@ -410,7 +432,7 @@ pub mod protocol {
             vec![]
         }
 
-        pub fn transition(&mut self, addr: net::SocketAddr, state: State) {
+        pub fn transition(&mut self, addr: PeerId, state: State) {
             debug!("{}: {:?} -> {:?}", addr, self.state, state);
 
             self.state = state;
@@ -506,6 +528,7 @@ pub mod protocol {
         use nakamoto_chain::block::cache::model;
         use std::collections::VecDeque;
 
+        /// A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
         mod simulator {
             use super::*;
 
@@ -580,12 +603,20 @@ pub mod protocol {
                 (
                     alice_addr,
                     &mut alice,
-                    vec![Event::Connected(bob_addr, alice_addr, Link::Outbound)],
+                    vec![Event::Connected {
+                        addr: bob_addr,
+                        local_addr: alice_addr,
+                        link: Link::Outbound,
+                    }],
                 ),
                 (
                     bob_addr,
                     &mut bob,
-                    vec![Event::Connected(alice_addr, bob_addr, Link::Inbound)],
+                    vec![Event::Connected {
+                        addr: alice_addr,
+                        local_addr: bob_addr,
+                        link: Link::Inbound,
+                    }],
                 ),
             ]);
 
@@ -637,6 +668,7 @@ pub mod reactor {
     /// Maximum peer-to-peer message size.
     pub const MAX_MESSAGE_SIZE: usize = 6 * 1024;
 
+    /// Command sent to a writer thread.
     #[derive(Debug)]
     pub enum Command<T> {
         Write(net::SocketAddr, T),
@@ -644,6 +676,7 @@ pub mod reactor {
         Quit,
     }
 
+    /// Reader socket.
     #[derive(Debug)]
     pub struct Reader<R: Read + Write, M> {
         events: crossbeam::Sender<Event<M>>,
@@ -671,8 +704,11 @@ pub mod reactor {
         }
 
         pub fn run(&mut self, link: Link) -> Result<(), Error> {
-            self.events
-                .send(Event::Connected(self.address, self.local_address, link))?;
+            self.events.send(Event::Connected {
+                addr: self.address,
+                local_addr: self.local_address,
+                link,
+            })?;
 
             loop {
                 match self.read() {
@@ -700,6 +736,7 @@ pub mod reactor {
 
     ///////////////////////////////////////////////////////////////////////////////////////////////
 
+    /// Writer socket.
     pub struct Writer<T> {
         address: net::SocketAddr,
         raw: T,
@@ -767,6 +804,7 @@ pub mod reactor {
         }
     }
 
+    /// Run the given protocol with the reactor.
     pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'static>(
         addrs: AddressBook,
         mut protocol: P,
