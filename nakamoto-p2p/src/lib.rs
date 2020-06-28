@@ -4,6 +4,8 @@ pub mod error;
 pub mod peer;
 pub mod tcp;
 
+pub mod prototype;
+
 use nakamoto_chain::block::{time::AdjustedTime, tree::BlockTree, Height};
 
 use std::collections::{HashMap, HashSet};

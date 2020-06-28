@@ -1,7 +1,10 @@
 use bitcoin::consensus::encode;
 
+use std::fmt::Debug;
 use std::io;
 use std::time;
+
+use crossbeam_channel as crossbeam;
 
 use thiserror::Error;
 
@@ -27,4 +30,25 @@ pub enum Error {
 
     #[error("send event error: {0}")]
     SendEvent(String),
+
+    #[error("channel error: {0}")]
+    Channel(Box<dyn std::error::Error + Send + Sync>),
+}
+
+impl<T: Debug + Send + Sync + 'static> From<crossbeam::SendError<T>> for Error {
+    fn from(err: crossbeam::SendError<T>) -> Self {
+        Self::Channel(Box::new(err))
+    }
+}
+
+impl From<crossbeam::RecvError> for Error {
+    fn from(err: crossbeam::RecvError) -> Self {
+        Self::Channel(Box::new(err))
+    }
+}
+
+impl From<crossbeam::RecvTimeoutError> for Error {
+    fn from(err: crossbeam::RecvTimeoutError) -> Self {
+        Self::Channel(Box::new(err))
+    }
 }

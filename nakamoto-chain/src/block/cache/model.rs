@@ -14,7 +14,7 @@ use bitcoin::hash_types::BlockHash;
 
 use bitcoin::util::hash::BitcoinHash;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Cache {
     headers: HashMap<BlockHash, BlockHeader>,
     chain: NonEmpty<BlockHeader>,

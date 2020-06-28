@@ -31,7 +31,7 @@ pub type TimeOffset = i64;
 /// the local time plus the median offset of all connected peers.
 ///
 /// Nb. Network time is never adjusted more than 70 minutes from local system time.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct AdjustedTime<K> {
     /// Sample sources. Prevents us from getting two samples from the same source.
     sources: HashSet<K>,
