@@ -13,6 +13,7 @@ pub mod protocol {
     use bitcoin::network::address::Address;
     use bitcoin::network::constants::ServiceFlags;
     use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use bitcoin::network::message_blockdata::GetHeadersMessage;
     use bitcoin::network::message_network::VersionMessage;
     use bitcoin::util::hash::BitcoinHash;
 
@@ -111,9 +112,12 @@ pub mod protocol {
         }
 
         /// Start initial block header sync.
-        pub fn initial_sync(&mut self, peer: PeerId) {
+        pub fn initial_sync(&mut self, peer: PeerId) -> Vec<(PeerId, NetworkMessage)> {
             // TODO: Notify peer that it should sync.
             self.state = State::InitialSync(peer);
+
+            let locator_hashes = self.locator_hashes();
+            vec![(peer, self.get_headers(locator_hashes))]
         }
 
         /// Check whether or not we are in sync with the network.
@@ -266,7 +270,7 @@ pub mod protocol {
             &mut self,
             event: Event<RawNetworkMessage>,
         ) -> Vec<(net::SocketAddr, RawNetworkMessage)> {
-            let outbound = match event {
+            let mut outbound = match event {
                 Event::Connected(addr, local_addr, link) => {
                     self.connect(addr, local_addr, link);
 
@@ -300,6 +304,7 @@ pub mod protocol {
                 }
             };
 
+            // TODO: Should be triggered when idle.
             if self.connected.len() >= PEER_CONNECTION_THRESHOLD {
                 match self.is_synced() {
                     Ok(is_synced) => {
@@ -308,8 +313,9 @@ pub mod protocol {
                         } else {
                             let ix = fastrand::usize(..self.connected.len());
                             let peer = *self.connected.iter().nth(ix).unwrap();
+                            let msgs = self.initial_sync(peer);
 
-                            self.initial_sync(peer);
+                            outbound.extend_from_slice(&msgs);
                         }
                     }
                     Err(Error::NotConnected) => self.state = State::Connecting,
@@ -352,6 +358,7 @@ pub mod protocol {
 
             peer.last_active = Some(time::Instant::now());
 
+            // TODO: Make sure we handle all messages at all times in some way.
             match peer.state {
                 PeerState::Handshake(Handshake::AwaitingVersion) => {
                     if let NetworkMessage::Version(version) = msg.payload {
@@ -361,7 +368,7 @@ pub mod protocol {
                             Link::Outbound => {}
                             Link::Inbound => {
                                 return vec![
-                                    (addr, self.version(addr, local_addr, 0)),
+                                    (addr, self.version(addr, local_addr, self.tree.height())),
                                     (addr, NetworkMessage::Verack),
                                 ]
                             }
@@ -383,7 +390,21 @@ pub mod protocol {
                 PeerState::Handshake(Handshake::Done) => {
                     peer.state = PeerState::Synchronize(Synchronize::default());
                 }
-                PeerState::Synchronize(_) => {}
+                PeerState::Synchronize(_) => {
+                    if let NetworkMessage::Headers(headers) = msg.payload {
+                        match self.receive_headers(addr, headers) {
+                            Ok(Some((tip, _))) => {
+                                return vec![(addr, self.get_headers(vec![tip]))];
+                            }
+                            Ok(None) => {
+                                // TODO: Nothing imported.
+                            }
+                            Err(_err) => {
+                                // TODO: Bad blocks received!
+                            }
+                        }
+                    }
+                }
             }
 
             vec![]
@@ -395,7 +416,7 @@ pub mod protocol {
             self.state = state;
         }
 
-        fn _receive_headers(
+        fn receive_headers(
             &mut self,
             addr: net::SocketAddr,
             headers: Vec<BlockHeader>,
@@ -459,6 +480,22 @@ pub mod protocol {
                 start_height,
                 relay: self.config.relay,
             })
+        }
+
+        fn get_headers(&self, locator_hashes: Vec<BlockHash>) -> NetworkMessage {
+            NetworkMessage::GetHeaders(GetHeadersMessage {
+                version: self.config.protocol_version,
+                // Starting hashes, highest heights first.
+                locator_hashes,
+                // Using the zero hash means *fetch as many blocks as possible*.
+                stop_hash: BlockHash::default(),
+            })
+        }
+
+        fn locator_hashes(&self) -> Vec<BlockHash> {
+            let (hash, _) = self.tree.tip();
+
+            vec![hash]
         }
     }
 
