@@ -68,7 +68,7 @@ impl BlockTree for HeightCache {
         unimplemented!()
     }
 
-    fn get_block(&self, _hash: &BlockHash) -> Option<&BlockHeader> {
+    fn get_block(&self, _hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         unimplemented!()
     }
 

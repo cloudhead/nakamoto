@@ -122,8 +122,13 @@ impl BlockTree for Cache {
         Ok((self.chain.last().bitcoin_hash(), self.height()))
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader> {
-        self.headers.get(hash)
+    fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
+        for (height, header) in self.chain.iter().enumerate() {
+            if hash == &header.bitcoin_hash() {
+                return Some((height as Height, header));
+            }
+        }
+        None
     }
 
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {

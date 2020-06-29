@@ -391,11 +391,11 @@ impl<S: Store, K: Hash + Eq> BlockTree for BlockCache<S, K> {
         Ok(result.unwrap_or((self.chain.last().hash, self.height())))
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader> {
+    fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         self.headers
             .get(hash)
             .and_then(|height| self.chain.get(*height as usize))
-            .map(|blk| &blk.header)
+            .map(|blk| (blk.height, &blk.header))
     }
 
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {

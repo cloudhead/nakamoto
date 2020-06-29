@@ -66,7 +66,7 @@ pub trait BlockTree {
         chain: I,
     ) -> Result<(BlockHash, Height), Error>;
     /// Get a block by hash.
-    fn get_block(&self, hash: &BlockHash) -> Option<&BlockHeader>;
+    fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)>;
     /// Get a block by height.
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader>;
     /// Iterate over the longest chain, starting from genesis.
@@ -75,6 +75,16 @@ pub trait BlockTree {
     }
     /// Iterate over the longest chain, starting from genesis, including heights.
     fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>>;
+    /// Iterate over a range of blocks.
+    fn range(&self, range: std::ops::Range<Height>) -> Box<dyn Iterator<Item = BlockHeader>> {
+        // TODO: Don't box twice?
+        Box::new(
+            self.iter()
+                .map(|(_, h)| h)
+                .skip(range.start as usize)
+                .take((range.end - range.start) as usize),
+        )
+    }
     /// Return the height of the longest chain.
     fn height(&self) -> Height;
     /// Get the tip of the longest chain.
