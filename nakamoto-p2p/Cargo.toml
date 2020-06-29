@@ -14,5 +14,7 @@ crossbeam-channel = { version = "0.4", default-features = false }
 fastrand = "1.1"
 
 [dev-dependencies]
+nakamoto-test = { path = "../nakamoto-test" }
 tempfile = "3"
 fern = { version = "0.6" }
+lazy_static = "1.4"

@@ -69,6 +69,7 @@ pub struct Config {
     pub services: ServiceFlags,
     pub protocol_version: u32,
     pub relay: bool,
+    pub sync: bool,
 }
 
 impl Default for Config {
@@ -78,6 +79,7 @@ impl Default for Config {
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
             relay: false,
+            sync: true,
         }
     }
 }

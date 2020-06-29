@@ -19,7 +19,7 @@ pub mod protocol {
 
     use nakamoto_chain::block::time::AdjustedTime;
     use nakamoto_chain::block::tree::BlockTree;
-    use nakamoto_chain::block::{BlockHash, BlockHeader, Height};
+    use nakamoto_chain::block::{BlockHash, Height};
 
     /// User agent included in `version` messages.
     pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
@@ -30,7 +30,7 @@ pub mod protocol {
     /// Number of blocks out of sync we have to be to trigger an initial sync.
     pub const SYNC_THRESHOLD: Height = 144;
     /// Minimum number of peers to be connected to.
-    pub const PEER_CONNECTION_THRESHOLD: usize = 3;
+    pub const PEER_CONNECTION_THRESHOLD: usize = 1;
     /// Maximum time adjustment between network and local time (70 minutes).
     pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
 
@@ -89,7 +89,7 @@ pub mod protocol {
     }
 
     /// Protocol state.
-    #[derive(Debug)]
+    #[derive(Debug, PartialEq, Eq)]
     pub enum State {
         /// Connecting to the network. Syncing hasn't started yet.
         Connecting,
@@ -130,28 +130,27 @@ pub mod protocol {
         }
 
         /// Start initial block header sync.
-        pub fn initial_sync(&mut self, peer: PeerId) -> Vec<(PeerId, NetworkMessage)> {
-            // TODO: Notify peer that it should sync, by setting its `PeerState`.
-            self.state = State::InitialSync(peer);
+        pub fn initial_sync(&mut self, addr: PeerId) -> Vec<(PeerId, NetworkMessage)> {
+            self.transition(State::InitialSync(addr));
 
             let locator_hashes = self.locator_hashes();
-            vec![(peer, self.get_headers(locator_hashes))]
+            let peer = self.peers.get_mut(&addr).unwrap();
+
+            peer.transition(PeerState::Syncing(Syncing::AwaitingHeaders(
+                locator_hashes.clone(),
+            )));
+
+            vec![(addr, self.get_headers(locator_hashes))]
         }
 
         /// Check whether or not we are in sync with the network.
+        /// TODO: Should return the minimum peer height, so that we can
+        /// keep track of it in our state, while syncing to it.
         pub fn is_synced(&self) -> bool {
-            const DAY: time::Duration = time::Duration::from_secs(60 * 60 * 24);
-
             let height = self.tree.height();
-            let (_, tip) = self.tree.tip();
-
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            let elapsed = now - time::Duration::from_secs(tip.time as u64);
 
             // TODO: Check actual block hashes once we are caught up on height.
-            if elapsed > DAY {
-                false
-            } else if let Some(peer_height) = self
+            if let Some(peer_height) = self
                 .peers
                 .values()
                 .filter(|p| p.is_ready())
@@ -187,8 +186,6 @@ pub mod protocol {
         AwaitingVersion,
         /// Waiting for "verack" message from remote.
         AwaitingVerack,
-        /// The peer handshake was completed.
-        Done,
     }
 
     impl Default for Handshake {
@@ -198,28 +195,23 @@ pub mod protocol {
     }
 
     /// Synchronization states.
-    #[derive(Copy, Clone, Debug)]
-    pub enum Synchronize {
+    #[derive(Clone, Debug)]
+    pub enum Syncing {
         // TODO: This should keep track of what hash we requested.
-        RequestedHeaders,
-        HeadersReceived,
-        Done,
-    }
-
-    impl Default for Synchronize {
-        fn default() -> Self {
-            Self::RequestedHeaders
-        }
+        AwaitingHeaders(Vec<BlockHash>),
     }
 
     /// State of a remote peer.
     #[derive(Debug)]
     pub enum PeerState {
         Handshake(Handshake),
-        Synchronize(Synchronize),
+        Ready,
+        Syncing(Syncing),
     }
 
     /// A remote peer.
+    /// TODO: It should be possible to statically enforce the state-machine rules.
+    /// Eg. `Peer<State>`.
     #[derive(Debug)]
     pub struct Peer {
         /// Remote peer address.
@@ -258,7 +250,7 @@ pub mod protocol {
         }
 
         fn is_ready(&self) -> bool {
-            matches!(self.state, PeerState::Handshake(Handshake::Done) | PeerState::Synchronize(_))
+            matches!(self.state, PeerState::Ready)
         }
 
         fn receive_version(
@@ -293,7 +285,7 @@ pub mod protocol {
         }
 
         fn receive_verack(&mut self) {
-            self.transition(PeerState::Handshake(Handshake::Done));
+            self.transition(PeerState::Ready);
         }
 
         fn transition(&mut self, state: PeerState) {
@@ -305,7 +297,7 @@ pub mod protocol {
 
     impl<T: BlockTree> Protocol<RawNetworkMessage> for Rpc<T> {
         fn step(&mut self, event: Event<RawNetworkMessage>) -> Vec<(PeerId, RawNetworkMessage)> {
-            let outbound = match event {
+            let mut outbound = match event {
                 Event::Connected {
                     addr,
                     local_addr,
@@ -317,7 +309,7 @@ pub mod protocol {
                         Link::Outbound => {
                             vec![(addr, self.version(addr, local_addr, self.tree.height()))]
                         }
-                        Link::Inbound => vec![],
+                        Link::Inbound => vec![], // Wait to receive remote version.
                     }
                 }
                 Event::Received(addr, msg) => self.receive(addr, msg),
@@ -345,6 +337,22 @@ pub mod protocol {
                 }
             };
 
+            // TODO: Should be triggered when idle, potentially by an `Idle` event.
+            if self.config.sync && self.connected.len() >= PEER_CONNECTION_THRESHOLD {
+                if self.is_synced() {
+                    if matches!(self.state, State::Connecting) {
+                        self.transition(State::Synced);
+                    }
+                } else {
+                    // TODO: Pick a peer whos `height` is high enough.
+                    let ix = fastrand::usize(..self.connected.len());
+                    let p = *self.connected.iter().nth(ix).unwrap();
+
+                    let sync_msgs = self.initial_sync(p);
+                    outbound.extend_from_slice(&sync_msgs);
+                }
+            }
+
             outbound
                 .into_iter()
                 .map(|(addr, msg)| {
@@ -361,6 +369,15 @@ pub mod protocol {
     }
 
     impl<T: BlockTree> Rpc<T> {
+        pub fn transition(&mut self, state: State) {
+            if state == self.state {
+                return;
+            }
+            debug!("state: {:?} -> {:?}", self.state, state);
+
+            self.state = state;
+        }
+
         pub fn receive(
             &mut self,
             addr: PeerId,
@@ -381,7 +398,7 @@ pub mod protocol {
             peer.last_active = Some(time::Instant::now());
 
             // TODO: Make sure we handle all messages at all times in some way.
-            match peer.state {
+            match &peer.state {
                 PeerState::Handshake(Handshake::AwaitingVersion) => {
                     if let NetworkMessage::Version(version) = msg.payload {
                         peer.receive_version(version);
@@ -409,85 +426,79 @@ pub mod protocol {
                         }
                     }
                 }
-                PeerState::Handshake(Handshake::Done) => {
-                    // TODO: Should be triggered when idle, potentially by an `Idle` event.
-                    if self.is_synced() {
-                        trace!("We are in sync with the network");
+                PeerState::Syncing(Syncing::AwaitingHeaders(_locators)) => {
+                    assert_eq!(self.state, State::InitialSync(peer.address));
 
-                        self.state = State::Synced;
-                    } else if self.connected.len() >= PEER_CONNECTION_THRESHOLD {
-                        trace!("We are out of sync with the network");
-
-                        let ix = fastrand::usize(..self.connected.len());
-                        let p = *self.connected.iter().nth(ix).unwrap();
-
-                        return self.initial_sync(p);
-                    } else {
-                        trace!("We are out-of-sync, but not enough peers are connected");
-                    }
-                }
-                PeerState::Synchronize(_) => {
                     if let NetworkMessage::Headers(headers) = msg.payload {
-                        match self.receive_headers(addr, headers) {
-                            Ok(Some((tip, _))) => {
-                                return vec![(addr, self.get_headers(vec![tip]))];
+                        let length = headers.len();
+
+                        debug!("{}: Received {} header(s)", addr, length);
+
+                        if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
+                            debug!(
+                                "{}: Range = {}..{}",
+                                addr,
+                                first.bitcoin_hash(),
+                                last.bitcoin_hash()
+                            );
+                        } else {
+                            info!("{}: Finished synchronizing", addr);
+
+                            peer.transition(PeerState::Ready);
+                            self.transition(State::Synced);
+
+                            return vec![];
+                        }
+
+                        match self.tree.import_blocks(headers.into_iter()) {
+                            Ok((tip, height)) => {
+                                info!("Imported {} headers from {}", length, addr);
+                                info!("Chain height = {}, tip = {}", height, tip);
+
+                                let locators = vec![tip];
+
+                                peer.transition(PeerState::Syncing(Syncing::AwaitingHeaders(
+                                    locators.clone(),
+                                )));
+
+                                // TODO: We can break here if we've received less than 2'000 headers.
+                                return vec![(addr, self.get_headers(locators))];
                             }
-                            Ok(None) => {
-                                // TODO: Nothing imported.
-                            }
-                            Err(_err) => {
+                            Err(err) => {
                                 // TODO: Bad blocks received!
+                                error!("Error importing headers: {}", err);
                             }
                         }
                     }
                 }
+                PeerState::Ready if self.state == State::Synced => {
+                    if let NetworkMessage::GetHeaders(GetHeadersMessage {
+                        locator_hashes, ..
+                    }) = msg.payload
+                    {
+                        assert!(locator_hashes.len() == 1);
+
+                        let start_hash = locator_hashes[0];
+                        let (start_height, _) = self.tree.get_block(&start_hash).unwrap();
+
+                        // TODO: Set this to highest locator hash. We can assume that the peer
+                        // is at this height if they know this hash.
+                        peer.height = start_height;
+
+                        let headers = self
+                            .tree
+                            .range(start_height + 1..self.tree.height() + 1)
+                            .collect();
+
+                        return vec![(addr, NetworkMessage::Headers(headers))];
+                    }
+                }
+                PeerState::Ready => {
+                    debug!("Ignoring {} from peer {}", msg.cmd(), peer.address);
+                }
             }
 
             vec![]
-        }
-
-        pub fn transition(&mut self, addr: PeerId, state: State) {
-            debug!("{}: {:?} -> {:?}", addr, self.state, state);
-
-            self.state = state;
-        }
-
-        fn receive_headers(
-            &mut self,
-            addr: net::SocketAddr,
-            headers: Vec<BlockHeader>,
-        ) -> Result<Option<(BlockHash, Height)>, Error> {
-            debug!("{}: Received {} headers", addr, headers.len());
-
-            if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
-                debug!(
-                    "{}: Range = {}..{}",
-                    addr,
-                    first.bitcoin_hash(),
-                    last.bitcoin_hash()
-                );
-            } else {
-                info!("{}: Finished synchronizing", addr);
-                return Ok(None);
-            }
-
-            let length = headers.len();
-
-            match self.tree.import_blocks(headers.into_iter()) {
-                Ok((tip, height)) => {
-                    let peer = self.peers.get_mut(&addr).unwrap();
-                    peer.height = height;
-
-                    info!("Imported {} headers from {}", length, addr);
-                    info!("Chain height = {}, tip = {}", height, tip);
-                    // TODO: We can break here if we've received less than 2'000 headers.
-                    Ok(Some((tip, height)))
-                }
-                Err(err) => {
-                    error!("Error importing headers: {}", err);
-                    return Err(Error::from(err));
-                }
-            }
         }
 
         fn version(
@@ -538,9 +549,11 @@ pub mod protocol {
     #[cfg(test)]
     mod tests {
         use super::*;
+        use std::collections::VecDeque;
 
         use nakamoto_chain::block::cache::model;
-        use std::collections::VecDeque;
+        use nakamoto_chain::block::BlockHeader;
+        use nakamoto_test::TREE;
 
         /// A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
         mod simulator {
@@ -590,7 +603,10 @@ pub mod protocol {
                 bits: 0,
             };
             let tree = model::Cache::new(genesis);
-            let config = Config::default();
+            let config = Config {
+                sync: false,
+                ..Config::default()
+            };
             let clock = AdjustedTime::new();
 
             let alice_addr = ([127, 0, 0, 1], 8333).into();
@@ -598,20 +614,6 @@ pub mod protocol {
 
             let mut alice = Rpc::new(tree.clone(), clock.clone(), config);
             let mut bob = Rpc::new(tree, clock, config);
-
-            fern::Dispatch::new()
-                .format(move |out, message, record| {
-                    out.finish(format_args!(
-                        "{:5} [{}] {}",
-                        record.level(),
-                        record.target(),
-                        message
-                    ))
-                })
-                .level(log::LevelFilter::Debug)
-                .chain(std::io::stderr())
-                .apply()
-                .unwrap();
 
             simulator::run(vec![
                 (
@@ -638,7 +640,7 @@ pub mod protocol {
                 alice
                     .peers
                     .values()
-                    .all(|p| matches!(p.state, PeerState::Handshake(Handshake::Done))),
+                    .all(|p| matches!(p.state, PeerState::Ready)),
                 "alice: {:#?}",
                 alice.peers
             );
@@ -646,10 +648,57 @@ pub mod protocol {
             assert!(
                 bob.peers
                     .values()
-                    .all(|p| matches!(p.state, PeerState::Handshake(Handshake::Done))),
+                    .all(|p| matches!(p.state, PeerState::Ready)),
                 "bob: {:#?}",
                 bob.peers
             );
+        }
+
+        #[test]
+        fn test_initial_sync() {
+            let config = Config::default();
+            let clock = AdjustedTime::new();
+
+            let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
+            let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
+
+            // Blockchain height we're going to be working with. Making it larger
+            // than the threshold ensures a sync happens.
+            let height = SYNC_THRESHOLD + 1;
+
+            // Let's test Bob trying to sync with Alice from genesis.
+            let mut alice_tree = TREE.clone();
+            let bob_tree = model::Cache::new(*alice_tree.genesis());
+
+            // Truncate chain to test height.
+            alice_tree.rollback(height).unwrap();
+
+            let mut alice = Rpc::new(alice_tree, clock.clone(), config);
+            let mut bob = Rpc::new(bob_tree, clock, config);
+
+            simulator::run(vec![
+                (
+                    alice_addr,
+                    &mut alice,
+                    vec![Event::Connected {
+                        addr: bob_addr,
+                        local_addr: alice_addr,
+                        link: Link::Outbound,
+                    }],
+                ),
+                (
+                    bob_addr,
+                    &mut bob,
+                    vec![Event::Connected {
+                        addr: alice_addr,
+                        local_addr: bob_addr,
+                        link: Link::Inbound,
+                    }],
+                ),
+            ]);
+
+            assert_eq!(alice.tree.height(), height);
+            assert_eq!(bob.tree.height(), height);
         }
     }
 }

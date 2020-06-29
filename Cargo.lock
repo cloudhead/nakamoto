@@ -241,8 +241,10 @@ dependencies = [
  "crossbeam-channel",
  "fastrand",
  "fern",
+ "lazy_static",
  "log",
  "nakamoto-chain",
+ "nakamoto-test",
  "tempfile",
  "thiserror",
 ]
