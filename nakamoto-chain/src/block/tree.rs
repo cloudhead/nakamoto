@@ -60,10 +60,13 @@ impl<'a, H: Header> Branch<'a, H> {
 
 /// A representation of all known blocks that keeps track of the longest chain.
 pub trait BlockTree {
+    type Context;
+
     /// Import a chain of block headers into the block tree.
     fn import_blocks<I: Iterator<Item = BlockHeader>>(
         &mut self,
         chain: I,
+        context: &Self::Context,
     ) -> Result<(BlockHash, Height), Error>;
     /// Get a block by hash.
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)>;

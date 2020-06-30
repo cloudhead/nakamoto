@@ -2,8 +2,7 @@ pub mod protocol {
     use log::*;
 
     use crate::error::Error;
-    use crate::peer::{Config, Link};
-    use crate::PeerId;
+    use crate::peer::network;
 
     use std::collections::{HashMap, HashSet};
     use std::fmt::Debug;
@@ -21,6 +20,8 @@ pub mod protocol {
     use nakamoto_chain::block::tree::BlockTree;
     use nakamoto_chain::block::{BlockHash, Height};
 
+    /// Peer-to-peer protocol version.
+    pub const PROTOCOL_VERSION: u32 = 70012;
     /// User agent included in `version` messages.
     pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
     /// Duration of inactivity before timing out a peer.
@@ -36,6 +37,9 @@ pub mod protocol {
 
     /// A time offset, in seconds.
     pub type TimeOffset = i64;
+
+    /// Identifies a peer.
+    pub type PeerId = net::SocketAddr;
 
     /// A finite-state machine that can advance one step at a time, given an input event.
     /// Parametrized over the message type.
@@ -99,7 +103,35 @@ pub mod protocol {
         Synced,
     }
 
-    impl<T: BlockTree> Rpc<T> {
+    /// Peer config.
+    #[derive(Debug, Copy, Clone)]
+    pub struct Config {
+        pub network: network::Network,
+        pub services: ServiceFlags,
+        pub protocol_version: u32,
+        pub relay: bool,
+        pub sync: bool,
+    }
+
+    impl Default for Config {
+        fn default() -> Self {
+            Self {
+                network: network::Network::Mainnet,
+                services: ServiceFlags::NONE,
+                protocol_version: PROTOCOL_VERSION,
+                relay: false,
+                sync: true,
+            }
+        }
+    }
+
+    impl Config {
+        pub fn port(&self) -> u16 {
+            self.network.port()
+        }
+    }
+
+    impl<T: BlockTree<Context = AdjustedTime<PeerId>>> Rpc<T> {
         pub fn new(tree: T, clock: AdjustedTime<PeerId>, config: Config) -> Self {
             Self {
                 peers: HashMap::new(),
@@ -209,6 +241,15 @@ pub mod protocol {
         Syncing(Syncing),
     }
 
+    /// Link direction of the peer connection.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum Link {
+        /// Inbound conneciton.
+        Inbound,
+        /// Outbound connection.
+        Outbound,
+    }
+
     /// A remote peer.
     /// TODO: It should be possible to statically enforce the state-machine rules.
     /// Eg. `Peer<State>`.
@@ -295,7 +336,7 @@ pub mod protocol {
         }
     }
 
-    impl<T: BlockTree> Protocol<RawNetworkMessage> for Rpc<T> {
+    impl<T: BlockTree<Context = AdjustedTime<PeerId>>> Protocol<RawNetworkMessage> for Rpc<T> {
         fn step(&mut self, event: Event<RawNetworkMessage>) -> Vec<(PeerId, RawNetworkMessage)> {
             let mut outbound = match event {
                 Event::Connected {
@@ -368,7 +409,7 @@ pub mod protocol {
         }
     }
 
-    impl<T: BlockTree> Rpc<T> {
+    impl<T: BlockTree<Context = AdjustedTime<PeerId>>> Rpc<T> {
         pub fn transition(&mut self, state: State) {
             if state == self.state {
                 return;
@@ -450,7 +491,7 @@ pub mod protocol {
                             return vec![];
                         }
 
-                        match self.tree.import_blocks(headers.into_iter()) {
+                        match self.tree.import_blocks(headers.into_iter(), &self.clock) {
                             Ok((tip, height)) => {
                                 info!("Imported {} headers from {}", length, addr);
                                 info!("Chain height = {}, tip = {}", height, tip);
@@ -710,11 +751,10 @@ pub mod reactor {
     use bitcoin::consensus::encode::{self, Encodable};
     use bitcoin::network::stream_reader::StreamReader;
 
-    use super::protocol::{Event, Protocol, IDLE_TIMEOUT, PING_INTERVAL};
+    use super::protocol::{Event, Link, Protocol, IDLE_TIMEOUT, PING_INTERVAL};
 
     use crate::address_book::AddressBook;
     use crate::error::Error;
-    use crate::peer::Link;
 
     use log::*;
     use std::collections::HashMap;
@@ -872,8 +912,8 @@ pub mod reactor {
 
     /// Run the given protocol with the reactor.
     pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'static>(
-        addrs: AddressBook,
         mut protocol: P,
+        addrs: AddressBook,
     ) -> Result<Vec<()>, Error> {
         use std::thread;
 

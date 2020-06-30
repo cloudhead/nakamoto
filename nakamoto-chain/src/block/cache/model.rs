@@ -1,7 +1,10 @@
 //! Block cache model.
 //! Not for production use.
+use std::net;
+
 use super::{BlockTree, Error};
 
+use crate::block::time::AdjustedTime;
 use crate::block::tree::Branch;
 use crate::block::Height;
 
@@ -109,9 +112,12 @@ impl Cache {
 }
 
 impl BlockTree for Cache {
+    type Context = AdjustedTime<net::SocketAddr>;
+
     fn import_blocks<I: Iterator<Item = BlockHeader>>(
         &mut self,
         chain: I,
+        _context: &Self::Context,
     ) -> Result<(BlockHash, Height), Error> {
         for header in chain {
             self.headers.insert(header.bitcoin_hash(), header);

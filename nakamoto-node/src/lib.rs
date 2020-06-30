@@ -1,7 +1,6 @@
 use std::io;
 use std::net;
 use std::path::Path;
-use std::sync::{Arc, Mutex, RwLock};
 
 use nakamoto_chain as chain;
 use nakamoto_chain::block::cache::BlockCache;
@@ -29,7 +28,7 @@ pub enum Error {
 pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::info!("Initializing daemon..");
 
-    let cfg = p2p::peer::Config::default();
+    let cfg = p2p::protocol::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
 
@@ -56,10 +55,8 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::info!("Store height = {}", store.height()?);
 
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
-    let clock = Arc::new(Mutex::new(AdjustedTime::<net::SocketAddr>::new()));
-    let cache = BlockCache::from(store, params, &checkpoints, clock.clone())?;
-    let block_cache = Arc::new(RwLock::new(cache));
-    let mut net = p2p::Network::new(cfg, block_cache, clock);
+    let clock = AdjustedTime::<net::SocketAddr>::new();
+    let cache = BlockCache::from(store, params, &checkpoints)?;
 
     let peers = if connect.is_empty() {
         match AddressBook::load("peers") {
@@ -79,7 +76,9 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::info!("{} peer(s) found..", peers.len());
     log::debug!("{:?}", peers);
 
-    net.connect(peers)?;
+    let protocol = p2p::protocol::Rpc::new(cache, clock, cfg);
+
+    p2p::reactor::run(protocol, peers)?;
 
     Ok(())
 }
