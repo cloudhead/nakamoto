@@ -28,7 +28,7 @@ pub enum Error {
 pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::info!("Initializing daemon..");
 
-    let cfg = p2p::protocol::Config::default();
+    let cfg = p2p::protocol::bitcoin::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
 
@@ -62,7 +62,7 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
         match AddressBook::load("peers") {
             Ok(peers) if peers.is_empty() => {
                 log::info!("Address book is empty. Trying DNS seeds..");
-                AddressBook::bootstrap(cfg.network)?
+                AddressBook::bootstrap(cfg.network.seeds(), cfg.network.port())?
             }
             Ok(peers) => peers,
             Err(err) => {
@@ -76,9 +76,9 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::info!("{} peer(s) found..", peers.len());
     log::debug!("{:?}", peers);
 
-    let protocol = p2p::protocol::Rpc::new(cache, clock, cfg);
+    let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
 
-    p2p::reactor::run(protocol, peers)?;
+    p2p::reactor::threaded::run(protocol, peers)?;
 
     Ok(())
 }

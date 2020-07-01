@@ -1,4 +1,4 @@
-//! Peer network. Eg. *Mainnet*.
+//! Bitcoin peer network. Eg. *Mainnet*.
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -78,7 +78,7 @@ impl Network {
 
 impl Network {
     /// ```
-    /// use nakamoto_p2p::peer::Network;
+    /// use nakamoto_p2p::protocol::bitcoin::Network;
     /// use bitcoin::util::hash::BitcoinHash;
     ///
     /// let network = Network::Mainnet;

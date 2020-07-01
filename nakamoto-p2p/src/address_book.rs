@@ -6,8 +6,6 @@ use std::net;
 use std::ops::Deref;
 use std::path::Path;
 
-use crate::peer;
-
 #[derive(Debug, PartialEq)]
 pub struct AddressBook {
     addrs: Vec<net::SocketAddr>,
@@ -26,19 +24,10 @@ impl AddressBook {
         Ok(Self { addrs })
     }
 
-    pub fn bootstrap(network: peer::Network) -> io::Result<Self> {
-        match network {
-            peer::Network::Mainnet => {
-                let seeds = network
-                    .seeds()
-                    .iter()
-                    .map(|s| (*s, network.port()))
-                    .collect::<Vec<_>>();
+    pub fn bootstrap(seeds: &[&str], port: u16) -> io::Result<Self> {
+        let seeds = seeds.iter().map(|s| (*s, port)).collect::<Vec<_>>();
 
-                AddressBook::from(&seeds)
-            }
-            _ => todo!(),
-        }
+        AddressBook::from(&seeds)
     }
 
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
