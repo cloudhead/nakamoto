@@ -77,7 +77,7 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
 
     let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
 
-    p2p::reactor::threaded::run(protocol, peers)?;
+    p2p::reactor::poll::run(protocol, peers)?;
 
     Ok(())
 }

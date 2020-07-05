@@ -245,6 +245,7 @@ dependencies = [
  "log",
  "nakamoto-chain",
  "nakamoto-test",
+ "popol",
  "tempfile",
  "thiserror",
 ]
@@ -263,6 +264,15 @@ name = "nonempty"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ff7ac1e5ea23db6d61ad103e91864675049644bf47c35912336352fa4e9c109"
+
+[[package]]
+name = "popol"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16901f77d3b89d5a21b10a9110aa656d3fa9219aa123e0619ce1756ea9b55104"
+dependencies = [
+ "libc",
+]
 
 [[package]]
 name = "ppv-lite86"
