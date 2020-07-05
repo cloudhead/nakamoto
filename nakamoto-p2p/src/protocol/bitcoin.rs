@@ -113,18 +113,17 @@ impl<T: BlockTree<Context = AdjustedTime<PeerId>>> Bitcoin<T> {
     fn connect(&mut self, addr: PeerId, local_addr: net::SocketAddr, link: Link) -> bool {
         self.disconnected.remove(&addr);
 
-        match self.peers.insert(
-            addr,
-            Peer::new(
+        self.peers
+            .insert(
                 addr,
-                local_addr,
-                PeerState::Handshake(Handshake::default()),
-                link,
-            ),
-        ) {
-            Some(_) => false,
-            None => true,
-        }
+                Peer::new(
+                    addr,
+                    local_addr,
+                    PeerState::Handshake(Handshake::default()),
+                    link,
+                ),
+            )
+            .is_none()
     }
 
     /// Start initial block header sync.

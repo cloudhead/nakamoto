@@ -46,13 +46,12 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
             store
         }
     };
-    log::info!("Loading blocks from store..");
-
     if store.check().is_err() {
         log::warn!("Corruption detected in store, healing..");
         store.heal()?; // Rollback store to the last valid header.
     }
     log::info!("Store height = {}", store.height()?);
+    log::info!("Loading blocks from store..");
 
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
     let clock = AdjustedTime::<net::SocketAddr>::new();
