@@ -8,6 +8,7 @@ use nakamoto_chain::block::store::{self, Store};
 use nakamoto_chain::block::time::AdjustedTime;
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
+use nakamoto_p2p::protocol::bitcoin::Config;
 
 use thiserror::Error;
 
@@ -28,7 +29,7 @@ pub enum Error {
 pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::info!("Initializing daemon..");
 
-    let cfg = p2p::protocol::bitcoin::Config::default();
+    let cfg = Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
 
@@ -76,8 +77,8 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::debug!("{:?}", peers);
 
     let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
-
-    p2p::reactor::poll::run(protocol, peers)?;
+    let listen_addr = ([0, 0, 0, 0], cfg.port()).into();
+    p2p::reactor::poll::run(protocol, peers, listen_addr)?;
 
     Ok(())
 }
