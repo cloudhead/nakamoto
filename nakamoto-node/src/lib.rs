@@ -78,7 +78,9 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
 
     let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
     let listen_addr = ([0, 0, 0, 0], cfg.port()).into();
-    p2p::reactor::poll::run(protocol, peers, listen_addr)?;
+    let mut reactor = p2p::reactor::poll::Reactor::new();
+
+    reactor.run(protocol, peers, listen_addr)?;
 
     Ok(())
 }

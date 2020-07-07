@@ -13,6 +13,7 @@ use std::fmt::Debug;
 use std::io;
 use std::io::prelude::*;
 use std::net;
+use std::os::unix::io::AsRawFd;
 
 /// Maximum peer-to-peer message size.
 pub const MAX_MESSAGE_SIZE: usize = 6 * 1024;
@@ -93,95 +94,146 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     }
 }
 
-/// Run the given protocol with the reactor.
-pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'static>(
-    mut protocol: P,
-    addrs: AddressBook,
-    listen_addr: net::SocketAddr,
-) -> Result<Vec<()>, Error> {
-    let mut peers = HashMap::new();
-    let mut descriptors = popol::Descriptors::new();
-    let mut events: VecDeque<Event<M>> = VecDeque::new();
+pub struct Reactor<R: Write + Read, M> {
+    peers: HashMap<net::SocketAddr, Socket<R, M>>,
+    descriptors: popol::Descriptors<Source>,
+    events: VecDeque<Event<M>>,
+}
 
-    // TODO(perf): This could be slow..
-    for addr in addrs.iter() {
-        let stream = self::dial::<_, P>(&addr)?;
-        let local_addr = stream.peer_addr()?;
-        let addr = stream.peer_addr()?;
+impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> {
+    pub fn new() -> Self {
+        let peers = HashMap::new();
+        let descriptors = popol::Descriptors::new();
+        let events: VecDeque<Event<M>> = VecDeque::new();
 
-        info!("Connected to {}", &addr);
-        trace!("{:#?}", stream);
+        Self {
+            peers,
+            descriptors,
+            events,
+        }
+    }
 
-        events.push_back(Event::Connected {
+    fn register_peer(
+        &mut self,
+        addr: net::SocketAddr,
+        local_addr: net::SocketAddr,
+        stream: R,
+        link: Link,
+    ) {
+        self.events.push_back(Event::Connected {
             addr,
             local_addr,
-            link: Link::Outbound,
+            link,
         });
 
-        descriptors.register(
+        self.descriptors.register(
             Source::Peer(addr),
             &stream,
             popol::events::READ | popol::events::WRITE,
         );
-        peers.insert(addr, Socket::from(stream, local_addr, addr));
+        self.peers
+            .insert(addr, Socket::from(stream, local_addr, addr));
     }
+}
 
-    let listener = self::listen(listen_addr)?;
-    descriptors.register(Source::Listener, &listener, popol::events::READ);
+impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpStream, M> {
+    /// Run the given protocol with the reactor.
+    pub fn run<P: Protocol<M>>(
+        &mut self,
+        mut protocol: P,
+        addrs: AddressBook,
+        listen_addr: net::SocketAddr,
+    ) -> Result<Vec<()>, Error> {
+        // TODO(perf): This could be slow..
+        for addr in addrs.iter() {
+            let stream = self::dial::<_, P>(&addr)?;
+            let local_addr = stream.peer_addr()?;
+            let addr = stream.peer_addr()?;
 
-    info!("Listening on {}", listen_addr);
+            info!("Connected to {}", &addr);
+            trace!("{:#?}", stream);
 
-    loop {
-        match popol::wait(&mut descriptors, P::PING_INTERVAL)? {
-            popol::Wait::Timeout => {
-                // TODO: Ping peers, nothing was received in a while. Find out
-                // who to ping.
-            }
-            popol::Wait::Ready(evs) => {
-                for (source, ev) in evs {
-                    match source {
-                        Source::Peer(addr) => {
-                            let socket = peers.get_mut(&addr).unwrap();
+            self.register_peer(addr, local_addr, stream, Link::Outbound);
+        }
 
-                            if ev.errored || ev.hangup {
-                                // Let the subsequent read fail.
-                            }
-                            if ev.readable {
-                                loop {
-                                    match socket.read() {
-                                        Ok(msg) => {
-                                            events.push_back(Event::Received(addr, msg));
-                                        }
-                                        Err(encode::Error::Io(err))
-                                            if err.kind() == io::ErrorKind::WouldBlock =>
-                                        {
-                                            break;
-                                        }
-                                        Err(err) => {
-                                            panic!(err.to_string());
+        let listener = self::listen(listen_addr)?;
+        self.descriptors
+            .register(Source::Listener, &listener, popol::events::READ);
+
+        info!("Listening on {}", listen_addr);
+
+        // Inbound connected peers. Used as a temporary buffer.
+        let mut inbound = Vec::new();
+
+        loop {
+            match popol::wait(&mut self.descriptors, P::PING_INTERVAL)? {
+                popol::Wait::Timeout => {
+                    // TODO: Ping peers, nothing was received in a while. Find out
+                    // who to ping.
+                }
+                popol::Wait::Ready(evs) => {
+                    for (source, ev) in evs {
+                        match source {
+                            Source::Peer(addr) => {
+                                let socket = self.peers.get_mut(&addr).unwrap();
+
+                                if ev.errored || ev.hangup {
+                                    // Let the subsequent read fail.
+                                }
+                                if ev.readable {
+                                    loop {
+                                        match socket.read() {
+                                            Ok(msg) => {
+                                                self.events.push_back(Event::Received(addr, msg));
+                                            }
+                                            Err(encode::Error::Io(err))
+                                                if err.kind() == io::ErrorKind::WouldBlock =>
+                                            {
+                                                break;
+                                            }
+                                            Err(err) => {
+                                                panic!(err.to_string());
+                                            }
                                         }
                                     }
                                 }
+                                if ev.writable {
+                                    socket.drain(&mut self.events, ev.descriptor);
+                                }
                             }
-                            if ev.writable {
-                                socket.drain(&mut events, ev.descriptor);
-                            }
+                            Source::Listener => loop {
+                                let (conn, addr) = match listener.accept() {
+                                    Ok((conn, addr)) => (conn, addr),
+                                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        panic!(e.to_string());
+                                    }
+                                };
+                                inbound.push((addr, conn));
+                            },
                         }
-                        Source::Listener => todo!(),
                     }
                 }
             }
-        }
 
-        while let Some(event) = events.pop_front() {
-            let msgs = protocol.step(event);
+            for (addr, stream) in inbound.drain(..) {
+                let local_addr = stream.local_addr()?;
 
-            for (addr, msg) in msgs.into_iter() {
-                let peer = peers.get_mut(&addr).unwrap();
-                let descriptor = descriptors.get_mut(Source::Peer(addr)).unwrap();
+                self.register_peer(addr, local_addr, stream, Link::Inbound);
+            }
 
-                peer.queue.push_back(msg);
-                peer.drain(&mut events, descriptor);
+            while let Some(event) = self.events.pop_front() {
+                let msgs = protocol.step(event);
+
+                for (addr, msg) in msgs.into_iter() {
+                    let peer = self.peers.get_mut(&addr).unwrap();
+                    let descriptor = self.descriptors.get_mut(Source::Peer(addr)).unwrap();
+
+                    peer.queue.push_back(msg);
+                    peer.drain(&mut self.events, descriptor);
+                }
             }
         }
     }
