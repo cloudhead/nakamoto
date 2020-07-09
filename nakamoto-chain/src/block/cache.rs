@@ -5,8 +5,6 @@ pub mod test;
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, VecDeque};
-use std::hash::Hash;
-use std::net;
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -21,7 +19,7 @@ use crate::block::store::Store;
 use crate::block::tree::{BlockTree, Branch, Error};
 use crate::block::{
     self,
-    time::{self, AdjustedTime},
+    time::{self, Clock},
     Bits, CachedBlock, Height, Time,
 };
 
@@ -126,10 +124,10 @@ impl<S: Store> BlockCache<S> {
     }
 
     /// Import a block into the tree. Performs header validation.
-    fn import_block<K: Eq + Hash>(
+    fn import_block(
         &mut self,
         header: BlockHeader,
-        adjusted_time: &AdjustedTime<K>,
+        clock: &impl Clock,
     ) -> Result<(BlockHash, Height), Error> {
         let hash = header.bitcoin_hash();
         let tip = self.chain.last();
@@ -138,7 +136,7 @@ impl<S: Store> BlockCache<S> {
         if header.prev_blockhash == tip.hash {
             let height = tip.height + 1;
 
-            self.validate(&tip, &header, adjusted_time)?;
+            self.validate(&tip, &header, clock)?;
             self.extend_chain(height, hash, header);
             self.store.put(std::iter::once(header))?;
         } else if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
@@ -157,7 +155,7 @@ impl<S: Store> BlockCache<S> {
 
         // Activate the chain with the most work.
 
-        let candidates = self.chain_candidates(adjusted_time);
+        let candidates = self.chain_candidates(clock);
 
         if candidates.is_empty()
             && !self.headers.contains_key(&header.prev_blockhash)
@@ -190,12 +188,12 @@ impl<S: Store> BlockCache<S> {
         Ok((self.chain.last().hash, self.height()))
     }
 
-    fn chain_candidates<K: Hash + Eq>(&self, adjusted_time: &AdjustedTime<K>) -> Vec<Candidate> {
+    fn chain_candidates(&self, clock: &impl Clock) -> Vec<Candidate> {
         let mut branches = Vec::new();
 
         for tip in self.orphans.keys() {
             if let Some(branch) = self.branch(tip) {
-                if self.validate_branch(&branch, adjusted_time).is_ok() {
+                if self.validate_branch(&branch, clock).is_ok() {
                     branches.push(branch);
                 }
             }
@@ -225,11 +223,7 @@ impl<S: Store> BlockCache<S> {
         None
     }
 
-    fn validate_branch<K: Hash + Eq>(
-        &self,
-        candidate: &Candidate,
-        adjusted_time: &AdjustedTime<K>,
-    ) -> Result<(), Error> {
+    fn validate_branch(&self, candidate: &Candidate, clock: &impl Clock) -> Result<(), Error> {
         let fork_header = self
             .get_block_by_height(candidate.fork_height)
             .expect("the given candidate must fork from a known block");
@@ -240,7 +234,7 @@ impl<S: Store> BlockCache<S> {
         };
 
         for header in candidate.headers.iter() {
-            self.validate(&tip, header, adjusted_time)?;
+            self.validate(&tip, header, clock)?;
 
             tip = CachedBlock {
                 height: tip.height + 1,
@@ -251,11 +245,11 @@ impl<S: Store> BlockCache<S> {
         Ok(())
     }
 
-    fn validate<K: Eq + Hash>(
+    fn validate(
         &self,
         tip: &CachedBlock,
         header: &BlockHeader,
-        adjusted_time: &AdjustedTime<K>,
+        clock: &impl Clock,
     ) -> Result<(), Error> {
         assert_eq!(tip.hash, header.prev_blockhash);
 
@@ -298,7 +292,7 @@ impl<S: Store> BlockCache<S> {
         if header.time <= self.median_time_past(height) {
             return Err(Error::InvalidTimestamp(header.time, Ordering::Less));
         }
-        if header.time > adjusted_time.get() + time::MAX_FUTURE_BLOCK_TIME {
+        if header.time > clock.time() + time::MAX_FUTURE_BLOCK_TIME {
             return Err(Error::InvalidTimestamp(header.time, Ordering::Greater));
         }
 
@@ -376,17 +370,15 @@ impl<S: Store> BlockCache<S> {
 }
 
 impl<S: Store> BlockTree for BlockCache<S> {
-    type Context = AdjustedTime<net::SocketAddr>;
-
-    fn import_blocks<I: Iterator<Item = BlockHeader>>(
+    fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
         &mut self,
         chain: I,
-        adjusted_time: &Self::Context,
+        context: &C,
     ) -> Result<(BlockHash, Height), Error> {
         let mut result = None;
 
         for (i, header) in chain.enumerate() {
-            match self.import_block(header, adjusted_time) {
+            match self.import_block(header, context) {
                 Ok(r) => result = Some(r),
                 Err(Error::DuplicateBlock(hash)) => log::trace!("Duplicate block {}", hash),
                 Err(Error::BlockMissing(hash)) => log::trace!("Missing block {}", hash),

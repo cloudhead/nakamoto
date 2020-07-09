@@ -24,6 +24,12 @@ pub const MAX_TIME_SAMPLES: usize = 200;
 /// A time offset, in seconds.
 pub type TimeOffset = i64;
 
+/// Clock that tells the time.
+pub trait Clock {
+    /// Tell the time.
+    fn time(&self) -> Time;
+}
+
 /// Network-adjusted time tracker.
 ///
 /// *Network-adjusted time* is the median timestamp of all connected peers.
@@ -39,6 +45,12 @@ pub struct AdjustedTime<K> {
     samples: Vec<TimeOffset>,
     /// Current time offset, based on our samples.
     offset: TimeOffset,
+}
+
+impl<K: Eq + Hash> Clock for AdjustedTime<K> {
+    fn time(&self) -> Time {
+        self.get()
+    }
 }
 
 impl<K: Hash + Eq> Default for AdjustedTime<K> {

@@ -1,7 +1,7 @@
 use super::{model, BlockCache, BlockTree, Error};
 
 use crate::block::store::{self, Store};
-use crate::block::time::AdjustedTime;
+use crate::block::time::{AdjustedTime, Clock};
 use crate::block::{self, Height, Target, Time};
 
 use std::collections::{BTreeMap, VecDeque};
@@ -61,12 +61,10 @@ impl HeightCache {
 }
 
 impl BlockTree for HeightCache {
-    type Context = AdjustedTime<net::SocketAddr>;
-
-    fn import_blocks<I: Iterator<Item = BlockHeader>>(
+    fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
         &mut self,
         _chain: I,
-        _ctx: &Self::Context,
+        _ctx: &C,
     ) -> Result<(BlockHash, Height), super::Error> {
         unimplemented!()
     }
@@ -281,7 +279,7 @@ impl Arbitrary for BlockImport {
         let genesis = constants::genesis_block(network).header;
         let params = Params::new(network);
         let store = store::Memory::new(NonEmpty::new(genesis));
-        let ctx = AdjustedTime::new();
+        let ctx = AdjustedTime::<net::SocketAddr>::new();
         let cache = BlockCache::from(store, params, &[]).unwrap();
         let header = arbitrary_header(genesis.bitcoin_hash(), genesis.time, &genesis.target(), g);
 
@@ -433,7 +431,7 @@ fn prop_cache_import_ordered() {
         let arbitrary::OrderedHeaders { headers } = input;
         let mut cache = model::Cache::new(headers.head);
         let tip = *headers.last();
-        let clock = AdjustedTime::new();
+        let clock = AdjustedTime::<net::SocketAddr>::new();
 
         cache
             .import_blocks(headers.tail.iter().cloned(), &clock)
@@ -668,7 +666,7 @@ fn prop_cache_import_tree(tree: Tree) -> bool {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
 
-    let ctx = AdjustedTime::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new();
     let mut real = BlockCache::from(store, params, &[]).unwrap();
     let mut model = model::Cache::new(genesis);
 
@@ -684,7 +682,7 @@ fn test_cache_import_back_and_forth() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new();
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
 
     let g = &mut rand::thread_rng();
@@ -768,7 +766,7 @@ fn test_cache_import_equal_difficulty_blocks() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new();
 
     let mut real = BlockCache::from(store.clone(), params.clone(), &[]).unwrap();
     let mut model = model::Cache::new(genesis);
@@ -810,7 +808,7 @@ fn test_cache_import_with_checkpoints() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new();
     let g = &mut rand::thread_rng();
 
     let tree = Tree::new(genesis);
@@ -852,7 +850,7 @@ fn test_cache_import_invalid_fork() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new();
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
     let g = &mut rand::thread_rng();
 

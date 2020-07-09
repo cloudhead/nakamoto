@@ -97,7 +97,7 @@ impl Config {
     }
 }
 
-impl<T: BlockTree<Context = AdjustedTime<PeerId>>> Bitcoin<T> {
+impl<T: BlockTree> Bitcoin<T> {
     pub fn new(tree: T, clock: AdjustedTime<PeerId>, config: Config) -> Self {
         Self {
             peers: HashMap::new(),
@@ -292,7 +292,7 @@ impl Peer {
     }
 }
 
-impl<T: BlockTree<Context = AdjustedTime<PeerId>>> Protocol<RawNetworkMessage> for Bitcoin<T> {
+impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     const IDLE_TIMEOUT: time::Duration = time::Duration::from_secs(60 * 5);
     const PING_INTERVAL: time::Duration = time::Duration::from_secs(60);
 
@@ -368,7 +368,7 @@ impl<T: BlockTree<Context = AdjustedTime<PeerId>>> Protocol<RawNetworkMessage> f
     }
 }
 
-impl<T: BlockTree<Context = AdjustedTime<PeerId>>> Bitcoin<T> {
+impl<T: BlockTree> Bitcoin<T> {
     pub fn transition(&mut self, state: State) {
         if state == self.state {
             return;

@@ -5,6 +5,7 @@ use bitcoin::hash_types::BlockHash;
 use thiserror::Error;
 
 use crate::block::store;
+use crate::block::time::Clock;
 use crate::block::{self, Bits, Height, Target, Time, Work};
 
 /// An error related to the block tree.
@@ -60,13 +61,11 @@ impl<'a, H: Header> Branch<'a, H> {
 
 /// A representation of all known blocks that keeps track of the longest chain.
 pub trait BlockTree {
-    type Context;
-
     /// Import a chain of block headers into the block tree.
-    fn import_blocks<I: Iterator<Item = BlockHeader>>(
+    fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
         &mut self,
         chain: I,
-        context: &Self::Context,
+        context: &C,
     ) -> Result<(BlockHash, Height), Error>;
     /// Get a block by hash.
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)>;
