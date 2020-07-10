@@ -53,6 +53,8 @@ pub struct Bitcoin<T> {
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Set of connected peers that have completed the handshake.
+    ready: HashSet<PeerId>,
+    /// Set of all connected peers.
     connected: HashSet<PeerId>,
     /// Set of disconnected peers.
     disconnected: HashSet<PeerId>,
@@ -105,12 +107,14 @@ impl<T: BlockTree> Bitcoin<T> {
             state: State::Connecting,
             tree,
             clock,
+            ready: HashSet::new(),
             connected: HashSet::new(),
             disconnected: HashSet::new(),
         }
     }
 
-    fn connect(&mut self, addr: PeerId, local_addr: net::SocketAddr, link: Link) -> bool {
+    fn connected(&mut self, addr: PeerId, local_addr: net::SocketAddr, link: Link) -> bool {
+        self.connected.insert(addr);
         self.disconnected.remove(&addr);
 
         self.peers
@@ -303,7 +307,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 local_addr,
                 link,
             } => {
-                self.connect(addr, local_addr, link);
+                self.connected(addr, local_addr, link);
 
                 match link {
                     Link::Outbound => {
@@ -318,6 +322,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 debug!("Disconnected from {}", &addr);
                 debug!("error: {}: {}", addr, err);
 
+                self.ready.remove(&addr);
                 self.connected.remove(&addr);
                 self.disconnected.insert(addr);
                 // TODO: Protocol shouldn't handle socket and io errors directly, because it
@@ -338,15 +343,15 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         };
 
         // TODO: Should be triggered when idle, potentially by an `Idle` event.
-        if self.config.sync && self.connected.len() >= PEER_CONNECTION_THRESHOLD {
+        if self.config.sync && self.ready.len() >= PEER_CONNECTION_THRESHOLD {
             if self.is_synced() {
                 if matches!(self.state, State::Connecting) {
                     self.transition(State::Synced);
                 }
             } else {
                 // TODO: Pick a peer whos `height` is high enough.
-                let ix = fastrand::usize(..self.connected.len());
-                let p = *self.connected.iter().nth(ix).unwrap();
+                let ix = fastrand::usize(..self.ready.len());
+                let p = *self.ready.iter().nth(ix).unwrap();
 
                 let sync_msgs = self.initial_sync(p);
                 outbound.extend_from_slice(&sync_msgs);
@@ -418,7 +423,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 if msg.payload == NetworkMessage::Verack {
                     peer.receive_verack();
 
-                    self.connected.insert(addr);
+                    self.ready.insert(addr);
                     self.clock.add_sample(addr, peer.time_offset);
 
                     if peer.link == Link::Outbound {
