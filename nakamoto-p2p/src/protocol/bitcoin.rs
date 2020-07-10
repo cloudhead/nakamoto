@@ -19,7 +19,7 @@ use bitcoin::util::hash::BitcoinHash;
 
 use nakamoto_chain::block::time::AdjustedTime;
 use nakamoto_chain::block::tree::BlockTree;
-use nakamoto_chain::block::{BlockHash, Height};
+use nakamoto_chain::block::{BlockHash, BlockHeader, Height};
 
 /// Peer-to-peer protocol version.
 pub const PROTOCOL_VERSION: u32 = 70012;
@@ -395,7 +395,7 @@ impl<T: BlockTree> Bitcoin<T> {
             // TODO: Send rejection messsage to peer and close connection.
             todo!();
         }
-        let peer = self
+        let mut peer = self
             .peers
             .get_mut(&addr)
             .unwrap_or_else(|| panic!("peer {} is not known", addr));
@@ -440,45 +440,8 @@ impl<T: BlockTree> Bitcoin<T> {
                 assert_eq!(self.state, State::InitialSync(peer.address));
 
                 if let NetworkMessage::Headers(headers) = msg.payload {
-                    let length = headers.len();
-
-                    debug!("{}: Received {} header(s)", addr, length);
-
-                    if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
-                        debug!(
-                            "{}: Range = {}..{}",
-                            addr,
-                            first.bitcoin_hash(),
-                            last.bitcoin_hash()
-                        );
-                    } else {
-                        info!("{}: Finished synchronizing", addr);
-
-                        peer.transition(PeerState::Ready);
-                        self.transition(State::Synced);
-
-                        return vec![];
-                    }
-
-                    match self.tree.import_blocks(headers.into_iter(), &self.clock) {
-                        Ok((tip, height)) => {
-                            info!("Imported {} headers from {}", length, addr);
-                            info!("Chain height = {}, tip = {}", height, tip);
-
-                            let locators = vec![tip];
-
-                            peer.transition(PeerState::Syncing(Syncing::AwaitingHeaders(
-                                locators.clone(),
-                            )));
-
-                            // TODO: We can break here if we've received less than 2'000 headers.
-                            return vec![(addr, self.get_headers(locators))];
-                        }
-                        Err(err) => {
-                            // TODO: Bad blocks received!
-                            error!("Error importing headers: {}", err);
-                        }
-                    }
+                    // TODO: Check that the headers received match the headers awaited.
+                    return self.receive_headers(addr, headers);
                 }
             }
             PeerState::Ready if self.state == State::Synced => {
@@ -500,6 +463,8 @@ impl<T: BlockTree> Bitcoin<T> {
                         .collect();
 
                     return vec![(addr, NetworkMessage::Headers(headers))];
+                } else if let NetworkMessage::Headers(headers) = msg.payload {
+                    return self.receive_headers(addr, headers);
                 }
             }
             PeerState::Ready => {
@@ -543,6 +508,58 @@ impl<T: BlockTree> Bitcoin<T> {
             // Using the zero hash means *fetch as many blocks as possible*.
             stop_hash: BlockHash::default(),
         })
+    }
+
+    fn receive_headers(
+        &mut self,
+        addr: PeerId,
+        headers: Vec<BlockHeader>,
+    ) -> Vec<(PeerId, NetworkMessage)> {
+        let length = headers.len();
+        let peer = self
+            .peers
+            .get_mut(&addr)
+            .unwrap_or_else(|| panic!("peer {} is not known", addr));
+
+        debug!("{}: Received {} header(s)", addr, length);
+
+        if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
+            debug!(
+                "{}: Range = {}..{}",
+                addr,
+                first.bitcoin_hash(),
+                last.bitcoin_hash()
+            );
+        } else {
+            info!("{}: Finished synchronizing", addr);
+
+            peer.transition(PeerState::Ready);
+            self.transition(State::Synced);
+
+            return vec![];
+        }
+
+        match self.tree.import_blocks(headers.into_iter(), &self.clock) {
+            Ok((tip, height)) => {
+                info!("Imported {} header(s) from {}", length, addr);
+                info!("Chain height = {}, tip = {}", height, tip);
+
+                let locators = vec![tip];
+
+                peer.transition(PeerState::Syncing(Syncing::AwaitingHeaders(
+                    locators.clone(),
+                )));
+
+                // TODO: We can break here if we've received less than 2'000 headers.
+                return vec![(addr, self.get_headers(locators))];
+            }
+            Err(err) => {
+                // TODO: Bad blocks received!
+                error!("Error importing headers: {}", err);
+
+                vec![]
+            }
+        }
     }
 
     fn locator_hashes(&self) -> Vec<BlockHash> {
