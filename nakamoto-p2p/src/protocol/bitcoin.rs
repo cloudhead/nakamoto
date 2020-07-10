@@ -361,6 +361,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         outbound
             .into_iter()
             .map(|(addr, msg)| {
+                debug!("{}: Sending {:?}", addr, msg.cmd());
                 (
                     addr,
                     RawNetworkMessage {

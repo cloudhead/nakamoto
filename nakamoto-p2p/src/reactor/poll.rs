@@ -49,7 +49,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     pub fn read(&mut self) -> Result<M, encode::Error> {
         match self.raw.read_next::<M>() {
             Ok(msg) => {
-                trace!("{}: {:#?}", self.address, msg);
+                trace!("{}: (read) {:#?}", self.address, msg);
 
                 Ok(msg)
             }
@@ -62,7 +62,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
         match msg.consensus_encode(&mut buf[..]) {
             Ok(len) => {
-                trace!("{}: {:#?}", self.address, msg);
+                trace!("{}: (write) {:#?}", self.address, msg);
 
                 self.raw.stream.write_all(&buf[..len])?;
                 self.raw.stream.flush()?;
