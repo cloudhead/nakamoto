@@ -26,7 +26,7 @@ pub enum Error {
     BlockStore(#[from] store::Error),
 }
 
-pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
+pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<(), Error> {
     log::info!("Initializing daemon..");
 
     let cfg = Config::default();
@@ -77,10 +77,13 @@ pub fn run(connect: &[net::SocketAddr]) -> Result<(), Error> {
     log::debug!("{:?}", peers);
 
     let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
-    let listen_addr = ([0, 0, 0, 0], cfg.port()).into();
     let mut reactor = p2p::reactor::poll::Reactor::new();
 
-    reactor.run(protocol, peers, listen_addr)?;
+    if listen.is_empty() {
+        reactor.run(protocol, peers, &[([0, 0, 0, 0], cfg.port()).into()])?;
+    } else {
+        reactor.run(protocol, peers, listen)?;
+    }
 
     Ok(())
 }

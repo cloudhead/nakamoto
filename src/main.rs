@@ -8,6 +8,10 @@ pub struct Options {
     /// connect to the specified peers only
     pub connect: Vec<net::SocketAddr>,
 
+    #[argh(option)]
+    /// listen on one of these addresses for peer connections.
+    pub listen: Vec<net::SocketAddr>,
+
     #[argh(switch)]
     /// use the bitcoin test network (default: false)
     pub testnet: bool,
@@ -59,7 +63,7 @@ fn main() {
             .unwrap();
     }
 
-    if let Err(err) = nakamoto_node::run(&opts.connect) {
+    if let Err(err) = nakamoto_node::run(&opts.connect, &opts.listen) {
         log::error!("{}", err);
         std::process::exit(1);
     }

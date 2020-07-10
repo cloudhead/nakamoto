@@ -142,7 +142,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
         &mut self,
         mut protocol: P,
         addrs: AddressBook,
-        listen_addr: net::SocketAddr,
+        listen_addrs: &[net::SocketAddr],
     ) -> Result<Vec<()>, Error> {
         // TODO(perf): This could be slow..
         for addr in addrs.iter() {
@@ -156,11 +156,11 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
             self.register_peer(addr, local_addr, stream, Link::Outbound);
         }
 
-        let listener = self::listen(listen_addr)?;
+        let listener = self::listen(listen_addrs)?;
         self.descriptors
             .register(Source::Listener, &listener, popol::events::READ);
 
-        info!("Listening on {}", listen_addr);
+        info!("Listening on {}", listener.local_addr()?);
 
         // Inbound connected peers. Used as a temporary buffer.
         let mut inbound = Vec::new();
