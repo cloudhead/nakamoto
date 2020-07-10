@@ -427,9 +427,13 @@ impl<T: BlockTree> Bitcoin<T> {
                     self.ready.insert(addr);
                     self.clock.add_sample(addr, peer.time_offset);
 
-                    if peer.link == Link::Outbound {
-                        return vec![(addr, NetworkMessage::Verack)];
-                    }
+                    return match peer.link {
+                        Link::Outbound => vec![
+                            (addr, NetworkMessage::Verack),
+                            (addr, NetworkMessage::SendHeaders),
+                        ],
+                        Link::Inbound => vec![(addr, NetworkMessage::SendHeaders)],
+                    };
                 }
             }
             PeerState::Syncing(Syncing::AwaitingHeaders(_locators)) => {
