@@ -192,7 +192,8 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                                                 break;
                                             }
                                             Err(err) => {
-                                                panic!(err.to_string());
+                                                // TODO: Disconnect peer.
+                                                error!("{}: Read error: {}", addr, err.to_string());
                                             }
                                         }
                                     }
@@ -208,7 +209,8 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                                         break;
                                     }
                                     Err(e) => {
-                                        panic!(e.to_string());
+                                        error!("Accept error: {}", e.to_string());
+                                        break;
                                     }
                                 };
                                 inbound.push((addr, conn));
