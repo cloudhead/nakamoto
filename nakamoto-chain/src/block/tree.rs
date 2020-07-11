@@ -96,6 +96,8 @@ pub trait BlockTree {
         self.get_block_by_height(0)
             .expect("the genesis block is always present")
     }
+    /// Check whether a block hash is known.
+    fn is_known(&self, hash: &BlockHash) -> bool;
     /// Get the next difficulty given a block height, time and bits.
     fn next_difficulty_target(
         &self,

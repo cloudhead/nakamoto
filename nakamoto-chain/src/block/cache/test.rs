@@ -89,6 +89,10 @@ impl BlockTree for HeightCache {
     fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
         unimplemented!()
     }
+
+    fn is_known(&self, _hash: &BlockHash) -> bool {
+        unimplemented!()
+    }
 }
 
 mod arbitrary {

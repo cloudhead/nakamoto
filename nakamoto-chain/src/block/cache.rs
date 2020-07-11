@@ -424,4 +424,9 @@ impl<S: Store> BlockTree for BlockCache<S> {
     fn height(&self) -> Height {
         self.chain.tail.len() as Height
     }
+
+    /// Check whether this block hash is known.
+    fn is_known(&self, hash: &BlockHash) -> bool {
+        self.headers.contains_key(hash) || self.orphans.contains_key(hash)
+    }
 }

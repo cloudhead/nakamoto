@@ -155,4 +155,8 @@ impl BlockTree for Cache {
 
         Box::new(iter)
     }
+
+    fn is_known(&self, hash: &BlockHash) -> bool {
+        self.headers.contains_key(hash)
+    }
 }
