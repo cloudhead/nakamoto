@@ -13,7 +13,7 @@ use std::time::{self, SystemTime, UNIX_EPOCH};
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use bitcoin::network::message_blockdata::GetHeadersMessage;
+use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::util::hash::BitcoinHash;
 
@@ -22,6 +22,7 @@ use nakamoto_chain::block::tree::BlockTree;
 use nakamoto_chain::block::{BlockHash, BlockHeader, Height};
 
 /// Peer-to-peer protocol version.
+/// For now, we only support `70012`, due to lacking `sendcmpct` support.
 pub const PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
@@ -141,12 +142,14 @@ impl<T: BlockTree> Bitcoin<T> {
             locator_hashes.clone(),
         )));
 
-        vec![(addr, self.get_headers(locator_hashes))]
+        vec![(addr, self.get_headers(locator_hashes, BlockHash::default()))]
     }
 
     /// Check whether or not we are in sync with the network.
     /// TODO: Should return the minimum peer height, so that we can
     /// keep track of it in our state, while syncing to it.
+    // FIXME: Currently if you connect and realize you're < 144 blocks behind, you do
+    // nothing. This should change.
     pub fn is_synced(&self) -> bool {
         let height = self.tree.height();
 
@@ -465,6 +468,8 @@ impl<T: BlockTree> Bitcoin<T> {
                     return vec![(addr, NetworkMessage::Headers(headers))];
                 } else if let NetworkMessage::Headers(headers) = msg.payload {
                     return self.receive_headers(addr, headers);
+                } else if let NetworkMessage::Inv(inventory) = msg.payload {
+                    return self.receive_inv(addr, inventory);
                 }
             }
             PeerState::Ready => {
@@ -500,14 +505,40 @@ impl<T: BlockTree> Bitcoin<T> {
         })
     }
 
-    fn get_headers(&self, locator_hashes: Vec<BlockHash>) -> NetworkMessage {
+    fn get_headers(&self, locator_hashes: Vec<BlockHash>, stop_hash: BlockHash) -> NetworkMessage {
         NetworkMessage::GetHeaders(GetHeadersMessage {
             version: self.config.protocol_version,
             // Starting hashes, highest heights first.
             locator_hashes,
             // Using the zero hash means *fetch as many blocks as possible*.
-            stop_hash: BlockHash::default(),
+            stop_hash,
         })
+    }
+
+    /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
+    /// are being announced. Otherwise, we expect to receive a `headers` message.
+    fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<(PeerId, NetworkMessage)> {
+        let mut best_block = None;
+
+        for i in &inv {
+            match i {
+                Inventory::Block(hash) => {
+                    // TODO: Update block availability for this peer.
+                    if !self.tree.is_known(hash) {
+                        debug!("{}: Discovered new block: {}", addr, &hash);
+                        // The final block hash in the inventory should be the highest. Use
+                        // that one for a `getheaders` call.
+                        best_block = Some(hash);
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some(stop_hash) = best_block {
+            vec![(addr, self.get_headers(self.locator_hashes(), *stop_hash))]
+        } else {
+            vec![]
+        }
     }
 
     fn receive_headers(
@@ -551,7 +582,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 )));
 
                 // TODO: We can break here if we've received less than 2'000 headers.
-                return vec![(addr, self.get_headers(locators))];
+                return vec![(addr, self.get_headers(locators, BlockHash::default()))];
             }
             Err(err) => {
                 // TODO: Bad blocks received!
