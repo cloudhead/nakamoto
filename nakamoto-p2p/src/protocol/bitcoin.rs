@@ -254,7 +254,7 @@ impl Peer {
     }
 
     fn is_ready(&self) -> bool {
-        matches!(self.state, PeerState::Ready)
+        matches!(self.state, PeerState::Ready | PeerState::Syncing(_))
     }
 
     fn receive_version(
@@ -405,6 +405,12 @@ impl<T: BlockTree> Bitcoin<T> {
         let local_addr = peer.local_address;
 
         peer.last_active = Some(time::Instant::now());
+
+        if let NetworkMessage::Ping(nonce) = msg.payload {
+            if peer.is_ready() {
+                return vec![(addr, NetworkMessage::Pong(nonce))];
+            }
+        }
 
         // TODO: Make sure we handle all messages at all times in some way.
         match &peer.state {
