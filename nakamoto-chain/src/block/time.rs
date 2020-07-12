@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::hash::Hash;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{Height, Time};
 
@@ -45,6 +44,8 @@ pub struct AdjustedTime<K> {
     samples: Vec<TimeOffset>,
     /// Current time offset, based on our samples.
     offset: TimeOffset,
+    /// Last known local time.
+    local_time: Time,
 }
 
 impl<K: Eq + Hash> Clock for AdjustedTime<K> {
@@ -55,14 +56,14 @@ impl<K: Eq + Hash> Clock for AdjustedTime<K> {
 
 impl<K: Hash + Eq> Default for AdjustedTime<K> {
     fn default() -> Self {
-        Self::new()
+        Self::new(0)
     }
 }
 
 impl<K: Hash + Eq> AdjustedTime<K> {
     /// Create a new network-adjusted time tracker.
     /// Starts with a single sample of zero.
-    pub fn new() -> Self {
+    pub fn new(local_time: Time) -> Self {
         let offset = 0;
 
         let mut samples = Vec::with_capacity(MAX_TIME_SAMPLES);
@@ -74,6 +75,7 @@ impl<K: Hash + Eq> AdjustedTime<K> {
             sources,
             samples,
             offset,
+            local_time,
         }
     }
 
@@ -147,12 +149,17 @@ impl<K: Hash + Eq> AdjustedTime<K> {
 
     /// Get the current network-adjusted time.
     pub fn get(&self) -> Time {
-        let local_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as Time;
+        self.from(self.local_time)
+    }
 
-        self.from(local_time)
+    /// Set the local time to the given value.
+    pub fn set_local_time(&mut self, time: Time) {
+        self.local_time = time;
+    }
+
+    /// Get the last known local time.
+    pub fn local_time(&self) -> Time {
+        self.local_time
     }
 }
 
@@ -164,7 +171,7 @@ mod tests {
 
     #[test]
     fn test_adjusted_time() {
-        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new();
+        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::default();
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
         adjusted_time.record_offset(([127, 0, 0, 1], 8333).into(), 42);
@@ -199,12 +206,14 @@ mod tests {
 
     #[test]
     fn test_adjusted_time_negative() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
         let local_time = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs() as Time;
 
-        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new();
+        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new(local_time);
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
         for i in 1..5 {
@@ -222,7 +231,7 @@ mod tests {
 
     #[test]
     fn test_adjusted_time_max_samples() {
-        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new();
+        let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::default();
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
         for i in 1..(MAX_TIME_SAMPLES / 2) {

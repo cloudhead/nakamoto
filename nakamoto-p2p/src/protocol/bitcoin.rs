@@ -835,7 +835,7 @@ mod tests {
         };
         let tree = model::Cache::new(genesis);
         let config = Config::default();
-        let clock = AdjustedTime::new();
+        let clock = AdjustedTime::default();
 
         let alice_addr = ([127, 0, 0, 1], 8333).into();
         let bob_addr = ([127, 0, 0, 2], 8333).into();
@@ -880,7 +880,7 @@ mod tests {
     #[test]
     fn test_initial_sync() {
         let config = Config::default();
-        let clock = AdjustedTime::new();
+        let clock = AdjustedTime::default();
 
         let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
         let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();

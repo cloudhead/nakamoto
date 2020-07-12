@@ -23,6 +23,9 @@ use bitcoin::hash_types::{BlockHash, TxMerkleNode};
 use bitcoin::util::hash::BitcoinHash;
 use bitcoin::util::uint::Uint256;
 
+/// Sun, 12 Jul 2020 15:03:05 +0000.
+const LOCAL_TIME: Time = 1594566185;
+
 // Lowest possible difficulty.
 const TARGET: Uint256 = Uint256([
     0xffffffffffffffffu64,
@@ -283,7 +286,7 @@ impl Arbitrary for BlockImport {
         let genesis = constants::genesis_block(network).header;
         let params = Params::new(network);
         let store = store::Memory::new(NonEmpty::new(genesis));
-        let ctx = AdjustedTime::<net::SocketAddr>::new();
+        let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
         let cache = BlockCache::from(store, params, &[]).unwrap();
         let header = arbitrary_header(genesis.bitcoin_hash(), genesis.time, &genesis.target(), g);
 
@@ -299,7 +302,7 @@ impl Arbitrary for BlockImport {
 #[quickcheck]
 fn prop_block_missing(import: BlockImport) -> bool {
     let BlockImport(mut cache, header) = import;
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let prev_blockhash = constants::genesis_block(bitcoin::Network::Testnet)
         .header
         .bitcoin_hash();
@@ -318,7 +321,7 @@ fn prop_block_missing(import: BlockImport) -> bool {
 #[quickcheck]
 fn prop_invalid_block_target(import: BlockImport) -> bool {
     let BlockImport(mut cache, header) = import;
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let genesis = cache.genesis().clone();
 
     assert!(cache.clone().import_block(header, &ctx).is_ok());
@@ -339,7 +342,7 @@ fn prop_invalid_block_target(import: BlockImport) -> bool {
 #[quickcheck]
 fn prop_invalid_block_pow(import: BlockImport) -> bool {
     let BlockImport(mut cache, header) = import;
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut header = header.clone();
 
     // Find an *invalid* nonce.
@@ -435,7 +438,7 @@ fn prop_cache_import_ordered() {
         let arbitrary::OrderedHeaders { headers } = input;
         let mut cache = model::Cache::new(headers.head);
         let tip = *headers.last();
-        let clock = AdjustedTime::<net::SocketAddr>::new();
+        let clock = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
 
         cache
             .import_blocks(headers.tail.iter().cloned(), &clock)
@@ -670,7 +673,7 @@ fn prop_cache_import_tree(tree: Tree) -> bool {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
 
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut real = BlockCache::from(store, params, &[]).unwrap();
     let mut model = model::Cache::new(genesis);
 
@@ -686,7 +689,7 @@ fn test_cache_import_back_and_forth() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
 
     let g = &mut rand::thread_rng();
@@ -770,7 +773,7 @@ fn test_cache_import_equal_difficulty_blocks() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
 
     let mut real = BlockCache::from(store.clone(), params.clone(), &[]).unwrap();
     let mut model = model::Cache::new(genesis);
@@ -812,7 +815,7 @@ fn test_cache_import_with_checkpoints() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let g = &mut rand::thread_rng();
 
     let tree = Tree::new(genesis);
@@ -854,7 +857,7 @@ fn test_cache_import_invalid_fork() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
     let g = &mut rand::thread_rng();
 
@@ -908,7 +911,7 @@ fn test_cache_import_fork_with_checkpoints() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let g = &mut rand::thread_rng();
 
     let a0 = Tree::new(genesis);
@@ -983,7 +986,7 @@ fn test_cache_import_duplicate() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
     let g = &mut rand::thread_rng();
 
@@ -1035,7 +1038,7 @@ fn test_cache_import_unordered() {
     let genesis = constants::genesis_block(network).header;
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
-    let ctx = AdjustedTime::<net::SocketAddr>::new();
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
     let mut model = model::Cache::new(genesis);
 
