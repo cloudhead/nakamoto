@@ -30,6 +30,8 @@ pub enum Event<M> {
         /// Link direction.
         link: Link,
     },
+    /// Disconnected from peer.
+    Disconnected(PeerId),
     /// Received a message from a remote peer.
     Received(PeerId, M),
     /// Sent a message to a remote peer, of the given size.

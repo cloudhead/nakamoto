@@ -32,6 +32,12 @@ enum Source {
     Listener,
 }
 
+impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
+    pub fn disconnect(&self) -> io::Result<()> {
+        self.raw.stream.shutdown(net::Shutdown::Both)
+    }
+}
+
 impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     /// Create a new socket from a `io::Read` and an address pair.
     pub fn from(r: R, local_address: net::SocketAddr, address: net::SocketAddr) -> Self {
@@ -236,6 +242,18 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
 
                             peer.queue.push_back(msg);
                             peer.drain(&mut self.events, descriptor);
+                        }
+                        Output::Disconnect(addr) => {
+                            let peer = self.peers.get(&addr).unwrap();
+
+                            // Shutdown the connection, ignoring any potential errors.
+                            // If the socket was already disconnected, this will yield
+                            // an error that is safe to ignore (`ENOTCONN`). The other
+                            // possible errors relate to an invalid file descriptor.
+                            peer.disconnect().ok();
+                            self.peers.remove(&addr);
+
+                            self.events.push_back(Event::Disconnected(addr));
                         }
                         _ => todo!(),
                     }

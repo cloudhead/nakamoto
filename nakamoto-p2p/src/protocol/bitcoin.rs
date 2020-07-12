@@ -358,7 +358,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         let mut outbound = Vec::new();
 
         match event {
-            // TODO: Do we need a `Disconnected` event?
             Event::Connected {
                 addr,
                 local_addr,
@@ -376,6 +375,13 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     Link::Inbound => {} // Wait to receive remote version.
                 }
             }
+            Event::Disconnected(addr) => {
+                debug!("Disconnected from {}", &addr);
+
+                self.ready.remove(&addr);
+                self.connected.remove(&addr);
+                self.disconnected.insert(addr);
+            }
             Event::Received(addr, msg) => {
                 for (addr, out) in self.receive(addr, msg) {
                     outbound.push(Output::Message(addr, out));
@@ -383,8 +389,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             }
             Event::Sent(_addr, _msg) => {}
             Event::Error(addr, err) => {
-                debug!("Disconnected from {}", &addr);
-                debug!("error: {}: {}", addr, err);
+                error!("{}: Error: {}", addr, err);
 
                 self.ready.remove(&addr);
                 self.connected.remove(&addr);
@@ -396,12 +401,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // doesn't decide on what to do about transport errors. It _may_ receive a higher
                 // level event like `Disconnected`, or an opaque `Error`, just to keep track of
                 // peer errors, scores etc.
-                // TODO: If this is a disconnect, then we need to send Command::Quit to the
-                // connection somehow. Maybe not directly here, but perhaps this should return
-                // not just messages but also the ability to drop a peer?
-                // TODO: The other option is that error events (Event::Error) and disconnects
-                // are handled one layer above. But this means the protocol can't decide on
-                // these things, but instead it is the reactor that does.
             }
             Event::Idle => {
                 let now = time::Instant::now();
@@ -770,7 +769,7 @@ mod tests {
     mod simulator {
         use super::*;
 
-        pub fn run<P: Protocol<M>, M>(peers: Vec<(PeerId, &mut P, Vec<Event<M>>)>) {
+        pub fn run<P: Protocol<M>, M: Debug>(peers: Vec<(PeerId, &mut P, Vec<Event<M>>)>) {
             let mut sim: HashMap<PeerId, (&mut P, VecDeque<Event<M>>)> = HashMap::new();
             let mut events = Vec::new();
 
@@ -797,6 +796,7 @@ mod tests {
                         for out in outs.into_iter() {
                             match out {
                                 Output::Message(receiver, msg) => {
+                                    debug!("(sim) {} -> {}: {:?}", peer, receiver, msg);
                                     events.push((receiver, Event::Received(*peer, msg)))
                                 }
                                 _ => todo!(),
