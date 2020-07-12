@@ -15,7 +15,6 @@ use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_network::VersionMessage;
-use bitcoin::util::hash::BitcoinHash;
 
 use nakamoto_chain::block::time::AdjustedTime;
 use nakamoto_chain::block::tree::BlockTree;
@@ -26,12 +25,12 @@ use nakamoto_chain::block::{BlockHash, BlockHeader, Height};
 pub const PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
-/// Number of blocks out of sync we have to be to trigger an initial sync.
-pub const SYNC_THRESHOLD: Height = 144;
 /// Minimum number of peers to be connected to.
 pub const PEER_CONNECTION_THRESHOLD: usize = 1;
 /// Maximum time adjustment between network and local time (70 minutes).
 pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
+/// Maximum number of headers sent in a `headers` message.
+pub const MAX_MESSAGE_HEADERS: usize = 2000;
 
 /// A time offset, in seconds.
 pub type TimeOffset = i64;
@@ -66,8 +65,8 @@ pub struct Bitcoin<T> {
 pub enum State {
     /// Connecting to the network. Syncing hasn't started yet.
     Connecting,
-    /// Initial syncing (IBD) has started with the designated peer.
-    InitialSync(PeerId),
+    /// We're out of sync, and syncing with the designated peer.
+    Syncing(PeerId),
     /// We're in sync.
     Synced,
 }
@@ -131,9 +130,9 @@ impl<T: BlockTree> Bitcoin<T> {
             .is_none()
     }
 
-    /// Start initial block header sync.
-    pub fn initial_sync(&mut self, addr: PeerId) -> Vec<(PeerId, NetworkMessage)> {
-        self.transition(State::InitialSync(addr));
+    /// Start syncing with the given peer.
+    pub fn sync(&mut self, addr: PeerId) -> Vec<(PeerId, NetworkMessage)> {
+        self.transition(State::Syncing(addr));
 
         let locator_hashes = self.locator_hashes();
         let peer = self.peers.get_mut(&addr).unwrap();
@@ -161,7 +160,7 @@ impl<T: BlockTree> Bitcoin<T> {
             .map(|p| p.height)
             .min()
         {
-            height >= peer_height || peer_height - height <= SYNC_THRESHOLD
+            height >= peer_height
         } else {
             true
         }
@@ -199,14 +198,14 @@ impl Default for Handshake {
 }
 
 /// Synchronization states.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Syncing {
     // TODO: This should keep track of what hash we requested.
     AwaitingHeaders(Vec<BlockHash>),
 }
 
 /// State of a remote peer.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum PeerState {
     Handshake(Handshake),
     Ready,
@@ -293,6 +292,9 @@ impl Peer {
     }
 
     fn transition(&mut self, state: PeerState) {
+        if state == self.state {
+            return;
+        }
         debug!("{}: {:?} -> {:?}", self.address, self.state, state);
 
         self.state = state;
@@ -346,18 +348,25 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         };
 
         // TODO: Should be triggered when idle, potentially by an `Idle` event.
-        if self.config.sync && self.ready.len() >= PEER_CONNECTION_THRESHOLD {
-            if self.is_synced() {
-                if matches!(self.state, State::Connecting) {
-                    self.transition(State::Synced);
-                }
-            } else {
-                // TODO: Pick a peer whos `height` is high enough.
-                let ix = fastrand::usize(..self.ready.len());
-                let p = *self.ready.iter().nth(ix).unwrap();
+        match self.state {
+            State::Syncing(_) => {}
+            State::Connecting | State::Synced => {
+                // Wait for a certain connection threshold to make sure we choose the best
+                // peer to sync from. For now, we choose a random peer.
+                // TODO: Threshold should be a parameter.
+                // TODO: Peer should be picked amongst lowest latency ones.
+                if self.config.sync && self.ready.len() >= PEER_CONNECTION_THRESHOLD {
+                    if self.is_synced() {
+                        self.transition(State::Synced);
+                    } else {
+                        // TODO: Pick a peer whos `height` is high enough.
+                        let ix = fastrand::usize(..self.ready.len());
+                        let p = *self.ready.iter().nth(ix).unwrap();
 
-                let sync_msgs = self.initial_sync(p);
-                outbound.extend_from_slice(&sync_msgs);
+                        let sync_msgs = self.sync(p);
+                        outbound.extend_from_slice(&sync_msgs);
+                    }
+                }
             }
         }
 
@@ -446,8 +455,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
             }
             PeerState::Syncing(Syncing::AwaitingHeaders(_locators)) => {
-                assert_eq!(self.state, State::InitialSync(peer.address));
-
                 if let NetworkMessage::Headers(headers) = msg.payload {
                     // TODO: Check that the headers received match the headers awaited.
                     return self.receive_headers(addr, headers);
@@ -558,37 +565,38 @@ impl<T: BlockTree> Bitcoin<T> {
             .get_mut(&addr)
             .unwrap_or_else(|| panic!("peer {} is not known", addr));
 
-        debug!("{}: Received {} header(s)", addr, length);
-
-        if let (Some(first), Some(last)) = (headers.first(), headers.last()) {
-            debug!(
-                "{}: Range = {}..{}",
-                addr,
-                first.bitcoin_hash(),
-                last.bitcoin_hash()
-            );
-        } else {
-            info!("{}: Finished synchronizing", addr);
-
-            peer.transition(PeerState::Ready);
-            self.transition(State::Synced);
-
+        if headers.is_empty() {
             return vec![];
         }
+        debug!("{}: Received {} header(s)", addr, length);
 
         match self.tree.import_blocks(headers.into_iter(), &self.clock) {
             Ok((tip, height)) => {
                 info!("Imported {} header(s) from {}", length, addr);
                 info!("Chain height = {}, tip = {}", height, tip);
 
-                let locators = vec![tip];
+                // If we received less than the maximum number of headers, we must be in sync.
+                // Otherwise, ask for the next batch of headers.
+                if length < MAX_MESSAGE_HEADERS {
+                    info!("{}: Finished synchronizing", addr);
 
-                peer.transition(PeerState::Syncing(Syncing::AwaitingHeaders(
-                    locators.clone(),
-                )));
+                    // If these headers were unsolicited, we may already be ready/synced.
+                    // Otherwise, we're finally in sync.
+                    peer.transition(PeerState::Ready);
+                    self.transition(State::Synced);
 
-                // TODO: We can break here if we've received less than 2'000 headers.
-                return vec![(addr, self.get_headers(locators, BlockHash::default()))];
+                    vec![]
+                } else {
+                    // TODO: If we're already in the state of asking for this header, don't
+                    // ask again.
+                    let locators = vec![tip];
+
+                    peer.transition(PeerState::Syncing(Syncing::AwaitingHeaders(
+                        locators.clone(),
+                    )));
+
+                    vec![(addr, self.get_headers(locators, BlockHash::default()))]
+                }
             }
             Err(err) => {
                 // TODO: Bad blocks received!
@@ -741,7 +749,7 @@ mod tests {
 
         // Blockchain height we're going to be working with. Making it larger
         // than the threshold ensures a sync happens.
-        let height = SYNC_THRESHOLD + 1;
+        let height = 144;
 
         // Let's test Bob trying to sync with Alice from genesis.
         let mut alice_tree = TREE.clone();
