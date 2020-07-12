@@ -554,7 +554,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     peer.receive_verack(now);
 
                     self.ready.insert(addr);
-                    self.clock.add_sample(addr, peer.time_offset);
+                    self.clock.record_offset(addr, peer.time_offset);
 
                     let ping = peer.ping();
 

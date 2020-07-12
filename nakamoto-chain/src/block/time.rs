@@ -78,7 +78,7 @@ impl<K: Hash + Eq> AdjustedTime<K> {
     }
 
     /// Add a time sample to influence the network-adjusted time.
-    pub fn add_sample(&mut self, source: K, sample: TimeOffset) {
+    pub fn record_offset(&mut self, source: K, sample: TimeOffset) {
         // Nb. This behavior is based on Bitcoin Core. An alternative is to truncate the
         // samples list, to never exceed `MAX_TIME_SAMPLES`, and allow new samples to be
         // added to the list, while the set of sample sources keeps growing. This has the
@@ -167,14 +167,14 @@ mod tests {
         let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new();
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
-        adjusted_time.add_sample(([127, 0, 0, 1], 8333).into(), 42);
+        adjusted_time.record_offset(([127, 0, 0, 1], 8333).into(), 42);
         assert_eq!(adjusted_time.offset(), 0); // samples = [0, 42]
 
-        adjusted_time.add_sample(([127, 0, 0, 2], 8333).into(), 47);
+        adjusted_time.record_offset(([127, 0, 0, 2], 8333).into(), 47);
         assert_eq!(adjusted_time.offset(), 0); // samples = [0, 42, 47]
 
         for i in 3.. {
-            adjusted_time.add_sample(([127, 0, 0, i], 8333).into(), MAX_TIME_ADJUSTMENT + 1);
+            adjusted_time.record_offset(([127, 0, 0, i], 8333).into(), MAX_TIME_ADJUSTMENT + 1);
 
             if adjusted_time.samples.len() >= MIN_TIME_SAMPLES {
                 break;
@@ -182,14 +182,14 @@ mod tests {
         }
         assert_eq!(adjusted_time.offset(), 47); // samples = [0, 42, 47, 4201, 4201]
 
-        adjusted_time.add_sample(([127, 0, 0, 5], 8333).into(), MAX_TIME_ADJUSTMENT + 1);
+        adjusted_time.record_offset(([127, 0, 0, 5], 8333).into(), MAX_TIME_ADJUSTMENT + 1);
         assert_eq!(
             adjusted_time.offset(),
             47,
             "No change when sample count is even"
         ); // samples = [0, 42, 47, 4201, 4201, 4201]
 
-        adjusted_time.add_sample(([127, 0, 0, 6], 8333).into(), MAX_TIME_ADJUSTMENT + 1);
+        adjusted_time.record_offset(([127, 0, 0, 6], 8333).into(), MAX_TIME_ADJUSTMENT + 1);
         assert_eq!(
             adjusted_time.offset(),
             0,
@@ -208,13 +208,13 @@ mod tests {
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
         for i in 1..5 {
-            adjusted_time.add_sample(([127, 0, 0, i], 8333).into(), 96);
+            adjusted_time.record_offset(([127, 0, 0, i], 8333).into(), 96);
         } // samples = [0, 96, 96, 96, 96]
         assert_eq!(adjusted_time.offset(), 96);
         assert_eq!(adjusted_time.from(local_time), local_time + 96);
 
         for i in 5..11 {
-            adjusted_time.add_sample(([127, 0, 0, i], 8333).into(), -96);
+            adjusted_time.record_offset(([127, 0, 0, i], 8333).into(), -96);
         } // samples = [-96, -96, -96, -96, -96, -96, 0, 96, 96, 96, 96]
         assert_eq!(adjusted_time.offset(), -96);
         assert_eq!(adjusted_time.from(local_time), local_time - 96);
@@ -226,12 +226,12 @@ mod tests {
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
         for i in 1..(MAX_TIME_SAMPLES / 2) {
-            adjusted_time.add_sample(([127, 0, 0, i as u8], 8333).into(), -1);
+            adjusted_time.record_offset(([127, 0, 0, i as u8], 8333).into(), -1);
         }
         assert_eq!(adjusted_time.offset(), -1);
 
         for i in (MAX_TIME_SAMPLES / 2).. {
-            adjusted_time.add_sample(([127, 0, 0, i as u8], 8333).into(), 1);
+            adjusted_time.record_offset(([127, 0, 0, i as u8], 8333).into(), 1);
 
             if adjusted_time.samples.len() == MAX_TIME_SAMPLES {
                 break;
@@ -241,9 +241,9 @@ mod tests {
         // There are 99 samples before, and 99 samples after.
         assert_eq!(adjusted_time.offset(), 0);
 
-        adjusted_time.add_sample(([127, 0, 0, 253], 8333).into(), 1);
-        adjusted_time.add_sample(([127, 0, 0, 254], 8333).into(), 2);
-        adjusted_time.add_sample(([127, 0, 0, 255], 8333).into(), 3);
+        adjusted_time.record_offset(([127, 0, 0, 253], 8333).into(), 1);
+        adjusted_time.record_offset(([127, 0, 0, 254], 8333).into(), 2);
+        adjusted_time.record_offset(([127, 0, 0, 255], 8333).into(), 3);
         assert_eq!(
             adjusted_time.sources.len(),
             MAX_TIME_SAMPLES,
