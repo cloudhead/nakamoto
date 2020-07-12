@@ -1,5 +1,8 @@
-use argh::FromArgs;
 use std::net;
+
+use argh::FromArgs;
+
+use nakamoto_daemon::logger;
 
 #[derive(FromArgs)]
 /// A Bitcoin light client.
@@ -16,9 +19,9 @@ pub struct Options {
     /// use the bitcoin test network (default: false)
     pub testnet: bool,
 
-    #[argh(option, default = "log::LevelFilter::Info")]
+    #[argh(option, default = "log::Level::Info")]
     /// log level (default: info)
-    pub log: log::LevelFilter,
+    pub log: log::Level,
 }
 
 impl Options {
@@ -30,38 +33,7 @@ impl Options {
 fn main() {
     let opts = Options::from_env();
 
-    {
-        use atty::Stream;
-        use fern::colors::{Color, ColoredLevelConfig};
-
-        let colors = ColoredLevelConfig::new().info(Color::Green);
-        let stream = Stream::Stderr;
-        let io = std::io::stderr();
-        let isatty = atty::is(stream);
-
-        fern::Dispatch::new()
-            .format(move |out, message, record| {
-                if isatty {
-                    out.finish(format_args!(
-                        "{:5} [{}] {}",
-                        colors.color(record.level()),
-                        record.target(),
-                        message
-                    ))
-                } else {
-                    out.finish(format_args!(
-                        "{:5} [{}] {}",
-                        record.level(),
-                        record.target(),
-                        message
-                    ))
-                }
-            })
-            .level(opts.log)
-            .chain(io)
-            .apply()
-            .unwrap();
-    }
+    logger::init(opts.log).expect("initializing logger for the first time");
 
     if let Err(err) = nakamoto_node::run(&opts.connect, &opts.listen) {
         log::error!("{}", err);
