@@ -138,9 +138,7 @@ impl<T: BlockTree> Bitcoin<T> {
         let locator_hashes = self.locator_hashes();
         let peer = self.peers.get_mut(&addr).unwrap();
 
-        peer.transition(PeerState::Syncing(Syncing::AwaitingHeaders(
-            locator_hashes.clone(),
-        )));
+        peer.syncing(Syncing::AwaitingHeaders(locator_hashes.clone()));
 
         vec![(addr, self.get_headers(locator_hashes, BlockHash::default()))]
     }
@@ -201,16 +199,25 @@ impl Default for Handshake {
 /// Synchronization states.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Syncing {
-    // TODO: This should keep track of what hash we requested.
+    /// Not currently syncing. This is usually the starting and end state.
+    Idle,
+    /// Syncing. A `getheaders` message was sent and we are expecting a response.
     AwaitingHeaders(Vec<BlockHash>),
 }
 
 /// State of a remote peer.
 #[derive(Debug, PartialEq, Eq)]
 pub enum PeerState {
+    /// Handshake is in progress.
     Handshake(Handshake),
-    Ready,
-    Syncing(Syncing),
+    /// Handshake was completed successfully. This peer is ready to receive messages.
+    Ready {
+        /// Last time this peer was active. This is set every time we receive
+        /// a message from this peer.
+        last_active: time::Instant,
+        /// Syncing state.
+        syncing: Syncing,
+    },
 }
 
 /// A remote peer.
@@ -233,8 +240,6 @@ pub struct Peer {
     pub link: Link,
     /// Peer state.
     pub state: PeerState,
-    /// Last time we heard from this peer.
-    pub last_active: Option<time::Instant>,
     /// Nonce and time the last ping was sent to this peer.
     pub last_ping: Option<(u64, time::Instant)>,
     /// Observed round-trip latencies for this peer.
@@ -254,7 +259,6 @@ impl Peer {
             height: 0,
             tip: BlockHash::default(),
             time_offset: 0,
-            last_active: None,
             state,
             link,
             last_ping: None,
@@ -263,7 +267,7 @@ impl Peer {
     }
 
     fn is_ready(&self) -> bool {
-        matches!(self.state, PeerState::Ready | PeerState::Syncing(_))
+        matches!(self.state, PeerState::Ready { .. })
     }
 
     fn ping(&mut self) -> NetworkMessage {
@@ -317,8 +321,11 @@ impl Peer {
         self.transition(PeerState::Handshake(Handshake::AwaitingVerack));
     }
 
-    fn receive_verack(&mut self) {
-        self.transition(PeerState::Ready);
+    fn receive_verack(&mut self, time: time::Instant) {
+        self.transition(PeerState::Ready {
+            last_active: time,
+            syncing: Syncing::Idle,
+        });
     }
 
     fn transition(&mut self, state: PeerState) {
@@ -328,6 +335,20 @@ impl Peer {
         debug!("{}: {:?} -> {:?}", self.address, self.state, state);
 
         self.state = state;
+    }
+
+    fn syncing(&mut self, state: Syncing) {
+        if let PeerState::Ready {
+            ref mut syncing, ..
+        } = self.state
+        {
+            if syncing == &state {
+                return;
+            }
+            debug!("{}: {:?} -> {:?}", self.address, state, syncing);
+
+            *syncing = state;
+        }
     }
 }
 
@@ -380,15 +401,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 let mut msgs = Vec::new();
 
                 for (addr, peer) in self.peers.iter_mut() {
-                    if !peer.is_ready() {
-                        continue;
-                    }
-                    match peer.last_active {
-                        Some(last) if now - last >= Self::PING_INTERVAL => {
+                    if let PeerState::Ready { last_active, .. } = peer.state {
+                        if now - last_active >= Self::PING_INTERVAL {
                             msgs.push((*addr, peer.ping()));
                         }
-                        Some(_) => {}
-                        None => panic!("Peer can't be ready without having been active"),
                     }
                 }
                 msgs
@@ -463,7 +479,13 @@ impl<T: BlockTree> Bitcoin<T> {
             .unwrap_or_else(|| panic!("peer {} is not known", addr));
         let local_addr = peer.local_address;
 
-        peer.last_active = Some(now);
+        if let PeerState::Ready {
+            ref mut last_active,
+            ..
+        } = peer.state
+        {
+            *last_active = now;
+        }
 
         if let NetworkMessage::Ping(nonce) = msg.payload {
             if peer.is_ready() {
@@ -498,7 +520,7 @@ impl<T: BlockTree> Bitcoin<T> {
             }
             PeerState::Handshake(Handshake::AwaitingVerack) => {
                 if msg.payload == NetworkMessage::Verack {
-                    peer.receive_verack();
+                    peer.receive_verack(now);
 
                     self.ready.insert(addr);
                     self.clock.add_sample(addr, peer.time_offset);
@@ -515,13 +537,19 @@ impl<T: BlockTree> Bitcoin<T> {
                     };
                 }
             }
-            PeerState::Syncing(Syncing::AwaitingHeaders(_locators)) => {
+            PeerState::Ready {
+                syncing: Syncing::AwaitingHeaders(_locators),
+                ..
+            } => {
                 if let NetworkMessage::Headers(headers) = msg.payload {
                     // TODO: Check that the headers received match the headers awaited.
                     return self.receive_headers(addr, headers);
                 }
             }
-            PeerState::Ready if self.state == State::Synced => {
+            PeerState::Ready {
+                syncing: Syncing::Idle,
+                ..
+            } if self.state == State::Synced => {
                 if let NetworkMessage::GetHeaders(GetHeadersMessage { locator_hashes, .. }) =
                     msg.payload
                 {
@@ -546,7 +574,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     return self.receive_inv(addr, inventory);
                 }
             }
-            PeerState::Ready => {
+            PeerState::Ready { .. } => {
                 debug!("Ignoring {} from peer {}", msg.cmd(), peer.address);
             }
         }
@@ -647,7 +675,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     // If these headers were unsolicited, we may already be ready/synced.
                     // Otherwise, we're finally in sync.
-                    peer.transition(PeerState::Ready);
+                    peer.syncing(Syncing::Idle);
                     self.transition(State::Synced);
 
                     vec![]
@@ -656,9 +684,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     // ask again.
                     let locators = vec![tip];
 
-                    peer.transition(PeerState::Syncing(Syncing::AwaitingHeaders(
-                        locators.clone(),
-                    )));
+                    peer.syncing(Syncing::AwaitingHeaders(locators.clone()));
 
                     vec![(addr, self.get_headers(locators, BlockHash::default()))]
                 }
@@ -800,18 +826,13 @@ mod tests {
         ]);
 
         assert!(
-            alice
-                .peers
-                .values()
-                .all(|p| matches!(p.state, PeerState::Ready)),
+            alice.peers.values().all(|p| p.is_ready()),
             "alice: {:#?}",
             alice.peers
         );
 
         assert!(
-            bob.peers
-                .values()
-                .all(|p| matches!(p.state, PeerState::Ready)),
+            bob.peers.values().all(|p| p.is_ready()),
             "bob: {:#?}",
             bob.peers
         );
