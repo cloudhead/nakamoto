@@ -5,7 +5,7 @@ pub use network::Network;
 
 use crate::protocol::{Event, Link, PeerId, Protocol};
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::net;
 use std::time::{self, SystemTime, UNIX_EPOCH};
@@ -32,6 +32,8 @@ pub const PEER_CONNECTION_THRESHOLD: usize = 1;
 pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
 /// Maximum number of headers sent in a `headers` message.
 pub const MAX_MESSAGE_HEADERS: usize = 2000;
+/// Maximum number of latencies recorded per peer.
+pub const MAX_RECORDED_LATENCIES: usize = 64;
 
 /// A time offset, in seconds.
 pub type TimeOffset = i64;
@@ -233,6 +235,10 @@ pub struct Peer {
     pub state: PeerState,
     /// Last time we heard from this peer.
     pub last_active: Option<time::Instant>,
+    /// Nonce and time the last ping was sent to this peer.
+    pub last_ping: Option<(u64, time::Instant)>,
+    /// Observed round-trip latencies for this peer.
+    pub latencies: VecDeque<time::Duration>,
 }
 
 impl Peer {
@@ -251,11 +257,33 @@ impl Peer {
             last_active: None,
             state,
             link,
+            last_ping: None,
+            latencies: VecDeque::new(),
         }
     }
 
     fn is_ready(&self) -> bool {
         matches!(self.state, PeerState::Ready | PeerState::Syncing(_))
+    }
+
+    fn ping(&mut self) -> NetworkMessage {
+        let nonce = fastrand::u64(..);
+        self.last_ping = Some((nonce, time::Instant::now()));
+
+        NetworkMessage::Ping(nonce)
+    }
+
+    /// Calculate the average latency of this peer.
+    #[allow(dead_code)]
+    fn latency(&self) -> time::Duration {
+        let sum: time::Duration = self.latencies.iter().sum();
+
+        sum / self.latencies.len() as u32
+    }
+
+    fn record_latency(&mut self, sample: time::Duration) {
+        self.latencies.push_front(sample);
+        self.latencies.truncate(MAX_RECORDED_LATENCIES);
     }
 
     fn receive_version(
@@ -421,6 +449,14 @@ impl<T: BlockTree> Bitcoin<T> {
             if peer.is_ready() {
                 return vec![(addr, NetworkMessage::Pong(nonce))];
             }
+        } else if let NetworkMessage::Pong(nonce) = msg.payload {
+            match peer.last_ping {
+                Some((last_nonce, last_time)) if nonce == last_nonce => {
+                    peer.record_latency(time::Instant::now() - last_time);
+                }
+                // Unsolicited or redundant `pong`. Ignore.
+                _ => return vec![],
+            }
         }
 
         // TODO: Make sure we handle all messages at all times in some way.
@@ -447,12 +483,15 @@ impl<T: BlockTree> Bitcoin<T> {
                     self.ready.insert(addr);
                     self.clock.add_sample(addr, peer.time_offset);
 
+                    let ping = peer.ping();
+
                     return match peer.link {
                         Link::Outbound => vec![
                             (addr, NetworkMessage::Verack),
                             (addr, NetworkMessage::SendHeaders),
+                            (addr, ping),
                         ],
-                        Link::Inbound => vec![(addr, NetworkMessage::SendHeaders)],
+                        Link::Inbound => vec![(addr, NetworkMessage::SendHeaders), (addr, ping)],
                     };
                 }
             }
