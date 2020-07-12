@@ -15,6 +15,7 @@ use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_network::VersionMessage;
+use bitcoin::util::hash::BitcoinHash;
 
 use nakamoto_chain::block::time::AdjustedTime;
 use nakamoto_chain::block::tree::BlockTree;
@@ -221,6 +222,8 @@ pub struct Peer {
     pub local_address: net::SocketAddr,
     /// The peer's best height.
     pub height: Height,
+    /// The peer's best block.
+    pub tip: BlockHash,
     /// An offset in seconds, between this peer's clock and ours.
     /// A positive offset means the peer's clock is ahead of ours.
     pub time_offset: TimeOffset,
@@ -243,6 +246,7 @@ impl Peer {
             address,
             local_address,
             height: 0,
+            tip: BlockHash::default(),
             time_offset: 0,
             last_active: None,
             state,
@@ -568,10 +572,14 @@ impl<T: BlockTree> Bitcoin<T> {
         }
         debug!("{}: Received {} header(s)", addr, length);
 
+        // TODO: Before importing, we could check the headers against known checkpoints.
         match self.tree.import_blocks(headers.into_iter(), &self.clock) {
             Ok((tip, height)) => {
                 info!("Imported {} header(s) from {}", length, addr);
                 info!("Chain height = {}, tip = {}", height, tip);
+
+                peer.tip = tip;
+                peer.height = height;
 
                 // If we received less than the maximum number of headers, we must be in sync.
                 // Otherwise, ask for the next batch of headers.
@@ -601,6 +609,22 @@ impl<T: BlockTree> Bitcoin<T> {
                 error!("Error importing headers: {}", err);
 
                 vec![]
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn sample_headers(&self, outbound: &mut Vec<(PeerId, NetworkMessage)>) {
+        let height = self.tree.height();
+        let (tip, _) = self.tree.tip();
+
+        if let Some(parent) = self.tree.get_block_by_height(height - 1) {
+            let locators = vec![parent.bitcoin_hash()];
+
+            for (addr, peer) in self.peers.iter() {
+                if peer.is_ready() && peer.link == Link::Outbound {
+                    outbound.push((*addr, self.get_headers(locators.clone(), tip)));
+                }
             }
         }
     }
