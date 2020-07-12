@@ -78,7 +78,6 @@ pub struct Config {
     pub services: ServiceFlags,
     pub protocol_version: u32,
     pub relay: bool,
-    pub sync: bool,
 }
 
 impl Default for Config {
@@ -88,7 +87,6 @@ impl Default for Config {
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
             relay: false,
-            sync: true,
         }
     }
 }
@@ -355,7 +353,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // peer to sync from. For now, we choose a random peer.
                 // TODO: Threshold should be a parameter.
                 // TODO: Peer should be picked amongst lowest latency ones.
-                if self.config.sync && self.ready.len() >= PEER_CONNECTION_THRESHOLD {
+                if self.ready.len() >= PEER_CONNECTION_THRESHOLD {
                     if self.is_synced() {
                         self.transition(State::Synced);
                     } else {
@@ -688,10 +686,7 @@ mod tests {
             bits: 0,
         };
         let tree = model::Cache::new(genesis);
-        let config = Config {
-            sync: false,
-            ..Config::default()
-        };
+        let config = Config::default();
         let clock = AdjustedTime::new();
 
         let alice_addr = ([127, 0, 0, 1], 8333).into();
