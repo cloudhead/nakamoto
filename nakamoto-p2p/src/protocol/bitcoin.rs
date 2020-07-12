@@ -146,8 +146,6 @@ impl<T: BlockTree> Bitcoin<T> {
     /// Check whether or not we are in sync with the network.
     /// TODO: Should return the minimum peer height, so that we can
     /// keep track of it in our state, while syncing to it.
-    // FIXME: Currently if you connect and realize you're < 144 blocks behind, you do
-    // nothing. This should change.
     pub fn is_synced(&self) -> bool {
         let height = self.tree.height();
 
@@ -345,7 +343,7 @@ impl Peer {
             if syncing == &state {
                 return;
             }
-            debug!("{}: {:?} -> {:?}", self.address, state, syncing);
+            debug!("{}: Syncing: {:?} -> {:?}", self.address, state, syncing);
 
             *syncing = state;
         }
@@ -358,6 +356,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
     fn step(&mut self, event: Event<RawNetworkMessage>) -> Vec<(PeerId, RawNetworkMessage)> {
         let mut outbound = match event {
+            // TODO: Do we need a `Disconnected` event?
             Event::Connected {
                 addr,
                 local_addr,
@@ -399,13 +398,25 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             Event::Idle => {
                 let now = time::Instant::now();
                 let mut msgs = Vec::new();
+                let mut disconnect = Vec::new();
 
-                for (addr, peer) in self.peers.iter_mut() {
+                for (_, peer) in self.peers.iter_mut() {
                     if let PeerState::Ready { last_active, .. } = peer.state {
-                        if now - last_active >= Self::PING_INTERVAL {
-                            msgs.push((*addr, peer.ping()));
+                        if let Some((_, last_ping)) = peer.last_ping {
+                            // A ping was sent and we're waiting for a `pong`. If too much
+                            // time has passed, we consider this peer dead, and disconnect
+                            // from them.
+                            if now - last_ping >= Self::IDLE_TIMEOUT {
+                                disconnect.push(peer.address);
+                            }
+                        } else if now - last_active >= Self::PING_INTERVAL {
+                            msgs.push((peer.address, peer.ping()));
                         }
                     }
+                }
+
+                for addr in &disconnect {
+                    self.disconnect(&addr, &mut msgs);
                 }
                 msgs
             }
@@ -495,6 +506,7 @@ impl<T: BlockTree> Bitcoin<T> {
             match peer.last_ping {
                 Some((last_nonce, last_time)) if nonce == last_nonce => {
                     peer.record_latency(now - last_time);
+                    peer.last_ping = None;
                 }
                 // Unsolicited or redundant `pong`. Ignore.
                 _ => return vec![],
@@ -712,6 +724,10 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
             }
         }
+    }
+
+    fn disconnect(&mut self, _addr: &PeerId, _outbound: &mut Vec<(PeerId, NetworkMessage)>) {
+        todo!()
     }
 
     fn locator_hashes(&self) -> Vec<BlockHash> {
