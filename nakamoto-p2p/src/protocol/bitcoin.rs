@@ -759,6 +759,7 @@ mod tests {
 
     use nakamoto_chain::block::cache::model;
     use nakamoto_chain::block::BlockHeader;
+    use nakamoto_test::logger;
     use nakamoto_test::TREE;
 
     /// A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
@@ -769,6 +770,8 @@ mod tests {
             let mut sim: HashMap<PeerId, (&mut P, VecDeque<Event<M>>)> = HashMap::new();
             let mut events = Vec::new();
             let local_time = LocalTime::from(SystemTime::now());
+
+            logger::init(log::Level::Debug);
 
             // Add peers to simulator.
             for (addr, proto, evs) in peers.into_iter() {
@@ -803,21 +806,6 @@ mod tests {
                 }
             }
         }
-    }
-
-    #[allow(dead_code)]
-    fn logging() -> fern::Dispatch {
-        fern::Dispatch::new()
-            .format(move |out, message, record| {
-                out.finish(format_args!(
-                    "{:5} [{}] {}",
-                    record.level(),
-                    record.target(),
-                    message
-                ))
-            })
-            .level(log::LevelFilter::Trace)
-            .chain(std::io::stderr())
     }
 
     #[test]

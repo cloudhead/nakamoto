@@ -140,15 +140,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a64b0126b293b050395b37b10489951590ed024c03d7df4f249d219c8ded7cbf"
 
 [[package]]
-name = "fern"
-version = "0.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c9a4820f0ccc8a7afd67c39a0f1a0f4b07ca1725164271a64939d7aeb9af065"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "getrandom"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -251,7 +242,6 @@ dependencies = [
  "bitcoin_hashes",
  "crossbeam-channel",
  "fastrand",
- "fern",
  "lazy_static",
  "log",
  "nakamoto-chain",
@@ -266,7 +256,9 @@ name = "nakamoto-test"
 version = "0.0.0"
 dependencies = [
  "bitcoin",
+ "chrono",
  "lazy_static",
+ "log",
  "nakamoto-chain",
 ]
 
