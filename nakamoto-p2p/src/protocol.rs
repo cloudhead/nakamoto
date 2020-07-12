@@ -41,6 +41,26 @@ pub enum Event<M> {
     Idle,
 }
 
+/// Output of a state transition (step) of the `Protocol` state machine.
+pub enum Output<M> {
+    /// Send a message to a peer.
+    Message(PeerId, M),
+    /// Connect to a peer.
+    Connect(PeerId),
+    /// Disconnect from a peer.
+    Disconnect(PeerId),
+}
+
+impl<M> Output<M> {
+    pub fn address(&self) -> PeerId {
+        match self {
+            Self::Message(addr, _) => *addr,
+            Self::Connect(addr) => *addr,
+            Self::Disconnect(addr) => *addr,
+        }
+    }
+}
+
 /// A finite-state machine that can advance one step at a time, given an input event.
 /// Parametrized over the message type.
 pub trait Protocol<M> {
@@ -51,5 +71,5 @@ pub trait Protocol<M> {
 
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
-    fn step(&mut self, event: Event<M>) -> Vec<(PeerId, M)>;
+    fn step(&mut self, event: Event<M>) -> Vec<Output<M>>;
 }

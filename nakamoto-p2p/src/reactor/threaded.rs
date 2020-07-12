@@ -4,7 +4,7 @@ use bitcoin::network::stream_reader::StreamReader;
 
 use crate::address_book::AddressBook;
 use crate::error::Error;
-use crate::protocol::{Event, Link, Protocol};
+use crate::protocol::{Event, Link, Output, Protocol};
 
 use log::*;
 use std::collections::HashMap;
@@ -197,10 +197,15 @@ pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'sta
 
         match result {
             Ok(event) => {
-                let msgs = protocol.step(event);
+                let outs = protocol.step(event);
 
-                for (addr, msg) in msgs.into_iter() {
-                    cmds_tx.send(Command::Write(addr, msg)).unwrap();
+                for out in outs.into_iter() {
+                    match out {
+                        Output::Message(addr, msg) => {
+                            cmds_tx.send(Command::Write(addr, msg)).unwrap();
+                        }
+                        _ => todo!(),
+                    }
                 }
             }
             Err(crossbeam::RecvTimeoutError::Disconnected) => {

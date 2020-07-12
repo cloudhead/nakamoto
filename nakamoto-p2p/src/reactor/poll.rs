@@ -4,7 +4,7 @@ use bitcoin::network::stream_reader::StreamReader;
 
 use crate::address_book::AddressBook;
 use crate::error::Error;
-use crate::protocol::{Event, Link, Protocol};
+use crate::protocol::{Event, Link, Output, Protocol};
 
 use log::*;
 
@@ -226,14 +226,19 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
             }
 
             while let Some(event) = self.events.pop_front() {
-                let msgs = protocol.step(event);
+                let outs = protocol.step(event);
 
-                for (addr, msg) in msgs.into_iter() {
-                    let peer = self.peers.get_mut(&addr).unwrap();
-                    let descriptor = self.descriptors.get_mut(Source::Peer(addr)).unwrap();
+                for out in outs.into_iter() {
+                    match out {
+                        Output::Message(addr, msg) => {
+                            let peer = self.peers.get_mut(&addr).unwrap();
+                            let descriptor = self.descriptors.get_mut(Source::Peer(addr)).unwrap();
 
-                    peer.queue.push_back(msg);
-                    peer.drain(&mut self.events, descriptor);
+                            peer.queue.push_back(msg);
+                            peer.drain(&mut self.events, descriptor);
+                        }
+                        _ => todo!(),
+                    }
                 }
             }
         }

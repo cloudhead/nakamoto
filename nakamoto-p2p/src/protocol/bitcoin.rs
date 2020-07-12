@@ -3,7 +3,7 @@ use log::*;
 pub mod network;
 pub use network::Network;
 
-use crate::protocol::{Event, Link, PeerId, Protocol};
+use crate::protocol::{Event, Link, Output, PeerId, Protocol};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -354,8 +354,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     const IDLE_TIMEOUT: time::Duration = time::Duration::from_secs(60 * 5);
     const PING_INTERVAL: time::Duration = time::Duration::from_secs(60);
 
-    fn step(&mut self, event: Event<RawNetworkMessage>) -> Vec<(PeerId, RawNetworkMessage)> {
-        let mut outbound = match event {
+    fn step(&mut self, event: Event<RawNetworkMessage>) -> Vec<Output<RawNetworkMessage>> {
+        let mut outbound = Vec::new();
+
+        match event {
             // TODO: Do we need a `Disconnected` event?
             Event::Connected {
                 addr,
@@ -366,13 +368,20 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                 match link {
                     Link::Outbound => {
-                        vec![(addr, self.version(addr, local_addr, self.tree.height()))]
+                        outbound.push(Output::Message(
+                            addr,
+                            self.version(addr, local_addr, self.tree.height()),
+                        ));
                     }
-                    Link::Inbound => vec![], // Wait to receive remote version.
+                    Link::Inbound => {} // Wait to receive remote version.
                 }
             }
-            Event::Received(addr, msg) => self.receive(addr, msg),
-            Event::Sent(_addr, _msg) => vec![],
+            Event::Received(addr, msg) => {
+                for (addr, out) in self.receive(addr, msg) {
+                    outbound.push(Output::Message(addr, out));
+                }
+            }
+            Event::Sent(_addr, _msg) => {}
             Event::Error(addr, err) => {
                 debug!("Disconnected from {}", &addr);
                 debug!("error: {}: {}", addr, err);
@@ -393,11 +402,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // TODO: The other option is that error events (Event::Error) and disconnects
                 // are handled one layer above. But this means the protocol can't decide on
                 // these things, but instead it is the reactor that does.
-                vec![]
             }
             Event::Idle => {
                 let now = time::Instant::now();
-                let mut msgs = Vec::new();
                 let mut disconnect = Vec::new();
 
                 for (_, peer) in self.peers.iter_mut() {
@@ -410,15 +417,14 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 disconnect.push(peer.address);
                             }
                         } else if now - last_active >= Self::PING_INTERVAL {
-                            msgs.push((peer.address, peer.ping()));
+                            outbound.push(Output::Message(peer.address, peer.ping()));
                         }
                     }
                 }
 
                 for addr in &disconnect {
-                    self.disconnect(&addr, &mut msgs);
+                    self.disconnect(&addr, &mut outbound);
                 }
-                msgs
             }
         };
 
@@ -438,8 +444,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let ix = fastrand::usize(..self.ready.len());
                         let p = *self.ready.iter().nth(ix).unwrap();
 
-                        let sync_msgs = self.sync(p);
-                        outbound.extend_from_slice(&sync_msgs);
+                        for (addr, msg) in self.sync(p) {
+                            outbound.push(Output::Message(addr, msg));
+                        }
                     }
                 }
             }
@@ -447,15 +454,28 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         outbound
             .into_iter()
-            .map(|(addr, msg)| {
-                debug!("{}: Sending {:?}", addr, msg.cmd());
-                (
-                    addr,
-                    RawNetworkMessage {
-                        magic: self.config.network.magic(),
-                        payload: msg,
-                    },
-                )
+            .map(|out| match out {
+                Output::Message(addr, msg) => {
+                    debug!("{}: Sending {:?}", addr, msg.cmd());
+
+                    Output::Message(
+                        addr,
+                        RawNetworkMessage {
+                            magic: self.config.network.magic(),
+                            payload: msg,
+                        },
+                    )
+                }
+                Output::Connect(addr) => {
+                    debug!("{}: Connecting..", addr);
+
+                    Output::Connect(addr)
+                }
+                Output::Disconnect(addr) => {
+                    debug!("{}: Disconnecting..", addr);
+
+                    Output::Disconnect(addr)
+                }
             })
             .collect()
     }
@@ -726,7 +746,7 @@ impl<T: BlockTree> Bitcoin<T> {
         }
     }
 
-    fn disconnect(&mut self, _addr: &PeerId, _outbound: &mut Vec<(PeerId, NetworkMessage)>) {
+    fn disconnect(&mut self, _addr: &PeerId, _outbound: &mut Vec<Output<NetworkMessage>>) {
         todo!()
     }
 
@@ -754,8 +774,6 @@ mod tests {
             let mut sim: HashMap<PeerId, (&mut P, VecDeque<Event<M>>)> = HashMap::new();
             let mut events = Vec::new();
 
-            // logging().apply().unwrap();
-
             // Add peers to simulator.
             for (addr, proto, evs) in peers.into_iter() {
                 sim.insert(addr, (proto, VecDeque::new()));
@@ -774,10 +792,15 @@ mod tests {
 
                 for (peer, (proto, queue)) in sim.iter_mut() {
                     if let Some(event) = queue.pop_front() {
-                        let out = proto.step(event);
+                        let outs = proto.step(event);
 
-                        for (receiver, msg) in out.into_iter() {
-                            events.push((receiver, Event::Received(*peer, msg)));
+                        for out in outs.into_iter() {
+                            match out {
+                                Output::Message(receiver, msg) => {
+                                    events.push((receiver, Event::Received(*peer, msg)))
+                                }
+                                _ => todo!(),
+                            }
                         }
                     }
                 }
