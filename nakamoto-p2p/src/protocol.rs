@@ -2,9 +2,10 @@ pub mod bitcoin;
 pub use self::bitcoin::Bitcoin;
 
 use std::net;
-use std::time;
 
 use crate::error::Error;
+
+use nakamoto_chain::block::time::{LocalDuration, LocalTime};
 
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
@@ -67,11 +68,11 @@ impl<M> Output<M> {
 /// Parametrized over the message type.
 pub trait Protocol<M> {
     /// Duration of inactivity before timing out a peer.
-    const IDLE_TIMEOUT: time::Duration;
+    const IDLE_TIMEOUT: LocalDuration;
     /// How long to wait between sending pings.
-    const PING_INTERVAL: time::Duration;
+    const PING_INTERVAL: LocalDuration;
 
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
-    fn step(&mut self, event: Event<M>) -> Vec<Output<M>>;
+    fn step(&mut self, event: Event<M>, time: LocalTime) -> Vec<Output<M>>;
 }

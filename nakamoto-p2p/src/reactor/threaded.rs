@@ -11,6 +11,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::io::prelude::*;
 use std::net;
+use std::time::SystemTime;
 
 use crossbeam_channel as crossbeam;
 
@@ -192,12 +193,14 @@ pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'sta
     let writer_events_tx = events_tx.clone();
     thread::Builder::new().spawn(move || Writer::thread(peers, cmds_rx, writer_events_tx))?;
 
+    let local_time = SystemTime::now().into();
+
     loop {
-        let result = events_rx.recv_timeout(P::PING_INTERVAL);
+        let result = events_rx.recv_timeout(P::PING_INTERVAL.into());
 
         match result {
             Ok(event) => {
-                let outs = protocol.step(event);
+                let outs = protocol.step(event, local_time);
 
                 for out in outs.into_iter() {
                     match out {
@@ -236,8 +239,8 @@ pub fn dial<M: Encodable + Decodable + Send + Sync + Debug + 'static, P: Protoco
 
     // TODO: We probably don't want the same timeouts for read and write.
     // For _write_, we want something much shorter.
-    sock.set_read_timeout(Some(P::IDLE_TIMEOUT))?;
-    sock.set_write_timeout(Some(P::IDLE_TIMEOUT))?;
+    sock.set_read_timeout(Some(P::IDLE_TIMEOUT.into()))?;
+    sock.set_write_timeout(Some(P::IDLE_TIMEOUT.into()))?;
 
     let w = sock.try_clone()?;
     let address = sock.peer_addr()?;

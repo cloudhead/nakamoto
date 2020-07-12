@@ -14,6 +14,7 @@ use std::io;
 use std::io::prelude::*;
 use std::net;
 use std::os::unix::io::AsRawFd;
+use std::time::SystemTime;
 
 /// Maximum peer-to-peer message size.
 pub const MAX_MESSAGE_SIZE: usize = 6 * 1024;
@@ -172,7 +173,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
         let mut inbound = Vec::new();
 
         loop {
-            match popol::wait(&mut self.descriptors, P::PING_INTERVAL)? {
+            match popol::wait(&mut self.descriptors, P::PING_INTERVAL.into())? {
                 popol::Wait::Timeout => {
                     self.events.push_back(Event::Idle);
                 }
@@ -231,8 +232,10 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                 self.register_peer(addr, local_addr, stream, Link::Inbound);
             }
 
+            let local_time = SystemTime::now().into();
+
             while let Some(event) = self.events.pop_front() {
-                let outs = protocol.step(event);
+                let outs = protocol.step(event, local_time);
 
                 for out in outs.into_iter() {
                     match out {
@@ -273,8 +276,8 @@ pub fn dial<M: Encodable + Decodable + Send + Sync + Debug + 'static, P: Protoco
 
     // TODO: We probably don't want the same timeouts for read and write.
     // For _write_, we want something much shorter.
-    sock.set_read_timeout(Some(P::IDLE_TIMEOUT))?;
-    sock.set_write_timeout(Some(P::IDLE_TIMEOUT))?;
+    sock.set_read_timeout(Some(P::IDLE_TIMEOUT.into()))?;
+    sock.set_write_timeout(Some(P::IDLE_TIMEOUT.into()))?;
     sock.set_nonblocking(true)?;
 
     Ok(sock)

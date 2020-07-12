@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{Height, Time};
 
@@ -29,6 +30,122 @@ pub trait Clock {
     fn time(&self) -> Time;
 }
 
+/// Local time.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct LocalTime {
+    /// Milliseconds since Epoch.
+    millis: u128,
+}
+
+impl Default for LocalTime {
+    fn default() -> Self {
+        Self { millis: 0 }
+    }
+}
+
+impl LocalTime {
+    /// Construct a local time from whole seconds.
+    pub const fn from_secs(secs: u64) -> Self {
+        Self {
+            millis: secs as u128 * 1000,
+        }
+    }
+
+    /// Return the local time as seconds since Epoch.
+    /// This is the same representation as used in block header timestamps.
+    pub fn as_secs(&self) -> Time {
+        use std::convert::TryInto;
+
+        (self.millis / 1000).try_into().unwrap()
+    }
+}
+
+/// Convert a `SystemTime` into a local time.
+impl From<SystemTime> for LocalTime {
+    fn from(system: SystemTime) -> Self {
+        let millis = system.duration_since(UNIX_EPOCH).unwrap().as_millis();
+
+        Self { millis }
+    }
+}
+
+/// Substract two local times. Yields a duration.
+impl std::ops::Sub<LocalTime> for LocalTime {
+    type Output = LocalDuration;
+
+    fn sub(self, other: LocalTime) -> LocalDuration {
+        LocalDuration(self.millis - other.millis)
+    }
+}
+
+/// Substract a duration from a local time. Yields a local time.
+impl std::ops::Sub<LocalDuration> for LocalTime {
+    type Output = LocalTime;
+
+    fn sub(self, other: LocalDuration) -> LocalTime {
+        LocalTime {
+            millis: self.millis - other.0,
+        }
+    }
+}
+
+/// Add a duration to a local time. Yields a local time.
+impl std::ops::Add<LocalDuration> for LocalTime {
+    type Output = LocalTime;
+
+    fn add(self, other: LocalDuration) -> LocalTime {
+        LocalTime {
+            millis: self.millis + other.0,
+        }
+    }
+}
+
+/// Time duration as measured locally.
+#[derive(Debug, Copy, Clone, PartialOrd, Ord, PartialEq, Eq)]
+pub struct LocalDuration(u128);
+
+impl LocalDuration {
+    /// Create a new duration from whole seconds.
+    pub const fn from_secs(secs: u64) -> Self {
+        Self(secs as u128 * 1000)
+    }
+}
+
+impl<'a> std::iter::Sum<&'a LocalDuration> for LocalDuration {
+    fn sum<I: Iterator<Item = &'a LocalDuration>>(iter: I) -> LocalDuration {
+        let mut total: u128 = 0;
+
+        for entry in iter {
+            total = total
+                .checked_add(entry.0)
+                .expect("iter::sum should not overflow");
+        }
+        Self(total)
+    }
+}
+
+impl std::ops::Add<LocalDuration> for LocalDuration {
+    type Output = LocalDuration;
+
+    fn add(self, other: LocalDuration) -> LocalDuration {
+        LocalDuration(self.0 + other.0)
+    }
+}
+
+impl std::ops::Div<u32> for LocalDuration {
+    type Output = LocalDuration;
+
+    fn div(self, other: u32) -> LocalDuration {
+        LocalDuration(self.0 / other as u128)
+    }
+}
+
+impl From<LocalDuration> for std::time::Duration {
+    fn from(other: LocalDuration) -> Self {
+        std::time::Duration::from_millis(other.0 as u64)
+    }
+}
+
 /// Network-adjusted time tracker.
 ///
 /// *Network-adjusted time* is the median timestamp of all connected peers.
@@ -45,7 +162,7 @@ pub struct AdjustedTime<K> {
     /// Current time offset, based on our samples.
     offset: TimeOffset,
     /// Last known local time.
-    local_time: Time,
+    local_time: LocalTime,
 }
 
 impl<K: Eq + Hash> Clock for AdjustedTime<K> {
@@ -56,14 +173,14 @@ impl<K: Eq + Hash> Clock for AdjustedTime<K> {
 
 impl<K: Hash + Eq> Default for AdjustedTime<K> {
     fn default() -> Self {
-        Self::new(0)
+        Self::new(LocalTime::default())
     }
 }
 
 impl<K: Hash + Eq> AdjustedTime<K> {
     /// Create a new network-adjusted time tracker.
     /// Starts with a single sample of zero.
-    pub fn new(local_time: Time) -> Self {
+    pub fn new(local_time: LocalTime) -> Self {
         let offset = 0;
 
         let mut samples = Vec::with_capacity(MAX_TIME_SAMPLES);
@@ -149,16 +266,16 @@ impl<K: Hash + Eq> AdjustedTime<K> {
 
     /// Get the current network-adjusted time.
     pub fn get(&self) -> Time {
-        self.from(self.local_time)
+        self.from(self.local_time.as_secs())
     }
 
     /// Set the local time to the given value.
-    pub fn set_local_time(&mut self, time: Time) {
+    pub fn set_local_time(&mut self, time: LocalTime) {
         self.local_time = time;
     }
 
     /// Get the last known local time.
-    pub fn local_time(&self) -> Time {
+    pub fn local_time(&self) -> LocalTime {
         self.local_time
     }
 }
@@ -206,13 +323,9 @@ mod tests {
 
     #[test]
     fn test_adjusted_time_negative() {
-        use std::time::{SystemTime, UNIX_EPOCH};
+        use std::time::SystemTime;
 
-        let local_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as Time;
-
+        let local_time = SystemTime::now().into();
         let mut adjusted_time: AdjustedTime<SocketAddr> = AdjustedTime::new(local_time);
         assert_eq!(adjusted_time.offset(), 0); // samples = [0]
 
@@ -220,13 +333,19 @@ mod tests {
             adjusted_time.record_offset(([127, 0, 0, i], 8333).into(), 96);
         } // samples = [0, 96, 96, 96, 96]
         assert_eq!(adjusted_time.offset(), 96);
-        assert_eq!(adjusted_time.from(local_time), local_time + 96);
+        assert_eq!(
+            adjusted_time.from(local_time.as_secs()),
+            local_time.as_secs() + 96
+        );
 
         for i in 5..11 {
             adjusted_time.record_offset(([127, 0, 0, i], 8333).into(), -96);
         } // samples = [-96, -96, -96, -96, -96, -96, 0, 96, 96, 96, 96]
         assert_eq!(adjusted_time.offset(), -96);
-        assert_eq!(adjusted_time.from(local_time), local_time - 96);
+        assert_eq!(
+            adjusted_time.from(local_time.as_secs()),
+            local_time.as_secs() - 96
+        );
     }
 
     #[test]

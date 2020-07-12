@@ -8,7 +8,6 @@ use crate::protocol::{Event, Link, Output, PeerId, Protocol};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::net;
-use std::time::{self, SystemTime, UNIX_EPOCH};
 
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
@@ -17,7 +16,7 @@ use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::util::hash::BitcoinHash;
 
-use nakamoto_chain::block::time::AdjustedTime;
+use nakamoto_chain::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_chain::block::tree::BlockTree;
 use nakamoto_chain::block::{BlockHash, BlockHeader, Height};
 
@@ -212,7 +211,7 @@ pub enum PeerState {
     Ready {
         /// Last time this peer was active. This is set every time we receive
         /// a message from this peer.
-        last_active: time::Instant,
+        last_active: LocalTime,
         /// Syncing state.
         syncing: Syncing,
     },
@@ -239,9 +238,9 @@ pub struct Peer {
     /// Peer state.
     pub state: PeerState,
     /// Nonce and time the last ping was sent to this peer.
-    pub last_ping: Option<(u64, time::Instant)>,
+    pub last_ping: Option<(u64, LocalTime)>,
     /// Observed round-trip latencies for this peer.
-    pub latencies: VecDeque<time::Duration>,
+    pub latencies: VecDeque<LocalDuration>,
 }
 
 impl Peer {
@@ -268,22 +267,22 @@ impl Peer {
         matches!(self.state, PeerState::Ready { .. })
     }
 
-    fn ping(&mut self) -> NetworkMessage {
+    fn ping(&mut self, local_time: LocalTime) -> NetworkMessage {
         let nonce = fastrand::u64(..);
-        self.last_ping = Some((nonce, time::Instant::now()));
+        self.last_ping = Some((nonce, local_time));
 
         NetworkMessage::Ping(nonce)
     }
 
     /// Calculate the average latency of this peer.
     #[allow(dead_code)]
-    fn latency(&self) -> time::Duration {
-        let sum: time::Duration = self.latencies.iter().sum();
+    fn latency(&self) -> LocalDuration {
+        let sum: LocalDuration = self.latencies.iter().sum();
 
         sum / self.latencies.len() as u32
     }
 
-    fn record_latency(&mut self, sample: time::Duration) {
+    fn record_latency(&mut self, sample: LocalDuration) {
         self.latencies.push_front(sample);
         self.latencies.truncate(MAX_RECORDED_LATENCIES);
     }
@@ -295,16 +294,9 @@ impl Peer {
             timestamp,
             ..
         }: VersionMessage,
+        local_time: LocalTime,
     ) {
         let height = 0;
-        // TODO: I'm not sure we should be getting the system time here.
-        // It may be a better idea _not_ to store the time offset locally,
-        // and instead send the remote time back to the network controller.
-        let local_time = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
         if height > start_height as Height + 1 {
             // We're ahead of this peer by more than one block. Don't use it
             // for IBD.
@@ -314,12 +306,12 @@ impl Peer {
         // TODO: Check services
         // TODO: Check start_height
         self.height = start_height as Height;
-        self.time_offset = timestamp - local_time;
+        self.time_offset = timestamp - local_time.as_secs() as i64;
 
         self.transition(PeerState::Handshake(Handshake::AwaitingVerack));
     }
 
-    fn receive_verack(&mut self, time: time::Instant) {
+    fn receive_verack(&mut self, time: LocalTime) {
         self.transition(PeerState::Ready {
             last_active: time,
             syncing: Syncing::Idle,
@@ -351,11 +343,17 @@ impl Peer {
 }
 
 impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
-    const IDLE_TIMEOUT: time::Duration = time::Duration::from_secs(60 * 5);
-    const PING_INTERVAL: time::Duration = time::Duration::from_secs(60);
+    const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(60 * 5);
+    const PING_INTERVAL: LocalDuration = LocalDuration::from_secs(60);
 
-    fn step(&mut self, event: Event<RawNetworkMessage>) -> Vec<Output<RawNetworkMessage>> {
+    fn step(
+        &mut self,
+        event: Event<RawNetworkMessage>,
+        time: LocalTime,
+    ) -> Vec<Output<RawNetworkMessage>> {
         let mut outbound = Vec::new();
+
+        self.clock.set_local_time(time);
 
         match event {
             Event::Connected {
@@ -403,7 +401,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // peer errors, scores etc.
             }
             Event::Idle => {
-                let now = time::Instant::now();
+                let now = self.clock.local_time();
                 let mut disconnect = Vec::new();
 
                 for (_, peer) in self.peers.iter_mut() {
@@ -416,7 +414,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 disconnect.push(peer.address);
                             }
                         } else if now - last_active >= Self::PING_INTERVAL {
-                            outbound.push(Output::Message(peer.address, peer.ping()));
+                            outbound.push(Output::Message(peer.address, peer.ping(now)));
                         }
                     }
                 }
@@ -495,7 +493,7 @@ impl<T: BlockTree> Bitcoin<T> {
         addr: PeerId,
         msg: RawNetworkMessage,
     ) -> Vec<(PeerId, NetworkMessage)> {
-        let now = time::Instant::now();
+        let now = self.clock.local_time();
 
         debug!("{}: Received {:?}", addr, msg.cmd());
 
@@ -536,7 +534,7 @@ impl<T: BlockTree> Bitcoin<T> {
         match &peer.state {
             PeerState::Handshake(Handshake::AwaitingVersion) => {
                 if let NetworkMessage::Version(version) = msg.payload {
-                    peer.receive_version(version);
+                    peer.receive_version(version, now);
 
                     match peer.link {
                         Link::Outbound => {}
@@ -556,7 +554,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     self.ready.insert(addr);
                     self.clock.record_offset(addr, peer.time_offset);
 
-                    let ping = peer.ping();
+                    let ping = peer.ping(now);
 
                     return match peer.link {
                         Link::Outbound => vec![
@@ -620,10 +618,7 @@ impl<T: BlockTree> Bitcoin<T> {
         start_height: Height,
     ) -> NetworkMessage {
         let start_height = start_height as i32;
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
+        let timestamp = self.clock.local_time().as_secs() as i64;
 
         NetworkMessage::Version(VersionMessage {
             version: self.config.protocol_version,
@@ -760,6 +755,7 @@ impl<T: BlockTree> Bitcoin<T> {
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+    use std::time::SystemTime;
 
     use nakamoto_chain::block::cache::model;
     use nakamoto_chain::block::BlockHeader;
@@ -772,6 +768,7 @@ mod tests {
         pub fn run<P: Protocol<M>, M: Debug>(peers: Vec<(PeerId, &mut P, Vec<Event<M>>)>) {
             let mut sim: HashMap<PeerId, (&mut P, VecDeque<Event<M>>)> = HashMap::new();
             let mut events = Vec::new();
+            let local_time = LocalTime::from(SystemTime::now());
 
             // Add peers to simulator.
             for (addr, proto, evs) in peers.into_iter() {
@@ -791,7 +788,7 @@ mod tests {
 
                 for (peer, (proto, queue)) in sim.iter_mut() {
                     if let Some(event) = queue.pop_front() {
-                        let outs = proto.step(event);
+                        let outs = proto.step(event, local_time);
 
                         for out in outs.into_iter() {
                             match out {

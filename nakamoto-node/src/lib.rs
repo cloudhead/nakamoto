@@ -1,13 +1,12 @@
 use std::io;
 use std::net;
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use nakamoto_chain as chain;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store::{self, Store};
 use nakamoto_chain::block::time::AdjustedTime;
-use nakamoto_chain::block::Time;
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::protocol::bitcoin::Config;
@@ -56,11 +55,7 @@ pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<()
     log::info!("Store height = {}", store.height()?);
     log::info!("Loading blocks from store..");
 
-    let local_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as Time;
-
+    let local_time = SystemTime::now().into();
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
     let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
     let cache = BlockCache::from(store, params, &checkpoints)?;

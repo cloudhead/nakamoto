@@ -1,7 +1,7 @@
 use super::{model, BlockCache, BlockTree, Error};
 
 use crate::block::store::{self, Store};
-use crate::block::time::{AdjustedTime, Clock};
+use crate::block::time::{AdjustedTime, Clock, LocalTime};
 use crate::block::{self, Height, Target, Time};
 
 use std::collections::{BTreeMap, VecDeque};
@@ -24,7 +24,7 @@ use bitcoin::util::hash::BitcoinHash;
 use bitcoin::util::uint::Uint256;
 
 /// Sun, 12 Jul 2020 15:03:05 +0000.
-const LOCAL_TIME: Time = 1594566185;
+const LOCAL_TIME: LocalTime = LocalTime::from_secs(1594566185);
 
 // Lowest possible difficulty.
 const TARGET: Uint256 = Uint256([
