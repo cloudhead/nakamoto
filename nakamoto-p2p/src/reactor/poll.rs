@@ -168,8 +168,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
         loop {
             match popol::wait(&mut self.descriptors, P::PING_INTERVAL)? {
                 popol::Wait::Timeout => {
-                    // TODO: Ping peers, nothing was received in a while. Find out
-                    // who to ping.
+                    self.events.push_back(Event::Idle);
                 }
                 popol::Wait::Ready(evs) => {
                     for (source, ev) in evs {

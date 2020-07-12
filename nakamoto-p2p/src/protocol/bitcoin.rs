@@ -375,6 +375,24 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // these things, but instead it is the reactor that does.
                 vec![]
             }
+            Event::Idle => {
+                let now = time::Instant::now();
+                let mut msgs = Vec::new();
+
+                for (addr, peer) in self.peers.iter_mut() {
+                    if !peer.is_ready() {
+                        continue;
+                    }
+                    match peer.last_active {
+                        Some(last) if now - last >= Self::PING_INTERVAL => {
+                            msgs.push((*addr, peer.ping()));
+                        }
+                        Some(_) => {}
+                        None => panic!("Peer can't be ready without having been active"),
+                    }
+                }
+                msgs
+            }
         };
 
         // TODO: Should be triggered when idle, potentially by an `Idle` event.
@@ -431,6 +449,8 @@ impl<T: BlockTree> Bitcoin<T> {
         addr: PeerId,
         msg: RawNetworkMessage,
     ) -> Vec<(PeerId, NetworkMessage)> {
+        let now = time::Instant::now();
+
         debug!("{}: Received {:?}", addr, msg.cmd());
 
         if msg.magic != self.config.network.magic() {
@@ -443,7 +463,7 @@ impl<T: BlockTree> Bitcoin<T> {
             .unwrap_or_else(|| panic!("peer {} is not known", addr));
         let local_addr = peer.local_address;
 
-        peer.last_active = Some(time::Instant::now());
+        peer.last_active = Some(now);
 
         if let NetworkMessage::Ping(nonce) = msg.payload {
             if peer.is_ready() {
@@ -452,7 +472,7 @@ impl<T: BlockTree> Bitcoin<T> {
         } else if let NetworkMessage::Pong(nonce) = msg.payload {
             match peer.last_ping {
                 Some((last_nonce, last_time)) if nonce == last_nonce => {
-                    peer.record_latency(time::Instant::now() - last_time);
+                    peer.record_latency(now - last_time);
                 }
                 // Unsolicited or redundant `pong`. Ignore.
                 _ => return vec![],

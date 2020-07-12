@@ -189,7 +189,8 @@ pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'sta
         spawned.push(handle);
     }
 
-    thread::Builder::new().spawn(move || Writer::thread(peers, cmds_rx, events_tx))?;
+    let writer_events_tx = events_tx.clone();
+    thread::Builder::new().spawn(move || Writer::thread(peers, cmds_rx, writer_events_tx))?;
 
     loop {
         let result = events_rx.recv_timeout(P::PING_INTERVAL);
@@ -208,8 +209,7 @@ pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'sta
                 break;
             }
             Err(crossbeam::RecvTimeoutError::Timeout) => {
-                // TODO: Ping peers, nothing was received in a while. Find out
-                // who to ping.
+                events_tx.send(Event::Idle).unwrap();
             }
         }
     }

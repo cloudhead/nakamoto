@@ -36,6 +36,9 @@ pub enum Event<M> {
     Sent(PeerId, usize),
     /// Got an error trying to send or receive from the remote peer.
     Error(PeerId, Error),
+    /// Nothing has happened in some time.. This event is useful for checking
+    /// timeouts or running periodic tasks.
+    Idle,
 }
 
 /// A finite-state machine that can advance one step at a time, given an input event.
