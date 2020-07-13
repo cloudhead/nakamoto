@@ -17,7 +17,7 @@ use std::os::unix::io::AsRawFd;
 use std::time::SystemTime;
 
 /// Maximum peer-to-peer message size.
-pub const MAX_MESSAGE_SIZE: usize = 6 * 1024;
+pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 
 #[derive(Debug)]
 pub struct Socket<R: Read + Write, M> {
@@ -71,10 +71,15 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
             Ok(len) => {
                 trace!("{}: (write) {:#?}", self.address, msg);
 
+                // TODO: Is it possible to get a `WriteZero` here, given
+                // the non-blocking socket?
                 self.raw.stream.write_all(&buf[..len])?;
                 self.raw.stream.flush()?;
 
                 Ok(len)
+            }
+            Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WriteZero => {
+                unreachable!();
             }
             Err(err) => Err(err),
         }
@@ -132,7 +137,6 @@ impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> 
             local_addr,
             link,
         });
-
         self.descriptors.register(
             Source::Peer(addr),
             &stream,
@@ -140,6 +144,12 @@ impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> 
         );
         self.peers
             .insert(addr, Socket::from(stream, local_addr, addr));
+    }
+
+    fn unregister_peer(&mut self, addr: net::SocketAddr) {
+        self.events.push_back(Event::Disconnected(addr));
+        self.descriptors.unregister(Source::Peer(addr));
+        self.peers.remove(&addr);
     }
 }
 
@@ -170,7 +180,9 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
         info!("Listening on {}", listener.local_addr()?);
 
         // Inbound connected peers. Used as a temporary buffer.
-        let mut inbound = Vec::new();
+        let mut connected = Vec::new();
+        // Disconnected peers to unregister.
+        let mut disconnected = Vec::new();
 
         loop {
             match popol::wait(&mut self.descriptors, P::PING_INTERVAL.into())? {
@@ -198,8 +210,12 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                                                 break;
                                             }
                                             Err(err) => {
-                                                // TODO: Disconnect peer.
                                                 error!("{}: Read error: {}", addr, err.to_string());
+
+                                                socket.disconnect().ok();
+                                                disconnected.push(addr);
+
+                                                break;
                                             }
                                         }
                                     }
@@ -219,17 +235,21 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                                         break;
                                     }
                                 };
-                                inbound.push((addr, conn));
+                                connected.push((addr, conn));
                             },
                         }
                     }
                 }
             }
 
-            for (addr, stream) in inbound.drain(..) {
+            for (addr, stream) in connected.drain(..) {
                 let local_addr = stream.local_addr()?;
+                stream.set_nonblocking(true)?;
 
                 self.register_peer(addr, local_addr, stream, Link::Inbound);
+            }
+            for addr in disconnected.drain(..) {
+                self.unregister_peer(addr);
             }
 
             let local_time = SystemTime::now().into();
@@ -237,26 +257,29 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
             while let Some(event) = self.events.pop_front() {
                 let outs = protocol.step(event, local_time);
 
+                // Note that there may be messages destined for a peer that has since been
+                // disconnected.
                 for out in outs.into_iter() {
                     match out {
                         Output::Message(addr, msg) => {
-                            let peer = self.peers.get_mut(&addr).unwrap();
-                            let descriptor = self.descriptors.get_mut(Source::Peer(addr)).unwrap();
+                            if let Some(peer) = self.peers.get_mut(&addr) {
+                                let descriptor =
+                                    self.descriptors.get_mut(Source::Peer(addr)).unwrap();
 
-                            peer.queue.push_back(msg);
-                            peer.drain(&mut self.events, descriptor);
+                                peer.queue.push_back(msg);
+                                peer.drain(&mut self.events, descriptor);
+                            }
                         }
                         Output::Disconnect(addr) => {
-                            let peer = self.peers.get(&addr).unwrap();
+                            if let Some(peer) = self.peers.get(&addr) {
+                                // Shutdown the connection, ignoring any potential errors.
+                                // If the socket was already disconnected, this will yield
+                                // an error that is safe to ignore (`ENOTCONN`). The other
+                                // possible errors relate to an invalid file descriptor.
+                                peer.disconnect().ok();
 
-                            // Shutdown the connection, ignoring any potential errors.
-                            // If the socket was already disconnected, this will yield
-                            // an error that is safe to ignore (`ENOTCONN`). The other
-                            // possible errors relate to an invalid file descriptor.
-                            peer.disconnect().ok();
-                            self.peers.remove(&addr);
-
-                            self.events.push_back(Event::Disconnected(addr));
+                                self.unregister_peer(addr);
+                            }
                         }
                         _ => todo!(),
                     }
