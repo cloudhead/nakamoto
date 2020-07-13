@@ -589,12 +589,16 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     // TODO: Set this to highest locator hash. We can assume that the peer
                     // is at this height if they know this hash.
+                    // TODO: If the height is higher than the previous peer height, also
+                    // set the peer tip.
                     peer.height = start_height;
 
-                    let headers = self
-                        .tree
-                        .range(start_height + 1..self.tree.height() + 1)
-                        .collect();
+                    let start = start_height + 1;
+                    let end = Height::min(
+                        start + MAX_MESSAGE_HEADERS as Height,
+                        self.tree.height() + 1,
+                    );
+                    let headers = self.tree.range(start..end).collect();
 
                     return vec![(addr, NetworkMessage::Headers(headers))];
                 } else if let NetworkMessage::Headers(headers) = msg.payload {
