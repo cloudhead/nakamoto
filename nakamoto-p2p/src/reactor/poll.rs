@@ -85,7 +85,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    pub fn drain(&mut self, events: &mut VecDeque<Event<M>>, descriptor: &mut popol::Descriptor) {
+    pub fn drain(&mut self, events: &mut VecDeque<Event<M>>, descriptor: &mut popol::Source) {
         while let Some(msg) = self.queue.pop_front() {
             match self.write(&msg) {
                 Ok(n) => {
@@ -108,19 +108,19 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
 pub struct Reactor<R: Write + Read, M> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
-    descriptors: popol::Descriptors<Source>,
+    sources: popol::Sources<Source>,
     events: VecDeque<Event<M>>,
 }
 
 impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> {
     pub fn new() -> Self {
         let peers = HashMap::new();
-        let descriptors = popol::Descriptors::new();
+        let sources = popol::Sources::new();
         let events: VecDeque<Event<M>> = VecDeque::new();
 
         Self {
             peers,
-            descriptors,
+            sources,
             events,
         }
     }
@@ -137,7 +137,7 @@ impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> 
             local_addr,
             link,
         });
-        self.descriptors.register(
+        self.sources.register(
             Source::Peer(addr),
             &stream,
             popol::events::READ | popol::events::WRITE,
@@ -148,7 +148,7 @@ impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> 
 
     fn unregister_peer(&mut self, addr: net::SocketAddr) {
         self.events.push_back(Event::Disconnected(addr));
-        self.descriptors.unregister(Source::Peer(addr));
+        self.sources.unregister(&Source::Peer(addr));
         self.peers.remove(&addr);
     }
 }
@@ -174,7 +174,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
         }
 
         let listener = self::listen(listen_addrs)?;
-        self.descriptors
+        self.sources
             .register(Source::Listener, &listener, popol::events::READ);
 
         info!("Listening on {}", listener.local_addr()?);
@@ -185,7 +185,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
         let mut disconnected = Vec::new();
 
         loop {
-            match popol::wait(&mut self.descriptors, P::PING_INTERVAL.into())? {
+            match popol::wait(&mut self.sources, P::PING_INTERVAL.into())? {
                 popol::Wait::Timeout => {
                     self.events.push_back(Event::Idle);
                 }
@@ -221,7 +221,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                                     }
                                 }
                                 if ev.writable {
-                                    socket.drain(&mut self.events, ev.descriptor);
+                                    socket.drain(&mut self.events, ev.source);
                                 }
                             }
                             Source::Listener => loop {
@@ -263,8 +263,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                     match out {
                         Output::Message(addr, msg) => {
                             if let Some(peer) = self.peers.get_mut(&addr) {
-                                let descriptor =
-                                    self.descriptors.get_mut(Source::Peer(addr)).unwrap();
+                                let descriptor = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
                                 peer.queue.push_back(msg);
                                 peer.drain(&mut self.events, descriptor);

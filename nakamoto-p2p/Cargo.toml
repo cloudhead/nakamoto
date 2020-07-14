@@ -12,7 +12,7 @@ bitcoin_hashes = "0.7.6"
 nakamoto-chain = { path = "../nakamoto-chain" }
 crossbeam-channel = { version = "0.4", default-features = false }
 fastrand = "1.1"
-popol = "0.1.0"
+popol = "0.2.0"
 
 [dev-dependencies]
 nakamoto-test = { path = "../nakamoto-test" }
