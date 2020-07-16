@@ -335,7 +335,7 @@ impl Peer {
             if syncing == &state {
                 return;
             }
-            debug!("{}: Syncing: {:?} -> {:?}", self.address, state, syncing);
+            debug!("{}: Syncing: {:?} -> {:?}", self.address, syncing, state);
 
             *syncing = state;
         }
@@ -570,9 +570,12 @@ impl<T: BlockTree> Bitcoin<T> {
                 syncing: Syncing::AwaitingHeaders(_locators),
                 ..
             } => {
+                // TODO: These two handlers are duplicated when the state is `Synced`.
                 if let NetworkMessage::Headers(headers) = msg.payload {
                     // TODO: Check that the headers received match the headers awaited.
                     return self.receive_headers(addr, headers);
+                } else if let NetworkMessage::Inv(inventory) = msg.payload {
+                    return self.receive_inv(addr, inventory);
                 }
             }
             PeerState::Ready {
