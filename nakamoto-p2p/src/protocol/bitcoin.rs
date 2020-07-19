@@ -365,12 +365,16 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                 match link {
                     Link::Outbound => {
+                        info!("{}: Peer connected (outbound)", &addr);
+
                         outbound.push(Output::Message(
                             addr,
                             self.version(addr, local_addr, self.tree.height()),
                         ));
                     }
-                    Link::Inbound => {} // Wait to receive remote version.
+                    Link::Inbound => {
+                        info!("{}: Peer connected (inbound)", &addr);
+                    } // Wait to receive remote version.
                 }
             }
             Event::Disconnected(addr) => {

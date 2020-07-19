@@ -41,7 +41,7 @@ impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
 
 impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     /// Create a new socket from a `io::Read` and an address pair.
-    pub fn from(r: R, local_address: net::SocketAddr, address: net::SocketAddr) -> Self {
+    fn from(r: R, local_address: net::SocketAddr, address: net::SocketAddr) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
         let queue = VecDeque::new();
 
@@ -53,7 +53,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    pub fn read(&mut self) -> Result<M, encode::Error> {
+    fn read(&mut self) -> Result<M, encode::Error> {
         match self.raw.read_next::<M>() {
             Ok(msg) => {
                 trace!("{}: (read) {:#?}", self.address, msg);
@@ -64,7 +64,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    pub fn write(&mut self, msg: &M) -> Result<usize, encode::Error> {
+    fn write(&mut self, msg: &M) -> Result<usize, encode::Error> {
         let mut buf = [0u8; MAX_MESSAGE_SIZE];
 
         match msg.consensus_encode(&mut buf[..]) {
@@ -164,7 +164,6 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
             let local_addr = stream.peer_addr()?;
             let addr = stream.peer_addr()?;
 
-            info!("Connected to {}", &addr);
             trace!("{:#?}", stream);
 
             self.register_peer(addr, local_addr, stream, Link::Outbound);
