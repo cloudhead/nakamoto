@@ -85,14 +85,14 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    pub fn drain(&mut self, events: &mut VecDeque<Event<M>>, descriptor: &mut popol::Source) {
+    fn drain(&mut self, events: &mut VecDeque<Event<M>>, source: &mut popol::Source) {
         while let Some(msg) = self.queue.pop_front() {
             match self.write(&msg) {
                 Ok(n) => {
                     events.push_back(Event::Sent(self.address, n));
                 }
                 Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
-                    descriptor.set(popol::events::WRITE);
+                    source.set(popol::interest::WRITE);
                     self.queue.push_front(msg);
 
                     return;
@@ -102,7 +102,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
                 }
             }
         }
-        descriptor.unset(popol::events::WRITE);
+        source.unset(popol::interest::WRITE);
     }
 }
 
@@ -137,11 +137,8 @@ impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> 
             local_addr,
             link,
         });
-        self.sources.register(
-            Source::Peer(addr),
-            &stream,
-            popol::events::READ | popol::events::WRITE,
-        );
+        self.sources
+            .register(Source::Peer(addr), &stream, popol::interest::ALL);
         self.peers
             .insert(addr, Socket::from(stream, local_addr, addr));
     }
@@ -175,81 +172,74 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
 
         let listener = self::listen(listen_addrs)?;
         self.sources
-            .register(Source::Listener, &listener, popol::events::READ);
+            .register(Source::Listener, &listener, popol::interest::READ);
 
         info!("Listening on {}", listener.local_addr()?);
 
-        // Inbound connected peers. Used as a temporary buffer.
-        let mut connected = Vec::new();
-        // Disconnected peers to unregister.
-        let mut disconnected = Vec::new();
+        let mut events = popol::Events::new();
 
         loop {
-            match popol::wait(&mut self.sources, P::PING_INTERVAL.into())? {
-                popol::Wait::Timeout => {
+            let result = self
+                .sources
+                .wait_timeout(&mut events, P::PING_INTERVAL.into());
+
+            if let Err(err) = result {
+                if err.kind() == io::ErrorKind::TimedOut {
                     self.events.push_back(Event::Idle);
+                } else {
+                    return Err(err.into());
                 }
-                popol::Wait::Ready(evs) => {
-                    for (source, ev) in evs {
-                        match source {
-                            Source::Peer(addr) => {
-                                let socket = self.peers.get_mut(&addr).unwrap();
+            } else {
+                for (source, ev) in events.iter() {
+                    match source {
+                        Source::Peer(addr) => {
+                            let socket = self.peers.get_mut(&addr).unwrap();
 
-                                if ev.errored || ev.hangup {
-                                    // Let the subsequent read fail.
-                                }
-                                if ev.readable {
-                                    loop {
-                                        match socket.read() {
-                                            Ok(msg) => {
-                                                self.events.push_back(Event::Received(addr, msg));
-                                            }
-                                            Err(encode::Error::Io(err))
-                                                if err.kind() == io::ErrorKind::WouldBlock =>
-                                            {
-                                                break;
-                                            }
-                                            Err(err) => {
-                                                error!("{}: Read error: {}", addr, err.to_string());
-
-                                                socket.disconnect().ok();
-                                                disconnected.push(addr);
-
-                                                break;
-                                            }
-                                        }
+                            if ev.errored || ev.invalid || ev.hangup {
+                                // Let the subsequent read fail.
+                            }
+                            if ev.writable {
+                                let src = self.sources.get_mut(&source).unwrap();
+                                socket.drain(&mut self.events, src);
+                            }
+                            if ev.readable {
+                                match socket.read() {
+                                    Ok(msg) => {
+                                        self.events.push_back(Event::Received(*addr, msg));
                                     }
-                                }
-                                if ev.writable {
-                                    socket.drain(&mut self.events, ev.source);
+                                    Err(encode::Error::Io(err))
+                                        if err.kind() == io::ErrorKind::WouldBlock =>
+                                    {
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        error!("{}: Read error: {}", addr, err.to_string());
+
+                                        socket.disconnect().ok();
+                                        self.unregister_peer(*addr);
+
+                                        break;
+                                    }
                                 }
                             }
-                            Source::Listener => loop {
-                                let (conn, addr) = match listener.accept() {
-                                    Ok((conn, addr)) => (conn, addr),
-                                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        error!("Accept error: {}", e.to_string());
-                                        break;
-                                    }
-                                };
-                                connected.push((addr, conn));
-                            },
                         }
+                        Source::Listener => loop {
+                            let (conn, addr) = match listener.accept() {
+                                Ok((conn, addr)) => (conn, addr),
+                                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                    break;
+                                }
+                                Err(e) => {
+                                    error!("Accept error: {}", e.to_string());
+                                    break;
+                                }
+                            };
+                            conn.set_nonblocking(true)?;
+
+                            self.register_peer(addr, conn.local_addr()?, conn, Link::Inbound);
+                        },
                     }
                 }
-            }
-
-            for (addr, stream) in connected.drain(..) {
-                let local_addr = stream.local_addr()?;
-                stream.set_nonblocking(true)?;
-
-                self.register_peer(addr, local_addr, stream, Link::Inbound);
-            }
-            for addr in disconnected.drain(..) {
-                self.unregister_peer(addr);
             }
 
             let local_time = SystemTime::now().into();
@@ -263,10 +253,10 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                     match out {
                         Output::Message(addr, msg) => {
                             if let Some(peer) = self.peers.get_mut(&addr) {
-                                let descriptor = self.sources.get_mut(&Source::Peer(addr)).unwrap();
+                                let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
                                 peer.queue.push_back(msg);
-                                peer.drain(&mut self.events, descriptor);
+                                peer.drain(&mut self.events, src);
                             }
                         }
                         Output::Disconnect(addr) => {
