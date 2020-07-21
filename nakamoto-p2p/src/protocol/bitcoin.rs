@@ -412,6 +412,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 let now = self.clock.local_time();
                 let mut disconnect = Vec::new();
 
+                debug!("Idle: local_time = {}", now);
+
                 for (_, peer) in self.peers.iter_mut() {
                     if let PeerState::Ready { last_active, .. } = peer.state {
                         if let Some((_, last_ping)) = peer.last_ping {
@@ -777,9 +779,14 @@ impl<T: BlockTree> Bitcoin<T> {
         }
     }
 
-    fn disconnect(&mut self, _addr: &PeerId, _outbound: &mut Vec<Output<NetworkMessage>>) {
-        // TODO: Set peer state to `Disconnecting`.
-        todo!()
+    fn disconnect(&mut self, addr: &PeerId, outbound: &mut Vec<Output<NetworkMessage>>) {
+        let peer = self
+            .peers
+            .get_mut(&addr)
+            .unwrap_or_else(|| panic!("peer {} is not known", addr));
+
+        peer.transition(PeerState::Disconnecting);
+        outbound.push(Output::Disconnect(*addr));
     }
 
     fn locator_hashes(&self) -> Vec<BlockHash> {
@@ -804,10 +811,47 @@ mod tests {
     mod simulator {
         use super::*;
 
-        pub fn run<P: Protocol<M>, M: Debug>(peers: Vec<(PeerId, &mut P, Vec<Event<M>>)>) {
+        pub fn handshake<T: BlockTree>(
+            alice: &mut Bitcoin<T>,
+            alice_addr: net::SocketAddr,
+            bob: &mut Bitcoin<T>,
+            bob_addr: net::SocketAddr,
+            local_time: LocalTime,
+        ) {
+            self::run(
+                vec![
+                    (
+                        alice_addr,
+                        alice,
+                        vec![Event::Connected {
+                            addr: bob_addr,
+                            local_addr: alice_addr,
+                            link: Link::Outbound,
+                        }],
+                    ),
+                    (
+                        bob_addr,
+                        bob,
+                        vec![Event::Connected {
+                            addr: alice_addr,
+                            local_addr: bob_addr,
+                            link: Link::Inbound,
+                        }],
+                    ),
+                ],
+                local_time,
+            );
+
+            assert!(alice.peers.values().all(|p| p.is_ready()));
+            assert!(bob.peers.values().all(|p| p.is_ready()));
+        }
+
+        pub fn run<P: Protocol<M>, M: Debug>(
+            peers: Vec<(PeerId, &mut P, Vec<Event<M>>)>,
+            local_time: LocalTime,
+        ) {
             let mut sim: HashMap<PeerId, (&mut P, VecDeque<Event<M>>)> = HashMap::new();
             let mut events = Vec::new();
-            let local_time = LocalTime::from(SystemTime::now());
 
             logger::init(log::Level::Debug);
 
@@ -859,6 +903,7 @@ mod tests {
         let tree = model::Cache::new(genesis);
         let config = Config::default();
         let clock = AdjustedTime::default();
+        let local_time = LocalTime::from(SystemTime::now());
 
         let alice_addr = ([127, 0, 0, 1], 8333).into();
         let bob_addr = ([127, 0, 0, 2], 8333).into();
@@ -866,26 +911,29 @@ mod tests {
         let mut alice = Bitcoin::new(tree.clone(), clock.clone(), config);
         let mut bob = Bitcoin::new(tree, clock, config);
 
-        simulator::run(vec![
-            (
-                alice_addr,
-                &mut alice,
-                vec![Event::Connected {
-                    addr: bob_addr,
-                    local_addr: alice_addr,
-                    link: Link::Outbound,
-                }],
-            ),
-            (
-                bob_addr,
-                &mut bob,
-                vec![Event::Connected {
-                    addr: alice_addr,
-                    local_addr: bob_addr,
-                    link: Link::Inbound,
-                }],
-            ),
-        ]);
+        simulator::run(
+            vec![
+                (
+                    alice_addr,
+                    &mut alice,
+                    vec![Event::Connected {
+                        addr: bob_addr,
+                        local_addr: alice_addr,
+                        link: Link::Outbound,
+                    }],
+                ),
+                (
+                    bob_addr,
+                    &mut bob,
+                    vec![Event::Connected {
+                        addr: alice_addr,
+                        local_addr: bob_addr,
+                        link: Link::Inbound,
+                    }],
+                ),
+            ],
+            local_time,
+        );
 
         assert!(
             alice.peers.values().all(|p| p.is_ready()),
@@ -904,6 +952,7 @@ mod tests {
     fn test_initial_sync() {
         let config = Config::default();
         let clock = AdjustedTime::default();
+        let local_time = LocalTime::from(SystemTime::now());
 
         let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
         let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
@@ -922,28 +971,66 @@ mod tests {
         let mut alice = Bitcoin::new(alice_tree, clock.clone(), config);
         let mut bob = Bitcoin::new(bob_tree, clock, config);
 
-        simulator::run(vec![
-            (
-                alice_addr,
-                &mut alice,
-                vec![Event::Connected {
-                    addr: bob_addr,
-                    local_addr: alice_addr,
-                    link: Link::Outbound,
-                }],
-            ),
-            (
-                bob_addr,
-                &mut bob,
-                vec![Event::Connected {
-                    addr: alice_addr,
-                    local_addr: bob_addr,
-                    link: Link::Inbound,
-                }],
-            ),
-        ]);
+        simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
         assert_eq!(alice.tree.height(), height);
         assert_eq!(bob.tree.height(), height);
+    }
+
+    #[test]
+    /// Test what happens when a peer is idle for too long.
+    fn test_idle() {
+        let genesis = BlockHeader {
+            version: 1,
+            prev_blockhash: Default::default(),
+            merkle_root: Default::default(),
+            nonce: 0,
+            time: 0,
+            bits: 0,
+        };
+        let tree = model::Cache::new(genesis);
+        let config = Config::default();
+        let clock = AdjustedTime::default();
+        let local_time = LocalTime::from(SystemTime::now());
+
+        let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
+        let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
+
+        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), config);
+        let mut bob = Bitcoin::new(tree, clock.clone(), config);
+
+        simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
+
+        let mut out = alice
+            .step(
+                Event::Idle,
+                local_time + Bitcoin::<model::Cache>::IDLE_TIMEOUT,
+            )
+            .into_iter();
+
+        assert!(matches!(
+            out.next(),
+            Some(Output::Message(
+                _,
+                RawNetworkMessage {
+                    payload: NetworkMessage::Ping(_), ..
+                },
+            ))
+        ));
+
+        let mut out = alice
+            .step(
+                Event::Idle,
+                local_time
+                    + Bitcoin::<model::Cache>::IDLE_TIMEOUT
+                    + Bitcoin::<model::Cache>::IDLE_TIMEOUT,
+            )
+            .into_iter();
+
+        assert!(alice
+            .peers
+            .values()
+            .all(|p| p.state == PeerState::Disconnecting));
+        assert_eq!(out.next(), Some(Output::Disconnect(bob_addr)));
     }
 }

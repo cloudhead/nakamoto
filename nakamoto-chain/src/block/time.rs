@@ -37,6 +37,12 @@ pub struct LocalTime {
     millis: u128,
 }
 
+impl std::fmt::Display for LocalTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_secs())
+    }
+}
+
 impl Default for LocalTime {
     fn default() -> Self {
         Self { millis: 0 }

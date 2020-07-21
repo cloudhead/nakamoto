@@ -45,7 +45,7 @@ pub enum Event<M> {
 }
 
 /// Output of a state transition (step) of the `Protocol` state machine.
-#[derive(Debug)]
+#[derive(Debug, Eq, PartialEq)]
 pub enum Output<M> {
     /// Send a message to a peer.
     Message(PeerId, M),
