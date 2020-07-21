@@ -100,6 +100,8 @@ impl Config {
 }
 
 impl<T: BlockTree> Bitcoin<T> {
+    const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
+
     pub fn new(tree: T, clock: AdjustedTime<PeerId>, config: Config) -> Self {
         Self {
             peers: HashMap::new(),
@@ -215,6 +217,8 @@ pub enum PeerState {
         /// Syncing state.
         syncing: Syncing,
     },
+    /// The peer is being disconnected.
+    Disconnecting,
 }
 
 /// A remote peer.
@@ -420,6 +424,18 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         } else if now - last_active >= Self::PING_INTERVAL {
                             outbound.push(Output::Message(peer.address, peer.ping(now)));
                         }
+
+                        // Check if we've been waiting too long to receive headers from
+                        // this peer.
+                        if let PeerState::Ready {
+                            syncing: Syncing::AwaitingHeaders(_, since),
+                            ..
+                        } = peer.state
+                        {
+                            if now - since >= Self::REQUEST_TIMEOUT {
+                                disconnect.push(peer.address);
+                            }
+                        }
                     }
                 }
 
@@ -617,6 +633,13 @@ impl<T: BlockTree> Bitcoin<T> {
             PeerState::Ready { .. } => {
                 debug!("Ignoring {} from peer {}", msg.cmd(), peer.address);
             }
+            PeerState::Disconnecting => {
+                debug!(
+                    "Ignoring {} from peer {} (disconnecting)",
+                    msg.cmd(),
+                    peer.address
+                );
+            }
         }
 
         vec![]
@@ -755,6 +778,7 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     fn disconnect(&mut self, _addr: &PeerId, _outbound: &mut Vec<Output<NetworkMessage>>) {
+        // TODO: Set peer state to `Disconnecting`.
         todo!()
     }
 
