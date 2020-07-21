@@ -131,13 +131,13 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     /// Start syncing with the given peer.
-    pub fn sync(&mut self, addr: PeerId) -> Vec<(PeerId, NetworkMessage)> {
+    pub fn sync(&mut self, addr: PeerId, local_time: LocalTime) -> Vec<(PeerId, NetworkMessage)> {
         self.transition(State::Syncing(addr));
 
         let locator_hashes = self.locator_hashes();
         let peer = self.peers.get_mut(&addr).unwrap();
 
-        peer.syncing(Syncing::AwaitingHeaders(locator_hashes.clone()));
+        peer.syncing(Syncing::AwaitingHeaders(locator_hashes.clone(), local_time));
 
         vec![(addr, self.get_headers(locator_hashes, BlockHash::default()))]
     }
@@ -199,7 +199,7 @@ pub enum Syncing {
     /// Not currently syncing. This is usually the starting and end state.
     Idle,
     /// Syncing. A `getheaders` message was sent and we are expecting a response.
-    AwaitingHeaders(Vec<BlockHash>),
+    AwaitingHeaders(Vec<BlockHash>, LocalTime),
 }
 
 /// State of a remote peer.
@@ -445,7 +445,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let ix = fastrand::usize(..self.ready.len());
                         let p = *self.ready.iter().nth(ix).unwrap();
 
-                        for (addr, msg) in self.sync(p) {
+                        for (addr, msg) in self.sync(p, self.clock.local_time()) {
                             outbound.push(Output::Message(addr, msg));
                         }
                     }
@@ -571,7 +571,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
             }
             PeerState::Ready {
-                syncing: Syncing::AwaitingHeaders(_locators),
+                syncing: Syncing::AwaitingHeaders(_locators, _local_time),
                 ..
             } => {
                 // TODO: These two handlers are duplicated when the state is `Synced`.
@@ -721,7 +721,10 @@ impl<T: BlockTree> Bitcoin<T> {
                     // ask again.
                     let locators = vec![tip];
 
-                    peer.syncing(Syncing::AwaitingHeaders(locators.clone()));
+                    peer.syncing(Syncing::AwaitingHeaders(
+                        locators.clone(),
+                        self.clock.local_time(),
+                    ));
 
                     vec![(addr, self.get_headers(locators, BlockHash::default()))]
                 }
