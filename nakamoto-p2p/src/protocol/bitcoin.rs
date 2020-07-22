@@ -389,8 +389,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 self.disconnected.insert(addr);
             }
             Event::Received(addr, msg) => {
-                for (addr, out) in self.receive(addr, msg) {
-                    outbound.push(Output::Message(addr, out));
+                for out in self.receive(addr, msg) {
+                    outbound.push(out);
                 }
             }
             Event::Sent(_addr, _msg) => {}
@@ -510,11 +510,7 @@ impl<T: BlockTree> Bitcoin<T> {
         self.state = state;
     }
 
-    pub fn receive(
-        &mut self,
-        addr: PeerId,
-        msg: RawNetworkMessage,
-    ) -> Vec<(PeerId, NetworkMessage)> {
+    pub fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) -> Vec<Output<NetworkMessage>> {
         let now = self.clock.local_time();
 
         debug!("{}: Received {:?}", addr, msg.cmd());
@@ -523,6 +519,7 @@ impl<T: BlockTree> Bitcoin<T> {
             // TODO: Send rejection messsage to peer and close connection.
             todo!();
         }
+
         let mut peer = self
             .peers
             .get_mut(&addr)
@@ -539,7 +536,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
         if let NetworkMessage::Ping(nonce) = msg.payload {
             if peer.is_ready() {
-                return vec![(addr, NetworkMessage::Pong(nonce))];
+                return vec![Output::Message(addr, NetworkMessage::Pong(nonce))];
             }
         } else if let NetworkMessage::Pong(nonce) = msg.payload {
             match peer.last_ping {
@@ -562,8 +559,11 @@ impl<T: BlockTree> Bitcoin<T> {
                         Link::Outbound => {}
                         Link::Inbound => {
                             return vec![
-                                (addr, self.version(addr, local_addr, self.tree.height())),
-                                (addr, NetworkMessage::Verack),
+                                Output::Message(
+                                    addr,
+                                    self.version(addr, local_addr, self.tree.height()),
+                                ),
+                                Output::Message(addr, NetworkMessage::Verack),
                             ]
                         }
                     }
@@ -580,11 +580,14 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     return match peer.link {
                         Link::Outbound => vec![
-                            (addr, NetworkMessage::Verack),
-                            (addr, NetworkMessage::SendHeaders),
-                            (addr, ping),
+                            Output::Message(addr, NetworkMessage::Verack),
+                            Output::Message(addr, NetworkMessage::SendHeaders),
+                            Output::Message(addr, ping),
                         ],
-                        Link::Inbound => vec![(addr, NetworkMessage::SendHeaders), (addr, ping)],
+                        Link::Inbound => vec![
+                            Output::Message(addr, NetworkMessage::SendHeaders),
+                            Output::Message(addr, ping),
+                        ],
                     };
                 }
             }
@@ -625,7 +628,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     );
                     let headers = self.tree.range(start..end).collect();
 
-                    return vec![(addr, NetworkMessage::Headers(headers))];
+                    return vec![Output::Message(addr, NetworkMessage::Headers(headers))];
                 } else if let NetworkMessage::Headers(headers) = msg.payload {
                     return self.receive_headers(addr, headers);
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
@@ -681,7 +684,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
     /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
     /// are being announced. Otherwise, we expect to receive a `headers` message.
-    fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<(PeerId, NetworkMessage)> {
+    fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Output<NetworkMessage>> {
         let mut best_block = None;
 
         for i in &inv {
@@ -699,7 +702,10 @@ impl<T: BlockTree> Bitcoin<T> {
             }
         }
         if let Some(stop_hash) = best_block {
-            vec![(addr, self.get_headers(self.locator_hashes(), *stop_hash))]
+            vec![Output::Message(
+                addr,
+                self.get_headers(self.locator_hashes(), *stop_hash),
+            )]
         } else {
             vec![]
         }
@@ -709,7 +715,7 @@ impl<T: BlockTree> Bitcoin<T> {
         &mut self,
         addr: PeerId,
         headers: Vec<BlockHeader>,
-    ) -> Vec<(PeerId, NetworkMessage)> {
+    ) -> Vec<Output<NetworkMessage>> {
         let length = headers.len();
         let peer = self
             .peers
@@ -751,7 +757,10 @@ impl<T: BlockTree> Bitcoin<T> {
                         self.clock.local_time(),
                     ));
 
-                    vec![(addr, self.get_headers(locators, BlockHash::default()))]
+                    vec![Output::Message(
+                        addr,
+                        self.get_headers(locators, BlockHash::default()),
+                    )]
                 }
             }
             Err(err) => {
