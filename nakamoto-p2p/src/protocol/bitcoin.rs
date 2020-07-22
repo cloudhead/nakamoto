@@ -549,6 +549,8 @@ impl<T: BlockTree> Bitcoin<T> {
                     ..
                 }) = msg.payload
                 {
+                    let height = self.tree.height();
+
                     info!(
                         "{}: Peer version = {}, height = {}, agent = {} timestamp = {}",
                         addr, version, start_height, user_agent, timestamp
@@ -575,7 +577,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     }
                     // If the peer is too far behind, there's no use connecting to it, we'll
                     // have to wait for it to catch up.
-                    if self.tree.height() - start_height as Height > MAX_STALE_HEIGHT_DIFFERENCE {
+                    if height.saturating_sub(start_height as Height) > MAX_STALE_HEIGHT_DIFFERENCE {
                         debug!("{}: Disconnecting: peer is too far behind", addr);
                         return vec![Output::Disconnect(addr)];
                     }
