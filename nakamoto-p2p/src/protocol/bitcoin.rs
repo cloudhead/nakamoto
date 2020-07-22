@@ -33,6 +33,8 @@ pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
 pub const MAX_MESSAGE_HEADERS: usize = 2000;
 /// Maximum number of latencies recorded per peer.
 pub const MAX_RECORDED_LATENCIES: usize = 64;
+/// Maximum height difference for a stale peer, to maintain the connection (2 weeks).
+pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 
 /// A time offset, in seconds.
 pub type TimeOffset = i64;
@@ -291,30 +293,6 @@ impl Peer {
         self.latencies.truncate(MAX_RECORDED_LATENCIES);
     }
 
-    fn receive_version(
-        &mut self,
-        VersionMessage {
-            start_height,
-            timestamp,
-            ..
-        }: VersionMessage,
-        local_time: LocalTime,
-    ) {
-        let height = 0;
-        if height > start_height as Height + 1 {
-            // We're ahead of this peer by more than one block. Don't use it
-            // for IBD.
-            todo!();
-        }
-        // TODO: Check version
-        // TODO: Check services
-        // TODO: Check start_height
-        self.height = start_height as Height;
-        self.time_offset = timestamp - local_time.as_secs() as i64;
-
-        self.transition(PeerState::Handshake(Handshake::AwaitingVerack));
-    }
-
     fn receive_verack(&mut self, time: LocalTime) {
         self.transition(PeerState::Ready {
             last_active: time,
@@ -384,6 +362,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             Event::Disconnected(addr) => {
                 debug!("Disconnected from {}", &addr);
 
+                self.peers.remove(&addr);
                 self.ready.remove(&addr);
                 self.connected.remove(&addr);
                 self.disconnected.insert(addr);
@@ -556,8 +535,49 @@ impl<T: BlockTree> Bitcoin<T> {
         // TODO: Make sure we handle all messages at all times in some way.
         match &peer.state {
             PeerState::Handshake(Handshake::AwaitingVersion) => {
-                if let NetworkMessage::Version(version) = msg.payload {
-                    peer.receive_version(version, now);
+                if let NetworkMessage::Version(VersionMessage {
+                    // Peer's best height.
+                    start_height,
+                    // Peer's local time.
+                    timestamp,
+                    // Highest protocol version understood by the peer.
+                    version,
+                    // Services offered by this peer.
+                    services,
+                    ..
+                }) = msg.payload
+                {
+                    debug!("{}: Peer height = {}", addr, start_height);
+
+                    // Don't support peers with an older protocol than ours, we won't be
+                    // able to handle it correctly.
+                    if version < PROTOCOL_VERSION {
+                        debug!(
+                            "{}: Disconnecting: peer protocol version is too old: {}",
+                            addr, version
+                        );
+                        return vec![Output::Disconnect(addr)];
+                    }
+                    // Peers that don't advertise the `NETWORK` service are not full nodes.
+                    // It's not so useful for us to connect to them, because they're likely
+                    // to be less secure.
+                    if !services.has(ServiceFlags::NETWORK) {
+                        debug!(
+                            "{}: Disconnecting: peer doesn't have required services",
+                            addr
+                        );
+                        return vec![Output::Disconnect(addr)];
+                    }
+                    // If the peer is too far behind, there's no use connecting to it, we'll
+                    // have to wait for it to catch up.
+                    if self.tree.height() - start_height as Height > MAX_STALE_HEIGHT_DIFFERENCE {
+                        debug!("{}: Disconnecting: peer is too far behind", addr);
+                        return vec![Output::Disconnect(addr)];
+                    }
+
+                    peer.height = start_height as Height;
+                    peer.time_offset = timestamp - now.as_secs() as i64;
+                    peer.transition(PeerState::Handshake(Handshake::AwaitingVerack));
 
                     match peer.link {
                         Link::Outbound => {}
@@ -990,8 +1010,8 @@ mod tests {
         assert_eq!(bob.tree.height(), height);
     }
 
-    #[test]
     /// Test what happens when a peer is idle for too long.
+    #[test]
     fn test_idle() {
         let genesis = BlockHeader {
             version: 1,
