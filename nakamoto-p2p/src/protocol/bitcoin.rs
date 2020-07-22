@@ -516,8 +516,12 @@ impl<T: BlockTree> Bitcoin<T> {
         debug!("{}: Received {:?}", addr, msg.cmd());
 
         if msg.magic != self.config.network.magic() {
-            // TODO: Send rejection messsage to peer and close connection.
-            todo!();
+            // TODO: Needs test.
+            debug!(
+                "{}: Received message with invalid magic: {}",
+                addr, msg.magic
+            );
+            return vec![Output::Disconnect(addr)];
         }
 
         let mut peer = self
