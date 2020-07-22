@@ -161,7 +161,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
         // TODO(perf): This could be slow..
         for addr in addrs.iter() {
             let stream = self::dial::<_, P>(&addr)?;
-            let local_addr = stream.peer_addr()?;
+            let local_addr = stream.local_addr()?;
             let addr = stream.peer_addr()?;
 
             trace!("{:#?}", stream);
