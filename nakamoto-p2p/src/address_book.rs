@@ -6,12 +6,16 @@ use std::net;
 use std::ops::Deref;
 use std::path::Path;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AddressBook {
     addrs: Vec<net::SocketAddr>,
 }
 
 impl AddressBook {
+    pub fn new() -> Self {
+        Self { addrs: Vec::new() }
+    }
+
     pub fn from<T: net::ToSocketAddrs + fmt::Debug>(seeds: &[T]) -> io::Result<Self> {
         let addrs = seeds
             .iter()

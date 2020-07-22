@@ -3,6 +3,7 @@ use log::*;
 pub mod network;
 pub use network::Network;
 
+use crate::address_book::AddressBook;
 use crate::protocol::{Event, Link, Output, PeerId, Protocol};
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -54,6 +55,8 @@ pub struct Bitcoin<T> {
     /// Block tree.
     pub tree: T,
 
+    /// Address book of peers.
+    address_book: AddressBook,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Set of connected peers that have completed the handshake.
@@ -104,13 +107,19 @@ impl Config {
 impl<T: BlockTree> Bitcoin<T> {
     const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 
-    pub fn new(tree: T, clock: AdjustedTime<PeerId>, config: Config) -> Self {
+    pub fn new(
+        tree: T,
+        address_book: AddressBook,
+        clock: AdjustedTime<PeerId>,
+        config: Config,
+    ) -> Self {
         Self {
             peers: HashMap::new(),
             config,
             state: State::Connecting,
             tree,
             clock,
+            address_book,
             ready: HashSet::new(),
             connected: HashSet::new(),
             disconnected: HashSet::new(),
@@ -328,6 +337,17 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(60 * 5);
     const PING_INTERVAL: LocalDuration = LocalDuration::from_secs(60);
 
+    fn initialize(&mut self, time: LocalTime) -> Vec<Output<RawNetworkMessage>> {
+        self.clock.set_local_time(time);
+
+        let mut outbound = Vec::new();
+
+        for peer in self.address_book.iter() {
+            outbound.push(Output::Connect(*peer));
+        }
+        outbound
+    }
+
     fn step(
         &mut self,
         event: Event<RawNetworkMessage>,
@@ -530,6 +550,11 @@ impl<T: BlockTree> Bitcoin<T> {
                 // Unsolicited or redundant `pong`. Ignore.
                 _ => return vec![],
             }
+        } else if let NetworkMessage::Addr(addrs) = msg.payload {
+            for _addr in &addrs {
+                todo!();
+            }
+            return vec![];
         }
 
         // TODO: Make sure we handle all messages at all times in some way.
@@ -930,6 +955,13 @@ mod tests {
         }
     }
 
+    const CONFIG: Config = Config {
+        network: network::Network::Mainnet,
+        services: ServiceFlags::NETWORK,
+        protocol_version: PROTOCOL_VERSION,
+        relay: false,
+    };
+
     #[test]
     fn test_handshake() {
         let genesis = BlockHeader {
@@ -941,15 +973,15 @@ mod tests {
             bits: 0,
         };
         let tree = model::Cache::new(genesis);
-        let config = Config::default();
         let clock = AdjustedTime::default();
         let local_time = LocalTime::from(SystemTime::now());
+        let book = AddressBook::new();
 
         let alice_addr = ([127, 0, 0, 1], 8333).into();
         let bob_addr = ([127, 0, 0, 2], 8333).into();
 
-        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), config);
-        let mut bob = Bitcoin::new(tree, clock, config);
+        let mut alice = Bitcoin::new(tree.clone(), book.clone(), clock.clone(), CONFIG);
+        let mut bob = Bitcoin::new(tree, book, clock, CONFIG);
 
         simulator::run(
             vec![
@@ -990,9 +1022,9 @@ mod tests {
 
     #[test]
     fn test_initial_sync() {
-        let config = Config::default();
         let clock = AdjustedTime::default();
         let local_time = LocalTime::from(SystemTime::now());
+        let book = AddressBook::new();
 
         let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
         let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
@@ -1008,8 +1040,8 @@ mod tests {
         // Truncate chain to test height.
         alice_tree.rollback(height).unwrap();
 
-        let mut alice = Bitcoin::new(alice_tree, clock.clone(), config);
-        let mut bob = Bitcoin::new(bob_tree, clock, config);
+        let mut alice = Bitcoin::new(alice_tree, book.clone(), clock.clone(), CONFIG);
+        let mut bob = Bitcoin::new(bob_tree, book, clock, CONFIG);
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
@@ -1029,16 +1061,16 @@ mod tests {
             bits: 0,
         };
         let tree = model::Cache::new(genesis);
-        let config = Config::default();
         let clock = AdjustedTime::default();
         let local_time = LocalTime::from(SystemTime::now());
+        let book = AddressBook::new();
         let idle_timeout = Bitcoin::<model::Cache>::IDLE_TIMEOUT;
 
         let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
         let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
 
-        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), config);
-        let mut bob = Bitcoin::new(tree, clock.clone(), config);
+        let mut alice = Bitcoin::new(tree.clone(), book.clone(), clock.clone(), CONFIG);
+        let mut bob = Bitcoin::new(tree, book, clock.clone(), CONFIG);
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 

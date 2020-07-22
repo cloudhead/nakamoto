@@ -60,7 +60,7 @@ pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<()
     let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
     let cache = BlockCache::from(store, params, &checkpoints)?;
 
-    let peers = if connect.is_empty() {
+    let address_book = if connect.is_empty() {
         match AddressBook::load("peers") {
             Ok(peers) if peers.is_empty() => {
                 log::info!("Address book is empty. Trying DNS seeds..");
@@ -75,16 +75,16 @@ pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<()
         AddressBook::from(connect)?
     };
 
-    log::info!("{} peer(s) found..", peers.len());
-    log::debug!("{:?}", peers);
+    log::info!("{} peer(s) found..", address_book.len());
+    log::debug!("{:?}", address_book);
 
-    let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
+    let protocol = p2p::protocol::Bitcoin::new(cache, address_book, clock, cfg);
     let mut reactor = p2p::reactor::poll::Reactor::new();
 
     if listen.is_empty() {
-        reactor.run(protocol, peers, &[([0, 0, 0, 0], cfg.port()).into()])?;
+        reactor.run(protocol, &[([0, 0, 0, 0], cfg.port()).into()])?;
     } else {
-        reactor.run(protocol, peers, listen)?;
+        reactor.run(protocol, listen)?;
     }
 
     Ok(())

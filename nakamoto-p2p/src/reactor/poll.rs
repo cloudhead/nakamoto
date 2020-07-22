@@ -2,7 +2,6 @@ use bitcoin::consensus::encode::Decodable;
 use bitcoin::consensus::encode::{self, Encodable};
 use bitcoin::network::stream_reader::StreamReader;
 
-use crate::address_book::AddressBook;
 use crate::error::Error;
 use crate::protocol::{Event, Link, Output, Protocol};
 
@@ -155,20 +154,8 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
     pub fn run<P: Protocol<M>>(
         &mut self,
         mut protocol: P,
-        addrs: AddressBook,
         listen_addrs: &[net::SocketAddr],
     ) -> Result<Vec<()>, Error> {
-        // TODO(perf): This could be slow..
-        for addr in addrs.iter() {
-            let stream = self::dial::<_, P>(&addr)?;
-            let local_addr = stream.local_addr()?;
-            let addr = stream.peer_addr()?;
-
-            trace!("{:#?}", stream);
-
-            self.register_peer(addr, local_addr, stream, Link::Outbound);
-        }
-
         let listener = self::listen(listen_addrs)?;
         self.sources
             .register(Source::Listener, &listener, popol::interest::READ);
@@ -258,6 +245,15 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                                 peer.drain(&mut self.events, src);
                             }
                         }
+                        Output::Connect(addr) => {
+                            let stream = self::dial::<_, P>(&addr)?;
+                            let local_addr = stream.local_addr()?;
+                            let addr = stream.peer_addr()?;
+
+                            trace!("{:#?}", stream);
+
+                            self.register_peer(addr, local_addr, stream, Link::Outbound);
+                        }
                         Output::Disconnect(addr) => {
                             if let Some(peer) = self.peers.get(&addr) {
                                 // Shutdown the connection, ignoring any potential errors.
@@ -269,7 +265,6 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                                 self.unregister_peer(addr);
                             }
                         }
-                        _ => todo!(),
                     }
                 }
             }

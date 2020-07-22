@@ -73,6 +73,9 @@ pub trait Protocol<M> {
     /// How long to wait between sending pings.
     const PING_INTERVAL: LocalDuration;
 
+    /// Initialize the protocol. Called once before any event is sent to the state machine.
+    fn initialize(&mut self, time: LocalTime) -> Vec<Output<M>>;
+
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
     fn step(&mut self, event: Event<M>, time: LocalTime) -> Vec<Output<M>>;

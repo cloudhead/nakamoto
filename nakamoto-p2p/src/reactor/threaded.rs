@@ -2,7 +2,6 @@ use bitcoin::consensus::encode::Decodable;
 use bitcoin::consensus::encode::{self, Encodable};
 use bitcoin::network::stream_reader::StreamReader;
 
-use crate::address_book::AddressBook;
 use crate::error::Error;
 use crate::protocol::{Event, Link, Output, Protocol};
 
@@ -24,8 +23,9 @@ pub const MAX_MESSAGE_SIZE: usize = 6 * 1024;
 
 /// Command sent to a writer thread.
 #[derive(Debug)]
-pub enum Command<T> {
+pub enum Command<T, S: Write> {
     Write(net::SocketAddr, T),
+    Connect(net::SocketAddr, Writer<S>),
     Disconnect(net::SocketAddr),
     Quit,
 }
@@ -91,6 +91,7 @@ impl<R: Read + Write, M: Decodable + Encodable + Debug + Send + Sync + 'static> 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 /// Writer socket.
+#[derive(Debug)]
 pub struct Writer<T> {
     address: net::SocketAddr,
     raw: T,
@@ -114,10 +115,11 @@ impl<T: Write> Writer<T> {
     }
 
     fn thread<M: Encodable + Send + Sync + Debug + 'static>(
-        mut peers: HashMap<net::SocketAddr, Self>,
-        cmds: crossbeam::Receiver<Command<M>>,
+        cmds: crossbeam::Receiver<Command<M, T>>,
         events: crossbeam::Sender<Event<M>>,
     ) -> Result<(), Error> {
+        let mut peers: HashMap<net::SocketAddr, Self> = HashMap::new();
+
         loop {
             let cmd = cmds.recv().unwrap();
 
@@ -136,6 +138,9 @@ impl<T: Write> Writer<T> {
                             events.send(Event::Error(addr, err))?;
                         }
                     }
+                }
+                Command::Connect(addr, writer) => {
+                    peers.insert(addr, writer);
                 }
                 Command::Disconnect(addr) => {
                     peers.remove(&addr);
@@ -164,34 +169,16 @@ impl<T: Write> std::ops::DerefMut for Writer<T> {
 /// Run the given protocol with the reactor.
 pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'static>(
     mut protocol: P,
-    addrs: AddressBook,
 ) -> Result<Vec<()>, Error> {
     use std::thread;
 
     let (events_tx, events_rx): (crossbeam::Sender<Event<M>>, _) = crossbeam::bounded(1);
     let (cmds_tx, cmds_rx) = crossbeam::bounded(1);
 
-    let mut spawned = Vec::with_capacity(addrs.len());
-    let mut peers = HashMap::new();
-
-    for addr in addrs.iter() {
-        let (mut conn, writer) = self::dial::<_, P>(&addr, events_tx.clone())?;
-
-        debug!("Connected to {}", &addr);
-        trace!("{:#?}", conn);
-
-        peers.insert(*addr, writer);
-
-        let handle = thread::Builder::new()
-            .name(addr.to_string())
-            .stack_size(THREAD_STACK_SIZE)
-            .spawn(move || conn.run(Link::Outbound))?;
-
-        spawned.push(handle);
-    }
+    let mut spawned = Vec::new();
 
     let writer_events_tx = events_tx.clone();
-    thread::Builder::new().spawn(move || Writer::thread(peers, cmds_rx, writer_events_tx))?;
+    thread::Builder::new().spawn(move || Writer::thread(cmds_rx, writer_events_tx))?;
 
     let local_time = SystemTime::now().into();
 
@@ -206,6 +193,21 @@ pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'sta
                     match out {
                         Output::Message(addr, msg) => {
                             cmds_tx.send(Command::Write(addr, msg)).unwrap();
+                        }
+                        Output::Connect(addr) => {
+                            let (mut conn, writer) = self::dial::<_, P>(&addr, events_tx.clone())?;
+
+                            debug!("Connected to {}", &addr);
+                            trace!("{:#?}", conn);
+
+                            cmds_tx.send(Command::Connect(addr, writer)).unwrap();
+
+                            let handle = thread::Builder::new()
+                                .name(addr.to_string())
+                                .stack_size(THREAD_STACK_SIZE)
+                                .spawn(move || conn.run(Link::Outbound))?;
+
+                            spawned.push(handle);
                         }
                         _ => todo!(),
                     }
