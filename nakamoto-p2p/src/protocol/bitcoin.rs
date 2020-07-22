@@ -955,8 +955,11 @@ mod tests {
         }
     }
 
+    /// Test protocol config.
     const CONFIG: Config = Config {
         network: network::Network::Mainnet,
+        // Pretend that we're a full-node, to fool connections
+        // between instances of this protocol in tests.
         services: ServiceFlags::NETWORK,
         protocol_version: PROTOCOL_VERSION,
         relay: false,
