@@ -1015,24 +1015,30 @@ mod tests {
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
+        // Let a certain amount of time pass.
         let mut out = alice
             .step(Event::Idle, local_time + idle_timeout)
             .into_iter();
 
-        assert!(matches!(
+        assert!(
+            matches!(
             out.next(),
             Some(Output::Message(
-                _,
+                addr,
                 RawNetworkMessage {
                     payload: NetworkMessage::Ping(_), ..
                 },
-            ))
-        ));
+            )) if addr == bob_addr
+        ),
+            "Alice pings Bob"
+        );
 
+        // More time passes, and Bob doesn't `pong` back.
         let mut out = alice
             .step(Event::Idle, local_time + idle_timeout + idle_timeout)
             .into_iter();
 
+        // Alice now decides to disconnect Bob.
         assert!(alice
             .peers
             .values()
