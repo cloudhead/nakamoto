@@ -992,6 +992,7 @@ mod tests {
         let config = Config::default();
         let clock = AdjustedTime::default();
         let local_time = LocalTime::from(SystemTime::now());
+        let idle_timeout = Bitcoin::<model::Cache>::IDLE_TIMEOUT;
 
         let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
         let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
@@ -1002,10 +1003,7 @@ mod tests {
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
         let mut out = alice
-            .step(
-                Event::Idle,
-                local_time + Bitcoin::<model::Cache>::IDLE_TIMEOUT,
-            )
+            .step(Event::Idle, local_time + idle_timeout)
             .into_iter();
 
         assert!(matches!(
@@ -1019,12 +1017,7 @@ mod tests {
         ));
 
         let mut out = alice
-            .step(
-                Event::Idle,
-                local_time
-                    + Bitcoin::<model::Cache>::IDLE_TIMEOUT
-                    + Bitcoin::<model::Cache>::IDLE_TIMEOUT,
-            )
+            .step(Event::Idle, local_time + idle_timeout + idle_timeout)
             .into_iter();
 
         assert!(alice
