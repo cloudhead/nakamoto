@@ -544,10 +544,15 @@ impl<T: BlockTree> Bitcoin<T> {
                     version,
                     // Services offered by this peer.
                     services,
+                    // User agent.
+                    user_agent,
                     ..
                 }) = msg.payload
                 {
-                    debug!("{}: Peer height = {}", addr, start_height);
+                    info!(
+                        "{}: Peer version = {}, height = {}, agent = {} timestamp = {}",
+                        addr, version, start_height, user_agent, timestamp
+                    );
 
                     // Don't support peers with an older protocol than ours, we won't be
                     // able to handle it correctly.
