@@ -161,6 +161,10 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
             .register(Source::Listener, &listener, popol::interest::READ);
 
         info!("Listening on {}", listener.local_addr()?);
+        info!("Initializing protocol..");
+
+        let outs = protocol.initialize(SystemTime::now().into());
+        self.process::<P>(outs)?;
 
         let mut events = popol::Events::new();
 
@@ -232,43 +236,48 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
 
             while let Some(event) = self.events.pop_front() {
                 let outs = protocol.step(event, local_time);
+                self.process::<P>(outs)?;
+            }
+        }
+    }
 
-                // Note that there may be messages destined for a peer that has since been
-                // disconnected.
-                for out in outs.into_iter() {
-                    match out {
-                        Output::Message(addr, msg) => {
-                            if let Some(peer) = self.peers.get_mut(&addr) {
-                                let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
+    fn process<P: Protocol<M>>(&mut self, outputs: Vec<Output<M>>) -> Result<(), Error> {
+        // Note that there may be messages destined for a peer that has since been
+        // disconnected.
+        for out in outputs.into_iter() {
+            match out {
+                Output::Message(addr, msg) => {
+                    if let Some(peer) = self.peers.get_mut(&addr) {
+                        let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
-                                peer.queue.push_back(msg);
-                                peer.drain(&mut self.events, src);
-                            }
-                        }
-                        Output::Connect(addr) => {
-                            let stream = self::dial::<_, P>(&addr)?;
-                            let local_addr = stream.local_addr()?;
-                            let addr = stream.peer_addr()?;
+                        peer.queue.push_back(msg);
+                        peer.drain(&mut self.events, src);
+                    }
+                }
+                Output::Connect(addr) => {
+                    let stream = self::dial::<_, P>(&addr)?;
+                    let local_addr = stream.local_addr()?;
+                    let addr = stream.peer_addr()?;
 
-                            trace!("{:#?}", stream);
+                    trace!("{:#?}", stream);
 
-                            self.register_peer(addr, local_addr, stream, Link::Outbound);
-                        }
-                        Output::Disconnect(addr) => {
-                            if let Some(peer) = self.peers.get(&addr) {
-                                // Shutdown the connection, ignoring any potential errors.
-                                // If the socket was already disconnected, this will yield
-                                // an error that is safe to ignore (`ENOTCONN`). The other
-                                // possible errors relate to an invalid file descriptor.
-                                peer.disconnect().ok();
+                    self.register_peer(addr, local_addr, stream, Link::Outbound);
+                }
+                Output::Disconnect(addr) => {
+                    if let Some(peer) = self.peers.get(&addr) {
+                        // Shutdown the connection, ignoring any potential errors.
+                        // If the socket was already disconnected, this will yield
+                        // an error that is safe to ignore (`ENOTCONN`). The other
+                        // possible errors relate to an invalid file descriptor.
+                        peer.disconnect().ok();
 
-                                self.unregister_peer(addr);
-                            }
-                        }
+                        self.unregister_peer(addr);
                     }
                 }
             }
         }
+
+        Ok(())
     }
 }
 
