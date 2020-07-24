@@ -85,6 +85,7 @@ pub struct Config {
     pub services: ServiceFlags,
     pub protocol_version: u32,
     pub relay: bool,
+    pub user_agent: &'static str,
 }
 
 impl Default for Config {
@@ -94,11 +95,19 @@ impl Default for Config {
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
             relay: false,
+            user_agent: USER_AGENT,
         }
     }
 }
 
 impl Config {
+    pub fn from(network: network::Network) -> Self {
+        Self {
+            network,
+            ..Self::default()
+        }
+    }
+
     pub fn port(&self) -> u16 {
         self.network.port()
     }
@@ -583,7 +592,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     // Don't support peers with an older protocol than ours, we won't be
                     // able to handle it correctly.
-                    if version < PROTOCOL_VERSION {
+                    if version < self.config.protocol_version {
                         debug!(
                             "{}: Disconnecting: peer protocol version is too old: {}",
                             addr, version
@@ -716,14 +725,23 @@ impl<T: BlockTree> Bitcoin<T> {
         let timestamp = self.clock.local_time().as_secs() as i64;
 
         NetworkMessage::Version(VersionMessage {
+            // Our max supported protocol version.
             version: self.config.protocol_version,
+            // Local services.
             services: self.config.services,
+            // Local time.
             timestamp,
+            // Receiver address, as perceived by us.
             receiver: Address::new(&addr, ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS),
-            sender: Address::new(&local_addr, ServiceFlags::NONE),
+            // Local address (unreliable) and local services (same as `services` field)
+            sender: Address::new(&local_addr, self.config.services),
+            // A nonce to detect connections to self (FIXME)
             nonce: 0,
-            user_agent: USER_AGENT.to_owned(),
+            // Our user agent string.
+            user_agent: self.config.user_agent.to_owned(),
+            // Our best height.
             start_height,
+            // Whether we want to receive transaction `inv` messages.
             relay: self.config.relay,
         })
     }
@@ -962,6 +980,7 @@ mod tests {
         // between instances of this protocol in tests.
         services: ServiceFlags::NETWORK,
         protocol_version: PROTOCOL_VERSION,
+        user_agent: USER_AGENT,
         relay: false,
     };
 
