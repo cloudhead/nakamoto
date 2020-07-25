@@ -7,20 +7,20 @@ use nakamoto_daemon::logger;
 #[derive(FromArgs)]
 /// A Bitcoin light client.
 pub struct Options {
-    #[argh(option)]
     /// connect to the specified peers only
+    #[argh(option)]
     pub connect: Vec<net::SocketAddr>,
 
-    #[argh(option)]
     /// listen on one of these addresses for peer connections.
+    #[argh(option)]
     pub listen: Vec<net::SocketAddr>,
 
-    #[argh(switch)]
     /// use the bitcoin test network (default: false)
+    #[argh(switch)]
     pub testnet: bool,
 
-    #[argh(option, default = "log::Level::Info")]
     /// log level (default: info)
+    #[argh(option, default = "log::Level::Info")]
     pub log: log::Level,
 }
 
