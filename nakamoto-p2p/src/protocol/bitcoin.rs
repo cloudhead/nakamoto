@@ -1,3 +1,4 @@
+use crossbeam_channel as chan;
 use log::*;
 
 pub mod network;
@@ -39,6 +40,12 @@ pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 
 /// A time offset, in seconds.
 pub type TimeOffset = i64;
+
+/// A command or request that can be sent to the protocol.
+#[derive(Debug)]
+pub enum Command {
+    GetTip(chan::Sender<BlockHeader>),
+}
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -346,6 +353,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(60 * 5);
     const PING_INTERVAL: LocalDuration = LocalDuration::from_secs(60);
 
+    type Command = self::Command;
+
     fn initialize(&mut self, time: LocalTime) -> Vec<Output<RawNetworkMessage>> {
         self.clock.set_local_time(time);
 
@@ -359,7 +368,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
     fn step(
         &mut self,
-        event: Event<RawNetworkMessage>,
+        event: Event<RawNetworkMessage, Command>,
         time: LocalTime,
     ) -> Vec<Output<RawNetworkMessage>> {
         let mut outbound = Vec::new();
@@ -416,6 +425,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // level event like `Disconnected`, or an opaque `Error`, just to keep track of
                 // peer errors, scores etc.
             }
+            Event::Command(_cmd) => {
+                todo!();
+            }
             Event::Idle => {
                 let now = self.clock.local_time();
                 let mut disconnect = Vec::new();
@@ -424,17 +436,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                 for (_, peer) in self.peers.iter_mut() {
                     if let PeerState::Ready { last_active, .. } = peer.state {
-                        if let Some((_, last_ping)) = peer.last_ping {
-                            // A ping was sent and we're waiting for a `pong`. If too much
-                            // time has passed, we consider this peer dead, and disconnect
-                            // from them.
-                            if now - last_ping >= Self::IDLE_TIMEOUT {
-                                disconnect.push(peer.address);
-                            }
-                        } else if now - last_active >= Self::PING_INTERVAL {
-                            outbound.push(Output::Message(peer.address, peer.ping(now)));
-                        }
-
                         // Check if we've been waiting too long to receive headers from
                         // this peer.
                         if let PeerState::Ready {
@@ -444,7 +445,19 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         {
                             if now - since >= Self::REQUEST_TIMEOUT {
                                 disconnect.push(peer.address);
+                                continue;
                             }
+                        }
+
+                        if let Some((_, last_ping)) = peer.last_ping {
+                            // A ping was sent and we're waiting for a `pong`. If too much
+                            // time has passed, we consider this peer dead, and disconnect
+                            // from them.
+                            if now - last_ping >= Self::IDLE_TIMEOUT {
+                                disconnect.push(peer.address);
+                            }
+                        } else if now - last_active >= Self::PING_INTERVAL {
+                            outbound.push(Output::Message(peer.address, peer.ping(now)));
                         }
                     }
                 }
@@ -602,7 +615,10 @@ impl<T: BlockTree> Bitcoin<T> {
                     // Peers that don't advertise the `NETWORK` service are not full nodes.
                     // It's not so useful for us to connect to them, because they're likely
                     // to be less secure.
-                    if !services.has(ServiceFlags::NETWORK) {
+                    if !services.has(ServiceFlags::NETWORK)
+                        && !services.has(ServiceFlags::NETWORK_LIMITED)
+                        && !user_agent.starts_with("/nakamoto:")
+                    {
                         debug!(
                             "{}: Disconnecting: peer doesn't have required services",
                             addr
@@ -929,11 +945,11 @@ mod tests {
             assert!(bob.peers.values().all(|p| p.is_ready()));
         }
 
-        pub fn run<P: Protocol<M>, M: Debug>(
-            peers: Vec<(PeerId, &mut P, Vec<Event<M>>)>,
+        pub fn run<P: Protocol<M, Command = C>, M: Debug, C: Debug>(
+            peers: Vec<(PeerId, &mut P, Vec<Event<M, C>>)>,
             local_time: LocalTime,
         ) {
-            let mut sim: HashMap<PeerId, (&mut P, VecDeque<Event<M>>)> = HashMap::new();
+            let mut sim: HashMap<PeerId, (&mut P, VecDeque<Event<M, C>>)> = HashMap::new();
             let mut events = Vec::new();
 
             logger::init(log::Level::Debug);

@@ -32,20 +32,25 @@ pub enum Command<T, S: Write> {
 
 /// Reader socket.
 #[derive(Debug)]
-pub struct Reader<R: Read + Write, M> {
-    events: crossbeam::Sender<Event<M>>,
+pub struct Reader<R: Read + Write, M, C: Send + Sync> {
+    events: crossbeam::Sender<Event<M, C>>,
     raw: StreamReader<R>,
     address: net::SocketAddr,
     local_address: net::SocketAddr,
 }
 
-impl<R: Read + Write, M: Decodable + Encodable + Debug + Send + Sync + 'static> Reader<R, M> {
+impl<
+        R: Read + Write,
+        M: Decodable + Encodable + Debug + Send + Sync + 'static,
+        C: Debug + Send + Sync + 'static,
+    > Reader<R, M, C>
+{
     /// Create a new peer from a `io::Read` and an address pair.
     pub fn from(
         r: R,
         local_address: net::SocketAddr,
         address: net::SocketAddr,
-        events: crossbeam::Sender<Event<M>>,
+        events: crossbeam::Sender<Event<M, C>>,
     ) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
 
@@ -114,9 +119,9 @@ impl<T: Write> Writer<T> {
         }
     }
 
-    fn thread<M: Encodable + Send + Sync + Debug + 'static>(
+    fn thread<M: Encodable + Send + Sync + Debug + 'static, C: Debug + Send + Sync + 'static>(
         cmds: crossbeam::Receiver<Command<M, T>>,
-        events: crossbeam::Sender<Event<M>>,
+        events: crossbeam::Sender<Event<M, C>>,
     ) -> Result<(), Error> {
         let mut peers: HashMap<net::SocketAddr, Self> = HashMap::new();
 
@@ -167,12 +172,16 @@ impl<T: Write> std::ops::DerefMut for Writer<T> {
 }
 
 /// Run the given protocol with the reactor.
-pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'static>(
+pub fn run<
+    P: Protocol<M, Command = C>,
+    M: Decodable + Encodable + Send + Sync + Debug + 'static,
+    C: Debug + Send + Sync + 'static,
+>(
     mut protocol: P,
 ) -> Result<Vec<()>, Error> {
     use std::thread;
 
-    let (events_tx, events_rx): (crossbeam::Sender<Event<M>>, _) = crossbeam::bounded(1);
+    let (events_tx, events_rx): (crossbeam::Sender<Event<M, C>>, _) = crossbeam::bounded(1);
     let (cmds_tx, cmds_rx) = crossbeam::bounded(1);
 
     let mut spawned = Vec::new();
@@ -195,7 +204,8 @@ pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'sta
                             cmds_tx.send(Command::Write(addr, msg)).unwrap();
                         }
                         Output::Connect(addr) => {
-                            let (mut conn, writer) = self::dial::<_, P>(&addr, events_tx.clone())?;
+                            let (mut conn, writer) =
+                                self::dial::<_, _, P>(&addr, events_tx.clone())?;
 
                             debug!("Connected to {}", &addr);
                             trace!("{:#?}", conn);
@@ -231,10 +241,14 @@ pub fn run<P: Protocol<M>, M: Decodable + Encodable + Send + Sync + Debug + 'sta
 }
 
 /// Connect to a peer given a remote address.
-pub fn dial<M: Encodable + Decodable + Send + Sync + Debug + 'static, P: Protocol<M>>(
+pub fn dial<
+    M: Encodable + Decodable + Send + Sync + Debug + 'static,
+    C: Debug + Send + Sync + 'static,
+    P: Protocol<M>,
+>(
     addr: &net::SocketAddr,
-    events_tx: crossbeam::Sender<Event<M>>,
-) -> Result<(Reader<net::TcpStream, M>, Writer<net::TcpStream>), Error> {
+    events_tx: crossbeam::Sender<Event<M, C>>,
+) -> Result<(Reader<net::TcpStream, M, C>, Writer<net::TcpStream>), Error> {
     debug!("Connecting to {}...", &addr);
 
     let sock = net::TcpStream::connect(addr)?;

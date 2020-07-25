@@ -21,7 +21,7 @@ pub enum Link {
 
 /// A protocol event, parametrized over the network message type.
 #[derive(Debug)]
-pub enum Event<M> {
+pub enum Event<M, C> {
     /// New connection with a peer.
     Connected {
         /// Remote peer id.
@@ -39,6 +39,8 @@ pub enum Event<M> {
     Sent(PeerId, usize),
     /// Got an error trying to send or receive from the remote peer.
     Error(PeerId, Error),
+    /// An external command has been received.
+    Command(C),
     /// Nothing has happened in some time.. This event is useful for checking
     /// timeouts or running periodic tasks.
     Idle,
@@ -73,10 +75,13 @@ pub trait Protocol<M> {
     /// How long to wait between sending pings.
     const PING_INTERVAL: LocalDuration;
 
+    /// A command to query or control the protocol.
+    type Command;
+
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     fn initialize(&mut self, time: LocalTime) -> Vec<Output<M>>;
 
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
-    fn step(&mut self, event: Event<M>, time: LocalTime) -> Vec<Output<M>>;
+    fn step(&mut self, event: Event<M, Self::Command>, time: LocalTime) -> Vec<Output<M>>;
 }

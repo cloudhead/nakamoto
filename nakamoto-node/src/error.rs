@@ -3,13 +3,24 @@ use std::io;
 use crossbeam_channel as chan;
 use thiserror::Error;
 
-use crate::node::Command;
+use nakamoto_chain as chain;
+use nakamoto_chain::block::store;
+use nakamoto_p2p as p2p;
+
+use p2p::protocol::bitcoin::Command;
 
 #[derive(Error, Debug)]
 pub enum Error {
     #[error(transparent)]
-    Io(io::Error),
-
+    P2p(#[from] p2p::error::Error),
+    #[error(transparent)]
+    Chain(#[from] chain::block::tree::Error),
+    #[error(transparent)]
+    Io(#[from] io::Error),
+    #[error("Error loading address book: {0}")]
+    AddressBook(io::Error),
+    #[error(transparent)]
+    BlockStore(#[from] store::Error),
     #[error("command channel disconnected")]
     Channel,
 }

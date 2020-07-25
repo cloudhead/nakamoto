@@ -3,3 +3,4 @@ pub mod checkpoints;
 pub mod error;
 pub mod protocol;
 pub mod reactor;
+pub use bitcoin;

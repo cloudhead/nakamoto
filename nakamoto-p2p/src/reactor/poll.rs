@@ -1,6 +1,10 @@
+pub use popol::Waker;
+
 use bitcoin::consensus::encode::Decodable;
 use bitcoin::consensus::encode::{self, Encodable};
 use bitcoin::network::stream_reader::StreamReader;
+
+use crossbeam_channel as chan;
 
 use crate::error::Error;
 use crate::protocol::{Event, Link, Output, Protocol};
@@ -86,7 +90,11 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    fn drain(&mut self, events: &mut VecDeque<Event<M>>, source: &mut popol::Source) {
+    fn drain<C: Send + Sync>(
+        &mut self,
+        events: &mut VecDeque<Event<M, C>>,
+        source: &mut popol::Source,
+    ) -> Result<(), encode::Error> {
         while let Some(msg) = self.queue.pop_front() {
             match self.write(&msg) {
                 Ok(n) => {
@@ -96,28 +104,34 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
                     source.set(popol::interest::WRITE);
                     self.queue.push_front(msg);
 
-                    return;
+                    return Ok(());
                 }
                 Err(err) => {
-                    panic!(err.to_string());
+                    // An unexpected error occured. Push the message back to the front of the
+                    // queue in case we're able to recover from it.
+                    self.queue.push_front(msg);
+
+                    return Err(err);
                 }
             }
         }
         source.unset(popol::interest::WRITE);
+
+        Ok(())
     }
 }
 
-pub struct Reactor<R: Write + Read, M> {
+pub struct Reactor<R: Write + Read, M, C: Send + Sync> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
-    events: VecDeque<Event<M>>,
+    events: VecDeque<Event<M, C>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
 }
 
-impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> {
+impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug, C: Send + Sync> Reactor<R, M, C> {
     pub fn new() -> Result<Self, io::Error> {
         let peers = HashMap::new();
-        let events: VecDeque<Event<M>> = VecDeque::new();
+        let events: VecDeque<Event<M, C>> = VecDeque::new();
 
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
@@ -159,11 +173,14 @@ impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> 
     }
 }
 
-impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpStream, M> {
+impl<M: Decodable + Encodable + Send + Sync + Debug + 'static, C: Send + Sync>
+    Reactor<net::TcpStream, M, C>
+{
     /// Run the given protocol with the reactor.
-    pub fn run<P: Protocol<M>>(
+    pub fn run<P: Protocol<M, Command = C>>(
         &mut self,
         mut protocol: P,
+        commands: chan::Receiver<C>,
         listen_addrs: &[net::SocketAddr],
     ) -> Result<Vec<()>, Error> {
         let listener = self::listen(listen_addrs)?;
@@ -193,16 +210,23 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                 for (source, ev) in events.iter() {
                     match source {
                         Source::Peer(addr) => {
-                            let socket = self.peers.get_mut(&addr).unwrap();
-
                             if ev.errored || ev.invalid || ev.hangup {
                                 // Let the subsequent read fail.
                             }
                             if ev.writable {
                                 let src = self.sources.get_mut(&source).unwrap();
-                                socket.drain(&mut self.events, src);
+                                let socket = self.peers.get_mut(&addr).unwrap();
+
+                                if let Err(err) = socket.drain(&mut self.events, src) {
+                                    error!("{}: Write error: {}", addr, err.to_string());
+
+                                    socket.disconnect().ok();
+                                    self.unregister_peer(*addr);
+                                }
                             }
                             if ev.readable {
+                                let socket = self.peers.get_mut(&addr).unwrap();
+
                                 match socket.read() {
                                     Ok(msg) => {
                                         self.events.push_back(Event::Received(*addr, msg));
@@ -238,7 +262,11 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
 
                             self.register_peer(addr, conn.local_addr()?, conn, Link::Inbound);
                         },
-                        Source::Waker => {}
+                        Source::Waker => {
+                            for cmd in commands.try_iter() {
+                                self.events.push_back(Event::Command(cmd));
+                            }
+                        }
                     }
                 }
             }
@@ -262,7 +290,13 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
                         let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
                         peer.queue.push_back(msg);
-                        peer.drain(&mut self.events, src);
+
+                        if let Err(err) = peer.drain(&mut self.events, src) {
+                            error!("{}: Write error: {}", addr, err.to_string());
+
+                            peer.disconnect().ok();
+                            self.unregister_peer(addr);
+                        }
                     }
                 }
                 Output::Connect(addr) => {
