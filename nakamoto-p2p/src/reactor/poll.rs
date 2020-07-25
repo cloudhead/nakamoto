@@ -13,6 +13,7 @@ use std::io;
 use std::io::prelude::*;
 use std::net;
 use std::os::unix::io::AsRawFd;
+use std::sync::Arc;
 use std::time::SystemTime;
 
 /// Maximum peer-to-peer message size.
@@ -30,6 +31,7 @@ pub struct Socket<R: Read + Write, M> {
 enum Source {
     Peer(net::SocketAddr),
     Listener,
+    Waker,
 }
 
 impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
@@ -107,21 +109,29 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
 pub struct Reactor<R: Write + Read, M> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
-    sources: popol::Sources<Source>,
     events: VecDeque<Event<M>>,
+    sources: popol::Sources<Source>,
+    waker: Arc<popol::Waker>,
 }
 
 impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug> Reactor<R, M> {
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, io::Error> {
         let peers = HashMap::new();
-        let sources = popol::Sources::new();
         let events: VecDeque<Event<M>> = VecDeque::new();
 
-        Self {
+        let mut sources = popol::Sources::new();
+        let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
+
+        Ok(Self {
             peers,
             sources,
             events,
-        }
+            waker,
+        })
+    }
+
+    pub fn waker(&mut self) -> Arc<popol::Waker> {
+        self.waker.clone()
     }
 
     fn register_peer(
@@ -228,6 +238,7 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static> Reactor<net::TcpS
 
                             self.register_peer(addr, conn.local_addr()?, conn, Link::Inbound);
                         },
+                        Source::Waker => {}
                     }
                 }
             }

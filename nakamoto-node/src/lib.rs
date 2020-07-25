@@ -83,7 +83,7 @@ pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<()
     log::debug!("{:?}", address_book);
 
     let protocol = p2p::protocol::Bitcoin::new(cache, address_book, clock, cfg);
-    let mut reactor = p2p::reactor::poll::Reactor::new();
+    let mut reactor = p2p::reactor::poll::Reactor::new()?;
 
     if listen.is_empty() {
         reactor.run(protocol, &[([0, 0, 0, 0], cfg.port()).into()])?;
