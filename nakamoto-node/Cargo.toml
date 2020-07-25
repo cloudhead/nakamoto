@@ -7,5 +7,6 @@ edition = "2018"
 [dependencies]
 nakamoto-p2p = { path = "../nakamoto-p2p" }
 nakamoto-chain = { path = "../nakamoto-chain" }
+crossbeam-channel = { version = "0.4", default-features = false }
 thiserror = "1.0"
 log = "0.4"
