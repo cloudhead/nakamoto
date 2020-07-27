@@ -90,7 +90,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    fn drain<C: Send + Sync>(
+    fn drain<C>(
         &mut self,
         events: &mut VecDeque<Event<M, C>>,
         source: &mut popol::Source,
@@ -121,7 +121,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     }
 }
 
-pub struct Reactor<R: Write + Read, M: Message, C: Send + Sync> {
+pub struct Reactor<R: Write + Read, M: Message, C> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
     events: VecDeque<Event<M, C>>,
     subscriber: chan::Sender<Event<M::Payload, C>>,
@@ -129,9 +129,7 @@ pub struct Reactor<R: Write + Read, M: Message, C: Send + Sync> {
     waker: Arc<popol::Waker>,
 }
 
-impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C: Send + Sync>
-    Reactor<R, M, C>
-{
+impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> Reactor<R, M, C> {
     pub fn new(subscriber: chan::Sender<Event<M::Payload, C>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
         let events: VecDeque<Event<M, C>> = VecDeque::new();
@@ -177,10 +175,8 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C: S
     }
 }
 
-impl<
-        M: Message + Decodable + Encodable + Send + Sync + Debug + 'static,
-        C: Send + Sync + Clone,
-    > Reactor<net::TcpStream, M, C>
+impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
+    Reactor<net::TcpStream, M, C>
 {
     /// Run the given protocol with the reactor.
     pub fn run<P: Protocol<M, Command = C>>(
@@ -349,7 +345,7 @@ impl<
 }
 
 /// Connect to a peer given a remote address.
-pub fn dial<M: Encodable + Decodable + Send + Sync + Debug + 'static, P: Protocol<M>>(
+pub fn dial<M: Message + Encodable + Decodable + Debug, P: Protocol<M>>(
     addr: &net::SocketAddr,
 ) -> Result<net::TcpStream, Error> {
     debug!("Connecting to {}...", &addr);

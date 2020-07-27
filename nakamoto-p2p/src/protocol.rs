@@ -18,7 +18,7 @@ pub enum Link {
 }
 
 /// A message that can be sent to a peer.
-pub trait Message {
+pub trait Message: Send + Sync + 'static {
     /// The message payload.
     type Payload: Clone;
 
