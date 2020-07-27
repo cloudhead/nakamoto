@@ -227,22 +227,29 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static, C: Send + Sync>
                             if ev.readable {
                                 let socket = self.peers.get_mut(&addr).unwrap();
 
-                                match socket.read() {
-                                    Ok(msg) => {
-                                        self.events.push_back(Event::Received(*addr, msg));
-                                    }
-                                    Err(encode::Error::Io(err))
-                                        if err.kind() == io::ErrorKind::WouldBlock =>
-                                    {
-                                        break;
-                                    }
-                                    Err(err) => {
-                                        error!("{}: Read error: {}", addr, err.to_string());
+                                // Nb. Normally, since `poll`, which `popol` is based on, is
+                                // level-triggered, we would be notified again if there was
+                                // still data to be read on the socket. However, since our
+                                // socket abstraction actually returns *decoded messages*, this
+                                // doesn't apply. Thus, we have to loop to not miss messages.
+                                loop {
+                                    match socket.read() {
+                                        Ok(msg) => {
+                                            self.events.push_back(Event::Received(*addr, msg));
+                                        }
+                                        Err(encode::Error::Io(err))
+                                            if err.kind() == io::ErrorKind::WouldBlock =>
+                                        {
+                                            break;
+                                        }
+                                        Err(err) => {
+                                            error!("{}: Read error: {}", addr, err.to_string());
 
-                                        socket.disconnect().ok();
-                                        self.unregister_peer(*addr);
+                                            socket.disconnect().ok();
+                                            self.unregister_peer(*addr);
 
-                                        break;
+                                            break;
+                                        }
                                     }
                                 }
                             }
