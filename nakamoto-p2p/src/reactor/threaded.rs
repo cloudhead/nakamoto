@@ -73,12 +73,10 @@ impl<
             match self.read() {
                 Ok(msg) => self.events.send(Event::Received(self.address, msg))?,
                 Err(err) => {
-                    self.events.send(Event::Error(self.address, err.into()))?;
-                    break;
+                    panic!(err);
                 }
             }
         }
-        Ok(())
     }
 
     pub fn read(&mut self) -> Result<M, encode::Error> {
@@ -140,7 +138,7 @@ impl<T: Write> Writer<T> {
                             events.send(Event::Sent(addr, nbytes))?;
                         }
                         Err(err) => {
-                            events.send(Event::Error(addr, err))?;
+                            panic!(err);
                         }
                     }
                 }

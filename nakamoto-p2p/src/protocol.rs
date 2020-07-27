@@ -3,8 +3,6 @@ pub use self::bitcoin::Bitcoin;
 
 use std::net;
 
-use crate::error::Error;
-
 use nakamoto_chain::block::time::{LocalDuration, LocalTime};
 
 /// Identifies a peer.
@@ -19,8 +17,17 @@ pub enum Link {
     Outbound,
 }
 
+/// A message that can be sent to a peer.
+pub trait Message {
+    /// The message payload.
+    type Payload: Clone;
+
+    /// Retrieve the message payload.
+    fn payload(&self) -> &Self::Payload;
+}
+
 /// A protocol event, parametrized over the network message type.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event<M, C> {
     /// New connection with a peer.
     Connected {
@@ -37,13 +44,34 @@ pub enum Event<M, C> {
     Received(PeerId, M),
     /// Sent a message to a remote peer, of the given size.
     Sent(PeerId, usize),
-    /// Got an error trying to send or receive from the remote peer.
-    Error(PeerId, Error),
     /// An external command has been received.
     Command(C),
     /// Nothing has happened in some time.. This event is useful for checking
     /// timeouts or running periodic tasks.
     Idle,
+}
+
+impl<M: Message, C: Clone> Event<M, C> {
+    pub fn payload(&self) -> Event<M::Payload, C> {
+        use Event::*;
+
+        match self {
+            Connected {
+                addr,
+                local_addr,
+                link,
+            } => Connected {
+                addr: addr.clone(),
+                local_addr: local_addr.clone(),
+                link: link.clone(),
+            },
+            Disconnected(p) => Disconnected(p.clone()),
+            Received(p, m) => Received(p.clone(), Message::payload(m).clone()),
+            Sent(p, n) => Sent(p.clone(), n.clone()),
+            Command(c) => Command(c.clone()),
+            Idle => Idle,
+        }
+    }
 }
 
 /// Output of a state transition (step) of the `Protocol` state machine.

@@ -1,6 +1,6 @@
 use crossbeam_channel as chan;
 
-use nakamoto_chain::block::{BlockHeader, Transaction};
+use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Transaction};
 
 use crate::error::Error;
 
@@ -8,6 +8,8 @@ use crate::error::Error;
 pub trait Handle {
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<BlockHeader, Error>;
+    /// Get a full block from the network.
+    fn get_block(&self, hash: &BlockHash) -> Result<Block, Error>;
     /// Submit a transaction to the network.
     fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
     /// Return a channel to wait for a given number of peers to be connected.

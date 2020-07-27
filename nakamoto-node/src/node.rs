@@ -9,12 +9,14 @@ use crossbeam_channel as chan;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store::{self, Store};
 use nakamoto_chain::block::time::AdjustedTime;
-use nakamoto_chain::block::{BlockHeader, Transaction};
+use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Transaction};
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
-use nakamoto_p2p::bitcoin::network::message::RawNetworkMessage;
+use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
 use nakamoto_p2p::protocol::bitcoin::Command;
 use nakamoto_p2p::protocol::bitcoin::{self, Network};
+use nakamoto_p2p::protocol::Event;
 use nakamoto_p2p::reactor::poll::Waker;
 
 use crate::error::Error;
@@ -32,6 +34,7 @@ pub struct NodeConfig {
 pub struct Node {
     commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
+    events: chan::Receiver<Event<NetworkMessage, Command>>,
     config: NodeConfig,
     reactor: nakamoto_p2p::reactor::poll::Reactor<net::TcpStream, RawNetworkMessage, Command>,
 }
@@ -39,11 +42,13 @@ pub struct Node {
 impl Node {
     /// Create a new node.
     pub fn new(config: NodeConfig) -> Result<Self, Error> {
-        let reactor = p2p::reactor::poll::Reactor::new()?;
         let (handle, commands) = chan::unbounded::<Command>();
+        let (subscriber, events) = chan::unbounded::<Event<NetworkMessage, Command>>();
+        let reactor = p2p::reactor::poll::Reactor::new(subscriber)?;
 
         Ok(Self {
             commands,
+            events,
             handle,
             reactor,
             config,
@@ -110,6 +115,7 @@ impl Node {
         NodeHandle {
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
+            events: self.events.clone(),
         }
     }
 }
@@ -117,6 +123,7 @@ impl Node {
 /// An instance of [`Handle`] for [`Node`].
 pub struct NodeHandle {
     commands: chan::Sender<Command>,
+    events: chan::Receiver<Event<NetworkMessage, Command>>,
     waker: Arc<Waker>,
 }
 
@@ -127,6 +134,26 @@ impl Handle for NodeHandle {
         self.waker.wake()?;
 
         Ok(receive.recv()?)
+    }
+
+    fn get_block(&self, hash: &BlockHash) -> Result<Block, Error> {
+        let events = self.events.clone();
+
+        // TODO: Timeouts
+        // TODO: Re-try with different peer
+        self.commands.send(Command::GetBlock(*hash))?;
+        self.waker.wake()?;
+
+        for event in events.try_iter() {
+            match event {
+                Event::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
+                    return Ok(blk);
+                }
+                _ => {}
+            }
+        }
+
+        todo!();
     }
 
     fn submit_transaction(&self, _tx: Transaction) -> Result<(), Error> {

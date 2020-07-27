@@ -7,7 +7,7 @@ use bitcoin::network::stream_reader::StreamReader;
 use crossbeam_channel as chan;
 
 use crate::error::Error;
-use crate::protocol::{Event, Link, Output, Protocol};
+use crate::protocol::{Event, Link, Message, Output, Protocol};
 
 use log::*;
 
@@ -121,15 +121,18 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     }
 }
 
-pub struct Reactor<R: Write + Read, M, C: Send + Sync> {
+pub struct Reactor<R: Write + Read, M: Message, C: Send + Sync> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
     events: VecDeque<Event<M, C>>,
+    subscriber: chan::Sender<Event<M::Payload, C>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
 }
 
-impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug, C: Send + Sync> Reactor<R, M, C> {
-    pub fn new() -> Result<Self, io::Error> {
+impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C: Send + Sync>
+    Reactor<R, M, C>
+{
+    pub fn new(subscriber: chan::Sender<Event<M::Payload, C>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
         let events: VecDeque<Event<M, C>> = VecDeque::new();
 
@@ -140,6 +143,7 @@ impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug, C: Send + Sync
             peers,
             sources,
             events,
+            subscriber,
             waker,
         })
     }
@@ -173,8 +177,10 @@ impl<R: Write + Read + AsRawFd, M: Encodable + Decodable + Debug, C: Send + Sync
     }
 }
 
-impl<M: Decodable + Encodable + Send + Sync + Debug + 'static, C: Send + Sync>
-    Reactor<net::TcpStream, M, C>
+impl<
+        M: Message + Decodable + Encodable + Send + Sync + Debug + 'static,
+        C: Send + Sync + Clone,
+    > Reactor<net::TcpStream, M, C>
 {
     /// Run the given protocol with the reactor.
     pub fn run<P: Protocol<M, Command = C>>(
@@ -247,12 +253,15 @@ impl<M: Decodable + Encodable + Send + Sync + Debug + 'static, C: Send + Sync>
             let local_time = SystemTime::now().into();
 
             while let Some(event) = self.events.pop_front() {
+                self.subscriber.try_send(event.payload()).unwrap(); // FIXME
+
                 let outs = protocol.step(event, local_time);
                 self.process::<P>(outs)?;
             }
         }
     }
 
+    /// Process protocol state machine outputs.
     fn process<P: Protocol<M>>(&mut self, outputs: Vec<Output<M>>) -> Result<(), Error> {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.

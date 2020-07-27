@@ -3,7 +3,7 @@ pub mod store;
 pub mod time;
 pub mod tree;
 
-pub use bitcoin::blockdata::block::BlockHeader;
+pub use bitcoin::blockdata::block::{Block, BlockHeader};
 pub use bitcoin::blockdata::transaction::Transaction;
 pub use bitcoin::hash_types::BlockHash;
 

@@ -5,7 +5,7 @@ pub mod network;
 pub use network::Network;
 
 use crate::address_book::AddressBook;
-use crate::protocol::{Event, Link, Output, PeerId, Protocol};
+use crate::protocol::{Event, Link, Message, Output, PeerId, Protocol};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -42,9 +42,18 @@ pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 pub type TimeOffset = i64;
 
 /// A command or request that can be sent to the protocol.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Command {
     GetTip(chan::Sender<BlockHeader>),
+    GetBlock(BlockHash),
+}
+
+impl Message for RawNetworkMessage {
+    type Payload = NetworkMessage;
+
+    fn payload(&self) -> &Self::Payload {
+        &self.payload
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -411,20 +420,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
             Event::Sent(_addr, _msg) => {}
-            Event::Error(addr, err) => {
-                error!("{}: Error: {}", addr, err);
-
-                self.ready.remove(&addr);
-                self.connected.remove(&addr);
-                self.disconnected.insert(addr);
-                // TODO: Protocol shouldn't handle socket and io errors directly, because it
-                // needs to understand all kinds of socket errors then, even though it's agnostic
-                // to the transport. This doesn't make sense. What should happen is that
-                // transport errors should be handled at the transport (or reactor) layer. The "protocol"
-                // doesn't decide on what to do about transport errors. It _may_ receive a higher
-                // level event like `Disconnected`, or an opaque `Error`, just to keep track of
-                // peer errors, scores etc.
-            }
             Event::Command(_cmd) => {
                 todo!();
             }
