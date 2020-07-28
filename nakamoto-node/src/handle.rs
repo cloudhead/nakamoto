@@ -1,8 +1,29 @@
 use crossbeam_channel as chan;
+use thiserror::Error;
 
 use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Transaction};
 
-use crate::error::Error;
+#[derive(Error, Debug)]
+pub enum Error {
+    #[error("command channel disconnected")]
+    Disconnected,
+    #[error("the operation timed out")]
+    Timeout,
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
+}
+
+impl From<chan::RecvError> for Error {
+    fn from(_: chan::RecvError) -> Self {
+        Self::Disconnected
+    }
+}
+
+impl<T> From<chan::SendError<T>> for Error {
+    fn from(_: chan::SendError<T>) -> Self {
+        Self::Disconnected
+    }
+}
 
 /// A handle for communicating with a node process.
 pub trait Handle {

@@ -2,7 +2,7 @@ use std::io;
 use std::net;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::SystemTime;
+use std::time::{self, SystemTime};
 
 use crossbeam_channel as chan;
 
@@ -20,7 +20,7 @@ use nakamoto_p2p::protocol::Event;
 use nakamoto_p2p::reactor::poll::Waker;
 
 use crate::error::Error;
-use crate::handle::Handle;
+use crate::handle::{self, Handle};
 
 /// Node configuration.
 pub struct NodeConfig {
@@ -28,6 +28,7 @@ pub struct NodeConfig {
     pub listen: Vec<net::SocketAddr>,
     pub network: Network,
     pub address_book: AddressBook,
+    pub timeout: time::Duration,
 }
 
 /// A light-node process.
@@ -116,6 +117,7 @@ impl Node {
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
             events: self.events.clone(),
+            timeout: self.config.timeout,
         }
     }
 }
@@ -125,50 +127,87 @@ pub struct NodeHandle {
     commands: chan::Sender<Command>,
     events: chan::Receiver<Event<NetworkMessage, Command>>,
     waker: Arc<Waker>,
+    timeout: time::Duration,
+}
+
+impl NodeHandle {
+    /// Set the timeout for operations that wait on the network.
+    pub fn set_timeout(&mut self, timeout: time::Duration) {
+        self.timeout = timeout;
+    }
+
+    /// Send a command to the command channel, and wake up the event loop.
+    fn command(&self, cmd: Command) -> Result<(), handle::Error> {
+        self.commands.send(cmd)?;
+        self.waker.wake()?;
+
+        Ok(())
+    }
+
+    /// Subscribe to the event feed, and wait for the given function to return something,
+    /// or timeout if the specified amount of time has elapsed.
+    fn wait_for<F, T>(&self, f: F) -> Result<T, handle::Error>
+    where
+        F: Fn(Event<NetworkMessage, Command>) -> Option<T>,
+    {
+        let start = time::Instant::now();
+        let events = self.events.clone();
+
+        loop {
+            if let Some(timeout) = self.timeout.checked_sub(start.elapsed()) {
+                match events.recv_timeout(timeout) {
+                    Ok(event) => {
+                        if let Some(t) = f(event) {
+                            return Ok(t);
+                        }
+                    }
+                    Err(chan::RecvTimeoutError::Disconnected) => {
+                        return Err(handle::Error::Disconnected);
+                    }
+                    Err(chan::RecvTimeoutError::Timeout) => {
+                        // Keep trying until our timeout reaches zero.
+                        continue;
+                    }
+                }
+            } else {
+                return Err(handle::Error::Timeout);
+            }
+        }
+    }
 }
 
 impl Handle for NodeHandle {
-    fn get_tip(&self) -> Result<BlockHeader, Error> {
+    fn get_tip(&self) -> Result<BlockHeader, handle::Error> {
         let (transmit, receive) = chan::bounded::<BlockHeader>(1);
-        self.commands.send(Command::GetTip(transmit))?;
-        self.waker.wake()?;
+        self.command(Command::GetTip(transmit))?;
 
         Ok(receive.recv()?)
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<Block, Error> {
-        let events = self.events.clone();
+    fn get_block(&self, hash: &BlockHash) -> Result<Block, handle::Error> {
+        self.command(Command::GetBlock(*hash))?;
 
-        // TODO: Timeouts
-        // TODO: Re-try with different peer
-        self.commands.send(Command::GetBlock(*hash))?;
-        self.waker.wake()?;
-
-        for event in events.try_iter() {
-            match event {
-                Event::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
-                    return Ok(blk);
-                }
-                _ => {}
+        self.wait_for(|e| match e {
+            Event::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
+                Some(blk)
             }
-        }
-
-        todo!();
+            _ => None,
+        })
     }
 
-    fn submit_transaction(&self, _tx: Transaction) -> Result<(), Error> {
+    fn submit_transaction(&self, _tx: Transaction) -> Result<(), handle::Error> {
         todo!()
     }
 
-    fn wait_for_peers(&self, _count: usize) -> Result<chan::Receiver<()>, Error> {
+    fn wait_for_peers(&self, _count: usize) -> Result<chan::Receiver<()>, handle::Error> {
         todo!()
     }
 
-    fn wait_for_ready(&self) -> Result<chan::Receiver<()>, Error> {
+    fn wait_for_ready(&self) -> Result<chan::Receiver<()>, handle::Error> {
         todo!()
     }
 
-    fn shutdown(self) -> Result<(), Error> {
+    fn shutdown(self) -> Result<(), handle::Error> {
         todo!()
     }
 }

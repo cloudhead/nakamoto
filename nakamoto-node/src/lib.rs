@@ -3,6 +3,7 @@ pub mod handle;
 pub mod node;
 
 use std::net;
+use std::time;
 
 use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::protocol::bitcoin::Network;
@@ -32,6 +33,7 @@ pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<()
         network,
         listen: listen.to_vec(),
         address_book,
+        timeout: time::Duration::from_secs(30),
     })?;
 
     node.run()
