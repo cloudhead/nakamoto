@@ -31,7 +31,7 @@ pub trait Clock {
 }
 
 /// Local time.
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Ord, PartialOrd)]
 pub struct LocalTime {
     /// Milliseconds since Epoch.
     millis: u128,
@@ -50,6 +50,11 @@ impl Default for LocalTime {
 }
 
 impl LocalTime {
+    /// Construct a local time from the current system time.
+    pub fn now() -> Self {
+        Self::from(SystemTime::now())
+    }
+
     /// Construct a local time from whole seconds.
     pub const fn from_secs(secs: u64) -> Self {
         Self {
@@ -114,6 +119,11 @@ impl LocalDuration {
     /// Create a new duration from whole seconds.
     pub const fn from_secs(secs: u64) -> Self {
         Self(secs as u128 * 1000)
+    }
+
+    /// Construct a new duration from milliseconds.
+    pub const fn from_millis(millis: u128) -> Self {
+        Self(millis)
     }
 }
 

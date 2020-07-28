@@ -6,8 +6,11 @@ use bitcoin::network::stream_reader::StreamReader;
 
 use crossbeam_channel as chan;
 
+use nakamoto_chain::block::time::LocalTime;
+
 use crate::error::Error;
 use crate::protocol::{Event, Link, Message, Output, Protocol};
+use crate::reactor::time::TimeoutManager;
 
 use log::*;
 
@@ -127,6 +130,7 @@ pub struct Reactor<R: Write + Read, M: Message, C> {
     subscriber: chan::Sender<Event<M::Payload, C>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
+    timeouts: TimeoutManager<net::SocketAddr>,
 }
 
 impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> Reactor<R, M, C> {
@@ -136,6 +140,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> R
 
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
+        let timeouts = TimeoutManager::new();
 
         Ok(Self {
             peers,
@@ -143,6 +148,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> R
             events,
             subscriber,
             waker,
+            timeouts,
         })
     }
 
@@ -192,19 +198,32 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
         info!("Listening on {}", listener.local_addr()?);
         info!("Initializing protocol..");
 
-        let outs = protocol.initialize(SystemTime::now().into());
-        self.process::<P>(outs)?;
+        {
+            let local_time = SystemTime::now().into();
+            let outs = protocol.initialize(local_time);
+            self.process::<P>(outs, local_time)?;
+        }
 
+        // I/O readiness events populated by `popol::Sources::wait_timeout`.
         let mut events = popol::Events::new();
+        // Timeouts populated by `TimeoutManager::wake`.
+        let mut timeouts = Vec::with_capacity(32);
 
         loop {
-            let result = self
-                .sources
-                .wait_timeout(&mut events, P::PING_INTERVAL.into());
+            let timeout = self.timeouts.next().unwrap_or(P::PING_INTERVAL).into();
+            let result = self.sources.wait_timeout(&mut events, timeout);
 
             if let Err(err) = result {
                 if err.kind() == io::ErrorKind::TimedOut {
-                    self.events.push_back(Event::Idle);
+                    self.timeouts.wake(SystemTime::now().into(), &mut timeouts);
+
+                    if !timeouts.is_empty() {
+                        for peer in timeouts.drain(..) {
+                            self.events.push_back(Event::Timeout(peer));
+                        }
+                    } else {
+                        self.events.push_back(Event::Idle);
+                    }
                 } else {
                     return Err(err.into());
                 }
@@ -252,13 +271,17 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
                 self.subscriber.try_send(event.payload()).unwrap(); // FIXME
 
                 let outs = protocol.step(event, local_time);
-                self.process::<P>(outs)?;
+                self.process::<P>(outs, local_time)?;
             }
         }
     }
 
     /// Process protocol state machine outputs.
-    fn process<P: Protocol<M>>(&mut self, outputs: Vec<Output<M>>) -> Result<(), Error> {
+    fn process<P: Protocol<M>>(
+        &mut self,
+        outputs: Vec<Output<M>>,
+        local_time: LocalTime,
+    ) -> Result<(), Error> {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
         for out in outputs.into_iter() {
@@ -296,6 +319,9 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
 
                         self.unregister_peer(addr);
                     }
+                }
+                Output::SetTimeout(addr, timeout) => {
+                    self.timeouts.register(addr, local_time + timeout);
                 }
             }
         }
