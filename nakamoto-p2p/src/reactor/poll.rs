@@ -211,10 +211,46 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
 
         loop {
             let timeout = self.timeouts.next().unwrap_or(P::PING_INTERVAL).into();
-            let result = self.sources.wait_timeout(&mut events, timeout);
 
-            if let Err(err) = result {
-                if err.kind() == io::ErrorKind::TimedOut {
+            match self.sources.wait_timeout(&mut events, timeout) {
+                Ok(()) => {
+                    for (source, ev) in events.iter() {
+                        match source {
+                            Source::Peer(addr) => {
+                                if ev.errored || ev.invalid || ev.hangup {
+                                    // Let the subsequent read fail.
+                                }
+                                if ev.writable {
+                                    self.handle_writable(&addr, source);
+                                }
+                                if ev.readable {
+                                    self.handle_readable(&addr);
+                                }
+                            }
+                            Source::Listener => loop {
+                                let (conn, addr) = match listener.accept() {
+                                    Ok((conn, addr)) => (conn, addr),
+                                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                        break;
+                                    }
+                                    Err(e) => {
+                                        error!("Accept error: {}", e.to_string());
+                                        break;
+                                    }
+                                };
+                                conn.set_nonblocking(true)?;
+
+                                self.register_peer(addr, conn.local_addr()?, conn, Link::Inbound);
+                            },
+                            Source::Waker => {
+                                for cmd in commands.try_iter() {
+                                    self.events.push_back(Event::Command(cmd));
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(err) if err.kind() == io::ErrorKind::TimedOut => {
                     self.timeouts.wake(SystemTime::now().into(), &mut timeouts);
 
                     if !timeouts.is_empty() {
@@ -224,45 +260,8 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
                     } else {
                         self.events.push_back(Event::Idle);
                     }
-                } else {
-                    return Err(err.into());
                 }
-            } else {
-                for (source, ev) in events.iter() {
-                    match source {
-                        Source::Peer(addr) => {
-                            if ev.errored || ev.invalid || ev.hangup {
-                                // Let the subsequent read fail.
-                            }
-                            if ev.writable {
-                                self.handle_writable(&addr, source);
-                            }
-                            if ev.readable {
-                                self.handle_readable(&addr);
-                            }
-                        }
-                        Source::Listener => loop {
-                            let (conn, addr) = match listener.accept() {
-                                Ok((conn, addr)) => (conn, addr),
-                                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                    break;
-                                }
-                                Err(e) => {
-                                    error!("Accept error: {}", e.to_string());
-                                    break;
-                                }
-                            };
-                            conn.set_nonblocking(true)?;
-
-                            self.register_peer(addr, conn.local_addr()?, conn, Link::Inbound);
-                        },
-                        Source::Waker => {
-                            for cmd in commands.try_iter() {
-                                self.events.push_back(Event::Command(cmd));
-                            }
-                        }
-                    }
-                }
+                Err(err) => return Err(err.into()),
             }
 
             let local_time = SystemTime::now().into();
