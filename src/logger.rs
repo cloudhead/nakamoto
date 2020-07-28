@@ -15,7 +15,7 @@ impl Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let target = if record.target().len() > 0 {
+            let target = if !record.target().is_empty() {
                 record.target()
             } else {
                 record.module_path().unwrap_or_default()
@@ -36,9 +36,9 @@ impl Log for Logger {
                     Level::Trace => record.level().to_string().white().dimmed(),
                 };
 
-                write!(
+                writeln!(
                     stream,
-                    "{} {:<5} {} {}\n",
+                    "{} {:<5} {} {}",
                     Local::now()
                         .to_rfc3339_opts(SecondsFormat::Millis, true)
                         .white(),

@@ -6,7 +6,7 @@ use std::net;
 use std::ops::Deref;
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct AddressBook {
     addrs: Vec<net::SocketAddr>,
 }

@@ -25,9 +25,8 @@ pub mod headers {
     use super::*;
 
     lazy_static! {
-        pub static ref PATH: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("data/headers.bin")
-            .into();
+        pub static ref PATH: PathBuf =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("data/headers.bin");
     }
 }
 
@@ -46,7 +45,7 @@ pub mod logger {
 
         fn log(&self, record: &Record) {
             if self.enabled(record.metadata()) {
-                let target = if record.target().len() > 0 {
+                let target = if !record.target().is_empty() {
                     record.target()
                 } else {
                     record.module_path().unwrap_or_default()

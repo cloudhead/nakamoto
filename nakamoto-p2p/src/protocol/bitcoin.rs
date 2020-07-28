@@ -773,19 +773,17 @@ impl<T: BlockTree> Bitcoin<T> {
         let mut best_block = None;
 
         for i in &inv {
-            match i {
-                Inventory::Block(hash) => {
-                    // TODO: Update block availability for this peer.
-                    if !self.tree.is_known(hash) {
-                        debug!("{}: Discovered new block: {}", addr, &hash);
-                        // The final block hash in the inventory should be the highest. Use
-                        // that one for a `getheaders` call.
-                        best_block = Some(hash);
-                    }
+            if let Inventory::Block(hash) = i {
+                // TODO: Update block availability for this peer.
+                if !self.tree.is_known(hash) {
+                    debug!("{}: Discovered new block: {}", addr, &hash);
+                    // The final block hash in the inventory should be the highest. Use
+                    // that one for a `getheaders` call.
+                    best_block = Some(hash);
                 }
-                _ => {}
             }
         }
+
         if let Some(stop_hash) = best_block {
             vec![Output::Message(
                 addr,
