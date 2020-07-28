@@ -49,6 +49,8 @@ pub enum Event<M, C> {
     /// Nothing has happened in some time.. This event is useful for checking
     /// timeouts or running periodic tasks.
     Idle,
+    /// A timeout on a peer has been reached.
+    Timeout(PeerId),
 }
 
 impl<M: Message, C: Clone> Event<M, C> {
@@ -70,6 +72,7 @@ impl<M: Message, C: Clone> Event<M, C> {
             Sent(p, n) => Sent(p.clone(), n.clone()),
             Command(c) => Command(c.clone()),
             Idle => Idle,
+            Timeout(p) => Timeout(p.clone()),
         }
     }
 }
@@ -83,6 +86,8 @@ pub enum Output<M> {
     Connect(PeerId),
     /// Disconnect from a peer.
     Disconnect(PeerId),
+    /// Set a timeout associated with a peer.
+    SetTimeout(PeerId, LocalDuration),
 }
 
 impl<M> Output<M> {
@@ -91,6 +96,7 @@ impl<M> Output<M> {
             Self::Message(addr, _) => *addr,
             Self::Connect(addr) => *addr,
             Self::Disconnect(addr) => *addr,
+            Self::SetTimeout(addr, _) => *addr,
         }
     }
 }

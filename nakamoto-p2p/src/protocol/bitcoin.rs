@@ -423,6 +423,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             Event::Command(_cmd) => {
                 todo!();
             }
+            Event::Timeout(_addr) => {
+                todo!();
+            }
             Event::Idle => {
                 let now = self.clock.local_time();
                 let mut disconnect = Vec::new();
@@ -511,6 +514,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                     Output::Disconnect(addr)
                 }
+                Output::SetTimeout(addr, t) => Output::SetTimeout(addr, t),
             })
             .collect()
     }
