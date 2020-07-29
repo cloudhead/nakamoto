@@ -1,3 +1,5 @@
+//! Nakamoto is a high-assurance Bitcoin light-client library and daemon.
+
 #[cfg(feature = "nakamoto-chain")]
 pub use nakamoto_chain as chain;
 #[cfg(feature = "nakamoto-daemon")]

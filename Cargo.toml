@@ -1,5 +1,8 @@
 [package]
 name = "nakamoto"
+description = "A high-assurance Bitcoin light-client"
+documentation = "https://docs.rs/nakamoto"
+repository = "https://github.com/cloudhead/nakamoto"
 readme = "README.md"
 license = "MIT"
 version = "0.1.0"
@@ -15,9 +18,12 @@ members = [
   "nakamoto-daemon",
 ]
 
+[features]
+default = ["nakamoto-node", "nakamoto-chain", "nakamoto-p2p"]
+
 [dependencies]
-nakamoto-node = { path = "./nakamoto-node", optional = true }
-nakamoto-daemon = { path = "./nakamoto-daemon", optional = true }
-nakamoto-chain = { path = "./nakamoto-chain", optional = true }
-nakamoto-p2p = { path = "./nakamoto-p2p", optional = true }
-nakamoto-test = { path = "./nakamoto-test", optional = true }
+nakamoto-node = { version = "0.1.0", path = "./nakamoto-node", optional = true }
+nakamoto-daemon = { version = "0.1.0", path = "./nakamoto-daemon", optional = true }
+nakamoto-chain = { version = "0.1.0", path = "./nakamoto-chain", optional = true }
+nakamoto-p2p = { version = "0.1.0", path = "./nakamoto-p2p", optional = true }
+nakamoto-test = { version = "0.1.0", path = "./nakamoto-test", optional = true }
