@@ -286,6 +286,8 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
             match out {
                 Output::Message(addr, msg) => {
                     if let Some(peer) = self.peers.get_mut(&addr) {
+                        debug!("{}: Sending {:?}..", addr, msg.display());
+
                         let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
                         peer.queue.push_back(msg);
@@ -299,6 +301,8 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
                     }
                 }
                 Output::Connect(addr) => {
+                    debug!("{}: Connecting..", addr);
+
                     let stream = self::dial::<_, P>(&addr)?;
                     let local_addr = stream.local_addr()?;
                     let addr = stream.peer_addr()?;
@@ -309,6 +313,8 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
                 }
                 Output::Disconnect(addr) => {
                     if let Some(peer) = self.peers.get(&addr) {
+                        debug!("{}: Disconnecting..", addr);
+
                         // Shutdown the connection, ignoring any potential errors.
                         // If the socket was already disconnected, this will yield
                         // an error that is safe to ignore (`ENOTCONN`). The other

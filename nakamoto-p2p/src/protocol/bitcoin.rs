@@ -55,6 +55,10 @@ impl Message for RawNetworkMessage {
     fn payload(&self) -> &Self::Payload {
         &self.payload
     }
+
+    fn display(&self) -> &'static str {
+        self.payload.cmd()
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -500,29 +504,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
         }
-
         outbound
-            .into_iter()
-            .map(|out| match out {
-                Output::Message(addr, msg) => {
-                    debug!("{}: Sending {:?}", addr, msg.cmd());
-
-                    Output::Message(addr, msg)
-                }
-                Output::Connect(addr) => {
-                    debug!("{}: Connecting..", addr);
-
-                    Output::Connect(addr)
-                }
-                Output::Disconnect(addr) => {
-                    debug!("{}: Disconnecting..", addr);
-
-                    Output::Disconnect(addr)
-                }
-                Output::SetTimeout(addr, t) => Output::SetTimeout(addr, t),
-                Output::Event(event) => Output::Event(event),
-            })
-            .collect()
     }
 }
 
@@ -913,6 +895,12 @@ impl<T: BlockTree> Bitcoin<T> {
         match input {
             Input::Connected { addr, .. } => {
                 outbound.push(Output::Event(Event::Connected(*addr)));
+            }
+            Input::Disconnected(addr) => {
+                outbound.push(Output::Event(Event::Disconnected(*addr)));
+            }
+            Input::Received(addr, msg) => {
+                outbound.push(Output::Event(Event::Received(*addr, msg.payload.clone())));
             }
             _ => {}
         }

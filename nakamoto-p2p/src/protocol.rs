@@ -1,7 +1,9 @@
 pub mod bitcoin;
 pub use self::bitcoin::Bitcoin;
+
 use crate::event::Event;
 
+use std::fmt::Debug;
 use std::net;
 
 use nakamoto_chain::block::time::{LocalDuration, LocalTime};
@@ -25,6 +27,8 @@ pub trait Message: Send + Sync + 'static {
 
     /// Retrieve the message payload.
     fn payload(&self) -> &Self::Payload;
+    /// Display the message.
+    fn display(&self) -> &'static str;
 }
 
 /// A protocol input event, parametrized over the network message type.
