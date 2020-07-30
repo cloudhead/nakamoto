@@ -1,5 +1,6 @@
 pub mod bitcoin;
 pub use self::bitcoin::Bitcoin;
+use crate::event::Event;
 
 use std::net;
 
@@ -24,18 +25,6 @@ pub trait Message: Send + Sync + 'static {
 
     /// Retrieve the message payload.
     fn payload(&self) -> &Self::Payload;
-}
-
-pub enum Notification {
-    /// The node has finished syncing and is ready to accept
-    /// connections and process commands.
-    Ready,
-    /// A peer is connected and ready to accept messages.
-    /// This event is triggered after the peer handshake
-    /// has successfully completed.
-    Connected(PeerId),
-    /// A peer has been disconnected.
-    Disconnected(PeerId),
 }
 
 /// A protocol input event, parametrized over the network message type.
@@ -92,7 +81,7 @@ impl<M: Message, C: Clone> Input<M, C> {
 
 /// Output of a state transition (step) of the `Protocol` state machine.
 #[derive(Debug, Eq, PartialEq)]
-pub enum Output<M> {
+pub enum Output<M: Message> {
     /// Send a message to a peer.
     Message(PeerId, M),
     /// Connect to a peer.
@@ -101,22 +90,25 @@ pub enum Output<M> {
     Disconnect(PeerId),
     /// Set a timeout associated with a peer.
     SetTimeout(PeerId, LocalDuration),
+    /// An event has occured.
+    Event(Event<M::Payload>),
 }
 
-impl<M> Output<M> {
-    pub fn address(&self) -> PeerId {
+impl<M: Message> Output<M> {
+    pub fn address(&self) -> Option<PeerId> {
         match self {
-            Self::Message(addr, _) => *addr,
-            Self::Connect(addr) => *addr,
-            Self::Disconnect(addr) => *addr,
-            Self::SetTimeout(addr, _) => *addr,
+            Self::Message(addr, _) => Some(*addr),
+            Self::Connect(addr) => Some(*addr),
+            Self::Disconnect(addr) => Some(*addr),
+            Self::SetTimeout(addr, _) => Some(*addr),
+            Self::Event(_) => None,
         }
     }
 }
 
 /// A finite-state machine that can advance one step at a time, given an input event.
 /// Parametrized over the message type.
-pub trait Protocol<M> {
+pub trait Protocol<M: Message> {
     /// Duration of inactivity before timing out a peer.
     const IDLE_TIMEOUT: LocalDuration;
     /// How long to wait between sending pings.

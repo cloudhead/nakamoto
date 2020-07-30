@@ -377,14 +377,14 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
     fn step(
         &mut self,
-        event: Input<RawNetworkMessage, Command>,
+        input: Input<RawNetworkMessage, Command>,
         time: LocalTime,
     ) -> Vec<Output<RawNetworkMessage>> {
         let mut outbound = Vec::new();
 
         self.clock.set_local_time(time);
 
-        match event {
+        match input {
             Input::Connected {
                 addr,
                 local_addr,
@@ -396,10 +396,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     Link::Outbound => {
                         info!("{}: Peer connected (outbound)", &addr);
 
-                        outbound.push(Output::Message(
-                            addr,
-                            self.version(addr, local_addr, self.tree.height()),
-                        ));
+                        outbound.push(
+                            self.message(addr, self.version(addr, local_addr, self.tree.height())),
+                        );
                     }
                     Link::Inbound => {
                         info!("{}: Peer connected (inbound)", &addr);
@@ -455,7 +454,15 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 disconnect.push(peer.address);
                             }
                         } else if now - last_active >= Self::PING_INTERVAL {
-                            outbound.push(Output::Message(peer.address, peer.ping(now)));
+                            let ping = peer.ping(now);
+
+                            outbound.push(Output::Message(
+                                peer.address,
+                                RawNetworkMessage {
+                                    magic: self.config.network.magic(),
+                                    payload: ping,
+                                },
+                            ));
                         }
                     }
                 }
@@ -466,7 +473,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             }
         };
 
-        // TODO: Should be triggered when idle, potentially by an `Idle` event.
+        // TODO: Should be triggered when idle, potentially by an `Idle` input.
         match self.state {
             State::Syncing(_) => {}
             State::Connecting | State::Synced => {
@@ -483,7 +490,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let p = *self.ready.iter().nth(ix).unwrap();
 
                         for (addr, msg) in self.sync(p, self.clock.local_time()) {
-                            outbound.push(Output::Message(addr, msg));
+                            outbound.push(self.message(addr, msg));
                         }
                     }
                 }
@@ -496,13 +503,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 Output::Message(addr, msg) => {
                     debug!("{}: Sending {:?}", addr, msg.cmd());
 
-                    Output::Message(
-                        addr,
-                        RawNetworkMessage {
-                            magic: self.config.network.magic(),
-                            payload: msg,
-                        },
-                    )
+                    Output::Message(addr, msg)
                 }
                 Output::Connect(addr) => {
                     debug!("{}: Connecting..", addr);
@@ -515,12 +516,23 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     Output::Disconnect(addr)
                 }
                 Output::SetTimeout(addr, t) => Output::SetTimeout(addr, t),
+                Output::Event(event) => Output::Event(event),
             })
             .collect()
     }
 }
 
 impl<T: BlockTree> Bitcoin<T> {
+    pub fn message(&self, addr: PeerId, payload: NetworkMessage) -> Output<RawNetworkMessage> {
+        Output::Message(
+            addr,
+            RawNetworkMessage {
+                magic: self.config.network.magic(),
+                payload,
+            },
+        )
+    }
+
     pub fn transition(&mut self, state: State) {
         if state == self.state {
             return;
@@ -530,7 +542,11 @@ impl<T: BlockTree> Bitcoin<T> {
         self.state = state;
     }
 
-    pub fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) -> Vec<Output<NetworkMessage>> {
+    pub fn receive(
+        &mut self,
+        addr: PeerId,
+        msg: RawNetworkMessage,
+    ) -> Vec<Output<RawNetworkMessage>> {
         let now = self.clock.local_time();
 
         debug!("{}: Received {:?}", addr, msg.cmd());
@@ -560,7 +576,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
         if let NetworkMessage::Ping(nonce) = msg.payload {
             if peer.is_ready() {
-                return vec![Output::Message(addr, NetworkMessage::Pong(nonce))];
+                return vec![self.message(addr, NetworkMessage::Pong(nonce))];
             }
         } else if let NetworkMessage::Pong(nonce) = msg.payload {
             match peer.last_ping {
@@ -639,11 +655,11 @@ impl<T: BlockTree> Bitcoin<T> {
                         Link::Outbound => {}
                         Link::Inbound => {
                             return vec![
-                                Output::Message(
+                                self.message(
                                     addr,
                                     self.version(addr, local_addr, self.tree.height()),
                                 ),
-                                Output::Message(addr, NetworkMessage::Verack),
+                                self.message(addr, NetworkMessage::Verack),
                             ]
                         }
                     }
@@ -660,13 +676,13 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     return match peer.link {
                         Link::Outbound => vec![
-                            Output::Message(addr, NetworkMessage::Verack),
-                            Output::Message(addr, NetworkMessage::SendHeaders),
-                            Output::Message(addr, ping),
+                            self.message(addr, NetworkMessage::Verack),
+                            self.message(addr, NetworkMessage::SendHeaders),
+                            self.message(addr, ping),
                         ],
                         Link::Inbound => vec![
-                            Output::Message(addr, NetworkMessage::SendHeaders),
-                            Output::Message(addr, ping),
+                            self.message(addr, NetworkMessage::SendHeaders),
+                            self.message(addr, ping),
                         ],
                     };
                 }
@@ -708,7 +724,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     );
                     let headers = self.tree.range(start..end).collect();
 
-                    return vec![Output::Message(addr, NetworkMessage::Headers(headers))];
+                    return vec![self.message(addr, NetworkMessage::Headers(headers))];
                 } else if let NetworkMessage::Headers(headers) = msg.payload {
                     return self.receive_headers(addr, headers);
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
@@ -773,7 +789,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
     /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
     /// are being announced. Otherwise, we expect to receive a `headers` message.
-    fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Output<NetworkMessage>> {
+    fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Output<RawNetworkMessage>> {
         let mut best_block = None;
 
         for i in &inv {
@@ -789,10 +805,7 @@ impl<T: BlockTree> Bitcoin<T> {
         }
 
         if let Some(stop_hash) = best_block {
-            vec![Output::Message(
-                addr,
-                self.get_headers(self.locator_hashes(), *stop_hash),
-            )]
+            vec![self.message(addr, self.get_headers(self.locator_hashes(), *stop_hash))]
         } else {
             vec![]
         }
@@ -802,7 +815,7 @@ impl<T: BlockTree> Bitcoin<T> {
         &mut self,
         addr: PeerId,
         headers: Vec<BlockHeader>,
-    ) -> Vec<Output<NetworkMessage>> {
+    ) -> Vec<Output<RawNetworkMessage>> {
         let length = headers.len();
         let peer = self
             .peers
@@ -844,10 +857,7 @@ impl<T: BlockTree> Bitcoin<T> {
                         self.clock.local_time(),
                     ));
 
-                    vec![Output::Message(
-                        addr,
-                        self.get_headers(locators, BlockHash::default()),
-                    )]
+                    vec![self.message(addr, self.get_headers(locators, BlockHash::default()))]
                 }
             }
             Err(err) => {
@@ -875,7 +885,7 @@ impl<T: BlockTree> Bitcoin<T> {
         }
     }
 
-    fn disconnect(&mut self, addr: &PeerId, outbound: &mut Vec<Output<NetworkMessage>>) {
+    fn disconnect(&mut self, addr: &PeerId, outbound: &mut Vec<Output<RawNetworkMessage>>) {
         let peer = self
             .peers
             .get_mut(&addr)
@@ -942,7 +952,7 @@ mod tests {
             assert!(bob.peers.values().all(|p| p.is_ready()));
         }
 
-        pub fn run<P: Protocol<M, Command = C>, M: Debug, C: Debug>(
+        pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
             peers: Vec<(PeerId, &mut P, Vec<Input<M, C>>)>,
             local_time: LocalTime,
         ) {

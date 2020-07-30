@@ -9,6 +9,7 @@ use crossbeam_channel as chan;
 use nakamoto_chain::block::time::LocalTime;
 
 use crate::error::Error;
+use crate::event::Event;
 use crate::protocol::{Input, Link, Message, Output, Protocol};
 use crate::reactor::time::TimeoutManager;
 
@@ -127,14 +128,14 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 pub struct Reactor<R: Write + Read, M: Message, C> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
     events: VecDeque<Input<M, C>>,
-    subscriber: chan::Sender<Input<M::Payload, C>>,
+    subscriber: chan::Sender<Event<M::Payload>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
     timeouts: TimeoutManager<net::SocketAddr>,
 }
 
 impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> Reactor<R, M, C> {
-    pub fn new(subscriber: chan::Sender<Input<M::Payload, C>>) -> Result<Self, io::Error> {
+    pub fn new(subscriber: chan::Sender<Event<M::Payload>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
         let events: VecDeque<Input<M, C>> = VecDeque::new();
 
@@ -267,8 +268,6 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
             let local_time = SystemTime::now().into();
 
             while let Some(event) = self.events.pop_front() {
-                self.subscriber.try_send(event.payload()).unwrap(); // FIXME
-
                 let outs = protocol.step(event, local_time);
                 self.process::<P>(outs, local_time)?;
             }
@@ -321,6 +320,9 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
                 }
                 Output::SetTimeout(addr, timeout) => {
                     self.timeouts.register(addr, local_time + timeout);
+                }
+                Output::Event(event) => {
+                    self.subscriber.try_send(event).unwrap(); // FIXME
                 }
             }
         }

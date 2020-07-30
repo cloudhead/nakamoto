@@ -3,7 +3,7 @@ use bitcoin::consensus::encode::{self, Encodable};
 use bitcoin::network::stream_reader::StreamReader;
 
 use crate::error::Error;
-use crate::protocol::{Input, Link, Output, Protocol};
+use crate::protocol::{Input, Link, Message, Output, Protocol};
 
 use log::*;
 use std::collections::HashMap;
@@ -172,7 +172,7 @@ impl<T: Write> std::ops::DerefMut for Writer<T> {
 /// Run the given protocol with the reactor.
 pub fn run<
     P: Protocol<M, Command = C>,
-    M: Decodable + Encodable + Send + Sync + Debug + 'static,
+    M: Message + Decodable + Encodable + Debug,
     C: Debug + Send + Sync + 'static,
 >(
     mut protocol: P,
@@ -240,7 +240,7 @@ pub fn run<
 
 /// Connect to a peer given a remote address.
 pub fn dial<
-    M: Encodable + Decodable + Send + Sync + Debug + 'static,
+    M: Message + Encodable + Decodable + Debug,
     C: Debug + Send + Sync + 'static,
     P: Protocol<M>,
 >(
