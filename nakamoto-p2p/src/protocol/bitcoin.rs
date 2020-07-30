@@ -174,15 +174,24 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     /// Start syncing with the given peer.
-    pub fn sync(&mut self, addr: PeerId, local_time: LocalTime) -> Vec<(PeerId, NetworkMessage)> {
-        self.transition(State::Syncing(addr));
+    pub fn sync(&mut self, addr: PeerId, local_time: LocalTime) -> Vec<Output<RawNetworkMessage>> {
+        let mut outs = self
+            .transition(State::Syncing(addr))
+            .into_iter()
+            .map(Output::from)
+            .collect::<Vec<Output<_>>>();
 
         let locator_hashes = self.locator_hashes();
+        let get_headers = self.message(
+            addr,
+            self.get_headers(locator_hashes.clone(), BlockHash::default()),
+        );
         let peer = self.peers.get_mut(&addr).unwrap();
 
-        peer.syncing(Syncing::AwaitingHeaders(locator_hashes.clone(), local_time));
+        peer.syncing(Syncing::AwaitingHeaders(locator_hashes, local_time));
 
-        vec![(addr, self.get_headers(locator_hashes, BlockHash::default()))]
+        outs.push(get_headers);
+        outs
     }
 
     /// Check whether or not we are in sync with the network.
@@ -491,15 +500,15 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // TODO: Peer should be picked amongst lowest latency ones.
                 if self.ready.len() >= PEER_CONNECTION_THRESHOLD {
                     if self.is_synced() {
-                        self.transition(State::Synced);
+                        let events = self.transition(State::Synced);
+                        outbound.extend(events.into_iter().map(Output::from));
                     } else {
                         // TODO: Pick a peer whos `height` is high enough.
                         let ix = fastrand::usize(..self.ready.len());
                         let p = *self.ready.iter().nth(ix).unwrap();
 
-                        for (addr, msg) in self.sync(p, self.clock.local_time()) {
-                            outbound.push(self.message(addr, msg));
-                        }
+                        let outs = self.sync(p, self.clock.local_time());
+                        outbound.extend(outs);
                     }
                 }
             }
@@ -519,13 +528,19 @@ impl<T: BlockTree> Bitcoin<T> {
         )
     }
 
-    pub fn transition(&mut self, state: State) {
+    pub fn transition(&mut self, state: State) -> Option<Event<NetworkMessage>> {
         if state == self.state {
-            return;
+            return None;
         }
         debug!("state: {:?} -> {:?}", self.state, state);
 
         self.state = state;
+
+        match self.state {
+            State::Connecting => return Some(Event::Connecting),
+            State::Syncing(_) => return Some(Event::Syncing),
+            State::Synced => return Some(Event::Synced),
+        }
     }
 
     pub fn receive(
@@ -830,9 +845,10 @@ impl<T: BlockTree> Bitcoin<T> {
                     // If these headers were unsolicited, we may already be ready/synced.
                     // Otherwise, we're finally in sync.
                     peer.syncing(Syncing::Idle);
-                    self.transition(State::Synced);
-
-                    vec![]
+                    self.transition(State::Synced)
+                        .into_iter()
+                        .map(Output::from)
+                        .collect()
                 } else {
                     // TODO: If we're already in the state of asking for this header, don't
                     // ask again.

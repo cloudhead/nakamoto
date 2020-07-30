@@ -98,6 +98,12 @@ pub enum Output<M: Message> {
     Event(Event<M::Payload>),
 }
 
+impl<M: Message> From<Event<M::Payload>> for Output<M> {
+    fn from(event: Event<M::Payload>) -> Self {
+        Output::Event(event)
+    }
+}
+
 impl<M: Message> Output<M> {
     pub fn address(&self) -> Option<PeerId> {
         match self {
