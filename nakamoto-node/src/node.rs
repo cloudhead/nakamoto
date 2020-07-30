@@ -221,7 +221,10 @@ impl Handle for NodeHandle {
     }
 
     fn wait_for_ready(&self) -> Result<(), handle::Error> {
-        todo!()
+        self.wait_for(|e| match e {
+            Event::Synced => Some(()),
+            _ => None,
+        })
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {
