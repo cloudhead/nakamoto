@@ -26,9 +26,22 @@ pub trait Message: Send + Sync + 'static {
     fn payload(&self) -> &Self::Payload;
 }
 
-/// A protocol event, parametrized over the network message type.
+pub enum Notification {
+    /// The node has finished syncing and is ready to accept
+    /// connections and process commands.
+    Ready,
+    /// A peer is connected and ready to accept messages.
+    /// This event is triggered after the peer handshake
+    /// has successfully completed.
+    Connected(PeerId),
+    /// A peer has been disconnected.
+    Disconnected(PeerId),
+}
+
+/// A protocol input event, parametrized over the network message type.
+/// These are input events generated outside of the protocol.
 #[derive(Debug, Clone)]
-pub enum Event<M, C> {
+pub enum Input<M, C> {
     /// New connection with a peer.
     Connected {
         /// Remote peer id.
@@ -53,9 +66,9 @@ pub enum Event<M, C> {
     Timeout(PeerId),
 }
 
-impl<M: Message, C: Clone> Event<M, C> {
-    pub fn payload(&self) -> Event<M::Payload, C> {
-        use Event::*;
+impl<M: Message, C: Clone> Input<M, C> {
+    pub fn payload(&self) -> Input<M::Payload, C> {
+        use Input::*;
 
         match self {
             Connected {
@@ -117,5 +130,5 @@ pub trait Protocol<M> {
 
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
-    fn step(&mut self, event: Event<M, Self::Command>, time: LocalTime) -> Vec<Output<M>>;
+    fn step(&mut self, event: Input<M, Self::Command>, time: LocalTime) -> Vec<Output<M>>;
 }

@@ -16,7 +16,7 @@ use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage}
 use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
 use nakamoto_p2p::protocol::bitcoin::Command;
 use nakamoto_p2p::protocol::bitcoin::{self, Network};
-use nakamoto_p2p::protocol::Event;
+use nakamoto_p2p::protocol::Input;
 use nakamoto_p2p::reactor::poll::Waker;
 
 use crate::error::Error;
@@ -35,7 +35,7 @@ pub struct NodeConfig {
 pub struct Node {
     commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
-    events: chan::Receiver<Event<NetworkMessage, Command>>,
+    events: chan::Receiver<Input<NetworkMessage, Command>>,
     config: NodeConfig,
     reactor: nakamoto_p2p::reactor::poll::Reactor<net::TcpStream, RawNetworkMessage, Command>,
 }
@@ -44,7 +44,7 @@ impl Node {
     /// Create a new node.
     pub fn new(config: NodeConfig) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
-        let (subscriber, events) = chan::unbounded::<Event<NetworkMessage, Command>>();
+        let (subscriber, events) = chan::unbounded::<Input<NetworkMessage, Command>>();
         let reactor = p2p::reactor::poll::Reactor::new(subscriber)?;
 
         Ok(Self {
@@ -125,7 +125,7 @@ impl Node {
 /// An instance of [`Handle`] for [`Node`].
 pub struct NodeHandle {
     commands: chan::Sender<Command>,
-    events: chan::Receiver<Event<NetworkMessage, Command>>,
+    events: chan::Receiver<Input<NetworkMessage, Command>>,
     waker: Arc<Waker>,
     timeout: time::Duration,
 }
@@ -148,7 +148,7 @@ impl NodeHandle {
     /// or timeout if the specified amount of time has elapsed.
     fn wait_for<F, T>(&self, f: F) -> Result<T, handle::Error>
     where
-        F: Fn(Event<NetworkMessage, Command>) -> Option<T>,
+        F: Fn(Input<NetworkMessage, Command>) -> Option<T>,
     {
         let start = time::Instant::now();
         let events = self.events.clone();
@@ -188,7 +188,7 @@ impl Handle for NodeHandle {
         self.command(Command::GetBlock(*hash))?;
 
         self.wait_for(|e| match e {
-            Event::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
+            Input::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
                 Some(blk)
             }
             _ => None,
@@ -206,7 +206,7 @@ impl Handle for NodeHandle {
             let mut connected = HashSet::new();
 
             match e {
-                Event::Connected { addr, .. } => {
+                Input::Connected { addr, .. } => {
                     connected.insert(addr);
 
                     if connected.len() == count {

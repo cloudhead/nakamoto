@@ -9,7 +9,7 @@ use crossbeam_channel as chan;
 use nakamoto_chain::block::time::LocalTime;
 
 use crate::error::Error;
-use crate::protocol::{Event, Link, Message, Output, Protocol};
+use crate::protocol::{Input, Link, Message, Output, Protocol};
 use crate::reactor::time::TimeoutManager;
 
 use log::*;
@@ -95,13 +95,13 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
     fn drain<C>(
         &mut self,
-        events: &mut VecDeque<Event<M, C>>,
+        events: &mut VecDeque<Input<M, C>>,
         source: &mut popol::Source,
     ) -> Result<(), encode::Error> {
         while let Some(msg) = self.queue.pop_front() {
             match self.write(&msg) {
                 Ok(n) => {
-                    events.push_back(Event::Sent(self.address, n));
+                    events.push_back(Input::Sent(self.address, n));
                 }
                 Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
                     source.set(popol::interest::WRITE);
@@ -126,17 +126,17 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
 pub struct Reactor<R: Write + Read, M: Message, C> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
-    events: VecDeque<Event<M, C>>,
-    subscriber: chan::Sender<Event<M::Payload, C>>,
+    events: VecDeque<Input<M, C>>,
+    subscriber: chan::Sender<Input<M::Payload, C>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
     timeouts: TimeoutManager<net::SocketAddr>,
 }
 
 impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> Reactor<R, M, C> {
-    pub fn new(subscriber: chan::Sender<Event<M::Payload, C>>) -> Result<Self, io::Error> {
+    pub fn new(subscriber: chan::Sender<Input<M::Payload, C>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
-        let events: VecDeque<Event<M, C>> = VecDeque::new();
+        let events: VecDeque<Input<M, C>> = VecDeque::new();
 
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
@@ -163,7 +163,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> R
         stream: R,
         link: Link,
     ) {
-        self.events.push_back(Event::Connected {
+        self.events.push_back(Input::Connected {
             addr,
             local_addr,
             link,
@@ -175,7 +175,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> R
     }
 
     fn unregister_peer(&mut self, addr: net::SocketAddr) {
-        self.events.push_back(Event::Disconnected(addr));
+        self.events.push_back(Input::Disconnected(addr));
         self.sources.unregister(&Source::Peer(addr));
         self.peers.remove(&addr);
     }
@@ -244,7 +244,7 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
                             },
                             Source::Waker => {
                                 for cmd in commands.try_iter() {
-                                    self.events.push_back(Event::Command(cmd));
+                                    self.events.push_back(Input::Command(cmd));
                                 }
                             }
                         }
@@ -255,10 +255,10 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
 
                     if !timeouts.is_empty() {
                         for peer in timeouts.drain(..) {
-                            self.events.push_back(Event::Timeout(peer));
+                            self.events.push_back(Input::Timeout(peer));
                         }
                     } else {
-                        self.events.push_back(Event::Idle);
+                        self.events.push_back(Input::Idle);
                     }
                 }
                 Err(err) => return Err(err.into()),
@@ -339,7 +339,7 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
         loop {
             match socket.read() {
                 Ok(msg) => {
-                    self.events.push_back(Event::Received(*addr, msg));
+                    self.events.push_back(Input::Received(*addr, msg));
                 }
                 Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
                     break;

@@ -5,7 +5,7 @@ pub mod network;
 pub use network::Network;
 
 use crate::address_book::AddressBook;
-use crate::protocol::{Event, Link, Message, Output, PeerId, Protocol};
+use crate::protocol::{Input, Link, Message, Output, PeerId, Protocol};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -377,7 +377,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
     fn step(
         &mut self,
-        event: Event<RawNetworkMessage, Command>,
+        event: Input<RawNetworkMessage, Command>,
         time: LocalTime,
     ) -> Vec<Output<RawNetworkMessage>> {
         let mut outbound = Vec::new();
@@ -385,7 +385,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         self.clock.set_local_time(time);
 
         match event {
-            Event::Connected {
+            Input::Connected {
                 addr,
                 local_addr,
                 link,
@@ -406,7 +406,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     } // Wait to receive remote version.
                 }
             }
-            Event::Disconnected(addr) => {
+            Input::Disconnected(addr) => {
                 debug!("Disconnected from {}", &addr);
 
                 self.peers.remove(&addr);
@@ -414,19 +414,19 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 self.connected.remove(&addr);
                 self.disconnected.insert(addr);
             }
-            Event::Received(addr, msg) => {
+            Input::Received(addr, msg) => {
                 for out in self.receive(addr, msg) {
                     outbound.push(out);
                 }
             }
-            Event::Sent(_addr, _msg) => {}
-            Event::Command(_cmd) => {
+            Input::Sent(_addr, _msg) => {}
+            Input::Command(_cmd) => {
                 todo!();
             }
-            Event::Timeout(_addr) => {
+            Input::Timeout(_addr) => {
                 todo!();
             }
-            Event::Idle => {
+            Input::Idle => {
                 let now = self.clock.local_time();
                 let mut disconnect = Vec::new();
 
@@ -919,7 +919,7 @@ mod tests {
                     (
                         alice_addr,
                         alice,
-                        vec![Event::Connected {
+                        vec![Input::Connected {
                             addr: bob_addr,
                             local_addr: alice_addr,
                             link: Link::Outbound,
@@ -928,7 +928,7 @@ mod tests {
                     (
                         bob_addr,
                         bob,
-                        vec![Event::Connected {
+                        vec![Input::Connected {
                             addr: alice_addr,
                             local_addr: bob_addr,
                             link: Link::Inbound,
@@ -943,10 +943,10 @@ mod tests {
         }
 
         pub fn run<P: Protocol<M, Command = C>, M: Debug, C: Debug>(
-            peers: Vec<(PeerId, &mut P, Vec<Event<M, C>>)>,
+            peers: Vec<(PeerId, &mut P, Vec<Input<M, C>>)>,
             local_time: LocalTime,
         ) {
-            let mut sim: HashMap<PeerId, (&mut P, VecDeque<Event<M, C>>)> = HashMap::new();
+            let mut sim: HashMap<PeerId, (&mut P, VecDeque<Input<M, C>>)> = HashMap::new();
             let mut events = Vec::new();
 
             logger::init(log::Level::Debug);
@@ -975,7 +975,7 @@ mod tests {
                             match out {
                                 Output::Message(receiver, msg) => {
                                     debug!("(sim) {} -> {}: {:?}", peer, receiver, msg);
-                                    events.push((receiver, Event::Received(*peer, msg)))
+                                    events.push((receiver, Input::Received(*peer, msg)))
                                 }
                                 _ => todo!(),
                             }
@@ -1023,7 +1023,7 @@ mod tests {
                 (
                     alice_addr,
                     &mut alice,
-                    vec![Event::Connected {
+                    vec![Input::Connected {
                         addr: bob_addr,
                         local_addr: alice_addr,
                         link: Link::Outbound,
@@ -1032,7 +1032,7 @@ mod tests {
                 (
                     bob_addr,
                     &mut bob,
-                    vec![Event::Connected {
+                    vec![Input::Connected {
                         addr: alice_addr,
                         local_addr: bob_addr,
                         link: Link::Inbound,
@@ -1111,7 +1111,7 @@ mod tests {
 
         // Let a certain amount of time pass.
         let mut out = alice
-            .step(Event::Idle, local_time + idle_timeout)
+            .step(Input::Idle, local_time + idle_timeout)
             .into_iter();
 
         assert!(
@@ -1129,7 +1129,7 @@ mod tests {
 
         // More time passes, and Bob doesn't `pong` back.
         let mut out = alice
-            .step(Event::Idle, local_time + idle_timeout + idle_timeout)
+            .step(Input::Idle, local_time + idle_timeout + idle_timeout)
             .into_iter();
 
         // Alice now decides to disconnect Bob.

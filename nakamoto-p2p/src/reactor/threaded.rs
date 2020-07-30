@@ -3,7 +3,7 @@ use bitcoin::consensus::encode::{self, Encodable};
 use bitcoin::network::stream_reader::StreamReader;
 
 use crate::error::Error;
-use crate::protocol::{Event, Link, Output, Protocol};
+use crate::protocol::{Input, Link, Output, Protocol};
 
 use log::*;
 use std::collections::HashMap;
@@ -33,7 +33,7 @@ pub enum Command<T, S: Write> {
 /// Reader socket.
 #[derive(Debug)]
 pub struct Reader<R: Read + Write, M, C: Send + Sync> {
-    events: crossbeam::Sender<Event<M, C>>,
+    events: crossbeam::Sender<Input<M, C>>,
     raw: StreamReader<R>,
     address: net::SocketAddr,
     local_address: net::SocketAddr,
@@ -50,7 +50,7 @@ impl<
         r: R,
         local_address: net::SocketAddr,
         address: net::SocketAddr,
-        events: crossbeam::Sender<Event<M, C>>,
+        events: crossbeam::Sender<Input<M, C>>,
     ) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
 
@@ -63,7 +63,7 @@ impl<
     }
 
     pub fn run(&mut self, link: Link) -> Result<(), Error> {
-        self.events.send(Event::Connected {
+        self.events.send(Input::Connected {
             addr: self.address,
             local_addr: self.local_address,
             link,
@@ -71,7 +71,7 @@ impl<
 
         loop {
             match self.read() {
-                Ok(msg) => self.events.send(Event::Received(self.address, msg))?,
+                Ok(msg) => self.events.send(Input::Received(self.address, msg))?,
                 Err(err) => {
                     panic!(err);
                 }
@@ -119,7 +119,7 @@ impl<T: Write> Writer<T> {
 
     fn thread<M: Encodable + Send + Sync + Debug + 'static, C: Debug + Send + Sync + 'static>(
         cmds: crossbeam::Receiver<Command<M, T>>,
-        events: crossbeam::Sender<Event<M, C>>,
+        events: crossbeam::Sender<Input<M, C>>,
     ) -> Result<(), Error> {
         let mut peers: HashMap<net::SocketAddr, Self> = HashMap::new();
 
@@ -135,7 +135,7 @@ impl<T: Write> Writer<T> {
                     // this will also affect the read-end.
                     match peer.write(msg) {
                         Ok(nbytes) => {
-                            events.send(Event::Sent(addr, nbytes))?;
+                            events.send(Input::Sent(addr, nbytes))?;
                         }
                         Err(err) => {
                             panic!(err);
@@ -179,7 +179,7 @@ pub fn run<
 ) -> Result<Vec<()>, Error> {
     use std::thread;
 
-    let (events_tx, events_rx): (crossbeam::Sender<Event<M, C>>, _) = crossbeam::bounded(1);
+    let (events_tx, events_rx): (crossbeam::Sender<Input<M, C>>, _) = crossbeam::bounded(1);
     let (cmds_tx, cmds_rx) = crossbeam::bounded(1);
 
     let mut spawned = Vec::new();
@@ -227,7 +227,7 @@ pub fn run<
                 break;
             }
             Err(crossbeam::RecvTimeoutError::Timeout) => {
-                events_tx.send(Event::Idle).unwrap();
+                events_tx.send(Input::Idle).unwrap();
             }
         }
     }
@@ -245,7 +245,7 @@ pub fn dial<
     P: Protocol<M>,
 >(
     addr: &net::SocketAddr,
-    events_tx: crossbeam::Sender<Event<M, C>>,
+    events_tx: crossbeam::Sender<Input<M, C>>,
 ) -> Result<(Reader<net::TcpStream, M, C>, Writer<net::TcpStream>), Error> {
     debug!("Connecting to {}...", &addr);
 
