@@ -199,11 +199,28 @@ impl Handle for NodeHandle {
         todo!()
     }
 
-    fn wait_for_peers(&self, _count: usize) -> Result<chan::Receiver<()>, handle::Error> {
-        todo!()
+    fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
+        use std::collections::HashSet;
+
+        self.wait_for(|e| {
+            let mut connected = HashSet::new();
+
+            match e {
+                Event::Connected { addr, .. } => {
+                    connected.insert(addr);
+
+                    if connected.len() == count {
+                        Some(())
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        })
     }
 
-    fn wait_for_ready(&self) -> Result<chan::Receiver<()>, handle::Error> {
+    fn wait_for_ready(&self) -> Result<(), handle::Error> {
         todo!()
     }
 
