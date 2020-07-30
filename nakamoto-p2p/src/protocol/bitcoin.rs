@@ -5,6 +5,7 @@ pub mod network;
 pub use network::Network;
 
 use crate::address_book::AddressBook;
+use crate::event::Event;
 use crate::protocol::{Input, Link, Message, Output, PeerId, Protocol};
 
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -382,7 +383,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     ) -> Vec<Output<RawNetworkMessage>> {
         let mut outbound = Vec::new();
 
+        // The local time is set from outside the protocol.
         self.clock.set_local_time(time);
+        // Generate `Event` outputs from the input.
+        self.generate_events(&input, &mut outbound);
 
         match input {
             Input::Connected {
@@ -900,6 +904,19 @@ impl<T: BlockTree> Bitcoin<T> {
 
         vec![hash]
     }
+
+    fn generate_events(
+        &self,
+        input: &Input<RawNetworkMessage, Command>,
+        outbound: &mut Vec<Output<RawNetworkMessage>>,
+    ) {
+        match input {
+            Input::Connected { addr, .. } => {
+                outbound.push(Output::Event(Event::Connected(*addr)));
+            }
+            _ => {}
+        }
+    }
 }
 
 #[cfg(test)]
@@ -987,7 +1004,7 @@ mod tests {
                                     debug!("(sim) {} -> {}: {:?}", peer, receiver, msg);
                                     events.push((receiver, Input::Received(*peer, msg)))
                                 }
-                                _ => todo!(),
+                                _ => {}
                             }
                         }
                     }
