@@ -162,21 +162,25 @@ impl<T: BlockTree> Bitcoin<T> {
         }
     }
 
-    fn connected(&mut self, addr: PeerId, local_addr: net::SocketAddr, link: Link) -> bool {
+    fn connected(&mut self, addr: PeerId, local_addr: net::SocketAddr, link: Link) -> u64 {
         self.connected.insert(addr);
         self.disconnected.remove(&addr);
 
-        self.peers
-            .insert(
+        let nonce = fastrand::u64(..);
+
+        // TODO: Handle case where peer already exists.
+        self.peers.insert(
+            addr,
+            Peer::new(
                 addr,
-                Peer::new(
-                    addr,
-                    local_addr,
-                    PeerState::Handshake(Handshake::default()),
-                    link,
-                ),
-            )
-            .is_none()
+                local_addr,
+                PeerState::Handshake(Handshake::default()),
+                nonce,
+                link,
+            ),
+        );
+
+        nonce
     }
 
     /// Start syncing with the given peer.
@@ -301,6 +305,8 @@ pub struct Peer {
     pub last_ping: Option<(u64, LocalTime)>,
     /// Observed round-trip latencies for this peer.
     pub latencies: VecDeque<LocalDuration>,
+    /// Peer nonce. Used to detect self-connections.
+    pub nonce: u64,
 }
 
 impl Peer {
@@ -308,6 +314,7 @@ impl Peer {
         address: net::SocketAddr,
         local_address: net::SocketAddr,
         state: PeerState,
+        nonce: u64,
         link: Link,
     ) -> Self {
         Self {
@@ -320,6 +327,7 @@ impl Peer {
             link,
             last_ping: None,
             latencies: VecDeque::new(),
+            nonce,
         }
     }
 
@@ -415,15 +423,16 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 local_addr,
                 link,
             } => {
-                self.connected(addr, local_addr, link);
+                let nonce = self.connected(addr, local_addr, link);
 
                 match link {
                     Link::Outbound => {
                         info!("{}: Peer connected (outbound)", &addr);
 
-                        outbound.push(
-                            self.message(addr, self.version(addr, local_addr, self.tree.height())),
-                        );
+                        outbound.push(self.message(
+                            addr,
+                            self.version(addr, local_addr, nonce, self.tree.height()),
+                        ));
                     }
                     Link::Inbound => {
                         info!("{}: Peer connected (inbound)", &addr);
@@ -619,6 +628,8 @@ impl<T: BlockTree> Bitcoin<T> {
                     services,
                     // User agent.
                     user_agent,
+                    // Peer nonce.
+                    nonce,
                     ..
                 }) = msg.payload
                 {
@@ -657,6 +668,19 @@ impl<T: BlockTree> Bitcoin<T> {
                         debug!("{}: Disconnecting: peer is too far behind", addr);
                         return vec![Output::Disconnect(addr)];
                     }
+                    // Check for self-connections. We only need to check one link direction,
+                    // since in the case of a self-connection, we will see both link directions.
+                    for (_, peer) in self.peers.iter() {
+                        if peer.link == Link::Outbound && peer.nonce == nonce {
+                            debug!("{}: Disconnecting: detected self-connection", addr);
+                            return vec![Output::Disconnect(addr)];
+                        }
+                    }
+
+                    let mut peer = self
+                        .peers
+                        .get_mut(&addr)
+                        .unwrap_or_else(|| panic!("peer {} is not known", addr));
 
                     peer.height = start_height as Height;
                     peer.time_offset = timestamp - now.as_secs() as i64;
@@ -665,13 +689,15 @@ impl<T: BlockTree> Bitcoin<T> {
                     match peer.link {
                         Link::Outbound => {}
                         Link::Inbound => {
+                            let nonce = peer.nonce;
+
                             return vec![
                                 self.message(
                                     addr,
-                                    self.version(addr, local_addr, self.tree.height()),
+                                    self.version(addr, local_addr, nonce, self.tree.height()),
                                 ),
                                 self.message(addr, NetworkMessage::Verack),
-                            ]
+                            ];
                         }
                     }
                 }
@@ -761,6 +787,7 @@ impl<T: BlockTree> Bitcoin<T> {
         &self,
         addr: net::SocketAddr,
         local_addr: net::SocketAddr,
+        nonce: u64,
         start_height: Height,
     ) -> NetworkMessage {
         let start_height = start_height as i32;
@@ -777,8 +804,8 @@ impl<T: BlockTree> Bitcoin<T> {
             receiver: Address::new(&addr, ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS),
             // Local address (unreliable) and local services (same as `services` field)
             sender: Address::new(&local_addr, self.config.services),
-            // A nonce to detect connections to self (FIXME)
-            nonce: 0,
+            // A nonce to detect connections to self.
+            nonce,
             // Our user agent string.
             user_agent: self.config.user_agent.to_owned(),
             // Our best height.
