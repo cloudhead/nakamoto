@@ -1,3 +1,7 @@
+//!
+//! The peer-to-peer address manager.
+//!
+#![warn(missing_docs)]
 use std::collections::{HashMap, HashSet};
 use std::net;
 
@@ -12,9 +16,12 @@ use crate::address_book::AddressBook;
 /// Maximum number of addresses we store for a given address range.
 const MAX_RANGE_SIZE: usize = 256;
 
+/// Address source. Specifies where an address originated from.
 #[derive(Debug, Clone)]
 pub enum Source {
+    /// An address that was shared by another peer.
     Peer(net::SocketAddr),
+    /// An address from an unspecified source.
     Other,
 }
 
@@ -24,14 +31,16 @@ impl Default for Source {
     }
 }
 
+/// A known address.
 #[derive(Debug)]
 struct KnownAddress {
-    // Network address.
+    /// Network address.
     addr: Address,
-    // Address of the peer who sent us this address.
+    /// Address of the peer who sent us this address.
     source: Source,
-
+    /// Last time this address was used to successfully connect to a peer.
     last_success: Option<LocalTime>,
+    /// Last time this address was tried.
     last_attempt: Option<LocalTime>,
 }
 
@@ -46,6 +55,7 @@ impl KnownAddress {
     }
 }
 
+/// Manages peer network addresses.
 #[derive(Debug)]
 pub struct AddressManager {
     // FIXME: HashMap and HashSet are non-deterministic.
@@ -151,23 +161,7 @@ impl AddressManager {
             self.addresses
                 .insert(ip, KnownAddress::new(addr, source.clone()));
 
-            let key = match net_addr.ip() {
-                net::IpAddr::V4(ip) => {
-                    // Use the *second* component of the IP address to key into the
-                    // range buckets.
-                    //
-                    // Eg. 124.99.123.1 and 124.54.123.1 would be placed in
-                    // different buckets, but 100.99.43.12 and 100.99.12.8
-                    // would be placed in the same bucket.
-                    //
-                    // TODO: Use the first 16 bits.
-                    ip.octets()[1]
-                }
-                net::IpAddr::V6(ip) => {
-                    // TODO: Use the first 32 bits.
-                    (ip.segments()[0] % u8::MAX as u16) as u8
-                }
-            };
+            let key = self::addr_key(net_addr.ip());
             let range = self.address_ranges.entry(key).or_default();
 
             // If the address range is already full, remove a random address
@@ -262,6 +256,7 @@ impl AddressManager {
     }
 }
 
+/// Check whether an IP address is globally routable.
 fn is_routable(addr: &net::IpAddr) -> bool {
     match addr {
         net::IpAddr::V4(addr) => ipv4_is_routable(addr),
@@ -269,7 +264,33 @@ fn is_routable(addr: &net::IpAddr) -> bool {
     }
 }
 
-/// Check whether an address is globally routable.
+/// Get the 8-bit key of an IP address. This key is based on the IP address's
+/// range, and is used as a key to group IP addresses by range.
+fn addr_key(ip: net::IpAddr) -> u8 {
+    match ip {
+        net::IpAddr::V4(ip) => {
+            // Use the /16 range (first two components) of the IP address to key into the
+            // range buckets.
+            //
+            // Eg. 124.99.123.1 and 124.54.123.1 would be placed in
+            // different buckets, but 100.99.43.12 and 100.99.12.8
+            // would be placed in the same bucket.
+            let octets: [u8; 4] = ip.octets();
+            let bits: u16 = (octets[0] as u16) << 8 | octets[1] as u16;
+
+            (bits % u8::MAX as u16) as u8
+        }
+        net::IpAddr::V6(ip) => {
+            // Use the first 32 bits of an IPv6 address to as a key.
+            let segments: [u16; 8] = ip.segments();
+            let bits: u32 = (segments[0] as u32) << 16 | segments[1] as u32;
+
+            (bits % u8::MAX as u32) as u8
+        }
+    }
+}
+
+/// Check whether an IPv4 address is globally routable.
 ///
 /// This code is adapted from the Rust standard library's `net::Ipv4Addr::is_global`. It can be
 /// replaced once that function is stabilized.
@@ -288,6 +309,10 @@ fn ipv4_is_routable(addr: &net::Ipv4Addr) -> bool {
         && addr.octets()[0] != 0
 }
 
+/// Check whether an IPv6 address is globally routable.
+///
+/// For now, this always returns `true`, as IPv6 addresses
+/// are not fully supported.
 fn ipv6_is_routable(_addr: &net::Ipv6Addr) -> bool {
     true
 }
