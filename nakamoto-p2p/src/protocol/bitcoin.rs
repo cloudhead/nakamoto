@@ -1,8 +1,11 @@
 use crossbeam_channel as chan;
 use log::*;
 
+pub mod address_manager;
 pub mod network;
 pub use network::Network;
+
+use address_manager::AddressManager;
 
 use crate::address_book::AddressBook;
 use crate::event::Event;
@@ -76,8 +79,8 @@ pub struct Bitcoin<T> {
     /// Block tree.
     pub tree: T,
 
-    /// Address book of peers.
-    address_book: AddressBook,
+    /// Peer address manager.
+    addrmgr: AddressManager,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Set of connected peers that have completed the handshake.
@@ -143,13 +146,16 @@ impl<T: BlockTree> Bitcoin<T> {
         clock: AdjustedTime<PeerId>,
         config: Config,
     ) -> Self {
+        let mut addrmgr = AddressManager::new();
+        addrmgr.insert(address_book.as_slice());
+
         Self {
             peers: HashMap::new(),
             config,
             state: State::Connecting,
             tree,
             clock,
-            address_book,
+            addrmgr,
             ready: HashSet::new(),
             connected: HashSet::new(),
             disconnected: HashSet::new(),
@@ -383,8 +389,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         let mut outbound = Vec::new();
 
-        for peer in self.address_book.iter() {
-            outbound.push(Output::Connect(*peer));
+        for peer in self.addrmgr.sample() {
+            outbound.push(Output::Connect(peer));
         }
         outbound
     }
@@ -499,6 +505,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // TODO: Threshold should be a parameter.
                 // TODO: Peer should be picked amongst lowest latency ones.
                 if self.ready.len() >= PEER_CONNECTION_THRESHOLD {
+                    debug_assert!(!self.ready.is_empty());
+
                     if self.is_synced() {
                         let events = self.transition(State::Synced);
                         outbound.extend(events.into_iter().map(Output::from));
