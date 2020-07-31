@@ -5,6 +5,7 @@ pub mod address_manager;
 pub mod network;
 pub use network::Network;
 
+use address_manager as addrmgr;
 use address_manager::AddressManager;
 
 use crate::address_book::AddressBook;
@@ -146,8 +147,7 @@ impl<T: BlockTree> Bitcoin<T> {
         clock: AdjustedTime<PeerId>,
         config: Config,
     ) -> Self {
-        let mut addrmgr = AddressManager::new();
-        addrmgr.insert(address_book.as_slice());
+        let addrmgr = AddressManager::from(address_book);
 
         Self {
             peers: HashMap::new(),
@@ -389,8 +389,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         let mut outbound = Vec::new();
 
-        for peer in self.addrmgr.sample() {
-            outbound.push(Output::Connect(peer));
+        for addr in self.addrmgr.sample() {
+            if let Ok(addr) = addr.socket_addr() {
+                outbound.push(Output::Connect(addr));
+            }
         }
         outbound
     }
@@ -597,9 +599,9 @@ impl<T: BlockTree> Bitcoin<T> {
                 _ => return vec![],
             }
         } else if let NetworkMessage::Addr(addrs) = msg.payload {
-            for _addr in &addrs {
-                todo!();
-            }
+            self.addrmgr
+                .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
+
             return vec![];
         }
 
