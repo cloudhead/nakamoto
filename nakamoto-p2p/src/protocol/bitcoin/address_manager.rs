@@ -139,12 +139,10 @@ impl AddressManager {
     ///
     /// addrmgr.clear();
     /// addrmgr.insert(vec![
-    ///     Address::new(&([127, 0, 0, 1], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([192, 168, 1, 1], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([255, 255, 255, 255], 8333).into(), ServiceFlags::NONE),
     /// ].into_iter().map(|a| (Time::default(), a)), Source::default());
     ///
-    /// assert!(addrmgr.is_empty(), "non-routable addresses are ignored");
+    /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
     /// ```
     pub fn insert(&mut self, addrs: impl Iterator<Item = (Time, Address)>, source: Source) {
         // TODO: Store timestamp.
@@ -155,9 +153,21 @@ impl AddressManager {
             };
             let ip = net_addr.ip();
 
-            if !self::is_routable(&ip) || self.addresses.contains_key(&ip) {
+            // Ignore non-routable addresses if they come from a peer.
+            // Allow local addresses when the source is `Other`.
+            //
+            // Nb. This is perhaps still not quite correct. A local peer may want to share
+            // another local address.
+            match source {
+                Source::Peer(_) if !self::is_routable(&ip) => continue,
+                Source::Other if !self::is_routable(&ip) && !self::is_local(&ip) => continue,
+                _ => {}
+            }
+            // Ignore addresses we already know.
+            if self.addresses.contains_key(&ip) {
                 continue;
             }
+
             self.addresses
                 .insert(ip, KnownAddress::new(addr, source.clone()));
 
@@ -264,6 +274,19 @@ fn is_routable(addr: &net::IpAddr) -> bool {
     }
 }
 
+/// Check whether an IP address is locally routable.
+fn is_local(addr: &net::IpAddr) -> bool {
+    match addr {
+        net::IpAddr::V4(addr) => {
+            addr.is_private()
+                || addr.is_loopback()
+                || addr.is_link_local()
+                || addr.octets() == [0, 0, 0, 0]
+        }
+        net::IpAddr::V6(_) => false,
+    }
+}
+
 /// Get the 8-bit key of an IP address. This key is based on the IP address's
 /// range, and is used as a key to group IP addresses by range.
 fn addr_key(ip: net::IpAddr) -> u8 {
@@ -353,6 +376,22 @@ mod tests {
             addrmgr.len(),
             MAX_RANGE_SIZE + 1,
             "inserting in another range is perfectly fine"
+        );
+    }
+
+    #[test]
+    fn test_addr_key() {
+        assert_eq!(
+            addr_key(net::IpAddr::V4(net::Ipv4Addr::new(255, 0, 3, 4))),
+            0
+        );
+        assert_eq!(
+            addr_key(net::IpAddr::V4(net::Ipv4Addr::new(255, 1, 3, 4))),
+            1
+        );
+        assert_eq!(
+            addr_key(net::IpAddr::V4(net::Ipv4Addr::new(1, 255, 3, 4))),
+            1
         );
     }
 }
