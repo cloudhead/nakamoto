@@ -1,12 +1,11 @@
 use crossbeam_channel as chan;
 use log::*;
 
-pub mod address_manager;
+pub mod addrmgr;
 pub mod network;
 pub use network::Network;
 
-use address_manager as addrmgr;
-use address_manager::AddressManager;
+use addrmgr::AddressManager;
 
 use crate::address_book::AddressBook;
 use crate::event::Event;
