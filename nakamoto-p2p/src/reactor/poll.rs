@@ -197,14 +197,21 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
         commands: chan::Receiver<C>,
         listen_addrs: &[net::SocketAddr],
     ) -> Result<Vec<()>, Error> {
-        let listener = self::listen(listen_addrs)?;
-        self.sources
-            .register(Source::Listener, &listener, popol::interest::READ);
+        let listener = if listen_addrs.is_empty() {
+            None
+        } else {
+            let listener = self::listen(listen_addrs)?;
+            self.sources
+                .register(Source::Listener, &listener, popol::interest::READ);
 
-        info!("Listening on {}", listener.local_addr()?);
-        info!("Initializing protocol..");
+            info!("Listening on {}", listener.local_addr()?);
+
+            Some(listener)
+        };
 
         {
+            info!("Initializing protocol..");
+
             let local_time = SystemTime::now().into();
             let outs = protocol.initialize(local_time);
             self.process::<P>(outs, local_time)?;
@@ -234,19 +241,26 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
                                 }
                             }
                             Source::Listener => loop {
-                                let (conn, addr) = match listener.accept() {
-                                    Ok((conn, addr)) => (conn, addr),
-                                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                                        break;
-                                    }
-                                    Err(e) => {
-                                        error!("Accept error: {}", e.to_string());
-                                        break;
-                                    }
-                                };
-                                conn.set_nonblocking(true)?;
+                                if let Some(ref listener) = listener {
+                                    let (conn, addr) = match listener.accept() {
+                                        Ok((conn, addr)) => (conn, addr),
+                                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                            break;
+                                        }
+                                        Err(e) => {
+                                            error!("Accept error: {}", e.to_string());
+                                            break;
+                                        }
+                                    };
+                                    conn.set_nonblocking(true)?;
 
-                                self.register_peer(addr, conn.local_addr()?, conn, Link::Inbound);
+                                    self.register_peer(
+                                        addr,
+                                        conn.local_addr()?,
+                                        conn,
+                                        Link::Inbound,
+                                    );
+                                }
                             },
                             Source::Waker => {
                                 for cmd in commands.try_iter() {

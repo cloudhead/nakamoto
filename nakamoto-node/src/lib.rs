@@ -34,7 +34,11 @@ pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<()
     let node = Node::new(NodeConfig {
         discovery: true,
         network,
-        listen: listen.to_vec(),
+        listen: if listen.is_empty() {
+            vec![([0, 0, 0, 0], 0).into()]
+        } else {
+            listen.to_vec()
+        },
         address_book,
         timeout: time::Duration::from_secs(30),
     })?;

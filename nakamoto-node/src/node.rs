@@ -38,7 +38,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             discovery: true,
-            listen: vec![([127, 0, 0, 1], 0).into()],
+            listen: vec![([0, 0, 0, 0], 0).into()],
             network: Network::default(),
             address_book: AddressBook::default(),
             timeout: time::Duration::from_secs(60),
@@ -115,14 +115,8 @@ impl Node {
         log::debug!("{:?}", cfg.address_book);
         let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
 
-        if self.config.listen.is_empty() {
-            let port = protocol.network.port();
-            self.reactor
-                .run(protocol, self.commands, &[([0, 0, 0, 0], port).into()])?;
-        } else {
-            self.reactor
-                .run(protocol, self.commands, &self.config.listen)?;
-        }
+        self.reactor
+            .run(protocol, self.commands, &self.config.listen)?;
 
         Ok(())
     }
@@ -143,14 +137,8 @@ impl Node {
         log::debug!("{:?}", cfg.address_book);
         let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
 
-        if self.config.listen.is_empty() {
-            let port = protocol.network.port();
-            self.reactor
-                .run(protocol, self.commands, &[([0, 0, 0, 0], port).into()])?;
-        } else {
-            self.reactor
-                .run(protocol, self.commands, &self.config.listen)?;
-        }
+        self.reactor
+            .run(protocol, self.commands, &self.config.listen)?;
 
         Ok(())
     }
