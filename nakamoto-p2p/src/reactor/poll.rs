@@ -10,6 +10,7 @@ use nakamoto_chain::block::time::LocalTime;
 
 use crate::error::Error;
 use crate::event::Event;
+use crate::fallible;
 use crate::protocol::{Input, Link, Message, Output, Protocol};
 use crate::reactor::time::TimeoutManager;
 
@@ -63,6 +64,8 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     }
 
     fn read(&mut self) -> Result<M, encode::Error> {
+        fallible! { encode::Error::Io(io::ErrorKind::Other.into()) };
+
         match self.raw.read_next::<M>() {
             Ok(msg) => {
                 trace!("{}: (read) {:#?}", self.address, msg);
@@ -74,6 +77,8 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     }
 
     fn write(&mut self, msg: &M) -> Result<usize, encode::Error> {
+        fallible! { encode::Error::Io(io::ErrorKind::Other.into()) };
+
         let mut buf = [0u8; MAX_MESSAGE_SIZE];
 
         match msg.consensus_encode(&mut buf[..]) {
@@ -381,6 +386,7 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
 pub fn dial<M: Message + Encodable + Decodable + Debug, P: Protocol<M>>(
     addr: &net::SocketAddr,
 ) -> Result<net::TcpStream, Error> {
+    fallible! { Error::Io(io::ErrorKind::Other.into()) };
     debug!("Connecting to {}...", &addr);
 
     let sock = net::TcpStream::connect(addr)?;
