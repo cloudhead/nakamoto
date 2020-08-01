@@ -895,8 +895,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 // If we received less than the maximum number of headers, we must be in sync.
                 // Otherwise, ask for the next batch of headers.
                 if length < MAX_MESSAGE_HEADERS {
-                    info!("{}: Finished synchronizing", addr);
-
                     // If these headers were unsolicited, we may already be ready/synced.
                     // Otherwise, we're finally in sync.
                     peer.syncing(Syncing::Idle);
