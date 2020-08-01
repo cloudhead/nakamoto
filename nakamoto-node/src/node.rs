@@ -9,7 +9,9 @@ use crossbeam_channel as chan;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store::{self, Store};
 use nakamoto_chain::block::time::AdjustedTime;
+use nakamoto_chain::block::tree::BlockTree;
 use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Transaction};
+
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
@@ -23,6 +25,7 @@ use crate::error::Error;
 use crate::handle::{self, Handle};
 
 /// Node configuration.
+#[derive(Debug, Clone)]
 pub struct NodeConfig {
     pub discovery: bool,
     pub listen: Vec<net::SocketAddr>,
@@ -31,12 +34,25 @@ pub struct NodeConfig {
     pub timeout: time::Duration,
 }
 
+impl Default for NodeConfig {
+    fn default() -> Self {
+        Self {
+            discovery: true,
+            listen: vec![([127, 0, 0, 1], 0).into()],
+            network: Network::default(),
+            address_book: AddressBook::default(),
+            timeout: time::Duration::from_secs(60),
+        }
+    }
+}
+
 /// A light-node process.
 pub struct Node {
+    pub config: NodeConfig,
+
     commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
     events: chan::Receiver<Event<NetworkMessage>>,
-    config: NodeConfig,
     reactor: nakamoto_p2p::reactor::poll::Reactor<net::TcpStream, RawNetworkMessage, Command>,
 }
 
@@ -56,18 +72,18 @@ impl Node {
         })
     }
 
-    pub fn seed<S: net::ToSocketAddrs>(&mut self, _seeds: Vec<S>) {
-        todo!()
+    /// Seed the node's address book with peer addresses.
+    pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> Result<(), Error> {
+        self.config.address_book.seed(seeds).map_err(Error::from)
     }
 
-    /// Start the node process. This function is meant to be
-    /// run in a background thread.
+    /// Start the node process. This function is meant to be run in its own thread.
     pub fn run(mut self) -> Result<(), Error> {
         let cfg = bitcoin::Config::from(self.config.network, self.config.address_book);
         let genesis = cfg.network.genesis();
         let params = cfg.network.params();
 
-        log::info!("Initializing daemon ({:?})..", cfg.network);
+        log::info!("Initializing node ({:?})..", cfg.network);
         log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
 
         // FIXME: Get path from `NodeConfig`.
@@ -94,6 +110,34 @@ impl Node {
         let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let cache = BlockCache::from(store, params, &checkpoints)?;
+
+        log::info!("{} peer(s) found..", cfg.address_book.len());
+        log::debug!("{:?}", cfg.address_book);
+        let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
+
+        if self.config.listen.is_empty() {
+            let port = protocol.network.port();
+            self.reactor
+                .run(protocol, self.commands, &[([0, 0, 0, 0], port).into()])?;
+        } else {
+            self.reactor
+                .run(protocol, self.commands, &self.config.listen)?;
+        }
+
+        Ok(())
+    }
+
+    /// Start the node process, supplying the block cache. This function is meant to be run in
+    /// its own thread.
+    pub fn run_with<T: BlockTree>(mut self, cache: T) -> Result<(), Error> {
+        let cfg = bitcoin::Config::from(self.config.network, self.config.address_book);
+
+        log::info!("Initializing node ({:?})..", cfg.network);
+        log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
+        log::info!("Chain height is {}", cache.height());
+
+        let local_time = SystemTime::now().into();
+        let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
 
         log::info!("{} peer(s) found..", cfg.address_book.len());
         log::debug!("{:?}", cfg.address_book);

@@ -8,6 +8,9 @@ use std::time;
 use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::protocol::bitcoin::Network;
 
+#[cfg(test)]
+mod tests;
+
 pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<(), error::Error> {
     use node::*;
 

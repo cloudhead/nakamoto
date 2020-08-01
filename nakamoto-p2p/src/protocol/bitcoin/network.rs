@@ -20,6 +20,12 @@ pub enum Network {
     Regtest,
 }
 
+impl Default for Network {
+    fn default() -> Self {
+        Self::Mainnet
+    }
+}
+
 impl From<Network> for bitcoin::Network {
     fn from(value: Network) -> Self {
         match value {

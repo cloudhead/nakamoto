@@ -11,9 +11,6 @@ pub use bitcoin;
 mod fallible;
 
 #[cfg(test)]
-mod tests;
-
-#[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
 

@@ -34,6 +34,14 @@ impl AddressBook {
         AddressBook::from(&seeds)
     }
 
+    pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> io::Result<()> {
+        for seed in seeds.into_iter() {
+            let addrs = seed.to_socket_addrs()?;
+            self.addrs.extend(addrs);
+        }
+        Ok(())
+    }
+
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         use std::io::BufReader;
 
