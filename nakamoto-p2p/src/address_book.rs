@@ -12,7 +12,7 @@ pub struct AddressBook {
 }
 
 impl AddressBook {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self { addrs: Vec::new() }
     }
 

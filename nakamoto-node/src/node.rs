@@ -63,7 +63,7 @@ impl Node {
     /// Start the node process. This function is meant to be
     /// run in a background thread.
     pub fn run(mut self) -> Result<(), Error> {
-        let cfg = bitcoin::Config::from(self.config.network);
+        let cfg = bitcoin::Config::from(self.config.network, self.config.address_book);
         let genesis = cfg.network.genesis();
         let params = cfg.network.params();
 
@@ -95,12 +95,12 @@ impl Node {
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let cache = BlockCache::from(store, params, &checkpoints)?;
 
-        log::info!("{} peer(s) found..", self.config.address_book.len());
-        log::debug!("{:?}", self.config.address_book);
-        let protocol = p2p::protocol::Bitcoin::new(cache, self.config.address_book, clock, cfg);
+        log::info!("{} peer(s) found..", cfg.address_book.len());
+        log::debug!("{:?}", cfg.address_book);
+        let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
 
         if self.config.listen.is_empty() {
-            let port = protocol.config.port();
+            let port = protocol.network.port();
             self.reactor
                 .run(protocol, self.commands, &[([0, 0, 0, 0], port).into()])?;
         } else {

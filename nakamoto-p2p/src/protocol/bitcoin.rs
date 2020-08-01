@@ -73,12 +73,20 @@ impl Message for RawNetworkMessage {
 pub struct Bitcoin<T> {
     /// Peer states.
     pub peers: HashMap<PeerId, Peer>,
-    /// Peer configuration.
-    pub config: Config,
     /// Protocol state.
     pub state: State,
     /// Block tree.
     pub tree: T,
+    /// Bitcoin network we're connecting to.
+    pub network: network::Network,
+    /// Services offered by us.
+    pub services: ServiceFlags,
+    /// Our protocol version.
+    pub protocol_version: u32,
+    /// Whether or not we should relay transactions.
+    pub relay: bool,
+    /// Our user agent.
+    pub user_agent: &'static str,
 
     /// Peer address manager.
     addrmgr: AddressManager,
@@ -104,9 +112,10 @@ pub enum State {
 }
 
 /// Peer config.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub network: network::Network,
+    pub address_book: AddressBook,
     pub services: ServiceFlags,
     pub protocol_version: u32,
     pub relay: bool,
@@ -117,6 +126,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             network: network::Network::Mainnet,
+            address_book: AddressBook::default(),
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
             relay: false,
@@ -126,9 +136,10 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn from(network: network::Network) -> Self {
+    pub fn from(network: network::Network, address_book: AddressBook) -> Self {
         Self {
             network,
+            address_book,
             ..Self::default()
         }
     }
@@ -141,19 +152,27 @@ impl Config {
 impl<T: BlockTree> Bitcoin<T> {
     const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 
-    pub fn new(
-        tree: T,
-        address_book: AddressBook,
-        clock: AdjustedTime<PeerId>,
-        config: Config,
-    ) -> Self {
+    pub fn new(tree: T, clock: AdjustedTime<PeerId>, config: Config) -> Self {
+        let Config {
+            network,
+            address_book,
+            services,
+            protocol_version,
+            relay,
+            user_agent,
+        } = config;
+
         let addrmgr = AddressManager::from(address_book);
 
         Self {
             peers: HashMap::new(),
-            config,
             state: State::Connecting,
             tree,
+            network,
+            services,
+            protocol_version,
+            relay,
+            user_agent,
             clock,
             addrmgr,
             ready: HashSet::new(),
@@ -493,7 +512,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             outbound.push(Output::Message(
                                 peer.address,
                                 RawNetworkMessage {
-                                    magic: self.config.network.magic(),
+                                    magic: self.network.magic(),
                                     payload: ping,
                                 },
                             ));
@@ -541,7 +560,7 @@ impl<T: BlockTree> Bitcoin<T> {
         Output::Message(
             addr,
             RawNetworkMessage {
-                magic: self.config.network.magic(),
+                magic: self.network.magic(),
                 payload,
             },
         )
@@ -571,7 +590,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
         debug!("{}: Received {:?}", addr, msg.cmd());
 
-        if msg.magic != self.config.network.magic() {
+        if msg.magic != self.network.magic() {
             // TODO: Needs test.
             debug!(
                 "{}: Received message with invalid magic: {}",
@@ -642,7 +661,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     // Don't support peers with an older protocol than ours, we won't be
                     // able to handle it correctly.
-                    if version < self.config.protocol_version {
+                    if version < self.protocol_version {
                         debug!(
                             "{}: Disconnecting: peer protocol version is too old: {}",
                             addr, version
@@ -795,29 +814,29 @@ impl<T: BlockTree> Bitcoin<T> {
 
         NetworkMessage::Version(VersionMessage {
             // Our max supported protocol version.
-            version: self.config.protocol_version,
+            version: self.protocol_version,
             // Local services.
-            services: self.config.services,
+            services: self.services,
             // Local time.
             timestamp,
             // Receiver address, as perceived by us.
             receiver: Address::new(&addr, ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS),
             // Local address (unreliable) and local services (same as `services` field)
-            sender: Address::new(&local_addr, self.config.services),
+            sender: Address::new(&local_addr, self.services),
             // A nonce to detect connections to self.
             nonce,
             // Our user agent string.
-            user_agent: self.config.user_agent.to_owned(),
+            user_agent: self.user_agent.to_owned(),
             // Our best height.
             start_height,
             // Whether we want to receive transaction `inv` messages.
-            relay: self.config.relay,
+            relay: self.relay,
         })
     }
 
     fn get_headers(&self, locator_hashes: Vec<BlockHash>, stop_hash: BlockHash) -> NetworkMessage {
         NetworkMessage::GetHeaders(GetHeadersMessage {
-            version: self.config.protocol_version,
+            version: self.protocol_version,
             // Starting hashes, highest heights first.
             locator_hashes,
             // Using the zero hash means *fetch as many blocks as possible*.
@@ -1057,6 +1076,7 @@ mod tests {
     /// Test protocol config.
     const CONFIG: Config = Config {
         network: network::Network::Mainnet,
+        address_book: AddressBook::new(),
         // Pretend that we're a full-node, to fool connections
         // between instances of this protocol in tests.
         services: ServiceFlags::NETWORK,
@@ -1078,13 +1098,12 @@ mod tests {
         let tree = model::Cache::new(genesis);
         let clock = AdjustedTime::default();
         let local_time = LocalTime::from(SystemTime::now());
-        let book = AddressBook::new();
 
         let alice_addr = ([127, 0, 0, 1], 8333).into();
         let bob_addr = ([127, 0, 0, 2], 8333).into();
 
-        let mut alice = Bitcoin::new(tree.clone(), book.clone(), clock.clone(), CONFIG);
-        let mut bob = Bitcoin::new(tree, book, clock, CONFIG);
+        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), CONFIG);
+        let mut bob = Bitcoin::new(tree, clock, CONFIG);
 
         simulator::run(
             vec![
@@ -1127,7 +1146,6 @@ mod tests {
     fn test_initial_sync() {
         let clock = AdjustedTime::default();
         let local_time = LocalTime::from(SystemTime::now());
-        let book = AddressBook::new();
 
         let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
         let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
@@ -1143,8 +1161,8 @@ mod tests {
         // Truncate chain to test height.
         alice_tree.rollback(height).unwrap();
 
-        let mut alice = Bitcoin::new(alice_tree, book.clone(), clock.clone(), CONFIG);
-        let mut bob = Bitcoin::new(bob_tree, book, clock, CONFIG);
+        let mut alice = Bitcoin::new(alice_tree, clock.clone(), CONFIG);
+        let mut bob = Bitcoin::new(bob_tree, clock, CONFIG);
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
@@ -1166,14 +1184,13 @@ mod tests {
         let tree = model::Cache::new(genesis);
         let clock = AdjustedTime::default();
         let local_time = LocalTime::from(SystemTime::now());
-        let book = AddressBook::new();
         let idle_timeout = Bitcoin::<model::Cache>::IDLE_TIMEOUT;
 
         let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
         let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
 
-        let mut alice = Bitcoin::new(tree.clone(), book.clone(), clock.clone(), CONFIG);
-        let mut bob = Bitcoin::new(tree, book, clock.clone(), CONFIG);
+        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), CONFIG);
+        let mut bob = Bitcoin::new(tree, clock.clone(), CONFIG);
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
