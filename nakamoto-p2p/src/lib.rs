@@ -1,4 +1,6 @@
 #![allow(clippy::type_complexity)]
+#![allow(clippy::new_without_default)]
+#![allow(clippy::single_match)]
 pub mod address_book;
 pub mod checkpoints;
 pub mod error;

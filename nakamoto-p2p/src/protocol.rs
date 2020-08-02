@@ -78,7 +78,7 @@ impl<M: Message, C: Clone> Input<M, C> {
             Sent(p, n) => Sent(*p, *n),
             Command(c) => Command(c.clone()),
             Idle => Idle,
-            Timeout(p) => Timeout(p.clone()),
+            Timeout(p) => Timeout(*p),
         }
     }
 }

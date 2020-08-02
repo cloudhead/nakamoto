@@ -129,7 +129,7 @@ mod arbitrary {
 
     impl std::fmt::Debug for OrderedHeaders {
         fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-            write!(fmt, "\n")?;
+            writeln!(fmt)?;
 
             for (height, header) in self.headers.iter().enumerate() {
                 writeln!(
@@ -157,7 +157,7 @@ mod arbitrary {
         fn new(ordered: NonEmpty<BlockHeader>) -> Self {
             let genesis = *ordered.first();
             let tip = ordered.last().bitcoin_hash();
-            let headers = ordered.tail.clone();
+            let headers = ordered.tail;
 
             UnorderedHeaders {
                 headers,
@@ -205,7 +205,7 @@ mod arbitrary {
 
     impl std::fmt::Debug for UnorderedHeaders {
         fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-            write!(fmt, "\n")?;
+            writeln!(fmt)?;
 
             for header in self.headers.iter() {
                 writeln!(
@@ -322,7 +322,7 @@ fn prop_block_missing(import: BlockImport) -> bool {
 fn prop_invalid_block_target(import: BlockImport) -> bool {
     let BlockImport(mut cache, header) = import;
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
-    let genesis = cache.genesis().clone();
+    let genesis = *cache.genesis();
 
     assert!(cache.clone().import_block(header, &ctx).is_ok());
 
@@ -343,7 +343,7 @@ fn prop_invalid_block_target(import: BlockImport) -> bool {
 fn prop_invalid_block_pow(import: BlockImport) -> bool {
     let BlockImport(mut cache, header) = import;
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
-    let mut header = header.clone();
+    let mut header = header;
 
     // Find an *invalid* nonce.
     while header.validate_pow(&header.target()).is_ok() {
@@ -509,7 +509,7 @@ impl Tree {
             nonce,
         };
         let target = header.target();
-        while !header.validate_pow(&target).is_err() {
+        while header.validate_pow(&target).is_ok() {
             header.nonce += 1;
         }
 
@@ -654,7 +654,7 @@ impl Arbitrary for Tree {
 
 impl std::fmt::Debug for Tree {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
-        write!(fmt, "\n")?;
+        writeln!(fmt)?;
         writeln!(fmt, "hash: {:#?}", &self.hash)?;
         writeln!(fmt, "genesis: {:#?}", &self.genesis)?;
         writeln!(fmt, "time: {:#?}", &self.time)?;
@@ -844,8 +844,7 @@ fn test_cache_import_with_checkpoints() {
         "An incorrect checkpoint at height 1 causes an error"
     );
 
-    let mut cache =
-        BlockCache::from(store.clone(), params.clone(), &[(1, a1.hash), (2, a2.hash)]).unwrap();
+    let mut cache = BlockCache::from(store, params, &[(1, a1.hash), (2, a2.hash)]).unwrap();
     cache
         .import_blocks(tree.branch([&a1, &a2]), &ctx)
         .expect("Correct checkpoints cause no error");
@@ -991,7 +990,7 @@ fn test_cache_import_duplicate() {
     let g = &mut rand::thread_rng();
 
     let tree = Tree::new(genesis);
-    let a0 = tree.clone();
+    let a0 = tree;
 
     // a0 <- a1 <- a2 <- a3 *
     let a1 = a0.next(g);

@@ -416,7 +416,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         let mut outbound = Vec::new();
 
-        for addr in self.addrmgr.sample() {
+        // FIXME: We should fetch multiple addresses.
+        if let Some(addr) = self.addrmgr.sample() {
             if let Ok(addr) = addr.socket_addr() {
                 outbound.push(Output::Connect(addr));
             }
@@ -576,9 +577,9 @@ impl<T: BlockTree> Bitcoin<T> {
         self.state = state;
 
         match self.state {
-            State::Connecting => return Some(Event::Connecting),
-            State::Syncing(_) => return Some(Event::Syncing),
-            State::Synced => return Some(Event::Synced),
+            State::Connecting => Some(Event::Connecting),
+            State::Syncing(_) => Some(Event::Syncing),
+            State::Synced => Some(Event::Synced),
         }
     }
 
@@ -1189,7 +1190,7 @@ mod tests {
         let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
 
         let mut alice = Bitcoin::new(tree.clone(), clock.clone(), CONFIG);
-        let mut bob = Bitcoin::new(tree, clock.clone(), CONFIG);
+        let mut bob = Bitcoin::new(tree, clock, CONFIG);
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 

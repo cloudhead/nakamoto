@@ -9,8 +9,6 @@ use crate::error;
 use crate::handle::Handle;
 use crate::node::{Event, Node, NodeConfig, NodeHandle};
 
-use log;
-
 fn network(
     size: usize,
     cfg: NodeConfig,
