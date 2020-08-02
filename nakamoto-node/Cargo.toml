@@ -10,3 +10,6 @@ nakamoto-chain = { path = "../nakamoto-chain" }
 crossbeam-channel = { version = "0.4", default-features = false }
 thiserror = "1.0"
 log = "0.4"
+
+[dev-dependencies]
+nakamoto-test = { path = "../nakamoto-test" }

@@ -50,6 +50,7 @@ pub type TimeOffset = i64;
 pub enum Command {
     GetTip(chan::Sender<BlockHeader>),
     GetBlock(BlockHash),
+    Connect(net::SocketAddr),
 }
 
 impl Message for RawNetworkMessage {
@@ -471,9 +472,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
             Input::Sent(_addr, _msg) => {}
-            Input::Command(_cmd) => {
-                todo!();
-            }
+            Input::Command(cmd) => match cmd {
+                Command::Connect(addr) => outbound.push(Output::Connect(addr)),
+                _ => todo!(),
+            },
             Input::Timeout(_addr) => {
                 todo!();
             }

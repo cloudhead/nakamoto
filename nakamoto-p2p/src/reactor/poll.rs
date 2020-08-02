@@ -196,15 +196,21 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
         mut protocol: P,
         commands: chan::Receiver<C>,
         listen_addrs: &[net::SocketAddr],
-    ) -> Result<Vec<()>, Error> {
+    ) -> Result<Vec<()>, Error>
+    where
+        M::Payload: Debug + Send + Sync,
+    {
         let listener = if listen_addrs.is_empty() {
             None
         } else {
             let listener = self::listen(listen_addrs)?;
+            let local_addr = listener.local_addr()?;
+
             self.sources
                 .register(Source::Listener, &listener, popol::interest::READ);
+            self.subscriber.send(Event::Listening(local_addr))?;
 
-            info!("Listening on {}", listener.local_addr()?);
+            info!("Listening on {}", local_addr);
 
             Some(listener)
         };

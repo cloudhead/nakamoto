@@ -16,10 +16,11 @@ use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
-use nakamoto_p2p::event::Event;
 use nakamoto_p2p::protocol::bitcoin::Command;
 use nakamoto_p2p::protocol::bitcoin::{self, Network};
 use nakamoto_p2p::reactor::poll::Waker;
+
+pub use nakamoto_p2p::event::Event;
 
 use crate::error::Error;
 use crate::handle::{self, Handle};
@@ -169,7 +170,7 @@ impl NodeHandle {
     }
 
     /// Send a command to the command channel, and wake up the event loop.
-    fn command(&self, cmd: Command) -> Result<(), handle::Error> {
+    pub fn command(&self, cmd: Command) -> Result<(), handle::Error> {
         self.commands.send(cmd)?;
         self.waker.wake()?;
 
@@ -178,7 +179,7 @@ impl NodeHandle {
 
     /// Subscribe to the event feed, and wait for the given function to return something,
     /// or timeout if the specified amount of time has elapsed.
-    fn wait_for<F, T>(&self, f: F) -> Result<T, handle::Error>
+    pub fn wait_for<F, T>(&self, f: F) -> Result<T, handle::Error>
     where
         F: Fn(Event<NetworkMessage>) -> Option<T>,
     {
@@ -187,7 +188,7 @@ impl NodeHandle {
 
         loop {
             if let Some(timeout) = self.timeout.checked_sub(start.elapsed()) {
-                match events.recv_timeout(timeout) {
+                match dbg!(events.recv_timeout(timeout)) {
                     Ok(event) => {
                         if let Some(t) = f(event) {
                             return Ok(t);
@@ -225,6 +226,12 @@ impl Handle for NodeHandle {
             }
             _ => None,
         })
+    }
+
+    fn connect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
+        self.command(Command::Connect(addr))?;
+
+        Ok(())
     }
 
     fn submit_transaction(&self, _tx: Transaction) -> Result<(), handle::Error> {

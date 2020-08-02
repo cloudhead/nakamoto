@@ -1,69 +1,66 @@
+use std::net;
 use std::thread;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
+use nakamoto_test::logger;
 
 use crate::error;
-use crate::node::{Node, NodeConfig};
+use crate::handle::Handle;
+use crate::node::{Event, Node, NodeConfig, NodeHandle};
 
-#[allow(dead_code)]
-fn setup() -> Result<(), error::Error> {
-    let cfg = NodeConfig::default();
+use log;
 
-    let mut olive = Node::new(cfg.clone())?;
-    let mut joey = Node::new(cfg.clone())?;
-    let mut alice = Node::new(cfg.clone())?;
-
-    olive.seed(joey.config.listen.clone())?;
-    olive.seed(alice.config.listen.clone())?;
-
-    joey.seed(olive.config.listen.clone())?;
-    joey.seed(alice.config.listen.clone())?;
-
-    alice.seed(olive.config.listen.clone())?;
-    alice.seed(joey.config.listen.clone())?;
-
-    let _olive_handle = olive.handle();
-    let _joey_handle = joey.handle();
-    let _alice_handle = alice.handle();
-
+fn network(
+    size: usize,
+    cfg: NodeConfig,
+) -> Result<Vec<(NodeHandle, net::SocketAddr, thread::JoinHandle<()>)>, error::Error> {
     let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
 
-    thread::spawn({
-        let params = params.clone();
-        let checkpoints = checkpoints.clone();
+    let mut handles = Vec::new();
 
-        move || {
-            let store = store::Memory::new((genesis, vec![]).into());
-            let cache = BlockCache::from(store, params.clone(), &checkpoints).unwrap();
+    for _ in 0..size {
+        let mut node = Node::new(cfg.clone())?;
+        let handle = node.handle();
 
-            olive.run_with(cache).unwrap();
+        let t = thread::spawn({
+            let params = params.clone();
+            let checkpoints = checkpoints.clone();
+
+            move || {
+                let store = store::Memory::new((genesis, vec![]).into());
+                let cache = BlockCache::from(store, params, &checkpoints).unwrap();
+
+                node.run_with(cache).unwrap();
+            }
+        });
+
+        let addr = handle
+            .wait_for(|e| match e {
+                Event::Listening(addr) => Some(addr),
+                _ => None,
+            })
+            .unwrap();
+
+        handles.push((handle, addr, t));
+    }
+
+    for (handle, addr, _) in &handles {
+        for (_, peer, _) in &handles {
+            if peer != addr {
+                handle.connect(*peer).unwrap();
+            }
         }
-    });
-    thread::spawn({
-        let params = params.clone();
-        let checkpoints = checkpoints.clone();
+    }
 
-        move || {
-            let store = store::Memory::new((genesis, vec![]).into());
-            let cache = BlockCache::from(store, params.clone(), &checkpoints).unwrap();
+    Ok(handles)
+}
 
-            joey.run_with(cache).unwrap();
-        }
-    });
-    thread::spawn({
-        let params = params.clone();
-        let checkpoints = checkpoints.clone();
+#[test]
+fn test_full_sync() {
+    logger::init(log::Level::Debug);
 
-        move || {
-            let store = store::Memory::new((genesis, vec![]).into());
-            let cache = BlockCache::from(store, params.clone(), &checkpoints).unwrap();
-
-            alice.run_with(cache).unwrap();
-        }
-    });
-
-    Ok(())
+    network(3, NodeConfig::default()).unwrap();
 }

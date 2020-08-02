@@ -1,3 +1,5 @@
+use std::net;
+
 use crossbeam_channel as chan;
 use thiserror::Error;
 
@@ -31,6 +33,8 @@ pub trait Handle {
     fn get_tip(&self) -> Result<BlockHeader, Error>;
     /// Get a full block from the network.
     fn get_block(&self, hash: &BlockHash) -> Result<Block, Error>;
+    /// Connect to the designated peer address.
+    fn connect(&self, addr: net::SocketAddr) -> Result<(), Error>;
     /// Submit a transaction to the network.
     fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
     /// Wait for a given number of peers to be connected.

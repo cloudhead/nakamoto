@@ -243,6 +243,7 @@ dependencies = [
  "log",
  "nakamoto-chain",
  "nakamoto-p2p",
+ "nakamoto-test",
  "thiserror",
 ]
 

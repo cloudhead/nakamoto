@@ -1,7 +1,11 @@
+use std::net;
+
 use crate::protocol::PeerId;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Event<M> {
+    /// The node is now listening for incoming connections.
+    Listening(net::SocketAddr),
     /// The node is connecting to the network and isn't ready to start syncing.
     Connecting,
     /// The node started syncing with the network.
