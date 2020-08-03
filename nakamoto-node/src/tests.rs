@@ -3,24 +3,23 @@ use std::thread;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
-use nakamoto_test::logger;
+use nakamoto_test::{logger, TREE};
 
 use crate::error;
 use crate::handle::Handle;
 use crate::node::{Event, Node, NodeConfig, NodeHandle};
 
 fn network(
-    size: usize,
-    cfg: NodeConfig,
+    cfgs: &[NodeConfig],
 ) -> Result<Vec<(NodeHandle, net::SocketAddr, thread::JoinHandle<()>)>, error::Error> {
-    let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
-    let genesis = cfg.network.genesis();
-    let params = cfg.network.params();
-
     let mut handles = Vec::new();
 
-    for _ in 0..size {
-        let mut node = Node::new(cfg.clone())?;
+    for cfg in cfgs.iter().cloned() {
+        let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
+        let genesis = cfg.network.genesis();
+        let params = cfg.network.params();
+
+        let mut node = Node::new(cfg)?;
         let handle = node.handle();
 
         let t = thread::spawn({
@@ -60,5 +59,23 @@ fn network(
 fn test_full_sync() {
     logger::init(log::Level::Debug);
 
-    network(3, NodeConfig::default()).unwrap();
+    let nodes = network(&[
+        NodeConfig::named("olive"),
+        NodeConfig::named("alice"),
+        NodeConfig::named("misha"),
+    ])
+    .unwrap();
+
+    let (handle, _, _t) = nodes.first().unwrap();
+
+    handle
+        .import_headers(TREE.chain.tail.clone())
+        .expect("command is successful")
+        .expect("chain is valid");
+
+    // TODO: When done, start disconnecting.
+
+    for (_, _, t) in nodes.into_iter() {
+        t.join().unwrap();
+    }
 }

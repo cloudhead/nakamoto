@@ -1003,6 +1003,15 @@ impl<T: BlockTree> Bitcoin<T> {
                 out.push(self.message(*addr, NetworkMessage::Headers(vec![*best])));
             }
         }
+
+        if !out.is_empty() {
+            debug!(
+                "[{}] Broadcasting tip at height {} to {} peers..",
+                self.name,
+                height,
+                out.len()
+            );
+        }
         out
     }
 

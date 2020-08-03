@@ -37,6 +37,15 @@ pub struct NodeConfig {
     pub name: &'static str,
 }
 
+impl NodeConfig {
+    pub fn named(name: &'static str) -> Self {
+        Self {
+            name,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for NodeConfig {
     fn default() -> Self {
         Self {
