@@ -23,7 +23,7 @@ use bitcoin::network::message_network::VersionMessage;
 use bitcoin::util::hash::BitcoinHash;
 
 use nakamoto_chain::block::time::{AdjustedTime, LocalDuration, LocalTime};
-use nakamoto_chain::block::tree::BlockTree;
+use nakamoto_chain::block::tree::{self, BlockTree};
 use nakamoto_chain::block::{BlockHash, BlockHeader, Height};
 
 /// Peer-to-peer protocol version.
@@ -52,6 +52,10 @@ pub enum Command {
     GetBlock(BlockHash),
     Connect(net::SocketAddr),
     Receive(net::SocketAddr, NetworkMessage),
+    ImportHeaders(
+        Vec<BlockHeader>,
+        chan::Sender<Result<(BlockHash, Height), tree::Error>>,
+    ),
 }
 
 impl Message for RawNetworkMessage {
@@ -477,15 +481,22 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             Input::Command(cmd) => match cmd {
                 Command::Connect(addr) => outbound.push(Output::Connect(addr)),
                 Command::Receive(addr, msg) => {
-                    for out in self.receive(
-                        addr,
-                        RawNetworkMessage {
-                            magic: self.network.magic(),
-                            payload: msg,
-                        },
-                    ) {
-                        outbound.push(out);
+                    if self.connected.contains(&addr) {
+                        for out in self.receive(
+                            addr,
+                            RawNetworkMessage {
+                                magic: self.network.magic(),
+                                payload: msg,
+                            },
+                        ) {
+                            outbound.push(out);
+                        }
                     }
+                }
+                Command::ImportHeaders(headers, reply) => {
+                    reply
+                        .send(self.tree.import_blocks(headers.into_iter(), &self.clock))
+                        .ok();
                 }
                 Command::GetTip(_) => todo!(),
                 Command::GetBlock(_) => todo!(),
