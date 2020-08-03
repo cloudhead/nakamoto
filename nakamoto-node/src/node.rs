@@ -176,10 +176,43 @@ impl NodeHandle {
 
         Ok(())
     }
+}
+
+impl Handle for NodeHandle {
+    type Event = Event<NetworkMessage>;
+
+    fn get_tip(&self) -> Result<BlockHeader, handle::Error> {
+        let (transmit, receive) = chan::bounded::<BlockHeader>(1);
+        self.command(Command::GetTip(transmit))?;
+
+        Ok(receive.recv()?)
+    }
+
+    fn get_block(&self, hash: &BlockHash) -> Result<Block, handle::Error> {
+        self.command(Command::GetBlock(*hash))?;
+        self.wait(|e| match e {
+            Event::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
+                Some(blk)
+            }
+            _ => None,
+        })
+    }
+
+    fn connect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
+        self.command(Command::Connect(addr))?;
+        self.wait(|e| match e {
+            Event::Connected(a) if a == addr => Some(()),
+            _ => None,
+        })
+    }
+
+    fn submit_transaction(&self, _tx: Transaction) -> Result<(), handle::Error> {
+        todo!()
+    }
 
     /// Subscribe to the event feed, and wait for the given function to return something,
     /// or timeout if the specified amount of time has elapsed.
-    pub fn wait_for<F, T>(&self, f: F) -> Result<T, handle::Error>
+    fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
     where
         F: Fn(Event<NetworkMessage>) -> Option<T>,
     {
@@ -207,42 +240,11 @@ impl NodeHandle {
             }
         }
     }
-}
-
-impl Handle for NodeHandle {
-    fn get_tip(&self) -> Result<BlockHeader, handle::Error> {
-        let (transmit, receive) = chan::bounded::<BlockHeader>(1);
-        self.command(Command::GetTip(transmit))?;
-
-        Ok(receive.recv()?)
-    }
-
-    fn get_block(&self, hash: &BlockHash) -> Result<Block, handle::Error> {
-        self.command(Command::GetBlock(*hash))?;
-        self.wait_for(|e| match e {
-            Event::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
-                Some(blk)
-            }
-            _ => None,
-        })
-    }
-
-    fn connect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
-        self.command(Command::Connect(addr))?;
-        self.wait_for(|e| match e {
-            Event::Connected(a) if a == addr => Some(()),
-            _ => None,
-        })
-    }
-
-    fn submit_transaction(&self, _tx: Transaction) -> Result<(), handle::Error> {
-        todo!()
-    }
 
     fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
         use std::collections::HashSet;
 
-        self.wait_for(|e| {
+        self.wait(|e| {
             let mut connected = HashSet::new();
 
             match e {
@@ -261,7 +263,7 @@ impl Handle for NodeHandle {
     }
 
     fn wait_for_ready(&self) -> Result<(), handle::Error> {
-        self.wait_for(|e| match e {
+        self.wait(|e| match e {
             Event::Synced => Some(()),
             _ => None,
         })

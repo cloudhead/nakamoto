@@ -36,7 +36,7 @@ fn network(
         });
 
         let addr = handle
-            .wait_for(|e| match e {
+            .wait(|e| match e {
                 Event::Listening(addr) => Some(addr),
                 _ => None,
             })

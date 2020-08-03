@@ -29,6 +29,8 @@ impl<T> From<chan::SendError<T>> for Error {
 
 /// A handle for communicating with a node process.
 pub trait Handle {
+    type Event;
+
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<BlockHeader, Error>;
     /// Get a full block from the network.
@@ -37,6 +39,8 @@ pub trait Handle {
     fn connect(&self, addr: net::SocketAddr) -> Result<(), Error>;
     /// Submit a transaction to the network.
     fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
+    /// Wait for the given predicate to be fulfilled.
+    fn wait<F: Fn(Self::Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected.
     fn wait_for_peers(&self, count: usize) -> Result<(), Error>;
     /// Wait for the node to be ready and in sync with the blockchain.
