@@ -359,6 +359,10 @@ impl Peer {
         matches!(self.state, PeerState::Ready { .. })
     }
 
+    fn is_idle(&self) -> bool {
+        matches!(self.state, PeerState::Ready { syncing: Syncing::Idle, .. })
+    }
+
     fn ping(&mut self, local_time: LocalTime) -> NetworkMessage {
         let nonce = fastrand::u64(..);
         self.last_ping = Some((nonce, local_time));
@@ -497,6 +501,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     reply
                         .send(self.tree.import_blocks(headers.into_iter(), &self.clock))
                         .ok();
+                    outbound.extend(self.broadcast_tip());
                 }
                 Command::GetTip(_) => todo!(),
                 Command::GetBlock(_) => todo!(),
@@ -925,10 +930,14 @@ impl<T: BlockTree> Bitcoin<T> {
                     // If these headers were unsolicited, we may already be ready/synced.
                     // Otherwise, we're finally in sync.
                     peer.syncing(Syncing::Idle);
-                    self.transition(State::Synced)
+
+                    let mut out = self
+                        .transition(State::Synced)
                         .into_iter()
                         .map(Output::from)
-                        .collect()
+                        .collect::<Vec<_>>();
+                    out.extend(self.broadcast_tip());
+                    out
                 } else {
                     // TODO: If we're already in the state of asking for this header, don't
                     // ask again.
@@ -949,6 +958,19 @@ impl<T: BlockTree> Bitcoin<T> {
                 vec![]
             }
         }
+    }
+
+    /// Broadcast our best block header to connected peers who don't have it.
+    fn broadcast_tip(&self) -> Vec<Output<RawNetworkMessage>> {
+        let (height, best) = self.tree.best_block();
+        let mut out = Vec::new();
+
+        for (addr, peer) in &self.peers {
+            if peer.is_idle() && height > peer.height {
+                out.push(self.message(*addr, NetworkMessage::Headers(vec![*best])));
+            }
+        }
+        out
     }
 
     #[allow(dead_code)]
