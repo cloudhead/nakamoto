@@ -221,7 +221,7 @@ impl Handle for NodeHandle {
 
         loop {
             if let Some(timeout) = self.timeout.checked_sub(start.elapsed()) {
-                match dbg!(events.recv_timeout(timeout)) {
+                match events.recv_timeout(timeout) {
                     Ok(event) => {
                         if let Some(t) = f(event) {
                             return Ok(t);
