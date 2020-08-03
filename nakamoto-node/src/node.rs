@@ -180,6 +180,7 @@ impl NodeHandle {
 }
 
 impl Handle for NodeHandle {
+    type Message = NetworkMessage;
     type Event = Event<NetworkMessage>;
 
     fn get_tip(&self) -> Result<BlockHeader, handle::Error> {
@@ -209,6 +210,12 @@ impl Handle for NodeHandle {
             }
             _ => None,
         })
+    }
+
+    fn receive(&self, from: net::SocketAddr, msg: NetworkMessage) -> Result<(), handle::Error> {
+        self.command(Command::Receive(from, msg))?;
+
+        Ok(())
     }
 
     fn submit_transaction(&self, _tx: Transaction) -> Result<(), handle::Error> {

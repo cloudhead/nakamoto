@@ -51,6 +51,7 @@ pub enum Command {
     GetTip(chan::Sender<BlockHeader>),
     GetBlock(BlockHash),
     Connect(net::SocketAddr),
+    Receive(net::SocketAddr, NetworkMessage),
 }
 
 impl Message for RawNetworkMessage {
@@ -475,7 +476,19 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             Input::Sent(_addr, _msg) => {}
             Input::Command(cmd) => match cmd {
                 Command::Connect(addr) => outbound.push(Output::Connect(addr)),
-                _ => todo!(),
+                Command::Receive(addr, msg) => {
+                    for out in self.receive(
+                        addr,
+                        RawNetworkMessage {
+                            magic: self.network.magic(),
+                            payload: msg,
+                        },
+                    ) {
+                        outbound.push(out);
+                    }
+                }
+                Command::GetTip(_) => todo!(),
+                Command::GetBlock(_) => todo!(),
             },
             Input::Timeout(_addr) => {
                 todo!();

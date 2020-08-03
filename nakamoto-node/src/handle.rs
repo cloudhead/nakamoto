@@ -32,6 +32,8 @@ impl<T> From<chan::SendError<T>> for Error {
 pub trait Handle {
     /// Node event generated during protocol operation.
     type Event;
+    /// The message payload exchanged between nodes in the network.
+    type Message;
 
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<BlockHeader, Error>;
@@ -41,6 +43,8 @@ pub trait Handle {
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, Error>;
     /// Submit a transaction to the network.
     fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
+    /// Have the node receive a message as if it was coming from the given peer in the network.
+    fn receive(&self, from: net::SocketAddr, msg: Self::Message) -> Result<(), Error>;
     /// Wait for the given predicate to be fulfilled.
     fn wait<F: Fn(Self::Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected.
