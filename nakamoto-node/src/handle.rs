@@ -4,6 +4,7 @@ use crossbeam_channel as chan;
 use thiserror::Error;
 
 use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Transaction};
+use nakamoto_p2p::protocol::Link;
 
 #[derive(Error, Debug)]
 pub enum Error {
@@ -29,6 +30,7 @@ impl<T> From<chan::SendError<T>> for Error {
 
 /// A handle for communicating with a node process.
 pub trait Handle {
+    /// Node event generated during protocol operation.
     type Event;
 
     /// Get the tip of the chain.
@@ -36,7 +38,7 @@ pub trait Handle {
     /// Get a full block from the network.
     fn get_block(&self, hash: &BlockHash) -> Result<Block, Error>;
     /// Connect to the designated peer address.
-    fn connect(&self, addr: net::SocketAddr) -> Result<(), Error>;
+    fn connect(&self, addr: net::SocketAddr) -> Result<Link, Error>;
     /// Submit a transaction to the network.
     fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
     /// Wait for the given predicate to be fulfilled.

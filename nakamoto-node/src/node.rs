@@ -18,6 +18,7 @@ use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage}
 use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
 use nakamoto_p2p::protocol::bitcoin::Command;
 use nakamoto_p2p::protocol::bitcoin::{self, Network};
+use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::reactor::poll::Waker;
 
 pub use nakamoto_p2p::event::Event;
@@ -198,10 +199,14 @@ impl Handle for NodeHandle {
         })
     }
 
-    fn connect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
+    fn connect(&self, addr: net::SocketAddr) -> Result<Link, handle::Error> {
         self.command(Command::Connect(addr))?;
         self.wait(|e| match e {
-            Event::Connected(a) if a == addr => Some(()),
+            Event::Connected(a, link)
+                if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
+            {
+                Some(link)
+            }
             _ => None,
         })
     }
@@ -248,7 +253,7 @@ impl Handle for NodeHandle {
             let mut connected = HashSet::new();
 
             match e {
-                Event::Connected(addr) => {
+                Event::Connected(addr, _) => {
                     connected.insert(addr);
 
                     if connected.len() == count {

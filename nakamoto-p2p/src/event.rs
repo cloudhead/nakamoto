@@ -1,6 +1,6 @@
 use std::net;
 
-use crate::protocol::PeerId;
+use crate::protocol::{Link, PeerId};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Event<M> {
@@ -16,7 +16,7 @@ pub enum Event<M> {
     /// A new peer has connected and is ready to accept messages.
     /// This event is triggered *after* the peer handshake
     /// has successfully completed.
-    Connected(PeerId),
+    Connected(PeerId, Link),
     /// A peer has been disconnected.
     Disconnected(PeerId),
     /// Received a message from a peer.

@@ -189,6 +189,8 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> R
 
 impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
     Reactor<net::TcpStream, M, C>
+where
+    M::Payload: Debug + Send + Sync,
 {
     /// Run the given protocol with the reactor.
     pub fn run<P: Protocol<M, Command = C>>(
@@ -196,10 +198,7 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
         mut protocol: P,
         commands: chan::Receiver<C>,
         listen_addrs: &[net::SocketAddr],
-    ) -> Result<Vec<()>, Error>
-    where
-        M::Payload: Debug + Send + Sync,
-    {
+    ) -> Result<Vec<()>, Error> {
         let listener = if listen_addrs.is_empty() {
             None
         } else {
@@ -353,6 +352,8 @@ impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
                     self.timeouts.register(addr, local_time + timeout);
                 }
                 Output::Event(event) => {
+                    trace!("Event: {:?}", event);
+
                     self.subscriber.try_send(event).unwrap(); // FIXME
                 }
             }

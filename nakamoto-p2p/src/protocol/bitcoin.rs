@@ -965,8 +965,8 @@ impl<T: BlockTree> Bitcoin<T> {
         outbound: &mut Vec<Output<RawNetworkMessage>>,
     ) {
         match input {
-            Input::Connected { addr, .. } => {
-                outbound.push(Output::Event(Event::Connected(*addr)));
+            Input::Connected { addr, link, .. } => {
+                outbound.push(Output::Event(Event::Connected(*addr, *link)));
             }
             Input::Disconnected(addr) => {
                 outbound.push(Output::Event(Event::Disconnected(*addr)));
