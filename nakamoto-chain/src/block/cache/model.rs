@@ -16,10 +16,10 @@ use bitcoin::util::hash::BitcoinHash;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
-    headers: HashMap<BlockHash, BlockHeader>,
-    chain: NonEmpty<BlockHeader>,
-    tip: BlockHash,
-    genesis: BlockHash,
+    pub headers: HashMap<BlockHash, BlockHeader>,
+    pub chain: NonEmpty<BlockHeader>,
+    pub tip: BlockHash,
+    pub genesis: BlockHash,
 }
 
 impl Cache {

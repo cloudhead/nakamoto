@@ -34,6 +34,7 @@ pub struct NodeConfig {
     pub network: Network,
     pub address_book: AddressBook,
     pub timeout: time::Duration,
+    pub name: &'static str,
 }
 
 impl Default for NodeConfig {
@@ -44,6 +45,7 @@ impl Default for NodeConfig {
             network: Network::default(),
             address_book: AddressBook::default(),
             timeout: time::Duration::from_secs(60),
+            name: "self",
         }
     }
 }
@@ -81,7 +83,11 @@ impl Node {
 
     /// Start the node process. This function is meant to be run in its own thread.
     pub fn run(mut self) -> Result<(), Error> {
-        let cfg = bitcoin::Config::from(self.config.network, self.config.address_book);
+        let cfg = bitcoin::Config::from(
+            self.config.name,
+            self.config.network,
+            self.config.address_book,
+        );
         let genesis = cfg.network.genesis();
         let params = cfg.network.params();
 
@@ -126,7 +132,11 @@ impl Node {
     /// Start the node process, supplying the block cache. This function is meant to be run in
     /// its own thread.
     pub fn run_with<T: BlockTree>(mut self, cache: T) -> Result<(), Error> {
-        let cfg = bitcoin::Config::from(self.config.network, self.config.address_book);
+        let cfg = bitcoin::Config::from(
+            self.config.name,
+            self.config.network,
+            self.config.address_book,
+        );
 
         log::info!("Initializing node ({:?})..", cfg.network);
         log::info!("Genesis block hash is {}", cfg.network.genesis_hash());

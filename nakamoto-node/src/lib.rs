@@ -41,6 +41,7 @@ pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<()
         },
         address_book,
         timeout: time::Duration::from_secs(30),
+        ..NodeConfig::default()
     })?;
 
     node.run()
