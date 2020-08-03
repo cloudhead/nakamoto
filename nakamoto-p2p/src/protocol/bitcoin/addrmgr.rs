@@ -278,10 +278,7 @@ fn is_routable(addr: &net::IpAddr) -> bool {
 fn is_local(addr: &net::IpAddr) -> bool {
     match addr {
         net::IpAddr::V4(addr) => {
-            addr.is_private()
-                || addr.is_loopback()
-                || addr.is_link_local()
-                || addr.octets() == [0, 0, 0, 0]
+            addr.is_private() || addr.is_loopback() || addr.is_link_local() || addr.is_unspecified()
         }
         net::IpAddr::V6(_) => false,
     }
