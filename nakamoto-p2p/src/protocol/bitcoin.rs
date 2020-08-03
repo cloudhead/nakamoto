@@ -501,8 +501,19 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             }
             Input::Sent(_addr, _msg) => {}
             Input::Command(cmd) => match cmd {
-                Command::Connect(addr) => outbound.push(Output::Connect(addr)),
+                Command::Connect(addr) => {
+                    debug!("[{}] Received command: Connect({})", self.name, addr);
+
+                    if !self.connected.contains(&addr) {
+                        outbound.push(Output::Connect(addr));
+                    }
+                }
                 Command::Receive(addr, msg) => {
+                    debug!(
+                        "[{}] Received command: Receive({}, {:?})",
+                        self.name, addr, msg
+                    );
+
                     if self.connected.contains(&addr) {
                         for out in self.receive(
                             addr,
@@ -516,6 +527,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     }
                 }
                 Command::ImportHeaders(headers, reply) => {
+                    debug!("[{}] Received command: ImportHeaders(..)", self.name);
+
                     reply
                         .send(self.tree.import_blocks(headers.into_iter(), &self.clock))
                         .ok();
