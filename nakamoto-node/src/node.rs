@@ -219,7 +219,6 @@ impl Handle for NodeHandle {
 
     fn get_block(&self, hash: &BlockHash) -> Result<Block, handle::Error> {
         self.command(Command::GetBlock(*hash))?;
-
         self.wait_for(|e| match e {
             Event::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
                 Some(blk)
@@ -230,8 +229,10 @@ impl Handle for NodeHandle {
 
     fn connect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
         self.command(Command::Connect(addr))?;
-
-        Ok(())
+        self.wait_for(|e| match e {
+            Event::Connected(a) if a == addr => Some(()),
+            _ => None,
+        })
     }
 
     fn submit_transaction(&self, _tx: Transaction) -> Result<(), handle::Error> {
