@@ -91,6 +91,15 @@ pub trait BlockTree {
     fn height(&self) -> Height;
     /// Get the tip of the longest chain.
     fn tip(&self) -> (BlockHash, BlockHeader);
+    /// Get the last block of the longest chain.
+    fn best_block(&self) -> (Height, &BlockHeader) {
+        let height = self.height();
+        (
+            height,
+            self.get_block_by_height(height)
+                .expect("the best block is always present"),
+        )
+    }
     /// Return the genesis block header.
     fn genesis(&self) -> &BlockHeader {
         self.get_block_by_height(0)
