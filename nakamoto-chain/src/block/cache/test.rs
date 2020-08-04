@@ -241,11 +241,7 @@ fn arbitrary_header<G: Gen>(
         merkle_root: TxMerkleNode::default(),
         prev_blockhash,
     };
-
-    let target = header.target();
-    while header.validate_pow(&target).is_err() {
-        header.nonce += 1;
-    }
+    block::solve(&mut header);
 
     header
 }
@@ -307,10 +303,11 @@ fn prop_block_missing(import: BlockImport) -> bool {
         .header
         .bitcoin_hash();
 
-    let header = BlockHeader {
+    let mut header = BlockHeader {
         prev_blockhash,
         ..header
     };
+    block::solve(&mut header);
 
     matches! {
         cache.import_block(header, &ctx).err(),
@@ -485,7 +482,7 @@ impl Tree {
             time: self.time + TARGET_SPACING,
             nonce,
         };
-        self.solve(&mut header);
+        block::solve(&mut header);
 
         let hash = header.bitcoin_hash();
         self.headers.write().unwrap().insert(hash, header);
@@ -574,13 +571,6 @@ impl Tree {
         }
 
         blocks.into_iter()
-    }
-
-    fn solve(&self, header: &mut BlockHeader) {
-        let target = header.target();
-        while header.validate_pow(&target).is_err() {
-            header.nonce += 1;
-        }
     }
 }
 
@@ -879,7 +869,9 @@ fn test_cache_import_invalid_fork() {
     let c4 = c3.next(g);
     let c5 = c4.next_invalid(g);
 
-    cache.import_blocks(a0.branch([&c3, &c5]), &ctx).unwrap();
+    cache
+        .import_blocks(a0.branch([&c3, &c5]), &ctx)
+        .unwrap_err();
     assert_eq!(cache.tip().0, a3.hash);
 
     cache.import_block(c2.block(), &ctx).unwrap();
@@ -900,7 +892,7 @@ fn test_cache_import_invalid_fork() {
     let b6 = b5.next(g);
 
     cache.import_blocks(a0.branch([&b4, &b6]), &ctx).unwrap();
-    cache.import_block(b3.block(), &ctx).unwrap();
+    cache.import_block(b3.block(), &ctx).unwrap_err();
     assert_eq!(cache.tip().0, c4.hash, "Don't switch to invalid fork");
 }
 

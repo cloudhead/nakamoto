@@ -45,8 +45,8 @@ impl tree::Header for CachedBlock {
     }
 }
 
-// Convert a compact difficulty representation to 256-bits.
-// Taken from `BlockHeader::target` from the `bitcoin` library.
+/// Convert a compact difficulty representation to 256-bits.
+/// Taken from `BlockHeader::target` from the `bitcoin` library.
 fn target_from_bits(bits: u32) -> Target {
     let (mant, expt) = {
         let unshifted_expt = bits >> 24;
@@ -62,5 +62,14 @@ fn target_from_bits(bits: u32) -> Target {
         Default::default()
     } else {
         Target::from_u64(mant as u64).unwrap() << (expt as usize)
+    }
+}
+
+/// Solve the block's proof of work puzzle.
+#[cfg(test)]
+fn solve(header: &mut BlockHeader) {
+    let target = header.target();
+    while header.validate_pow(&target).is_err() {
+        header.nonce += 1;
     }
 }

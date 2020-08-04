@@ -148,8 +148,33 @@ impl<S: Store> BlockCache<S> {
                     return Err(Error::InvalidBlockHeight(*height + 1));
                 }
             }
-            // TODO: The orphan set can grow indefinitely. We should at least validate the
-            // PoW to ensure cheap attacks aren't possible.
+
+            // Validate that the block's PoW (1) is valid against its difficulty target, and (2)
+            // is greater than the minimum allowed for this network.
+            //
+            // We do this because it's cheap to verify and prevents flooding attacks.
+            let target = header.target();
+            match header.validate_pow(&target) {
+                Ok(_) => {
+                    let limit = self.params.pow_limit;
+                    if target > limit {
+                        dbg!(&target, &limit);
+                        return Err(Error::InvalidBlockTarget(target, limit));
+                    }
+                }
+                Err(bitcoin::util::Error::BlockBadProofOfWork) => {
+                    return Err(Error::InvalidBlockPoW);
+                }
+                Err(bitcoin::util::Error::BlockBadTarget) => {
+                    // The only way to get a 'bad target' error is to pass a different target
+                    // than the one specified in the header.
+                    unreachable!();
+                }
+                Err(_) => {
+                    // We've handled all possible errors above.
+                    unreachable!();
+                }
+            }
             self.orphans.insert(hash, header);
         }
 
@@ -157,6 +182,16 @@ impl<S: Store> BlockCache<S> {
 
         let candidates = self.chain_candidates(clock);
 
+        // TODO: What are we trying to do here? We're saying that if there are no
+        // forks, and this header has no parent, we return an error. But:
+        //
+        // If there are forks, it doesn't mean this header is part of one. It could
+        // be a fork that already existed before this header was received.
+        //
+        // What we should do is simply: if the block has no parent (is orphan), we
+        // know it's a no-op, ie. we won't discover a better branch. So we always
+        // return the error without even checking for candidates. Otherwise, if
+        // it *does* have a parent, we check for candidates.
         if candidates.is_empty()
             && !self.headers.contains_key(&header.prev_blockhash)
             && !self.orphans.contains_key(&header.prev_blockhash)
