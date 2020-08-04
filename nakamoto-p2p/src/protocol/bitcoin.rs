@@ -623,6 +623,16 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
         }
+
+        if log::max_level() >= log::Level::Debug {
+            outbound.iter().for_each(|o| match o {
+                Output::Message(addr, msg) => {
+                    debug!("[{}] {}: Sending {:?}", self.name, addr, msg.display());
+                }
+                _ => {}
+            });
+        }
+
         outbound
     }
 }
@@ -731,7 +741,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     let height = self.tree.height();
 
                     info!(
-                        "[{}] {}: Peer version = {}, height = {}, agent = {} timestamp = {}",
+                        "[{}] {}: Peer version = {}, height = {}, agent = {}, timestamp = {}",
                         self.name, addr, version, start_height, user_agent, timestamp
                     );
 
@@ -964,7 +974,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
         if self.tree.contains(&best) {
             debug!(
-                "[{}] {}: Received headers are already part of the active chain",
+                "[{}] {}: Received header(s) already part of active chain",
                 self.name, addr,
             );
             return vec![];

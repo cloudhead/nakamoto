@@ -310,8 +310,6 @@ where
             match out {
                 Output::Message(addr, msg) => {
                     if let Some(peer) = self.peers.get_mut(&addr) {
-                        debug!("{}: Sending {:?}..", addr, msg.display());
-
                         let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
                         peer.queue.push_back(msg);
@@ -325,8 +323,6 @@ where
                     }
                 }
                 Output::Connect(addr) => {
-                    debug!("{}: Connecting..", addr);
-
                     let stream = self::dial::<_, P>(&addr)?;
                     let local_addr = stream.local_addr()?;
                     let addr = stream.peer_addr()?;
