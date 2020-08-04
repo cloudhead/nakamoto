@@ -962,21 +962,15 @@ impl<T: BlockTree> Bitcoin<T> {
         // TODO: Check that headers form a chain.
         match self.tree.import_blocks(headers.into_iter(), &self.clock) {
             Ok(ImportResult::TipUnchanged) => {
-                if let PeerState::Ready {
-                    syncing: Syncing::AwaitingHeaders(_locators, _local_time),
-                    ..
-                } = &peer.state
-                {
-                    // The headers we requested are either stale or already known.
-                    // TODO: Request more.
-                } else {
-                    // Unsolicited header.
-                    // The headers are on a branch or orphan.
-                    // Try to find a common ancestor.
-                    let locators = self.tree.locators_hashes(self.tree.height());
-                    outbound
-                        .push(self.message(addr, self.get_headers(locators, BlockHash::default())));
-                }
+                // Try to find a common ancestor.
+                let locators = self.tree.locators_hashes(self.tree.height());
+
+                // TODO: What if we already knew these headers?
+                peer.syncing(Syncing::AwaitingHeaders(
+                    locators.clone(),
+                    self.clock.local_time(),
+                ));
+                outbound.push(self.message(addr, self.get_headers(locators, BlockHash::default())));
             }
             Ok(ImportResult::TipChanged(tip, height, _)) => {
                 info!(
@@ -985,8 +979,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 );
                 info!("[{}] Chain height = {}, tip = {}", self.name, height, tip);
 
-                // FIXME: This isn't correct, since it could be that the headers created
-                // a minority fork.
                 peer.tip = tip;
                 peer.height = height;
 
@@ -1020,6 +1012,8 @@ impl<T: BlockTree> Bitcoin<T> {
                         );
                     }
                 }
+
+                // Broadcast the new tip, since we were able to verify the header chain up to it.
                 outbound.extend(self.broadcast_tip());
             }
             Err(err) => {
