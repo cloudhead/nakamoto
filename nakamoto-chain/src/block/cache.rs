@@ -464,4 +464,21 @@ impl<S: Store> BlockTree for BlockCache<S> {
     fn is_known(&self, hash: &BlockHash) -> bool {
         self.headers.contains_key(hash) || self.orphans.contains_key(hash)
     }
+
+    /// Get the locator hashes for the active chain.
+    ///
+    /// *Panics* if the given starting height is out of bounds.
+    ///
+    fn locators_hashes(&self, from: Height) -> Vec<BlockHash> {
+        let mut hashes = Vec::new();
+
+        assert!(from <= self.height());
+
+        for height in block::locators_indexes(from).into_iter() {
+            if let Some(blk) = self.chain.get(height as usize) {
+                hashes.push(blk.hash);
+            }
+        }
+        hashes
+    }
 }

@@ -45,6 +45,35 @@ impl tree::Header for CachedBlock {
     }
 }
 
+/// Get the locator indexes starting from a given height, and going backwards, exponentially
+/// backing off.
+///
+/// ```
+/// use nakamoto_chain::block;
+///
+/// assert_eq!(block::locators_indexes(0), vec![0]);
+/// assert_eq!(block::locators_indexes(8), vec![8, 7, 6, 5, 4, 3, 2, 1, 0]);
+/// assert_eq!(block::locators_indexes(99), vec![
+///     99, 98, 97, 96, 95, 94, 93, 92, 91, 89, 85, 77, 61, 29, 0
+/// ]);
+/// ```
+pub fn locators_indexes(mut from: Height) -> Vec<Height> {
+    let mut indexes = Vec::new();
+    let mut step = 1;
+
+    while from > 0 {
+        // For the first 8 blocks, don't skip any heights.
+        if indexes.len() >= 8 {
+            step *= 2;
+        }
+        indexes.push(from as Height);
+        from = from.saturating_sub(step);
+    }
+    // Always include genesis.
+    indexes.push(0);
+    indexes
+}
+
 /// Convert a compact difficulty representation to 256-bits.
 /// Taken from `BlockHeader::target` from the `bitcoin` library.
 fn target_from_bits(bits: u32) -> Target {

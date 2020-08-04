@@ -96,6 +96,10 @@ impl BlockTree for HeightCache {
     fn is_known(&self, _hash: &BlockHash) -> bool {
         unimplemented!()
     }
+
+    fn locators_hashes(&self, _from: Height) -> Vec<BlockHash> {
+        unimplemented!()
+    }
 }
 
 mod arbitrary {
