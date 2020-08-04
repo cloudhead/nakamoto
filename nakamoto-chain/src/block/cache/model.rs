@@ -2,7 +2,7 @@
 //! Not for production use.
 use super::{BlockTree, Error};
 
-use crate::block::tree::Branch;
+use crate::block::tree::{Branch, ImportResult};
 use crate::block::Height;
 
 use std::collections::{HashMap, VecDeque};
@@ -113,14 +113,20 @@ impl BlockTree for Cache {
         &mut self,
         chain: I,
         _context: &C,
-    ) -> Result<(BlockHash, Height), Error> {
+    ) -> Result<ImportResult, Error> {
         for header in chain {
             self.headers.insert(header.bitcoin_hash(), header);
         }
+        let tip = self.tip;
+
         self.chain = self.longest_chain();
         self.tip = self.chain.last().bitcoin_hash();
 
-        Ok((self.chain.last().bitcoin_hash(), self.height()))
+        if tip != self.tip {
+            Ok(ImportResult::TipChanged(self.tip, self.height(), vec![]))
+        } else {
+            Ok(ImportResult::TipUnchanged)
+        }
     }
 
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {

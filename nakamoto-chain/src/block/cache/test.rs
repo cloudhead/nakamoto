@@ -2,6 +2,7 @@ use super::{model, BlockCache, BlockTree, Error};
 
 use crate::block::store::{self, Store};
 use crate::block::time::{AdjustedTime, Clock, LocalTime};
+use crate::block::tree::ImportResult;
 use crate::block::{self, Height, Target, Time};
 
 use std::collections::{BTreeMap, VecDeque};
@@ -68,7 +69,7 @@ impl BlockTree for HeightCache {
         &mut self,
         _chain: I,
         _ctx: &C,
-    ) -> Result<(BlockHash, Height), super::Error> {
+    ) -> Result<ImportResult, super::Error> {
         unimplemented!()
     }
 

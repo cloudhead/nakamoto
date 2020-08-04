@@ -16,7 +16,7 @@ use nonempty::NonEmpty;
 
 use crate::block::store::Store;
 
-use crate::block::tree::{BlockTree, Branch, Error};
+use crate::block::tree::{BlockTree, Branch, Error, ImportResult};
 use crate::block::{
     self,
     time::{self, Clock},
@@ -128,9 +128,10 @@ impl<S: Store> BlockCache<S> {
         &mut self,
         header: BlockHeader,
         clock: &impl Clock,
-    ) -> Result<(BlockHash, Height), Error> {
+    ) -> Result<ImportResult, Error> {
         let hash = header.bitcoin_hash();
         let tip = self.chain.last();
+        let best = tip.hash;
 
         // Block extends the active chain.
         if header.prev_blockhash == tip.hash {
@@ -199,7 +200,7 @@ impl<S: Store> BlockCache<S> {
             return Err(Error::BlockMissing(header.prev_blockhash));
         }
 
-        // TODO(perf): Skip overlapping branches.
+        // TODO: Don't switch multiple times. Switch to the best branch in one go.
         for branch in candidates.iter() {
             let candidate_work = Branch(&branch.headers).work();
             let main_work = Branch(self.chain_suffix(branch.fork_height)).work();
@@ -220,7 +221,13 @@ impl<S: Store> BlockCache<S> {
                 }
             }
         }
-        Ok((self.chain.last().hash, self.height()))
+
+        let (hash, _) = self.tip();
+        if hash != best {
+            Ok(ImportResult::TipChanged(hash, self.height(), vec![]))
+        } else {
+            Ok(ImportResult::TipUnchanged)
+        }
     }
 
     fn chain_candidates(&self, clock: &impl Clock) -> Vec<Candidate> {
@@ -358,20 +365,24 @@ impl<S: Store> BlockCache<S> {
         bits
     }
 
-    /// Rollback active chain to the given height.
-    fn rollback(&mut self, height: Height) -> Result<(), Error> {
+    /// Rollback active chain to the given height. Returns the list of rolled-back headers.
+    fn rollback(&mut self, height: Height) -> Result<Vec<BlockHeader>, Error> {
+        let mut stale = Vec::new();
+
         for block in self.chain.tail.drain(height as usize..) {
+            stale.push(block.header.clone());
+
             self.headers.remove(&block.hash);
             self.orphans.insert(block.hash, block.header);
         }
         self.store.rollback(height)?;
 
-        Ok(())
+        Ok(stale)
     }
 
-    /// Activate a fork candidate.
-    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<(), Error> {
-        self.rollback(branch.fork_height)?;
+    /// Activate a fork candidate. Returns the list of rolled-back (stale) headers.
+    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<Vec<BlockHeader>, Error> {
+        let stale = self.rollback(branch.fork_height)?;
 
         for (i, header) in branch.headers.iter().enumerate() {
             self.extend_chain(
@@ -382,7 +393,7 @@ impl<S: Store> BlockCache<S> {
         }
         self.store.put(branch.headers.iter().cloned())?;
 
-        Ok(())
+        Ok(stale)
     }
 
     /// Extend the active chain with a block.
@@ -409,7 +420,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
         &mut self,
         chain: I,
         context: &C,
-    ) -> Result<(BlockHash, Height), Error> {
+    ) -> Result<ImportResult, Error> {
         let mut result = None;
 
         for (i, header) in chain.enumerate() {
@@ -420,8 +431,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
                 Err(err) => return Err(Error::BlockImportAborted(err.into(), i, self.height())),
             }
         }
-
-        Ok(result.unwrap_or((self.chain.last().hash, self.height())))
+        Ok(result.unwrap_or(ImportResult::TipUnchanged))
     }
 
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {

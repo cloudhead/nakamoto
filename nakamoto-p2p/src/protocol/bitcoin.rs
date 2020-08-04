@@ -23,7 +23,7 @@ use bitcoin::network::message_network::VersionMessage;
 use bitcoin::util::hash::BitcoinHash;
 
 use nakamoto_chain::block::time::{AdjustedTime, LocalDuration, LocalTime};
-use nakamoto_chain::block::tree::{self, BlockTree};
+use nakamoto_chain::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_chain::block::{BlockHash, BlockHeader, Height};
 
 /// Peer-to-peer protocol version.
@@ -54,7 +54,7 @@ pub enum Command {
     Receive(net::SocketAddr, NetworkMessage),
     ImportHeaders(
         Vec<BlockHeader>,
-        chan::Sender<Result<(BlockHash, Height), tree::Error>>,
+        chan::Sender<Result<ImportResult, tree::Error>>,
     ),
 }
 
@@ -946,7 +946,6 @@ impl<T: BlockTree> Bitcoin<T> {
         addr: PeerId,
         headers: Vec<BlockHeader>,
     ) -> Vec<Output<RawNetworkMessage>> {
-        let old_height = self.tree.height();
         let mut outbound = Vec::new();
         let length = headers.len();
         let peer = self
@@ -960,15 +959,34 @@ impl<T: BlockTree> Bitcoin<T> {
         debug!("[{}] {}: Received {} header(s)", self.name, addr, length);
 
         // TODO: Before importing, we could check the headers against known checkpoints.
+        // TODO: Check that headers form a chain.
         match self.tree.import_blocks(headers.into_iter(), &self.clock) {
-            // TODO: Should be an enum `NewTip | TipUnchanged etc.`
-            Ok((tip, height)) => {
+            Ok(ImportResult::TipUnchanged) => {
+                if let PeerState::Ready {
+                    syncing: Syncing::AwaitingHeaders(_locators, _local_time),
+                    ..
+                } = &peer.state
+                {
+                    // The headers we requested are either stale or already known.
+                    // TODO: Request more.
+                } else {
+                    // Unsolicited header.
+                    // The headers are on a branch or orphan.
+                    // Try to find a common ancestor.
+                    let locators = self.tree.locators_hashes(self.tree.height());
+                    outbound
+                        .push(self.message(addr, self.get_headers(locators, BlockHash::default())));
+                }
+            }
+            Ok(ImportResult::TipChanged(tip, height, _)) => {
                 info!(
                     "[{}] Imported {} header(s) from {}",
                     self.name, length, addr
                 );
                 info!("[{}] Chain height = {}, tip = {}", self.name, height, tip);
 
+                // FIXME: This isn't correct, since it could be that the headers created
+                // a minority fork.
                 peer.tip = tip;
                 peer.height = height;
 
@@ -1001,11 +1019,8 @@ impl<T: BlockTree> Bitcoin<T> {
                             self.message(addr, self.get_headers(locators, BlockHash::default())),
                         );
                     }
-                };
-
-                if height > old_height {
-                    outbound.extend(self.broadcast_tip());
                 }
+                outbound.extend(self.broadcast_tip());
             }
             Err(err) => {
                 // TODO: Bad blocks received!
@@ -1024,6 +1039,7 @@ impl<T: BlockTree> Bitcoin<T> {
         for (addr, peer) in &self.peers {
             if peer.is_inbound() && peer.is_idle() && height > peer.height {
                 out.push(self.message(*addr, NetworkMessage::Headers(vec![*best])));
+                // TODO: Update peer inventory?
             }
         }
 

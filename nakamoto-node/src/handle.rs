@@ -3,7 +3,8 @@ use std::net;
 use crossbeam_channel as chan;
 use thiserror::Error;
 
-use nakamoto_chain::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_chain::block::tree::ImportResult;
+use nakamoto_chain::block::{self, Block, BlockHash, BlockHeader, Transaction};
 use nakamoto_p2p::protocol::Link;
 
 #[derive(Error, Debug)]
@@ -48,7 +49,7 @@ pub trait Handle {
     fn import_headers(
         &self,
         headers: Vec<BlockHeader>,
-    ) -> Result<Result<(BlockHash, Height), block::tree::Error>, Error>;
+    ) -> Result<Result<ImportResult, block::tree::Error>, Error>;
     /// Have the node receive a message as if it was coming from the given peer in the network.
     /// If the peer is not connected, the message is ignored.
     fn receive(&self, from: net::SocketAddr, msg: Self::Message) -> Result<(), Error>;

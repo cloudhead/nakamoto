@@ -9,8 +9,8 @@ use crossbeam_channel as chan;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store::{self, Store};
 use nakamoto_chain::block::time::AdjustedTime;
-use nakamoto_chain::block::tree::{self, BlockTree};
-use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_chain::block::tree::{self, BlockTree, ImportResult};
+use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Transaction};
 
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
@@ -234,8 +234,8 @@ impl Handle for NodeHandle {
     fn import_headers(
         &self,
         headers: Vec<BlockHeader>,
-    ) -> Result<Result<(BlockHash, Height), tree::Error>, handle::Error> {
-        let (transmit, receive) = chan::bounded::<Result<(BlockHash, Height), tree::Error>>(1);
+    ) -> Result<Result<ImportResult, tree::Error>, handle::Error> {
+        let (transmit, receive) = chan::bounded::<Result<ImportResult, tree::Error>>(1);
         self.command(Command::ImportHeaders(headers, transmit))?;
 
         Ok(receive.recv()?)

@@ -46,6 +46,21 @@ impl Header for BlockHeader {
     }
 }
 
+/// The outcome of a successful block header import.
+#[derive(Debug)]
+pub enum ImportResult {
+    /// A new tip was found. This can happen in either of two scenarios:
+    ///
+    /// 1. The imported block(s) extended the active chain, or
+    /// 2. The imported block(s) caused a chain re-org. In that case, the last field is
+    ///    populated with the now stale blocks.
+    ///
+    TipChanged(BlockHash, Height, Vec<BlockHash>),
+    /// The block headers were imported successfully, but our best block hasn't changed.
+    /// This will happen if we imported a duplicate, orphan or stale block.
+    TipUnchanged,
+}
+
 #[derive(Debug, Clone)]
 pub struct Branch<'a, H: Header>(pub &'a [H]);
 
@@ -66,7 +81,7 @@ pub trait BlockTree {
         &mut self,
         chain: I,
         context: &C,
-    ) -> Result<(BlockHash, Height), Error>;
+    ) -> Result<ImportResult, Error>;
     /// Get a block by hash.
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)>;
     /// Get a block by height.
