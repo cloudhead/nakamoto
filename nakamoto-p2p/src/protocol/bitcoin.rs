@@ -375,6 +375,15 @@ impl Peer {
         matches!(self.state, PeerState::Ready { syncing: Syncing::Idle, .. })
     }
 
+    fn is_inbound(&self) -> bool {
+        self.link == Link::Inbound
+    }
+
+    #[allow(dead_code)]
+    fn is_outbound(&self) -> bool {
+        self.link == Link::Outbound
+    }
+
     fn ping(&mut self, local_time: LocalTime) -> NetworkMessage {
         let nonce = fastrand::u64(..);
         self.last_ping = Some((nonce, local_time));
@@ -1012,7 +1021,7 @@ impl<T: BlockTree> Bitcoin<T> {
         let mut out = Vec::new();
 
         for (addr, peer) in &self.peers {
-            if peer.is_idle() && height > peer.height {
+            if peer.is_inbound() && peer.is_idle() && height > peer.height {
                 out.push(self.message(*addr, NetworkMessage::Headers(vec![*best])));
             }
         }
