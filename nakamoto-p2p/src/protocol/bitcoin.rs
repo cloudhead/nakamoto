@@ -702,6 +702,10 @@ impl<T: BlockTree> Bitcoin<T> {
                 .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
 
             return vec![];
+        } else if let NetworkMessage::Headers(headers) = msg.payload {
+            return self.receive_headers(addr, headers);
+        } else if let NetworkMessage::Inv(inventory) = msg.payload {
+            return self.receive_inv(addr, inventory);
         }
 
         // TODO: Make sure we handle all messages at all times in some way.
@@ -821,18 +825,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
             }
             PeerState::Ready {
-                syncing: Syncing::AwaitingHeaders(_locators, _local_time),
-                ..
-            } => {
-                // TODO: These two handlers are duplicated when the state is `Synced`.
-                if let NetworkMessage::Headers(headers) = msg.payload {
-                    // TODO: Check that the headers received match the headers awaited.
-                    return self.receive_headers(addr, headers);
-                } else if let NetworkMessage::Inv(inventory) = msg.payload {
-                    return self.receive_inv(addr, inventory);
-                }
-            }
-            PeerState::Ready {
                 syncing: Syncing::Idle,
                 ..
             } if self.state == State::Synced => {
@@ -858,8 +850,6 @@ impl<T: BlockTree> Bitcoin<T> {
                     let headers = self.tree.range(start..end).collect();
 
                     return vec![self.message(addr, NetworkMessage::Headers(headers))];
-                } else if let NetworkMessage::Headers(headers) = msg.payload {
-                    return self.receive_headers(addr, headers);
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
                     return self.receive_inv(addr, inventory);
                 }
@@ -956,6 +946,8 @@ impl<T: BlockTree> Bitcoin<T> {
         addr: PeerId,
         headers: Vec<BlockHeader>,
     ) -> Vec<Output<RawNetworkMessage>> {
+        let old_height = self.tree.height();
+        let mut outbound = Vec::new();
         let length = headers.len();
         let peer = self
             .peers
@@ -969,6 +961,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
         // TODO: Before importing, we could check the headers against known checkpoints.
         match self.tree.import_blocks(headers.into_iter(), &self.clock) {
+            // TODO: Should be an enum `NewTip | TipUnchanged etc.`
             Ok((tip, height)) => {
                 info!(
                     "[{}] Imported {} header(s) from {}",
@@ -979,40 +972,48 @@ impl<T: BlockTree> Bitcoin<T> {
                 peer.tip = tip;
                 peer.height = height;
 
-                // If we received less than the maximum number of headers, we must be in sync.
-                // Otherwise, ask for the next batch of headers.
-                if length < MAX_MESSAGE_HEADERS {
-                    // If these headers were unsolicited, we may already be ready/synced.
-                    // Otherwise, we're finally in sync.
-                    peer.syncing(Syncing::Idle);
+                // TODO: Check that the headers received match the headers awaited.
+                if let PeerState::Ready {
+                    syncing: Syncing::AwaitingHeaders(_locators, _local_time),
+                    ..
+                } = &peer.state
+                {
+                    // If we received less than the maximum number of headers, we must be in sync.
+                    // Otherwise, ask for the next batch of headers.
+                    if length < MAX_MESSAGE_HEADERS {
+                        // If these headers were unsolicited, we may already be ready/synced.
+                        // Otherwise, we're finally in sync.
+                        peer.syncing(Syncing::Idle);
 
-                    let mut out = self
-                        .transition(State::Synced)
-                        .into_iter()
-                        .map(Output::from)
-                        .collect::<Vec<_>>();
-                    out.extend(self.broadcast_tip());
-                    out
-                } else {
-                    // TODO: If we're already in the state of asking for this header, don't
-                    // ask again.
-                    let locators = vec![tip];
+                        outbound
+                            .extend(self.transition(State::Synced).into_iter().map(Output::from));
+                    } else {
+                        // TODO: If we're already in the state of asking for this header, don't
+                        // ask again.
+                        let locators = vec![tip];
 
-                    peer.syncing(Syncing::AwaitingHeaders(
-                        locators.clone(),
-                        self.clock.local_time(),
-                    ));
+                        peer.syncing(Syncing::AwaitingHeaders(
+                            locators.clone(),
+                            self.clock.local_time(),
+                        ));
 
-                    vec![self.message(addr, self.get_headers(locators, BlockHash::default()))]
+                        outbound.push(
+                            self.message(addr, self.get_headers(locators, BlockHash::default())),
+                        );
+                    }
+                };
+
+                if height > old_height {
+                    outbound.extend(self.broadcast_tip());
                 }
             }
             Err(err) => {
                 // TODO: Bad blocks received!
+                // TODO: Disconnect peer.
                 error!("[{}] Error importing headers: {}", self.name, err);
-
-                vec![]
             }
         }
+        outbound
     }
 
     /// Broadcast our best block header to connected peers who don't have it.
