@@ -831,25 +831,26 @@ impl<T: BlockTree> Bitcoin<T> {
                 if let NetworkMessage::GetHeaders(GetHeadersMessage { locator_hashes, .. }) =
                     msg.payload
                 {
-                    assert!(locator_hashes.len() == 1);
+                    let tree = &self.tree;
 
-                    let start_hash = locator_hashes[0];
-                    let (start_height, _) = self.tree.get_block(&start_hash).unwrap();
+                    // Start from the highest locator hash that is on our active chain.
+                    // We don't respond with anything if none of the locators were found. Sorry!
+                    if let Some(hash) = locator_hashes.iter().find(|h| tree.contains(h)) {
+                        let (start_height, _) = self.tree.get_block(hash).unwrap();
 
-                    // TODO: Set this to highest locator hash. We can assume that the peer
-                    // is at this height if they know this hash.
-                    // TODO: If the height is higher than the previous peer height, also
-                    // set the peer tip.
-                    peer.height = start_height;
+                        // TODO: Set this to highest locator hash. We can assume that the peer
+                        // is at this height if they know this hash.
+                        // TODO: If the height is higher than the previous peer height, also
+                        // set the peer tip.
+                        peer.height = start_height;
 
-                    let start = start_height + 1;
-                    let end = Height::min(
-                        start + MAX_MESSAGE_HEADERS as Height,
-                        self.tree.height() + 1,
-                    );
-                    let headers = self.tree.range(start..end).collect();
+                        let start = start_height + 1;
+                        let end =
+                            Height::min(start + MAX_MESSAGE_HEADERS as Height, tree.height() + 1);
+                        let headers = tree.range(start..end).collect();
 
-                    return vec![self.message(addr, NetworkMessage::Headers(headers))];
+                        return vec![self.message(addr, NetworkMessage::Headers(headers))];
+                    }
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
                     return self.receive_inv(addr, inventory);
                 }
