@@ -954,10 +954,20 @@ impl<T: BlockTree> Bitcoin<T> {
             .get_mut(&addr)
             .unwrap_or_else(|| panic!("peer {} is not known", addr));
 
-        if headers.is_empty() {
+        let best = if let Some(last) = headers.last() {
+            last.bitcoin_hash()
+        } else {
+            return vec![];
+        };
+        debug!("[{}] {}: Received {} header(s)", self.name, addr, length);
+
+        if self.tree.contains(&best) {
+            debug!(
+                "[{}] {}: Received headers are already part of the active chain",
+                self.name, addr,
+            );
             return vec![];
         }
-        debug!("[{}] {}: Received {} header(s)", self.name, addr, length);
 
         // TODO: Before importing, we could check the headers against known checkpoints.
         // TODO: Check that headers form a chain.
@@ -1040,7 +1050,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
         if !out.is_empty() {
             debug!(
-                "[{}] Broadcasting tip at height {} to {} peers..",
+                "[{}] Broadcasting tip at height {} to {} peer(s)..",
                 self.name,
                 height,
                 out.len()
