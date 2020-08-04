@@ -537,10 +537,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
                 Command::ImportHeaders(headers, reply) => {
                     debug!("[{}] Received command: ImportHeaders(..)", self.name);
+                    let result = self.tree.import_blocks(headers.into_iter(), &self.clock);
 
-                    reply
-                        .send(self.tree.import_blocks(headers.into_iter(), &self.clock))
-                        .ok();
+                    debug!("[{}] Import result: {:?}", self.name, &result);
+
+                    reply.send(result).ok();
                     outbound.extend(self.broadcast_tip());
                 }
                 Command::GetTip(_) => todo!(),

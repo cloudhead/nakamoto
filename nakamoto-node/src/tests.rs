@@ -44,8 +44,8 @@ fn network(
         handles.push((handle, addr, t));
     }
 
-    for (handle, addr, _) in &handles {
-        for (_, peer, _) in &handles {
+    for (i, (handle, addr, _)) in handles.iter().enumerate() {
+        for (_, peer, _) in handles.iter().skip(i) {
             if peer != addr {
                 handle.connect(*peer).unwrap();
             }
@@ -66,7 +66,7 @@ fn test_full_sync() {
     ])
     .unwrap();
 
-    let (handle, _, _t) = nodes.first().unwrap();
+    let (handle, _, _t) = nodes.last().unwrap();
 
     handle
         .import_headers(TREE.chain.tail.clone())
