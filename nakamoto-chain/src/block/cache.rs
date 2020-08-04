@@ -475,6 +475,11 @@ impl<S: Store> BlockTree for BlockCache<S> {
         self.headers.contains_key(hash) || self.orphans.contains_key(hash)
     }
 
+    /// Check whether this block hash is part of the active chain.
+    fn contains(&self, hash: &BlockHash) -> bool {
+        self.headers.contains_key(hash)
+    }
+
     /// Get the locator hashes for the active chain.
     ///
     /// *Panics* if the given starting height is out of bounds.

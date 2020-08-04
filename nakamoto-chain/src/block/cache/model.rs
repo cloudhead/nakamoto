@@ -166,6 +166,15 @@ impl BlockTree for Cache {
         Box::new(iter)
     }
 
+    fn contains(&self, hash: &BlockHash) -> bool {
+        self.headers.contains_key(hash)
+            && self
+                .chain
+                .iter()
+                .find(|b| b.bitcoin_hash() == *hash)
+                .is_some()
+    }
+
     fn is_known(&self, hash: &BlockHash) -> bool {
         self.headers.contains_key(hash)
     }
