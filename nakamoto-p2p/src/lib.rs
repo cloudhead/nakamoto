@@ -24,9 +24,9 @@ macro_rules! fallible {
             let fallible = fallible::FALLIBLE.lock().unwrap();
 
             if let Some(p) = *fallible {
-                let r = fastrand::u64(0..100);
+                let r = fastrand::f64();
 
-                if r <= (p * 100.) as u64 {
+                if r <= p {
                     return Err($err.into());
                 }
             }

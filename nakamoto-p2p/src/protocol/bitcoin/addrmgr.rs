@@ -61,20 +61,22 @@ pub struct AddressManager {
     // FIXME: HashMap and HashSet are non-deterministic.
     addresses: HashMap<net::IpAddr, KnownAddress>,
     address_ranges: HashMap<u8, HashSet<net::IpAddr>>,
+    rng: fastrand::Rng,
 }
 
 impl AddressManager {
     /// Create a new, empty address manager.
-    pub fn new() -> Self {
+    pub fn new(rng: fastrand::Rng) -> Self {
         Self {
             addresses: HashMap::new(),
             address_ranges: HashMap::new(),
+            rng,
         }
     }
 
     /// Create a new address manager from an address book.
-    pub fn from(book: AddressBook) -> Self {
-        let mut addrmgr = Self::new();
+    pub fn from(book: AddressBook, rng: fastrand::Rng) -> Self {
+        let mut addrmgr = Self::new(rng);
 
         for addr in book.iter() {
             addrmgr.insert_sockaddr(std::iter::once(*addr), Source::Other);
@@ -121,7 +123,7 @@ impl AddressManager {
     /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{AddressManager, Source};
     /// use nakamoto_chain::block::Time;
     ///
-    /// let mut addrmgr = AddressManager::new();
+    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new());
     ///
     /// addrmgr.insert(vec![
     ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
@@ -177,7 +179,7 @@ impl AddressManager {
             // If the address range is already full, remove a random address
             // before inserting this new one.
             if range.len() == MAX_RANGE_SIZE {
-                let ix = fastrand::usize(..range.len());
+                let ix = self.rng.usize(..range.len());
                 let addr = range
                     .iter()
                     .cloned()
@@ -206,7 +208,7 @@ impl AddressManager {
     /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{Source, AddressManager};
     /// use nakamoto_chain::block::Time;
     ///
-    /// let mut addrmgr = AddressManager::new();
+    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new());
     ///
     /// // Addresses controlled by an adversary.
     /// let adversary_addrs = vec![
@@ -255,11 +257,11 @@ impl AddressManager {
         }
 
         // First select a random address range.
-        let ix = fastrand::usize(..self.address_ranges.len());
+        let ix = self.rng.usize(..self.address_ranges.len());
         let range = self.address_ranges.values().nth(ix)?;
 
         // Then select a random address in that range.
-        let ix = fastrand::usize(..range.len());
+        let ix = self.rng.usize(..range.len());
         let ip = range.iter().nth(ix)?;
 
         self.addresses.get(&ip).map(|ka| &ka.addr)
@@ -344,14 +346,14 @@ mod tests {
 
     #[test]
     fn test_sample_empty() {
-        let addrmgr = AddressManager::new();
+        let addrmgr = AddressManager::new(fastrand::Rng::new());
 
         assert!(addrmgr.sample().is_none());
     }
 
     #[test]
     fn test_max_range_size() {
-        let mut addrmgr = AddressManager::new();
+        let mut addrmgr = AddressManager::new(fastrand::Rng::new());
 
         for i in 0..MAX_RANGE_SIZE + 1 {
             addrmgr.insert_sockaddr(

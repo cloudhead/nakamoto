@@ -106,6 +106,8 @@ pub struct Bitcoin<T> {
     disconnected: HashSet<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
     name: &'static str,
+    /// Random number generator.
+    rng: fastrand::Rng,
 }
 
 /// Protocol state.
@@ -163,7 +165,7 @@ impl Config {
 impl<T: BlockTree> Bitcoin<T> {
     const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 
-    pub fn new(tree: T, clock: AdjustedTime<PeerId>, config: Config) -> Self {
+    pub fn new(tree: T, clock: AdjustedTime<PeerId>, rng: fastrand::Rng, config: Config) -> Self {
         let Config {
             network,
             address_book,
@@ -174,7 +176,10 @@ impl<T: BlockTree> Bitcoin<T> {
             name,
         } = config;
 
-        let addrmgr = AddressManager::from(address_book);
+        let addrmgr_rng = fastrand::Rng::new();
+        addrmgr_rng.seed(rng.u64(..));
+
+        let addrmgr = AddressManager::from(address_book, addrmgr_rng);
 
         Self {
             peers: HashMap::new(),
@@ -188,6 +193,7 @@ impl<T: BlockTree> Bitcoin<T> {
             name,
             clock,
             addrmgr,
+            rng,
             ready: HashSet::new(),
             connected: HashSet::new(),
             disconnected: HashSet::new(),
@@ -198,7 +204,9 @@ impl<T: BlockTree> Bitcoin<T> {
         self.connected.insert(addr);
         self.disconnected.remove(&addr);
 
-        let nonce = fastrand::u64(..);
+        let nonce = self.rng.u64(..);
+        let rng = fastrand::Rng::new();
+        rng.seed(self.rng.u64(..));
 
         // TODO: Handle case where peer already exists.
         self.peers.insert(
@@ -209,6 +217,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 PeerState::Handshake(Handshake::default()),
                 nonce,
                 link,
+                rng,
                 self.name,
             ),
         );
@@ -340,6 +349,8 @@ pub struct Peer {
     pub latencies: VecDeque<LocalDuration>,
     /// Peer nonce. Used to detect self-connections.
     pub nonce: u64,
+    /// Random number generator.
+    pub rng: fastrand::Rng,
     /// Informational context for this peer. Used for logging purposes only.
     pub ctx: &'static str,
 }
@@ -351,6 +362,7 @@ impl Peer {
         state: PeerState,
         nonce: u64,
         link: Link,
+        rng: fastrand::Rng,
         ctx: &'static str,
     ) -> Self {
         Self {
@@ -365,6 +377,7 @@ impl Peer {
             latencies: VecDeque::new(),
             ctx,
             nonce,
+            rng,
         }
     }
 
@@ -386,7 +399,7 @@ impl Peer {
     }
 
     fn ping(&mut self, local_time: LocalTime) -> NetworkMessage {
-        let nonce = fastrand::u64(..);
+        let nonce = self.rng.u64(..);
         self.last_ping = Some((nonce, local_time));
 
         NetworkMessage::Ping(nonce)
@@ -625,7 +638,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         outbound.extend(events.into_iter().map(Output::from));
                     } else {
                         // TODO: Pick a peer whos `height` is high enough.
-                        let ix = fastrand::usize(..self.ready.len());
+                        let ix = self.rng.usize(..self.ready.len());
                         let p = *self.ready.iter().nth(ix).unwrap();
 
                         let outs = self.sync(p, self.clock.local_time());
@@ -1266,8 +1279,8 @@ mod tests {
         let alice_addr = ([127, 0, 0, 1], 8333).into();
         let bob_addr = ([127, 0, 0, 2], 8333).into();
 
-        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), CONFIG);
-        let mut bob = Bitcoin::new(tree, clock, CONFIG);
+        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), fastrand::Rng::new(), CONFIG);
+        let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG);
 
         simulator::run(
             vec![
@@ -1325,8 +1338,8 @@ mod tests {
         // Truncate chain to test height.
         alice_tree.rollback(height).unwrap();
 
-        let mut alice = Bitcoin::new(alice_tree, clock.clone(), CONFIG);
-        let mut bob = Bitcoin::new(bob_tree, clock, CONFIG);
+        let mut alice = Bitcoin::new(alice_tree, clock.clone(), fastrand::Rng::new(), CONFIG);
+        let mut bob = Bitcoin::new(bob_tree, clock, fastrand::Rng::new(), CONFIG);
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
@@ -1356,6 +1369,7 @@ mod tests {
         let mut alice = Bitcoin::new(
             tree.clone(),
             clock.clone(),
+            fastrand::Rng::new(),
             Config {
                 name: "alice",
                 ..CONFIG
@@ -1364,6 +1378,7 @@ mod tests {
         let mut bob = Bitcoin::new(
             tree,
             clock,
+            fastrand::Rng::new(),
             Config {
                 name: "bob",
                 ..CONFIG

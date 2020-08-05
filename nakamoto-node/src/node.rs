@@ -127,10 +127,11 @@ impl Node {
         let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let cache = BlockCache::from(store, params, &checkpoints)?;
+        let rng = fastrand::Rng::new();
 
         log::info!("{} peer(s) found..", cfg.address_book.len());
         log::debug!("{:?}", cfg.address_book);
-        let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
+        let protocol = p2p::protocol::Bitcoin::new(cache, clock, rng, cfg);
 
         self.reactor
             .run(protocol, self.commands, &self.config.listen)?;
@@ -153,10 +154,12 @@ impl Node {
 
         let local_time = SystemTime::now().into();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
+        let rng = fastrand::Rng::new();
 
         log::info!("{} peer(s) found..", cfg.address_book.len());
         log::debug!("{:?}", cfg.address_book);
-        let protocol = p2p::protocol::Bitcoin::new(cache, clock, cfg);
+
+        let protocol = p2p::protocol::Bitcoin::new(cache, clock, rng, cfg);
 
         self.reactor
             .run(protocol, self.commands, &self.config.listen)?;
