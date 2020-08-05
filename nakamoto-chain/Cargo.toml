@@ -1,8 +1,10 @@
 [package]
 name = "nakamoto-chain"
+description = "Chain storage and fork selection used by the nakamoto crate"
 version = "0.1.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
+license = "MIT"
 
 [dependencies]
 nakamoto-common = { version = "0.1.0", path = "../nakamoto-common", features = ["log"] }
