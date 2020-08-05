@@ -7,7 +7,7 @@ use bitcoin_hashes::hex::FromHex;
 
 use bitcoin_hashes::sha256d;
 
-use nakamoto_chain::block::Height;
+use nakamoto_common::block::Height;
 
 /// Bitcoin peer network.
 #[derive(Debug, Copy, Clone)]
@@ -100,7 +100,7 @@ impl Network {
 
     pub fn genesis_hash(&self) -> BlockHash {
         use bitcoin_hashes::Hash;
-        use nakamoto_chain::genesis;
+        use nakamoto_common::block::genesis;
 
         let hash = match self {
             Self::Mainnet => genesis::MAINNET,

@@ -200,6 +200,7 @@ name = "nakamoto"
 version = "0.1.0"
 dependencies = [
  "nakamoto-chain",
+ "nakamoto-common",
  "nakamoto-daemon",
  "nakamoto-node",
  "nakamoto-p2p",
@@ -213,12 +214,21 @@ dependencies = [
  "bitcoin",
  "bitcoin_hashes",
  "log",
+ "nakamoto-common",
  "nakamoto-test",
  "nonempty",
  "quickcheck",
  "quickcheck_macros",
  "rand",
  "tempfile",
+]
+
+[[package]]
+name = "nakamoto-common"
+version = "0.1.0"
+dependencies = [
+ "bitcoin",
+ "log",
  "thiserror",
 ]
 
@@ -243,6 +253,7 @@ dependencies = [
  "fastrand",
  "log",
  "nakamoto-chain",
+ "nakamoto-common",
  "nakamoto-p2p",
  "nakamoto-test",
  "thiserror",
@@ -258,7 +269,7 @@ dependencies = [
  "fastrand",
  "lazy_static",
  "log",
- "nakamoto-chain",
+ "nakamoto-common",
  "nakamoto-test",
  "popol",
  "tempfile",
@@ -273,7 +284,8 @@ dependencies = [
  "chrono",
  "lazy_static",
  "log",
- "nakamoto-chain",
+ "nakamoto-common",
+ "nonempty",
 ]
 
 [[package]]

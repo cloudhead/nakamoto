@@ -260,6 +260,7 @@ impl<K: Hash + Eq> AdjustedTime<K> {
                 // log a warning about our clock possibly being wrong.
                 self.offset = 0;
             }
+            #[cfg(feature = "log")]
             log::debug!("Time offset adjusted to {} seconds", self.offset);
         };
     }

@@ -1,6 +1,6 @@
 use std::net;
 
-use nakamoto_chain::block::tree::ImportResult;
+use nakamoto_common::block::tree::ImportResult;
 
 use crate::protocol::{Link, PeerId};
 

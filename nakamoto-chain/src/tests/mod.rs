@@ -1,4 +1,4 @@
-use crate::block::{Bits, Height, Time};
+use nakamoto_common::block::{Bits, Height, Time};
 
 /// Difficulty retargeting test vector, from bitcoin main chain.
 /// Each row represents a difficulty change.

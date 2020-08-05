@@ -3,7 +3,7 @@ use std::thread;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
-use nakamoto_chain::block::Height;
+use nakamoto_common::block::Height;
 use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
 use nakamoto_test::{logger, TREE};
 

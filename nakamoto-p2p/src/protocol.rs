@@ -6,7 +6,7 @@ use crate::event::Event;
 use std::fmt::Debug;
 use std::net;
 
-use nakamoto_chain::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;

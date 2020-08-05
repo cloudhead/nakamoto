@@ -6,9 +6,8 @@ use std::path::Path;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode::{Decodable, Encodable};
 
-use crate::block::Height;
-
-use super::{Error, Store};
+use nakamoto_common::block::store::{Error, Store};
+use nakamoto_common::block::Height;
 
 /// Size in bytes of a block header.
 const HEADER_SIZE: usize = 80;

@@ -1,9 +1,13 @@
-use super::{model, BlockCache, BlockTree, Error};
+use super::BlockCache;
+
+use nakamoto_common::block::time::{AdjustedTime, Clock, LocalTime};
+use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
+use nakamoto_common::block::{Height, Target, Time};
+
+use nakamoto_test::block;
+use nakamoto_test::block::cache::model;
 
 use crate::block::store::{self, Store};
-use crate::block::time::{AdjustedTime, Clock, LocalTime};
-use crate::block::tree::ImportResult;
-use crate::block::{self, Height, Target, Time};
 
 use std::collections::{BTreeMap, VecDeque};
 use std::iter;
@@ -27,16 +31,16 @@ use bitcoin::util::uint::Uint256;
 /// Sun, 12 Jul 2020 15:03:05 +0000.
 const LOCAL_TIME: LocalTime = LocalTime::from_secs(1594566185);
 
-// Lowest possible difficulty.
+/// Lowest possible difficulty.
 const TARGET: Uint256 = Uint256([
     0xffffffffffffffffu64,
     0xffffffffffffffffu64,
     0xffffffffffffffffu64,
     0x7fffffffffffffffu64,
 ]);
-// Target block time (1 minute).
+/// Target block time (1 minute).
 const TARGET_SPACING: Time = 60;
-// Target time span (1 hour).
+/// Target time span (1 hour).
 const _TARGET_TIMESPAN: Time = 60 * 60;
 
 #[derive(Debug)]

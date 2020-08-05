@@ -1,9 +1,7 @@
 //! Block cache model.
 //! Not for production use.
-use super::{BlockTree, Error};
-
-use crate::block::tree::{Branch, ImportResult};
-use crate::block::Height;
+use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
+use nakamoto_common::block::Height;
 
 use std::collections::{HashMap, VecDeque};
 

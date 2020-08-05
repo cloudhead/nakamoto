@@ -1,9 +1,8 @@
 use bitcoin::blockdata::block::BlockHeader;
 use nonempty::NonEmpty;
 
-use crate::block::Height;
-
-use super::{Error, Store};
+use nakamoto_common::block::store::{Error, Store};
+use nakamoto_common::block::Height;
 
 #[derive(Debug, Clone)]
 pub struct Memory(NonEmpty<BlockHeader>);

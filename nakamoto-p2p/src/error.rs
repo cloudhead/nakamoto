@@ -8,7 +8,7 @@ use crossbeam_channel as crossbeam;
 
 use thiserror::Error;
 
-use nakamoto_chain::block::tree;
+use nakamoto_common::block::tree;
 
 /// An error occuring in peer-to-peer networking code.
 #[derive(Error, Debug)]

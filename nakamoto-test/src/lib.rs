@@ -1,22 +1,29 @@
+pub mod block;
+
+use std::fs::File;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use bitcoin::blockdata::constants;
+use bitcoin::consensus::encode::Decodable;
+
 use lazy_static::*;
 
-use nakamoto_chain::block::cache::model;
-use nakamoto_chain::block::store::{self, Store};
+use nakamoto_common::block::BlockHeader;
+
+use crate::block::cache::model;
 
 lazy_static! {
     pub static ref TREE: model::Cache = {
         let genesis = constants::genesis_block(bitcoin::Network::Bitcoin).header;
-        let store = store::File::open(&*self::headers::PATH, genesis).unwrap();
+        let mut f = File::open(&*self::headers::PATH).unwrap();
+        let mut buf = [0; 80];
+        let mut headers = vec![genesis];
 
-        let headers = store
-            .iter()
-            .map(|r| r.map(|(_, h)| h))
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-
+        while f.read_exact(&mut buf).is_ok() {
+            let header = BlockHeader::consensus_decode(&buf[..]).unwrap();
+            headers.push(header);
+        }
         model::Cache::from(headers)
     };
 }

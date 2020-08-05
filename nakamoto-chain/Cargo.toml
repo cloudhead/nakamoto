@@ -5,9 +5,9 @@ authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
 
 [dependencies]
+nakamoto-common = { version = "0.1.0", path = "../nakamoto-common", features = ["log"] }
 bitcoin = "0.23.0"
 bitcoin_hashes = "0.7.6"
-thiserror = "1.0"
 nonempty = "0.5.0"
 log = "0.4"
 

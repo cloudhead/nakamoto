@@ -22,9 +22,9 @@ use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::util::hash::BitcoinHash;
 
-use nakamoto_chain::block::time::{AdjustedTime, LocalDuration, LocalTime};
-use nakamoto_chain::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_chain::block::{BlockHash, BlockHeader, Height};
+use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
+use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
+use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
 /// Peer-to-peer protocol version.
 /// For now, we only support `70012`, due to lacking `sendcmpct` support.
@@ -1161,8 +1161,9 @@ mod tests {
     use std::collections::VecDeque;
     use std::time::SystemTime;
 
-    use nakamoto_chain::block::cache::model;
-    use nakamoto_chain::block::BlockHeader;
+    use nakamoto_common::block::BlockHeader;
+
+    use nakamoto_test::block::cache::model;
     use nakamoto_test::logger;
     use nakamoto_test::TREE;
 

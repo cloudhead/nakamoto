@@ -1,0 +1,12 @@
+[package]
+name = "nakamoto-common"
+repository = "https://github.com/cloudhead/nakamoto"
+license = "MIT"
+version = "0.1.0"
+authors = ["Alexis Sellier <self@cloudhead.io>"]
+edition = "2018"
+
+[dependencies]
+bitcoin = "0.23"
+thiserror = "1.0"
+log = { version = "0.4", optional = true }

@@ -3,8 +3,8 @@ use std::net;
 use crossbeam_channel as chan;
 use thiserror::Error;
 
-use nakamoto_chain::block::tree::ImportResult;
-use nakamoto_chain::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::block::tree::ImportResult;
+use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_p2p::protocol::Link;
 
 #[derive(Error, Debug)]

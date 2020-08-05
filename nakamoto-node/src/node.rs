@@ -7,10 +7,12 @@ use std::time::{self, SystemTime};
 use crossbeam_channel as chan;
 
 use nakamoto_chain::block::cache::BlockCache;
-use nakamoto_chain::block::store::{self, Store};
-use nakamoto_chain::block::time::AdjustedTime;
-use nakamoto_chain::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_chain::block::store;
+
+use nakamoto_common::block::store::Store;
+use nakamoto_common::block::time::AdjustedTime;
+use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
+use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction};
 
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;

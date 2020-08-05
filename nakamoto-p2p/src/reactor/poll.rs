@@ -6,7 +6,7 @@ use bitcoin::network::stream_reader::StreamReader;
 
 use crossbeam_channel as chan;
 
-use nakamoto_chain::block::time::LocalTime;
+use nakamoto_common::block::time::LocalTime;
 
 use crate::error::Error;
 use crate::event::Event;

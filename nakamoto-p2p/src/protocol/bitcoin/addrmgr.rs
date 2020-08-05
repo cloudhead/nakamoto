@@ -8,8 +8,8 @@ use std::net;
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 
-use nakamoto_chain::block::time::LocalTime;
-use nakamoto_chain::block::Time;
+use nakamoto_common::block::time::LocalTime;
+use nakamoto_common::block::Time;
 
 use crate::address_book::AddressBook;
 
@@ -121,7 +121,7 @@ impl AddressManager {
     /// use bitcoin::network::constants::ServiceFlags;
     ///
     /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{AddressManager, Source};
-    /// use nakamoto_chain::block::Time;
+    /// use nakamoto_common::block::Time;
     ///
     /// let mut addrmgr = AddressManager::new(fastrand::Rng::new());
     ///
@@ -206,7 +206,7 @@ impl AddressManager {
     /// use bitcoin::network::constants::ServiceFlags;
     ///
     /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{Source, AddressManager};
-    /// use nakamoto_chain::block::Time;
+    /// use nakamoto_common::block::Time;
     ///
     /// let mut addrmgr = AddressManager::new(fastrand::Rng::new());
     ///

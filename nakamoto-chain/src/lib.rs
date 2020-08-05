@@ -6,7 +6,6 @@
     missing_copy_implementations
 )]
 pub mod block;
-pub mod genesis;
 
 #[cfg(test)]
 mod tests;

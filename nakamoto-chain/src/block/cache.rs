@@ -1,5 +1,3 @@
-pub mod model;
-
 #[cfg(test)]
 pub mod test;
 
@@ -14,11 +12,10 @@ use bitcoin::util::hash::BitcoinHash;
 
 use nonempty::NonEmpty;
 
-use crate::block::store::Store;
-
-use crate::block::tree::{BlockTree, Branch, Error, ImportResult};
-use crate::block::{
+use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
+use nakamoto_common::block::{
     self,
+    store::Store,
     time::{self, Clock},
     Bits, CachedBlock, Height, Time,
 };

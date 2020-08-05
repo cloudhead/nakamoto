@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-pub use nakamoto_chain::block::time::{LocalDuration, LocalTime};
+pub use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
 pub struct TimeoutManager<K> {
     timeouts: Vec<(K, LocalTime)>,

@@ -5,12 +5,13 @@ authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
 
 [dependencies]
-nakamoto-p2p = { path = "../nakamoto-p2p" }
-nakamoto-chain = { path = "../nakamoto-chain" }
+nakamoto-p2p = { version = "0.1.0", path = "../nakamoto-p2p" }
+nakamoto-chain = { version = "0.1.0", path = "../nakamoto-chain" }
+nakamoto-common = { version = "0.1.0", path = "../nakamoto-common" }
 crossbeam-channel = { version = "0.4", default-features = false }
 thiserror = "1.0"
 log = "0.4"
 fastrand = "1.3"
 
 [dev-dependencies]
-nakamoto-test = { path = "../nakamoto-test" }
+nakamoto-test = { version = "0.1.0", path = "../nakamoto-test" }
