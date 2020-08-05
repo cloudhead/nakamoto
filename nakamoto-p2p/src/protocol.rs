@@ -96,6 +96,8 @@ pub enum Output<M: Message> {
     SetTimeout(PeerId, LocalDuration),
     /// An event has occured.
     Event(Event<M::Payload>),
+    /// Shutdown protocol.
+    Shutdown,
 }
 
 impl<M: Message> From<Event<M::Payload>> for Output<M> {
@@ -112,6 +114,7 @@ impl<M: Message> Output<M> {
             Self::Disconnect(addr) => Some(*addr),
             Self::SetTimeout(addr, _) => Some(*addr),
             Self::Event(_) => None,
+            Self::Shutdown => None,
         }
     }
 }

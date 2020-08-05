@@ -320,6 +320,8 @@ impl Handle for NodeHandle {
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {
-        todo!()
+        self.command(Command::Shutdown)?;
+
+        Ok(())
     }
 }

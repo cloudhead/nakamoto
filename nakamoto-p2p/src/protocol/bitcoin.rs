@@ -56,6 +56,7 @@ pub enum Command {
         Vec<BlockHeader>,
         chan::Sender<Result<ImportResult, tree::Error>>,
     ),
+    Shutdown,
 }
 
 impl Message for RawNetworkMessage {
@@ -553,6 +554,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
                 Command::GetTip(_) => todo!(),
                 Command::GetBlock(_) => todo!(),
+                Command::Shutdown => {
+                    outbound.push(Output::Shutdown);
+                }
             },
             Input::Timeout(_addr) => {
                 todo!();

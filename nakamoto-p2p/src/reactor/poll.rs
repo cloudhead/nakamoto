@@ -36,6 +36,13 @@ pub struct Socket<R: Read + Write, M> {
     queue: VecDeque<M>,
 }
 
+#[must_use]
+#[derive(Debug, PartialEq, Eq)]
+enum Control {
+    Continue,
+    Shutdown,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum Source {
     Peer(net::SocketAddr),
@@ -198,7 +205,7 @@ where
         mut protocol: P,
         commands: chan::Receiver<C>,
         listen_addrs: &[net::SocketAddr],
-    ) -> Result<Vec<()>, Error> {
+    ) -> Result<(), Error> {
         let listener = if listen_addrs.is_empty() {
             None
         } else {
@@ -219,7 +226,11 @@ where
 
             let local_time = SystemTime::now().into();
             let outs = protocol.initialize(local_time);
-            self.process::<P>(outs, local_time)?;
+
+            match self.process::<P>(outs, local_time)? {
+                Control::Shutdown => return Ok(()),
+                _ => {}
+            }
         }
 
         // I/O readiness events populated by `popol::Sources::wait_timeout`.
@@ -293,7 +304,11 @@ where
 
             while let Some(event) = self.events.pop_front() {
                 let outs = protocol.step(event, local_time);
-                self.process::<P>(outs, local_time)?;
+                let control = self.process::<P>(outs, local_time)?;
+
+                if control == Control::Shutdown {
+                    return Ok(());
+                }
             }
         }
     }
@@ -303,7 +318,7 @@ where
         &mut self,
         outputs: Vec<Output<M>>,
         local_time: LocalTime,
-    ) -> Result<(), Error> {
+    ) -> Result<Control, Error> {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
         for out in outputs.into_iter() {
@@ -352,10 +367,14 @@ where
 
                     self.subscriber.try_send(event).unwrap(); // FIXME
                 }
+                Output::Shutdown => {
+                    info!("Shutdown received");
+
+                    return Ok(Control::Shutdown);
+                }
             }
         }
-
-        Ok(())
+        Ok(Control::Continue)
     }
 
     fn handle_readable(&mut self, addr: &net::SocketAddr) {
