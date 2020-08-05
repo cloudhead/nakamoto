@@ -68,16 +68,19 @@ fn test_full_sync() {
     ])
     .unwrap();
 
-    let (handle, _, _t) = nodes.last().unwrap();
+    let (handle, _, _) = nodes.last().unwrap();
+    let headers = TREE.chain.tail.clone();
+    let height = headers.len() as Height;
+    let hash = headers.last().unwrap().bitcoin_hash();
 
     handle
-        .import_headers(TREE.chain.tail.clone())
+        .import_headers(headers)
         .expect("command is successful")
         .expect("chain is valid");
 
-    // TODO: When done, start disconnecting.
-
-    for (_, _, t) in nodes.into_iter() {
-        t.join().unwrap();
+    for (node, _, thread) in nodes.into_iter() {
+        assert_eq!(node.wait_for_height(height).unwrap(), hash);
+        node.shutdown().unwrap();
+        thread.join().unwrap();
     }
 }
