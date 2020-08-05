@@ -1,5 +1,6 @@
 [package]
 name = "nakamoto-test"
+description = "Testing utilities for nakamoto crates"
 version = "0.1.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
