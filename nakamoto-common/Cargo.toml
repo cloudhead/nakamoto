@@ -1,5 +1,6 @@
 [package]
 name = "nakamoto-common"
+description = "Common types and functions shared by all nakamoto crates"
 repository = "https://github.com/cloudhead/nakamoto"
 license = "MIT"
 version = "0.1.0"
