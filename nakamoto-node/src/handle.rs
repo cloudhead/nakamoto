@@ -4,7 +4,7 @@ use crossbeam_channel as chan;
 use thiserror::Error;
 
 use nakamoto_chain::block::tree::ImportResult;
-use nakamoto_chain::block::{self, Block, BlockHash, BlockHeader, Transaction};
+use nakamoto_chain::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_p2p::protocol::Link;
 
 #[derive(Error, Debug)]
@@ -59,6 +59,9 @@ pub trait Handle {
     fn wait_for_peers(&self, count: usize) -> Result<(), Error>;
     /// Wait for the node to be ready and in sync with the blockchain.
     fn wait_for_ready(&self) -> Result<(), Error>;
+    /// Wait for the node's active chain to reach a certain height. The hash at that height
+    /// is returned.
+    fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;
     /// Shutdown the node process.
     fn shutdown(self) -> Result<(), Error>;
 }

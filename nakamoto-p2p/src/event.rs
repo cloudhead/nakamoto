@@ -1,5 +1,7 @@
 use std::net;
 
+use nakamoto_chain::block::tree::ImportResult;
+
 use crate::protocol::{Link, PeerId};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -21,4 +23,6 @@ pub enum Event<M> {
     Disconnected(PeerId),
     /// Received a message from a peer.
     Received(PeerId, M),
+    /// Headers have been imported into the block store.
+    HeadersImported(ImportResult),
 }

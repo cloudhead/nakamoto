@@ -10,7 +10,7 @@ use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store::{self, Store};
 use nakamoto_chain::block::time::AdjustedTime;
 use nakamoto_chain::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Transaction};
+use nakamoto_chain::block::{Block, BlockHash, BlockHeader, Height, Transaction};
 
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
@@ -306,6 +306,15 @@ impl Handle for NodeHandle {
     fn wait_for_ready(&self) -> Result<(), handle::Error> {
         self.wait(|e| match e {
             Event::Synced => Some(()),
+            _ => None,
+        })
+    }
+
+    fn wait_for_height(&self, h: Height) -> Result<BlockHash, handle::Error> {
+        self.wait(|e| match e {
+            Event::HeadersImported(ImportResult::TipChanged(hash, height, _)) if height == h => {
+                Some(hash)
+            }
             _ => None,
         })
     }

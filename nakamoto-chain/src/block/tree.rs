@@ -47,7 +47,7 @@ impl Header for BlockHeader {
 }
 
 /// The outcome of a successful block header import.
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ImportResult {
     /// A new tip was found. This can happen in either of two scenarios:
     ///

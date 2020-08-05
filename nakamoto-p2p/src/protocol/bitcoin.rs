@@ -538,11 +538,18 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 Command::ImportHeaders(headers, reply) => {
                     debug!("[{}] Received command: ImportHeaders(..)", self.name);
                     let result = self.tree.import_blocks(headers.into_iter(), &self.clock);
+                    let import: Option<ImportResult> = result.as_ref().ok().cloned();
 
                     debug!("[{}] Import result: {:?}", self.name, &result);
 
                     reply.send(result).ok();
-                    outbound.extend(self.broadcast_tip());
+
+                    if let Some(import) = import {
+                        if let ImportResult::TipChanged(hash, _, _) = &import {
+                            outbound.extend(self.broadcast_tip(hash));
+                        }
+                        outbound.push(Output::Event(Event::HeadersImported(import)));
+                    }
                 }
                 Command::GetTip(_) => todo!(),
                 Command::GetBlock(_) => todo!(),
@@ -993,8 +1000,11 @@ impl<T: BlockTree> Bitcoin<T> {
                     self.clock.local_time(),
                 ));
                 outbound.push(self.message(addr, self.get_headers(locators, BlockHash::default())));
+                outbound.push(Output::Event(Event::HeadersImported(
+                    ImportResult::TipUnchanged,
+                )));
             }
-            Ok(ImportResult::TipChanged(tip, height, _)) => {
+            Ok(ImportResult::TipChanged(tip, height, reverted)) => {
                 info!(
                     "[{}] Imported {} header(s) from {}",
                     self.name, length, addr
@@ -1036,7 +1046,10 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
 
                 // Broadcast the new tip, since we were able to verify the header chain up to it.
-                outbound.extend(self.broadcast_tip());
+                outbound.extend(self.broadcast_tip(&tip));
+                outbound.push(Output::Event(Event::HeadersImported(
+                    ImportResult::TipChanged(tip, height, reverted),
+                )));
             }
             Err(err) => {
                 // TODO: Bad blocks received!
@@ -1048,8 +1061,11 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     /// Broadcast our best block header to connected peers who don't have it.
-    fn broadcast_tip(&self) -> Vec<Output<RawNetworkMessage>> {
-        let (height, best) = self.tree.best_block();
+    fn broadcast_tip(&self, hash: &BlockHash) -> Vec<Output<RawNetworkMessage>> {
+        let (height, best) = self
+            .tree
+            .get_block(hash)
+            .unwrap_or_else(|| self.tree.best_block());
         let mut out = Vec::new();
 
         for (addr, peer) in &self.peers {
