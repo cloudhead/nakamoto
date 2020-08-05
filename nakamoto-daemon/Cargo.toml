@@ -1,8 +1,10 @@
 [package]
 name = "nakamoto-daemon"
+description = "Bitcoin light-client daemon using nakamoto crates"
 version = "0.1.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
+license = "MIT"
 
 [dependencies]
 nakamoto-node = { version = "0.1.0", path = "../nakamoto-node" }
