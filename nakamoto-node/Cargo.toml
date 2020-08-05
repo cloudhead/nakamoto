@@ -1,14 +1,16 @@
 [package]
 name = "nakamoto-node"
+description = "Bitcoin light-node library used by nakamoto crate"
 version = "0.1.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
+license = "MIT"
 
 [dependencies]
 nakamoto-p2p = { version = "0.1.0", path = "../nakamoto-p2p" }
 nakamoto-chain = { version = "0.1.0", path = "../nakamoto-chain" }
 nakamoto-common = { version = "0.1.0", path = "../nakamoto-common" }
-crossbeam-channel = { version = "0.4", default-features = false }
+crossbeam-channel = { version = "0.4" }
 thiserror = "1.0"
 log = "0.4"
 fastrand = "1.3"
