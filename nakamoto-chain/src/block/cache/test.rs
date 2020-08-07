@@ -412,6 +412,40 @@ fn test_invalid_orphan_block_target() {
     }
 }
 
+#[test]
+fn test_invalid_orphan_block_pow() {
+    let network = bitcoin::Network::Bitcoin;
+    let genesis = constants::genesis_block(network).header;
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let clock = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
+    let params = Params::new(network);
+
+    let mut cache = BlockCache::from(store, params.clone(), &[]).unwrap();
+
+    // Some arbitrary previous block we don't have.
+    let prev_blockhash =
+        BlockHash::from_hex("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+            .unwrap();
+
+    // An invalid header.
+    let header = BlockHeader {
+        prev_blockhash,
+        bits: genesis.bits,
+        time: genesis.time,
+        version: genesis.version,
+        nonce: 94173,
+        merkle_root: TxMerkleNode::default(),
+    };
+
+    assert!(
+        matches!(
+            cache.import_block(header, &clock).err(),
+            Some(Error::InvalidBlockPoW)
+        ),
+        "the orphan header is not imported"
+    );
+}
+
 #[quickcheck]
 fn prop_invalid_block_pow(import: BlockImport) -> bool {
     let BlockImport(mut cache, header) = import;
