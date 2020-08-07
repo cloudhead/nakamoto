@@ -156,7 +156,6 @@ impl<S: Store> BlockCache<S> {
                 Ok(_) => {
                     let limit = self.params.pow_limit;
                     if target > limit {
-                        dbg!(&target, &limit);
                         return Err(Error::InvalidBlockTarget(target, limit));
                     }
                 }

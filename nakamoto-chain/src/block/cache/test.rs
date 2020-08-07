@@ -24,6 +24,7 @@ use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::{BlockHash, TxMerkleNode};
+use bitcoin_hashes::hex::FromHex;
 
 use bitcoin::util::hash::BitcoinHash;
 use bitcoin::util::uint::Uint256;
@@ -346,6 +347,68 @@ fn prop_invalid_block_target(import: BlockImport) -> bool {
         Some(Error::InvalidBlockTarget(actual, expected))
             if actual == block::target_from_bits(genesis.bits - 1)
                 && expected == genesis.target()
+    }
+}
+
+#[test]
+fn test_invalid_orphan_block_target() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let clock = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
+    let params = Params::new(network);
+
+    // A lower difficulty target than expected.
+    let invalid_bits: Uint256 = Uint256([
+        0xffffffffffffffffu64,
+        0xffffffffffffffffu64,
+        0xffffffffffffffffu64,
+        0x9fffffffffffffffu64,
+    ]);
+
+    let mut cache = BlockCache::from(store, params.clone(), &[]).unwrap();
+
+    // Some arbitrary previous block we don't have.
+    let prev_blockhash =
+        BlockHash::from_hex("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+            .unwrap();
+
+    // A valid header.
+    let mut header = BlockHeader {
+        prev_blockhash,
+        bits: genesis.bits,
+        time: genesis.time,
+        version: genesis.version,
+        nonce: 0,
+        merkle_root: TxMerkleNode::default(),
+    };
+    block::solve(&mut header);
+
+    assert!(matches!(
+        cache.import_block(header, &clock).err(),
+        Some(Error::BlockMissing(h)) if h == prev_blockhash
+    ));
+
+    // An invalid header.
+    let mut header = BlockHeader {
+        bits: BlockHeader::compact_target_from_u256(&invalid_bits),
+        ..header
+    };
+    block::solve(&mut header);
+
+    // Even though the header can't be connected to the main chain, we still get an error.
+    match cache.import_block(header, &clock).unwrap_err() {
+        Error::InvalidBlockTarget(actual, expected) => {
+            assert_eq!(
+                BlockHeader::compact_target_from_u256(&actual),
+                BlockHeader::compact_target_from_u256(&invalid_bits)
+            );
+            assert_eq!(
+                BlockHeader::compact_target_from_u256(&expected),
+                BlockHeader::compact_target_from_u256(&params.pow_limit)
+            );
+        }
+        err => panic!("wrong error returned: {:?}", err),
     }
 }
 
@@ -736,7 +799,6 @@ fn test_cache_import_back_and_forth() {
 
 #[test]
 fn test_cache_import_equal_difficulty_blocks() {
-    use bitcoin_hashes::hex::FromHex;
     let mut headers = vec![
         BlockHeader {
             version: 1,
