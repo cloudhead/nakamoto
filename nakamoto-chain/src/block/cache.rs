@@ -366,7 +366,7 @@ impl<S: Store> BlockCache<S> {
         let mut stale = Vec::new();
 
         for block in self.chain.tail.drain(height as usize..) {
-            stale.push(block.header.clone());
+            stale.push(block.header);
 
             self.headers.remove(&block.hash);
             self.orphans.insert(block.hash, block.header);

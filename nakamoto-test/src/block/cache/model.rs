@@ -165,12 +165,7 @@ impl BlockTree for Cache {
     }
 
     fn contains(&self, hash: &BlockHash) -> bool {
-        self.headers.contains_key(hash)
-            && self
-                .chain
-                .iter()
-                .find(|b| b.bitcoin_hash() == *hash)
-                .is_some()
+        self.headers.contains_key(hash) && self.chain.iter().any(|b| b.bitcoin_hash() == *hash)
     }
 
     fn is_known(&self, hash: &BlockHash) -> bool {

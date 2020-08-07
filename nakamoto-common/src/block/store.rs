@@ -1,3 +1,4 @@
+#![allow(clippy::len_without_is_empty)]
 use crate::block::Height;
 
 use bitcoin::blockdata::block::BlockHeader;
