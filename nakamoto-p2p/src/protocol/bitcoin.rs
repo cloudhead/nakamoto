@@ -41,6 +41,8 @@ pub const MAX_MESSAGE_HEADERS: usize = 2000;
 pub const MAX_RECORDED_LATENCIES: usize = 64;
 /// Maximum height difference for a stale peer, to maintain the connection (2 weeks).
 pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
+/// Time to wait for response during peer handshake before disconnecting the peer.
+pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
 
 /// A time offset, in seconds.
 pub type TimeOffset = i64;
@@ -475,6 +477,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         outbound
     }
 
+    // FIXME: This function shouldn't take a time input: what if it gets a timeout
+    // which doesn't match the input time?
     fn step(
         &mut self,
         input: Input<RawNetworkMessage, Command>,
@@ -506,6 +510,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     }
                     Link::Inbound => {
                         info!("[{}] {}: Peer connected (inbound)", self.name, &addr);
+
+                        outbound.push(Output::SetTimeout(addr, HANDSHAKE_TIMEOUT));
                     } // Wait to receive remote version.
                 }
             }
@@ -571,8 +577,24 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     outbound.push(Output::Shutdown);
                 }
             },
-            Input::Timeout(_addr) => {
-                todo!();
+            Input::Timeout(addr) => {
+                // We may not have the peer anymore, if it was disconnected and remove in
+                // the meantime.
+                if let Some(peer) = self.peers.get(&addr) {
+                    match peer.state {
+                        PeerState::Handshake(Handshake::AwaitingVerack)
+                        | PeerState::Handshake(Handshake::AwaitingVersion)
+                        // FIXME: We need to associate timeouts to a specific sub-system, since
+                        // otherwise, a stale handshake timeout could trigger the below condition.
+                        | PeerState::Ready {
+                            syncing: Syncing::AwaitingHeaders(_, _),
+                            ..
+                        } => {
+                            outbound.push(Output::Disconnect(addr));
+                        }
+                        _ => {}
+                    }
+                }
             }
             Input::Idle => {
                 let now = self.clock.local_time();
@@ -832,6 +854,7 @@ impl<T: BlockTree> Bitcoin<T> {
                                     self.version(addr, local_addr, nonce, self.tree.height()),
                                 ),
                                 self.message(addr, NetworkMessage::Verack),
+                                Output::SetTimeout(addr, HANDSHAKE_TIMEOUT),
                             ];
                         }
                     }
@@ -1167,6 +1190,44 @@ mod tests {
     use nakamoto_test::logger;
     use nakamoto_test::TREE;
 
+    fn payload<M: Message>(o: &Output<M>) -> Option<&M::Payload> {
+        match o {
+            Output::Message(_, m) => Some(m.payload()),
+            _ => None,
+        }
+    }
+
+    mod setup {
+        use super::*;
+
+        /// Test protocol config.
+        pub const CONFIG: Config = Config {
+            network: network::Network::Mainnet,
+            address_book: AddressBook::new(),
+            // Pretend that we're a full-node, to fool connections
+            // between instances of this protocol in tests.
+            services: ServiceFlags::NETWORK,
+            protocol_version: PROTOCOL_VERSION,
+            user_agent: USER_AGENT,
+            relay: false,
+            name: "self",
+        };
+
+        pub fn singleton(network: Network) -> (Bitcoin<model::Cache>, LocalTime) {
+            use bitcoin::blockdata::constants;
+
+            let genesis = constants::genesis_block(network.into()).header;
+            let tree = model::Cache::new(genesis);
+            let time = LocalTime::from_secs(genesis.time as u64);
+            let clock = AdjustedTime::new(time);
+
+            (
+                Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG),
+                time,
+            )
+        }
+    }
+
     /// A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
     mod simulator {
         use super::*;
@@ -1250,19 +1311,6 @@ mod tests {
         }
     }
 
-    /// Test protocol config.
-    const CONFIG: Config = Config {
-        network: network::Network::Mainnet,
-        address_book: AddressBook::new(),
-        // Pretend that we're a full-node, to fool connections
-        // between instances of this protocol in tests.
-        services: ServiceFlags::NETWORK,
-        protocol_version: PROTOCOL_VERSION,
-        user_agent: USER_AGENT,
-        relay: false,
-        name: "self",
-    };
-
     #[test]
     fn test_handshake() {
         let genesis = BlockHeader {
@@ -1280,8 +1328,13 @@ mod tests {
         let alice_addr = ([127, 0, 0, 1], 8333).into();
         let bob_addr = ([127, 0, 0, 2], 8333).into();
 
-        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), fastrand::Rng::new(), CONFIG);
-        let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG);
+        let mut alice = Bitcoin::new(
+            tree.clone(),
+            clock.clone(),
+            fastrand::Rng::new(),
+            setup::CONFIG,
+        );
+        let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), setup::CONFIG);
 
         simulator::run(
             vec![
@@ -1339,8 +1392,13 @@ mod tests {
         // Truncate chain to test height.
         alice_tree.rollback(height).unwrap();
 
-        let mut alice = Bitcoin::new(alice_tree, clock.clone(), fastrand::Rng::new(), CONFIG);
-        let mut bob = Bitcoin::new(bob_tree, clock, fastrand::Rng::new(), CONFIG);
+        let mut alice = Bitcoin::new(
+            alice_tree,
+            clock.clone(),
+            fastrand::Rng::new(),
+            setup::CONFIG,
+        );
+        let mut bob = Bitcoin::new(bob_tree, clock, fastrand::Rng::new(), setup::CONFIG);
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
@@ -1373,7 +1431,7 @@ mod tests {
             fastrand::Rng::new(),
             Config {
                 name: "alice",
-                ..CONFIG
+                ..setup::CONFIG
             },
         );
         let mut bob = Bitcoin::new(
@@ -1382,7 +1440,7 @@ mod tests {
             fastrand::Rng::new(),
             Config {
                 name: "bob",
-                ..CONFIG
+                ..setup::CONFIG
             },
         );
 
@@ -1417,5 +1475,85 @@ mod tests {
             .values()
             .all(|p| p.state == PeerState::Disconnecting));
         assert_eq!(out.next(), Some(Output::Disconnect(bob_addr)));
+    }
+
+    #[test]
+    fn test_handshake_version_timeout() {
+        let network = Network::Mainnet;
+        let (mut instance, time) = setup::singleton(network);
+
+        let remote = ([131, 31, 11, 33], 11111).into();
+        let local = ([0, 0, 0, 0], 0).into();
+
+        let out = instance.step(
+            Input::Connected {
+                addr: remote,
+                local_addr: local,
+                link: Link::Inbound,
+            },
+            time,
+        );
+        out.iter()
+            .find(|o| {
+                matches!(o,
+                Output::SetTimeout(addr, _) if addr == &remote)
+            })
+            .expect("a timer should be returned");
+
+        let out = instance.step(Input::Timeout(remote), time);
+        assert!(out
+            .iter()
+            .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
+    }
+
+    #[test]
+    fn test_handshake_verack_timeout() {
+        let network = Network::Mainnet;
+        let (mut instance, time) = setup::singleton(network);
+
+        let remote = ([131, 31, 11, 33], 11111).into();
+        let local = ([0, 0, 0, 0], 0).into();
+
+        instance.step(
+            Input::Connected {
+                addr: remote,
+                local_addr: local,
+                link: Link::Inbound,
+            },
+            time,
+        );
+
+        let out = instance.step(
+            Input::Received(
+                remote,
+                RawNetworkMessage {
+                    magic: network.magic(),
+                    payload: instance.version(local, remote, 0, 0),
+                },
+            ),
+            time,
+        );
+        assert!(out
+            .iter()
+            .any(|o| matches!(payload(o), Some(NetworkMessage::Version(_)))));
+        assert!(out
+            .iter()
+            .any(|o| matches!(payload(o), Some(NetworkMessage::Verack))));
+        out.iter()
+            .find(|o| {
+                matches!(o,
+                Output::SetTimeout(addr, _) if addr == &remote)
+            })
+            .expect("a timer should be returned");
+
+        let out = instance.step(Input::Timeout(remote), time);
+        assert!(out
+            .iter()
+            .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
+    }
+
+    #[test]
+    fn test_get_headers_timeout() {
+        // TODO
     }
 }

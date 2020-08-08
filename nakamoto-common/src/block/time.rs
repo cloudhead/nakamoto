@@ -55,7 +55,7 @@ impl LocalTime {
         Self::from(SystemTime::now())
     }
 
-    /// Construct a local time from whole seconds.
+    /// Construct a local time from whole seconds since Epoch.
     pub const fn from_secs(secs: u64) -> Self {
         Self {
             millis: secs as u128 * 1000,
