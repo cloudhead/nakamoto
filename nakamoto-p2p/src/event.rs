@@ -2,6 +2,7 @@ use std::net;
 
 use nakamoto_common::block::tree::ImportResult;
 
+use crate::protocol::bitcoin::syncmgr;
 use crate::protocol::{Link, PeerId};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -25,4 +26,13 @@ pub enum Event<M> {
     Received(PeerId, M),
     /// Headers have been imported into the block store.
     HeadersImported(ImportResult),
+}
+
+impl<M> From<syncmgr::Event> for Event<M> {
+    fn from(e: syncmgr::Event) -> Self {
+        match e {
+            syncmgr::Event::Syncing => Event::Syncing,
+            syncmgr::Event::Synced => Event::Synced,
+        }
+    }
 }

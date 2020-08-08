@@ -271,6 +271,7 @@ dependencies = [
  "log",
  "nakamoto-common",
  "nakamoto-test",
+ "nonempty",
  "popol",
  "tempfile",
  "thiserror",
