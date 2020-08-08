@@ -24,7 +24,7 @@ use bitcoin::util::hash::BitcoinHash;
 
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_common::block::{BlockHash, BlockHeader, Height};
+use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 
 /// Peer-to-peer protocol version.
 /// For now, we only support `70012`, due to lacking `sendcmpct` support.
@@ -58,6 +58,7 @@ pub enum Command {
         Vec<BlockHeader>,
         chan::Sender<Result<ImportResult, tree::Error>>,
     ),
+    SubmitTransaction(Transaction),
     Shutdown,
 }
 
@@ -573,6 +574,15 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
                 Command::GetTip(_) => todo!(),
                 Command::GetBlock(_) => todo!(),
+                Command::SubmitTransaction(tx) => {
+                    debug!("[{}] Received command: SubmitTransaction(..)", self.name);
+
+                    // TODO: Factor this out when we have a `peermgr`.
+                    let ix = self.rng.usize(..self.ready.len());
+                    let peer = *self.ready.iter().nth(ix).unwrap();
+
+                    outbound.push(self.message(peer, NetworkMessage::Tx(tx)));
+                }
                 Command::Shutdown => {
                     outbound.push(Output::Shutdown);
                 }
@@ -659,7 +669,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let events = self.transition(State::Synced);
                         outbound.extend(events.into_iter().map(Output::from));
                     } else {
-                        // TODO: Pick a peer whos `height` is high enough.
+                        // TODO: Pick a peer whose `height` is high enough.
+                        // TODO: Factor this out when we have a `peermgr`.
                         let ix = self.rng.usize(..self.ready.len());
                         let p = *self.ready.iter().nth(ix).unwrap();
 

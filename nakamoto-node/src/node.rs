@@ -252,8 +252,10 @@ impl Handle for NodeHandle {
         Ok(())
     }
 
-    fn submit_transaction(&self, _tx: Transaction) -> Result<(), handle::Error> {
-        todo!()
+    fn submit_transaction(&self, tx: Transaction) -> Result<(), handle::Error> {
+        self.command(Command::SubmitTransaction(tx))?;
+
+        Ok(())
     }
 
     /// Subscribe to the event feed, and wait for the given function to return something,
