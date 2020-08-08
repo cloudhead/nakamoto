@@ -510,10 +510,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     }
                     Link::Inbound => {
                         info!("[{}] {}: Peer connected (inbound)", self.name, &addr);
-
-                        outbound.push(Output::SetTimeout(addr, HANDSHAKE_TIMEOUT));
                     } // Wait to receive remote version.
                 }
+                // Set a timeout for receiving the `version` message.
+                outbound.push(Output::SetTimeout(addr, HANDSHAKE_TIMEOUT));
             }
             Input::Disconnected(addr) => {
                 debug!("[{}] Disconnected from {}", self.name, &addr);
@@ -844,7 +844,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     peer.transition(PeerState::Handshake(Handshake::AwaitingVerack));
 
                     match peer.link {
-                        Link::Outbound => {}
+                        Link::Outbound => return vec![Output::SetTimeout(addr, HANDSHAKE_TIMEOUT)],
                         Link::Inbound => {
                             let nonce = peer.nonce;
 
@@ -1190,6 +1190,7 @@ mod tests {
     use nakamoto_test::logger;
     use nakamoto_test::TREE;
 
+    #[allow(dead_code)]
     fn payload<M: Message>(o: &Output<M>) -> Option<&M::Payload> {
         match o {
             Output::Message(_, m) => Some(m.payload()),
@@ -1485,25 +1486,24 @@ mod tests {
         let remote = ([131, 31, 11, 33], 11111).into();
         let local = ([0, 0, 0, 0], 0).into();
 
-        let out = instance.step(
-            Input::Connected {
-                addr: remote,
-                local_addr: local,
-                link: Link::Inbound,
-            },
-            time,
-        );
-        out.iter()
-            .find(|o| {
-                matches!(o,
-                Output::SetTimeout(addr, _) if addr == &remote)
-            })
-            .expect("a timer should be returned");
+        for link in &[Link::Outbound, Link::Inbound] {
+            let out = instance.step(
+                Input::Connected {
+                    addr: remote,
+                    local_addr: local,
+                    link: *link,
+                },
+                time,
+            );
+            out.iter()
+                .find(|o| matches!(o, Output::SetTimeout(addr, _) if addr == &remote))
+                .expect("a timer should be returned");
 
-        let out = instance.step(Input::Timeout(remote), time);
-        assert!(out
-            .iter()
-            .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
+            let out = instance.step(Input::Timeout(remote), time);
+            assert!(out
+                .iter()
+                .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
+        }
     }
 
     #[test]
@@ -1514,46 +1514,40 @@ mod tests {
         let remote = ([131, 31, 11, 33], 11111).into();
         let local = ([0, 0, 0, 0], 0).into();
 
-        instance.step(
-            Input::Connected {
-                addr: remote,
-                local_addr: local,
-                link: Link::Inbound,
-            },
-            time,
-        );
-
-        let out = instance.step(
-            Input::Received(
-                remote,
-                RawNetworkMessage {
-                    magic: network.magic(),
-                    payload: instance.version(local, remote, 0, 0),
+        for link in &[Link::Outbound, Link::Inbound] {
+            instance.step(
+                Input::Connected {
+                    addr: remote,
+                    local_addr: local,
+                    link: *link,
                 },
-            ),
-            time,
-        );
-        assert!(out
-            .iter()
-            .any(|o| matches!(payload(o), Some(NetworkMessage::Version(_)))));
-        assert!(out
-            .iter()
-            .any(|o| matches!(payload(o), Some(NetworkMessage::Verack))));
-        out.iter()
-            .find(|o| {
-                matches!(o,
-                Output::SetTimeout(addr, _) if addr == &remote)
-            })
-            .expect("a timer should be returned");
+                time,
+            );
 
-        let out = instance.step(Input::Timeout(remote), time);
-        assert!(out
-            .iter()
-            .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
+            let out = instance.step(
+                Input::Received(
+                    remote,
+                    RawNetworkMessage {
+                        magic: network.magic(),
+                        payload: instance.version(local, remote, 0, 0),
+                    },
+                ),
+                time,
+            );
+            out.iter()
+                .find(|o| matches!(o, Output::SetTimeout(addr, _) if *addr == remote))
+                .expect("a timer should be returned");
+
+            let out = instance.step(Input::Timeout(remote), time);
+            assert!(out
+                .iter()
+                .any(|o| matches!(o, Output::Disconnect(a) if *a == remote)));
+        }
     }
 
     #[test]
     fn test_get_headers_timeout() {
-        // TODO
+        // TODO: Protocol should try different peers if it can't get the headers from the first
+        // peer. It should keep trying until it succeeds.
     }
 }
