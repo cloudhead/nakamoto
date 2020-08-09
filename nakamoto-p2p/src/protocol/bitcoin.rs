@@ -915,10 +915,7 @@ impl<T: BlockTree> Bitcoin<T> {
     /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Output<RawNetworkMessage>> {
-        let outs = self
-            .syncmgr
-            .step(syncmgr::Input::ReceivedInventory(addr, inv), &self.clock);
-
+        let outs = self.syncmgr.receive_inv(addr, inv);
         self.syncmgr(outs)
     }
 
@@ -940,10 +937,7 @@ impl<T: BlockTree> Bitcoin<T> {
             headers.len()
         );
 
-        let outs = self
-            .syncmgr
-            .step(syncmgr::Input::ReceivedHeaders(addr, headers), &self.clock);
-
+        let outs = self.syncmgr.receive_headers(&addr, headers, &self.clock);
         self.syncmgr(outs)
     }
 
