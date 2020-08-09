@@ -957,7 +957,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 syncmgr::Output::HeadersImported(_addr, import_result) => {
                     self.handle_import(import_result, &mut outbound);
                 }
-                syncmgr::Output::FinishedSyncing(_, _) => {
+                syncmgr::Output::Synced(_, _) => {
                     outbound.extend(self.transition(State::Synced).into_iter().map(Output::from));
                 }
                 syncmgr::Output::Syncing(addr) => {

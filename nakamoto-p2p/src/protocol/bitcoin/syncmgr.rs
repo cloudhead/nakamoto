@@ -16,6 +16,7 @@ use super::{Locators, PeerId};
 pub enum State {
     WaitingForPeers,
     Syncing(PeerId),
+    // TODO: Add confidence parameter to synced state.
     Synced(BlockHash, Height),
 }
 
@@ -93,9 +94,9 @@ pub enum Output {
     SendHeaders(PeerId, Vec<BlockHeader>),
     HeadersImported(PeerId, ImportResult),
     ReceivedInvalidHeaders(PeerId, Error),
-    FinishedSyncing(BlockHash, Height),
     BlockDiscovered(PeerId, BlockHash),
     Syncing(PeerId),
+    Synced(BlockHash, Height),
     PeerTimeout(PeerId),
     WaitingForPeers,
 }
@@ -197,7 +198,10 @@ impl<T: BlockTree> SyncManager<T> {
         let mut out = Vec::new();
 
         if self.is_synced() {
-            return vec![];
+            let (tip, _) = self.tree.tip();
+            let height = self.tree.height();
+
+            return self.transition(State::Synced(tip, height));
         }
 
         // TODO: Pick a peer whose `height` is high enough.
@@ -297,7 +301,7 @@ impl<T: BlockTree> SyncManager<T> {
                         let mut out = self.transition(State::Synced(tip, height));
 
                         out.push(Output::HeadersImported(*from, import_result));
-                        out.push(Output::FinishedSyncing(tip, height));
+                        out.push(Output::Synced(tip, height));
                         out
                     } else {
                         // TODO: If we're already in the state of asking for this header, don't
@@ -368,7 +372,7 @@ impl<T: BlockTree> SyncManager<T> {
         match &self.state {
             State::WaitingForPeers => vec![Output::WaitingForPeers],
             State::Syncing(addr) => vec![Output::Syncing(*addr)],
-            State::Synced(hash, height) => vec![Output::FinishedSyncing(*hash, *height)],
+            State::Synced(hash, height) => vec![Output::Synced(*hash, *height)],
         }
     }
 
