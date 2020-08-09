@@ -11,7 +11,7 @@ use nakamoto_common::block::time::LocalTime;
 use crate::error::Error;
 use crate::event::Event;
 use crate::fallible;
-use crate::protocol::{Input, Link, Message, Output, Protocol};
+use crate::protocol::{Component, Input, Link, Message, Output, Protocol};
 use crate::reactor::time::TimeoutManager;
 
 use log::*;
@@ -137,16 +137,18 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     }
 }
 
-pub struct Reactor<R: Write + Read, M: Message, C> {
+pub struct Reactor<R: Write + Read, M: Message, C, T> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
     events: VecDeque<Input<M, C>>,
     subscriber: chan::Sender<Event<M::Payload>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
-    timeouts: TimeoutManager<net::SocketAddr>,
+    timeouts: TimeoutManager<(net::SocketAddr, T)>,
 }
 
-impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> Reactor<R, M, C> {
+impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C, T>
+    Reactor<R, M, C, T>
+{
     pub fn new(subscriber: chan::Sender<Event<M::Payload>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
         let events: VecDeque<Input<M, C>> = VecDeque::new();
@@ -195,7 +197,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> R
 }
 
 impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
-    Reactor<net::TcpStream, M, C>
+    Reactor<net::TcpStream, M, C, Component>
 where
     M::Payload: Debug + Send + Sync,
 {
@@ -290,8 +292,8 @@ where
                     self.timeouts.wake(SystemTime::now().into(), &mut timeouts);
 
                     if !timeouts.is_empty() {
-                        for peer in timeouts.drain(..) {
-                            self.events.push_back(Input::Timeout(peer));
+                        for (peer, ctx) in timeouts.drain(..) {
+                            self.events.push_back(Input::Timeout(peer, ctx));
                         }
                     } else {
                         self.events.push_back(Input::Idle);
@@ -359,8 +361,9 @@ where
                         self.unregister_peer(addr);
                     }
                 }
-                Output::SetTimeout(addr, timeout) => {
-                    self.timeouts.register(addr, local_time + timeout);
+                Output::SetTimeout(key, component, timeout) => {
+                    self.timeouts
+                        .register((key, component), local_time + timeout);
                 }
                 Output::Event(event) => {
                     trace!("Event: {:?}", event);
