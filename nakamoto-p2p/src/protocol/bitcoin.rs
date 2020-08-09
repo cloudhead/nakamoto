@@ -639,8 +639,9 @@ impl<T: BlockTree> Bitcoin<T> {
         msg: RawNetworkMessage,
     ) -> Vec<Output<RawNetworkMessage>> {
         let now = self.clock.local_time();
+        let cmd = msg.cmd();
 
-        debug!("[{}] {}: Received {:?}", self.name, addr, msg.cmd());
+        debug!("[{}] {}: Received {:?}", self.name, addr, cmd);
 
         if msg.magic != self.network.magic() {
             // TODO: Needs test.
@@ -864,24 +865,20 @@ impl<T: BlockTree> Bitcoin<T> {
                         return vec![self
                             .message(addr, message::get_headers(locators, self.protocol_version))];
                     }
-                } else {
-                    debug!(
-                        "[{}] Ignoring {} from peer {}",
-                        self.name,
-                        msg.cmd(),
-                        peer.address,
-                    );
                 }
             }
             PeerState::Disconnecting => {
                 debug!(
                     "[{}] Ignoring {} from peer {} (disconnecting)",
-                    self.name,
-                    msg.cmd(),
-                    peer.address
+                    self.name, cmd, peer.address
                 );
             }
         }
+
+        debug!(
+            "[{}] {}: Ignoring {:?} (state = {:?})",
+            self.name, peer.address, cmd, peer.state,
+        );
 
         vec![]
     }
