@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use log::*;
 use nonempty::NonEmpty;
 
 use bitcoin::network::constants::ServiceFlags;
@@ -15,9 +14,9 @@ use super::{Locators, PeerId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
-    Idle,
+    WaitingForPeers,
     Syncing(PeerId),
-    Synced(Height),
+    Synced(BlockHash, Height),
 }
 
 /// Synchronization states.
@@ -42,7 +41,6 @@ struct PeerState {
     tip: BlockHash,
     services: ServiceFlags,
     state: Syncing,
-    ctx: &'static str,
 }
 
 impl PeerState {
@@ -55,11 +53,6 @@ impl PeerState {
         if self.state == state {
             return;
         }
-        debug!(
-            "[{}] {}: Syncing: {:?} -> {:?}",
-            self.ctx, self.id, self.state, state
-        );
-
         self.state = state;
     }
 }
@@ -82,8 +75,6 @@ pub struct SyncManager<T> {
     state: State,
     /// Random number generator.
     rng: fastrand::Rng,
-    /// Read-only context passed by parent, used for logging.
-    ctx: &'static str,
 }
 
 #[derive(Debug)]
@@ -100,15 +91,16 @@ pub enum Output {
     HeadersImported(PeerId, ImportResult),
     ReceivedInvalidHeaders(PeerId, Error),
     FinishedSyncing(BlockHash, Height),
+    BlockDiscovered(PeerId, BlockHash),
     Syncing(PeerId),
     PeerTimeout(PeerId),
     WaitingForPeers,
 }
 
 impl<T: BlockTree> SyncManager<T> {
-    pub fn new(tree: T, config: Config, rng: fastrand::Rng, ctx: &'static str) -> Self {
+    pub fn new(tree: T, config: Config, rng: fastrand::Rng) -> Self {
         let peers = HashMap::new();
-        let state = State::Idle;
+        let state = State::WaitingForPeers;
 
         Self {
             tree,
@@ -116,7 +108,6 @@ impl<T: BlockTree> SyncManager<T> {
             config,
             state,
             rng,
-            ctx,
         }
     }
 
@@ -147,7 +138,6 @@ impl<T: BlockTree> SyncManager<T> {
                 tip,
                 services,
                 state: Syncing::default(),
-                ctx: self.ctx,
             },
         );
     }
@@ -193,9 +183,7 @@ impl<T: BlockTree> SyncManager<T> {
 
         peer.transition(Syncing::AwaitingHeaders(locators.clone()));
 
-        if self.transition(State::Syncing(addr)).is_some() {
-            out.push(Output::Syncing(addr));
-        }
+        out.extend(self.transition(State::Syncing(addr)));
         out.push(Output::GetHeaders(addr, locators));
         out
     }
@@ -286,10 +274,11 @@ impl<T: BlockTree> SyncManager<T> {
                         // Otherwise, we're finally in sync.
                         peer.transition(Syncing::Idle);
 
-                        vec![
-                            Output::HeadersImported(*from, import_result),
-                            Output::FinishedSyncing(tip, height),
-                        ]
+                        let mut out = self.transition(State::Synced(tip, height));
+
+                        out.push(Output::HeadersImported(*from, import_result));
+                        out.push(Output::FinishedSyncing(tip, height));
+                        out
                     } else {
                         // TODO: If we're already in the state of asking for this header, don't
                         // ask again.
@@ -314,12 +303,13 @@ impl<T: BlockTree> SyncManager<T> {
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     pub fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Output> {
         let mut best_block = None;
+        let mut output = Vec::new();
 
         for i in &inv {
             if let Inventory::Block(hash) = i {
                 // TODO: Update block availability for this peer.
                 if !self.tree.is_known(hash) {
-                    debug!("[{}] {}: Discovered new block: {}", self.ctx, addr, &hash);
+                    output.push(Output::BlockDiscovered(addr, *hash));
                     // The final block hash in the inventory should be the highest. Use
                     // that one for a `getheaders` call.
                     best_block = Some(hash);
@@ -328,13 +318,12 @@ impl<T: BlockTree> SyncManager<T> {
         }
 
         if let Some(stop_hash) = best_block {
-            vec![Output::GetHeaders(
+            output.push(Output::GetHeaders(
                 addr,
                 (self.locator_hashes(), *stop_hash),
-            )]
-        } else {
-            vec![]
+            ));
         }
+        output
     }
 
     pub fn handle_timeout(&mut self, id: PeerId) -> Vec<Output> {
@@ -347,17 +336,20 @@ impl<T: BlockTree> SyncManager<T> {
         vec![]
     }
 
-    fn transition(&mut self, state: State) -> Option<State> {
+    fn transition(&mut self, state: State) -> Vec<Output> {
         let previous = self.state.clone();
 
         if state == previous {
-            return None;
+            return vec![];
         }
-        debug!("[{}] state: {:?} -> {:?}", self.ctx, previous, state);
 
         self.state = state;
 
-        Some(previous)
+        match &self.state {
+            State::WaitingForPeers => vec![Output::WaitingForPeers],
+            State::Syncing(addr) => vec![Output::Syncing(*addr)],
+            State::Synced(hash, height) => vec![Output::FinishedSyncing(*hash, *height)],
+        }
     }
 
     fn locator_hashes(&self) -> Vec<BlockHash> {

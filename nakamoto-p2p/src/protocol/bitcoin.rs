@@ -196,7 +196,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 max_headers_received: MAX_MESSAGE_HEADERS,
             },
             syncmgr_rng,
-            name,
         );
 
         Self {
@@ -993,7 +992,11 @@ impl<T: BlockTree> Bitcoin<T> {
                     outbound.push(Output::Disconnect(addr));
                 }
                 syncmgr::Output::WaitingForPeers => {
-                    todo!();
+                    // TODO: Connect to peers!
+                    debug!("[{}] syncmgr: Waiting for peers..", self.name);
+                }
+                syncmgr::Output::BlockDiscovered(from, hash) => {
+                    debug!("[{}] {}: Discovered new block: {}", self.name, from, &hash);
                 }
             }
         }
