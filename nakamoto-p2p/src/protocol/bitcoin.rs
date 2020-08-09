@@ -193,7 +193,7 @@ impl<T: BlockTree> Bitcoin<T> {
         let syncmgr = SyncManager::new(
             tree,
             syncmgr::Config {
-                max_headers_received: MAX_MESSAGE_HEADERS,
+                max_message_headers: MAX_MESSAGE_HEADERS,
             },
             syncmgr_rng,
         );
@@ -710,7 +710,6 @@ impl<T: BlockTree> Bitcoin<T> {
         } else if let NetworkMessage::Addr(addrs) = msg.payload {
             self.addrmgr
                 .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
-
             return vec![];
         } else if let NetworkMessage::Headers(headers) = msg.payload {
             return self.receive_headers(addr, headers);
@@ -849,14 +848,18 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
             }
             PeerState::Ready { .. } if self.state == State::Synced => {
-                if let NetworkMessage::GetHeaders(GetHeadersMessage { locator_hashes, .. }) =
-                    msg.payload
+                if let NetworkMessage::GetHeaders(GetHeadersMessage {
+                    locator_hashes,
+                    stop_hash,
+                    ..
+                }) = msg.payload
                 {
-                    let headers = self
-                        .syncmgr
-                        .get_headers(locator_hashes, MAX_MESSAGE_HEADERS);
-
-                    return vec![self.message(addr, NetworkMessage::Headers(headers))];
+                    let outs = self.syncmgr.receive_get_headers(
+                        &addr,
+                        (locator_hashes, stop_hash),
+                        MAX_MESSAGE_HEADERS,
+                    );
+                    return self.syncmgr(outs);
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
                     return self.receive_inv(addr, inventory);
                 }
@@ -997,6 +1000,9 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
                 syncmgr::Output::BlockDiscovered(from, hash) => {
                     debug!("[{}] {}: Discovered new block: {}", self.name, from, &hash);
+                }
+                syncmgr::Output::SendHeaders(peer, headers) => {
+                    outbound.push(self.message(peer, NetworkMessage::Headers(headers)));
                 }
             }
         }

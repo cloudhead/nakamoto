@@ -59,7 +59,7 @@ impl PeerState {
 
 #[derive(Debug)]
 pub struct Config {
-    pub max_headers_received: usize,
+    pub max_message_headers: usize,
 }
 
 #[derive(Debug)]
@@ -83,11 +83,14 @@ pub enum Input {
     PeerDisconnected(PeerId),
     ReceivedHeaders(PeerId, NonEmpty<BlockHeader>),
     ReceivedInventory(PeerId, Vec<Inventory>),
+    GetHeaders(PeerId, Locators),
 }
 
+#[must_use]
 #[derive(Debug)]
 pub enum Output {
     GetHeaders(PeerId, Locators),
+    SendHeaders(PeerId, Vec<BlockHeader>),
     HeadersImported(PeerId, ImportResult),
     ReceivedInvalidHeaders(PeerId, Error),
     FinishedSyncing(BlockHash, Height),
@@ -124,6 +127,9 @@ impl<T: BlockTree> SyncManager<T> {
             }
             Input::ReceivedInventory(from, inv) => {
                 return self.receive_inv(from, inv);
+            }
+            Input::GetHeaders(from, locators) => {
+                return self.receive_get_headers(&from, locators, self.config.max_message_headers);
             }
         }
         vec![]
@@ -192,7 +198,27 @@ impl<T: BlockTree> SyncManager<T> {
         self.tree.height()
     }
 
-    pub fn get_headers(&self, locator_hashes: Vec<BlockHash>, max: usize) -> Vec<BlockHeader> {
+    pub fn receive_get_headers(
+        &self,
+        addr: &PeerId,
+        (locator_hashes, stop_hash): Locators,
+        max: usize,
+    ) -> Vec<Output> {
+        let headers = self.get_headers(locator_hashes, stop_hash, max);
+
+        if headers.is_empty() {
+            return vec![];
+        }
+        return vec![Output::SendHeaders(*addr, headers)];
+    }
+
+    fn get_headers(
+        &self,
+        locator_hashes: Vec<BlockHash>,
+        // FIXME(syncmgr): Use this
+        _stop_hash: BlockHash,
+        max: usize,
+    ) -> Vec<BlockHeader> {
         let tree = &self.tree;
 
         // Start from the highest locator hash that is on our active chain.
@@ -269,7 +295,7 @@ impl<T: BlockTree> SyncManager<T> {
                 if let Syncing::AwaitingHeaders(_locators) = &peer.state {
                     // If we received less than the maximum number of headers, we must be in sync.
                     // Otherwise, ask for the next batch of headers.
-                    if length < self.config.max_headers_received {
+                    if length < self.config.max_message_headers {
                         // If these headers were unsolicited, we may already be ready/synced.
                         // Otherwise, we're finally in sync.
                         peer.transition(Syncing::Idle);
