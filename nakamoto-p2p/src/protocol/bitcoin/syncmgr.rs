@@ -152,79 +152,6 @@ impl<T: BlockTree> SyncManager<T> {
         vec![]
     }
 
-    fn register(&mut self, id: PeerId, height: Height, tip: BlockHash, services: ServiceFlags) {
-        self.peers.insert(
-            id,
-            PeerState {
-                id,
-                height,
-                tip,
-                services,
-                state: Syncing::default(),
-            },
-        );
-    }
-
-    fn unregister(&mut self, id: &PeerId) {
-        self.peers.remove(id);
-    }
-
-    /// Check whether or not we are in sync with the network.
-    /// TODO: Should return the minimum peer height, so that we can
-    /// keep track of it in our state, while syncing to it.
-    fn is_synced(&self) -> bool {
-        let height = self.tree.height();
-
-        // TODO: Check actual block hashes once we are caught up on height.
-        if let Some(peer_height) = self
-            .peers
-            .values()
-            .filter(|p| p.is_candidate())
-            .map(|p| p.height)
-            .min()
-        {
-            height >= peer_height
-        } else {
-            true
-        }
-    }
-
-    /// Start syncing with the given peer.
-    pub fn sync(&mut self) -> Vec<Output> {
-        if self.peers.is_empty() {
-            return vec![Output::WaitingForPeers];
-        }
-        let locators = (self.locator_hashes(), BlockHash::default());
-        let mut out = Vec::new();
-
-        if self.is_synced() {
-            let (tip, _) = self.tree.tip();
-            let height = self.tree.height();
-
-            return self.transition(State::Synced(tip, height));
-        }
-
-        // TODO: Pick a peer whose `height` is high enough.
-        // TODO: Factor this out when we have a `peermgr`.
-        // TODO: Threshold should be a parameter.
-        // TODO: Peer should be picked amongst lowest latency ones.
-        // Wait for a certain connection threshold to make sure we choose the best
-        // peer to sync from. For now, we choose a random peer.
-        let ix = self.rng.usize(..self.peers.len());
-        let (addr, peer) = self.peers.iter_mut().nth(ix).unwrap();
-        let addr = *addr;
-
-        peer.transition(Syncing::AwaitingHeaders(locators.clone()));
-
-        out.extend(self.transition(State::Syncing(addr)));
-        out.push(Output::GetHeaders(addr, locators));
-        out
-    }
-
-    pub fn height(&self) -> Height {
-        self.tree.height()
-    }
-
     pub fn receive_get_headers(
         &self,
         addr: &PeerId,
@@ -358,6 +285,77 @@ impl<T: BlockTree> SyncManager<T> {
             }
         }
         vec![]
+    }
+
+    ///////////////////////////////////////////////////////////////////////////
+
+    fn register(&mut self, id: PeerId, height: Height, tip: BlockHash, services: ServiceFlags) {
+        self.peers.insert(
+            id,
+            PeerState {
+                id,
+                height,
+                tip,
+                services,
+                state: Syncing::default(),
+            },
+        );
+    }
+
+    fn unregister(&mut self, id: &PeerId) {
+        self.peers.remove(id);
+    }
+
+    /// Check whether or not we are in sync with the network.
+    /// TODO: Should return the minimum peer height, so that we can
+    /// keep track of it in our state, while syncing to it.
+    fn is_synced(&self) -> bool {
+        let height = self.tree.height();
+
+        // TODO: Check actual block hashes once we are caught up on height.
+        if let Some(peer_height) = self
+            .peers
+            .values()
+            .filter(|p| p.is_candidate())
+            .map(|p| p.height)
+            .min()
+        {
+            height >= peer_height
+        } else {
+            true
+        }
+    }
+
+    /// Start syncing with the given peer.
+    fn sync(&mut self) -> Vec<Output> {
+        if self.peers.is_empty() {
+            return vec![Output::WaitingForPeers];
+        }
+        let locators = (self.locator_hashes(), BlockHash::default());
+        let mut out = Vec::new();
+
+        if self.is_synced() {
+            let (tip, _) = self.tree.tip();
+            let height = self.tree.height();
+
+            return self.transition(State::Synced(tip, height));
+        }
+
+        // TODO: Pick a peer whose `height` is high enough.
+        // TODO: Factor this out when we have a `peermgr`.
+        // TODO: Threshold should be a parameter.
+        // TODO: Peer should be picked amongst lowest latency ones.
+        // Wait for a certain connection threshold to make sure we choose the best
+        // peer to sync from. For now, we choose a random peer.
+        let ix = self.rng.usize(..self.peers.len());
+        let (addr, peer) = self.peers.iter_mut().nth(ix).unwrap();
+        let addr = *addr;
+
+        peer.transition(Syncing::AwaitingHeaders(locators.clone()));
+
+        out.extend(self.transition(State::Syncing(addr)));
+        out.push(Output::GetHeaders(addr, locators));
+        out
     }
 
     fn transition(&mut self, state: State) -> Vec<Output> {

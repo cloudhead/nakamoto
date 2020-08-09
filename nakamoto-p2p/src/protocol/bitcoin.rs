@@ -100,6 +100,8 @@ pub struct Bitcoin<T> {
     pub relay: bool,
     /// Our user agent.
     pub user_agent: &'static str,
+    /// Block height of active chain.
+    pub height: Height,
 
     /// Peer address manager.
     addrmgr: AddressManager,
@@ -183,6 +185,8 @@ impl<T: BlockTree> Bitcoin<T> {
             name,
         } = config;
 
+        let height = tree.height();
+
         let addrmgr_rng = fastrand::Rng::new();
         addrmgr_rng.seed(rng.u64(..));
 
@@ -208,6 +212,7 @@ impl<T: BlockTree> Bitcoin<T> {
             user_agent,
             name,
             clock,
+            height,
             addrmgr,
             syncmgr,
             rng,
@@ -445,10 +450,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     Link::Outbound => {
                         info!("[{}] {}: Peer connected (outbound)", self.name, &addr);
 
-                        outbound.push(self.message(
-                            addr,
-                            self.version(addr, local_addr, nonce, self.syncmgr.height()),
-                        ));
+                        outbound.push(
+                            self.message(addr, self.version(addr, local_addr, nonce, self.height)),
+                        );
                     }
                     Link::Inbound => {
                         info!("[{}] {}: Peer connected (inbound)", self.name, &addr);
@@ -701,7 +705,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     ..
                 }) = msg.payload
                 {
-                    let height = self.syncmgr.height();
+                    let height = self.height;
 
                     info!(
                         "[{}] {}: Peer version = {}, height = {}, agent = {}, timestamp = {}",
@@ -775,7 +779,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             return vec![
                                 self.message(
                                     addr,
-                                    self.version(addr, local_addr, nonce, self.syncmgr.height()),
+                                    self.version(addr, local_addr, nonce, self.height),
                                 ),
                                 self.message(addr, NetworkMessage::Verack),
                                 Output::SetTimeout(
@@ -992,12 +996,17 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     fn handle_import(
-        &self,
+        &mut self,
         import_result: ImportResult,
         outbound: &mut Vec<Output<RawNetworkMessage>>,
     ) {
         if let &ImportResult::TipChanged(tip, height, _) = &import_result {
-            info!("[{}] Chain height = {}, tip = {}", self.name, height, tip);
+            self.height = height;
+
+            info!(
+                "[{}] Chain height = {}, tip = {}",
+                self.name, self.height, tip
+            );
 
             // Broadcast the new tip, since we were able to verify the header chain up to it.
             outbound.extend(self.broadcast_tip(&tip));
