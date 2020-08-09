@@ -10,7 +10,7 @@ use nakamoto_common::block::time::Clock;
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
-use super::{Locators, PeerId};
+use super::{Link, Locators, PeerId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
@@ -41,6 +41,7 @@ struct PeerState {
     height: Height,
     tip: BlockHash,
     services: ServiceFlags,
+    link: Link,
     state: Syncing,
 }
 
@@ -80,7 +81,7 @@ pub struct SyncManager<T> {
 
 #[derive(Debug)]
 pub enum Input {
-    PeerConnected(PeerId, Height, BlockHash, ServiceFlags),
+    PeerConnected(PeerId, Height, BlockHash, ServiceFlags, Link),
     PeerDisconnected(PeerId),
     ReceivedHeaders(PeerId, NonEmpty<BlockHeader>),
     ReceivedInventory(PeerId, Vec<Inventory>),
@@ -91,8 +92,8 @@ pub enum Input {
 #[derive(Debug)]
 pub enum Output {
     GetHeaders(PeerId, Locators),
-    SendHeaders(PeerId, Vec<BlockHeader>),
-    HeadersImported(PeerId, ImportResult),
+    SendHeaders(Vec<PeerId>, Vec<BlockHeader>),
+    HeadersImported(ImportResult),
     ReceivedInvalidHeaders(PeerId, Error),
     BlockDiscovered(PeerId, BlockHash),
     Syncing(PeerId),
@@ -117,8 +118,8 @@ impl<T: BlockTree> SyncManager<T> {
 
     pub fn step<C: Clock>(&mut self, input: Input, clock: &C) -> Vec<Output> {
         match input {
-            Input::PeerConnected(id, height, tip, services) => {
-                self.register(id, height, tip, services);
+            Input::PeerConnected(id, height, tip, services, link) => {
+                self.register(id, height, tip, services, link);
             }
             Input::PeerDisconnected(id) => {
                 self.unregister(&id);
@@ -142,8 +143,9 @@ impl<T: BlockTree> SyncManager<T> {
         height: Height,
         tip: BlockHash,
         services: ServiceFlags,
+        link: Link,
     ) -> Vec<Output> {
-        self.register(id, height, tip, services);
+        self.register(id, height, tip, services, link);
         self.sync()
     }
 
@@ -163,15 +165,28 @@ impl<T: BlockTree> SyncManager<T> {
         if headers.is_empty() {
             return vec![];
         }
-        return vec![Output::SendHeaders(*addr, headers)];
+        return vec![Output::SendHeaders(vec![*addr], headers)];
     }
 
     pub fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
         &mut self,
         chain: I,
         context: &C,
-    ) -> Result<ImportResult, Error> {
-        self.tree.import_blocks(chain, context)
+    ) -> Result<(ImportResult, Vec<Output>), Error> {
+        match self.tree.import_blocks(chain, context) {
+            Ok(ImportResult::TipChanged(tip, height, reverted)) => {
+                let mut out = self.broadcast_tip(&tip);
+                let result = ImportResult::TipChanged(tip, height, reverted);
+
+                out.push(Output::HeadersImported(result.clone()));
+
+                Ok((result, out))
+            }
+            Ok(result @ ImportResult::TipUnchanged) => {
+                Ok((result.clone(), vec![Output::HeadersImported(result)]))
+            }
+            Err(err) => Err(err),
+        }
     }
 
     pub fn receive_headers(
@@ -184,10 +199,8 @@ impl<T: BlockTree> SyncManager<T> {
         let best = headers.last().bitcoin_hash();
 
         if self.tree.contains(&best) {
-            return vec![Output::ReceivedInvalidHeaders(
-                *from,
-                Error::DuplicateBlock(best),
-            )];
+            // Ignore duplicate headers on the active chain.
+            return vec![];
         }
 
         let peer = self.peers.get_mut(from).unwrap();
@@ -206,7 +219,7 @@ impl<T: BlockTree> SyncManager<T> {
                 peer.transition(Syncing::AwaitingHeaders(locators.clone()));
 
                 vec![
-                    Output::HeadersImported(*from, import_result),
+                    Output::HeadersImported(import_result),
                     Output::GetHeaders(*from, locators),
                 ]
             }
@@ -227,8 +240,9 @@ impl<T: BlockTree> SyncManager<T> {
 
                         let mut out = self.transition(State::Synced(tip, height));
 
-                        out.push(Output::HeadersImported(*from, import_result));
+                        out.push(Output::HeadersImported(import_result));
                         out.push(Output::Synced(tip, height));
+                        out.extend(self.broadcast_tip(&tip));
                         out
                     } else {
                         // TODO: If we're already in the state of asking for this header, don't
@@ -238,12 +252,12 @@ impl<T: BlockTree> SyncManager<T> {
                         peer.transition(Syncing::AwaitingHeaders(locators.clone()));
 
                         vec![
-                            Output::HeadersImported(*from, import_result),
+                            Output::HeadersImported(import_result),
                             Output::GetHeaders(*from, locators),
                         ]
                     }
                 } else {
-                    vec![Output::HeadersImported(*from, import_result)]
+                    vec![Output::HeadersImported(import_result)]
                 }
             }
             Err(err) => vec![Output::ReceivedInvalidHeaders(*from, err)],
@@ -289,7 +303,14 @@ impl<T: BlockTree> SyncManager<T> {
 
     ///////////////////////////////////////////////////////////////////////////
 
-    fn register(&mut self, id: PeerId, height: Height, tip: BlockHash, services: ServiceFlags) {
+    fn register(
+        &mut self,
+        id: PeerId,
+        height: Height,
+        tip: BlockHash,
+        services: ServiceFlags,
+        link: Link,
+    ) {
         self.peers.insert(
             id,
             PeerState {
@@ -297,6 +318,7 @@ impl<T: BlockTree> SyncManager<T> {
                 height,
                 tip,
                 services,
+                link,
                 state: Syncing::default(),
             },
         );
@@ -356,6 +378,24 @@ impl<T: BlockTree> SyncManager<T> {
         out.extend(self.transition(State::Syncing(addr)));
         out.push(Output::GetHeaders(addr, locators));
         out
+    }
+
+    /// Broadcast our best block header to connected peers who don't have it.
+    fn broadcast_tip(&self, hash: &BlockHash) -> Vec<Output> {
+        if let Some((height, best)) = self.tree.get_block(hash) {
+            let mut addrs = Vec::new();
+
+            for (addr, peer) in &self.peers {
+                // TODO: Don't broadcast to peer that is currently syncing?
+                if peer.link == Link::Inbound && height > peer.height {
+                    addrs.push(*addr);
+                    // TODO: Update peer inventory?
+                }
+            }
+            vec![Output::SendHeaders(addrs, vec![*best])]
+        } else {
+            vec![]
+        }
     }
 
     fn transition(&mut self, state: State) -> Vec<Output> {

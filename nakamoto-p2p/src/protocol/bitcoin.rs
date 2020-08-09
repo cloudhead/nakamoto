@@ -358,6 +358,7 @@ impl Peer {
         matches!(self.state, PeerState::Ready { .. })
     }
 
+    #[allow(dead_code)]
     fn is_inbound(&self) -> bool {
         self.link == Link::Inbound
     }
@@ -510,15 +511,17 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
                 Command::ImportHeaders(headers, reply) => {
                     debug!("[{}] Received command: ImportHeaders(..)", self.name);
+
                     let result = self.syncmgr.import_blocks(headers.into_iter(), &self.clock);
-                    let import: Option<ImportResult> = result.as_ref().ok().cloned();
 
-                    debug!("[{}] Import result: {:?}", self.name, &result);
-
-                    reply.send(result).ok();
-
-                    if let Some(import) = import {
-                        self.handle_import(import, &mut outbound);
+                    match result {
+                        Ok((import_result, out)) => {
+                            reply.send(Ok(import_result)).ok();
+                            outbound.extend(self.syncmgr(out));
+                        }
+                        Err(err) => {
+                            reply.send(Err(err)).ok();
+                        }
                     }
                 }
                 Command::GetTip(_) => todo!(),
@@ -808,6 +811,7 @@ impl<T: BlockTree> Bitcoin<T> {
                         peer.height,
                         peer.tip,
                         peer.services,
+                        peer.link,
                     );
 
                     out.extend(self.syncmgr(syncmgr_out));
@@ -958,8 +962,18 @@ impl<T: BlockTree> Bitcoin<T> {
                         self.name, addr, error
                     );
                 }
-                syncmgr::Output::HeadersImported(_addr, import_result) => {
-                    self.handle_import(import_result, &mut outbound);
+                syncmgr::Output::HeadersImported(import_result) => {
+                    debug!("[{}] Import result: {:?}", self.name, &import_result);
+
+                    if let ImportResult::TipChanged(tip, height, _) = import_result {
+                        self.height = height;
+
+                        info!(
+                            "[{}] Chain height = {}, tip = {}",
+                            self.name, self.height, tip
+                        );
+                    }
+                    outbound.push(Output::Event(Event::HeadersImported(import_result)));
                 }
                 syncmgr::Output::Synced(_, _) => {
                     outbound.extend(self.transition(State::Synced).into_iter().map(Output::from));
@@ -987,59 +1001,23 @@ impl<T: BlockTree> Bitcoin<T> {
                 syncmgr::Output::BlockDiscovered(from, hash) => {
                     debug!("[{}] {}: Discovered new block: {}", self.name, from, &hash);
                 }
-                syncmgr::Output::SendHeaders(peer, headers) => {
-                    outbound.push(self.message(peer, NetworkMessage::Headers(headers)));
+                syncmgr::Output::SendHeaders(peers, headers) => {
+                    if !peers.is_empty() {
+                        debug!(
+                            "[{}] Sending {} header(s) to {} peer(s)..",
+                            self.name,
+                            headers.len(),
+                            peers.len()
+                        );
+                    }
+
+                    for peer in peers {
+                        outbound.push(self.message(peer, NetworkMessage::Headers(headers.clone())));
+                    }
                 }
             }
         }
         outbound
-    }
-
-    fn handle_import(
-        &mut self,
-        import_result: ImportResult,
-        outbound: &mut Vec<Output<RawNetworkMessage>>,
-    ) {
-        if let &ImportResult::TipChanged(tip, height, _) = &import_result {
-            self.height = height;
-
-            info!(
-                "[{}] Chain height = {}, tip = {}",
-                self.name, self.height, tip
-            );
-
-            // Broadcast the new tip, since we were able to verify the header chain up to it.
-            outbound.extend(self.broadcast_tip(&tip));
-        }
-        outbound.push(Output::Event(Event::HeadersImported(import_result)));
-    }
-
-    /// Broadcast our best block header to connected peers who don't have it.
-    fn broadcast_tip(&self, hash: &BlockHash) -> Vec<Output<RawNetworkMessage>> {
-        let (height, best) = self
-            .syncmgr
-            .tree
-            .get_block(hash)
-            .unwrap_or_else(|| self.syncmgr.tree.best_block());
-        let mut out = Vec::new();
-
-        for (addr, peer) in &self.peers {
-            // TODO: Don't broadcast to peer that is currently syncing?
-            if peer.is_inbound() && height > peer.height {
-                out.push(self.message(*addr, NetworkMessage::Headers(vec![*best])));
-                // TODO: Update peer inventory?
-            }
-        }
-
-        if !out.is_empty() {
-            debug!(
-                "[{}] Broadcasting tip at height {} to {} peer(s)..",
-                self.name,
-                height,
-                out.len()
-            );
-        }
-        out
     }
 
     #[allow(dead_code)]
