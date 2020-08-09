@@ -8,11 +8,11 @@ pub mod syncmgr;
 pub use network::Network;
 
 use addrmgr::AddressManager;
-use syncmgr::{ReceiveHeaders, SyncManager};
+use syncmgr::SyncManager;
 
 use crate::address_book::AddressBook;
 use crate::event::Event;
-use crate::protocol::{Input, Link, Message, Output, PeerId, Protocol};
+use crate::protocol::{Component, Input, Link, Message, Output, PeerId, Protocol};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -456,7 +456,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     } // Wait to receive remote version.
                 }
                 // Set a timeout for receiving the `version` message.
-                outbound.push(Output::SetTimeout(addr, HANDSHAKE_TIMEOUT));
+                outbound.push(Output::SetTimeout(
+                    addr,
+                    Component::HandshakeManager,
+                    HANDSHAKE_TIMEOUT,
+                ));
             }
             Input::Disconnected(addr) => {
                 debug!("[{}] Disconnected from {}", self.name, &addr);
@@ -465,6 +469,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 self.ready.remove(&addr);
                 self.connected.remove(&addr);
                 self.disconnected.insert(addr);
+                self.syncmgr.unregister(&addr);
             }
             Input::Received(addr, msg) => {
                 for out in self.receive(addr, msg) {
@@ -526,23 +531,24 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     outbound.push(Output::Shutdown);
                 }
             },
-            Input::Timeout(addr) => {
+            Input::Timeout(addr, component) => {
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
                 if let Some(peer) = self.peers.get(&addr) {
-                    match peer.state {
-                        PeerState::Handshake(Handshake::AwaitingVerack)
-                        | PeerState::Handshake(Handshake::AwaitingVersion)
-                        // FIXME: We need to associate timeouts to a specific sub-system, since
-                        // otherwise, a stale handshake timeout could trigger the below condition.
-                        | PeerState::Ready {
-                            // FIXME(syncmgr)
-                            // syncing: Syncing::AwaitingHeaders(_, _),
-                            ..
-                        } => {
-                            outbound.push(Output::Disconnect(addr));
+                    match component {
+                        Component::HandshakeManager => match peer.state {
+                            PeerState::Handshake(Handshake::AwaitingVerack)
+                            | PeerState::Handshake(Handshake::AwaitingVersion) => {
+                                outbound.push(Output::Disconnect(addr));
+                            }
+                            _ => {}
+                        },
+                        Component::SyncManager => {
+                            self.syncmgr.handle_timeout(addr);
                         }
-                        _ => {}
+                        _ => {
+                            warn!("[{}] Unhandled timeout: {:?}", self.name, (addr, component));
+                        }
                     }
                 }
             }
@@ -611,13 +617,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let events = self.transition(State::Synced);
                         outbound.extend(events.into_iter().map(Output::from));
                     } else {
-                        if let Some((addr, locators, events)) = self.syncmgr.sync() {
-                            outbound.push(self.message(addr, self.get_headers(locators)));
-                            outbound
-                                .extend(events.into_iter().map(|e| Output::from(Event::from(e))));
-                        } else {
-                            todo!("no sync peer found");
-                        }
+                        let outs = self.syncmgr.sync();
+                        outbound.extend(self.syncmgr(outs));
                     }
                 }
             }
@@ -798,7 +799,13 @@ impl<T: BlockTree> Bitcoin<T> {
                     peer.transition(PeerState::Handshake(Handshake::AwaitingVerack));
 
                     match peer.link {
-                        Link::Outbound => return vec![Output::SetTimeout(addr, HANDSHAKE_TIMEOUT)],
+                        Link::Outbound => {
+                            return vec![Output::SetTimeout(
+                                addr,
+                                Component::HandshakeManager,
+                                HANDSHAKE_TIMEOUT,
+                            )]
+                        }
                         Link::Inbound => {
                             let nonce = peer.nonce;
 
@@ -808,7 +815,11 @@ impl<T: BlockTree> Bitcoin<T> {
                                     self.version(addr, local_addr, nonce, self.syncmgr.height()),
                                 ),
                                 self.message(addr, NetworkMessage::Verack),
-                                Output::SetTimeout(addr, HANDSHAKE_TIMEOUT),
+                                Output::SetTimeout(
+                                    addr,
+                                    Component::HandshakeManager,
+                                    HANDSHAKE_TIMEOUT,
+                                ),
                             ];
                         }
                     }
@@ -917,10 +928,11 @@ impl<T: BlockTree> Bitcoin<T> {
     /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Output<RawNetworkMessage>> {
-        match self.syncmgr.receive_inv(addr, inv) {
-            Ok(Some(locators)) => vec![self.message(addr, self.get_headers(locators))],
-            _ => vec![],
-        }
+        let outs = self
+            .syncmgr
+            .step(syncmgr::Input::ReceivedInventory(addr, inv), &self.clock);
+
+        self.syncmgr(outs)
     }
 
     fn receive_headers(
@@ -933,7 +945,6 @@ impl<T: BlockTree> Bitcoin<T> {
         } else {
             return vec![];
         };
-        let mut outbound = Vec::new();
 
         debug!(
             "[{}] {}: Received {} header(s)",
@@ -942,34 +953,50 @@ impl<T: BlockTree> Bitcoin<T> {
             headers.len()
         );
 
-        match self.syncmgr.receive_headers(&addr, headers, &self.clock) {
-            ReceiveHeaders::Okay(import_result) => {
-                self.handle_import(import_result, &mut outbound);
-            }
-            ReceiveHeaders::Continue {
-                import_result,
-                locators,
-            } => {
-                outbound.push(self.message(addr, self.get_headers(locators)));
-                self.handle_import(import_result, &mut outbound);
-            }
-            ReceiveHeaders::Done(import_result) => {
-                outbound.extend(self.transition(State::Synced).into_iter().map(Output::from));
-                self.handle_import(import_result, &mut outbound);
-            }
-            ReceiveHeaders::Duplicate => {
-                debug!(
-                    "[{}] {}: Received header(s) already part of active chain",
-                    self.name, addr,
-                );
-            }
-            ReceiveHeaders::Failure(err) => {
-                // TODO: Bad blocks received!
-                // TODO: Disconnect peer.
-                error!("[{}] Error importing headers: {}", self.name, err);
-            }
-        };
+        let outs = self
+            .syncmgr
+            .step(syncmgr::Input::ReceivedHeaders(addr, headers), &self.clock);
 
+        self.syncmgr(outs)
+    }
+
+    fn syncmgr(&mut self, outs: Vec<syncmgr::Output>) -> Vec<Output<RawNetworkMessage>> {
+        let mut outbound = Vec::new();
+
+        for out in outs {
+            match out {
+                syncmgr::Output::GetHeaders(addr, locators) => {
+                    outbound.push(self.message(addr, self.get_headers(locators)));
+                }
+                syncmgr::Output::ReceivedInvalidHeaders(addr, error) => {
+                    // TODO: Bad blocks received!
+                    // TODO: Disconnect peer.
+                    debug!(
+                        "[{}] {}: Received invalid headers: {}",
+                        self.name, addr, error
+                    );
+                }
+                syncmgr::Output::HeadersImported(_addr, import_result) => {
+                    self.handle_import(import_result, &mut outbound);
+                }
+                syncmgr::Output::FinishedSyncing(_, _) => {
+                    outbound.extend(self.transition(State::Synced).into_iter().map(Output::from));
+                }
+                syncmgr::Output::Syncing(addr) => {
+                    outbound.extend(
+                        self.transition(State::Syncing(addr))
+                            .into_iter()
+                            .map(Output::from),
+                    );
+                }
+                syncmgr::Output::PeerTimeout(addr) => {
+                    outbound.push(Output::Disconnect(addr));
+                }
+                syncmgr::Output::WaitingForPeers => {
+                    todo!();
+                }
+            }
+        }
         outbound
     }
 
@@ -1379,10 +1406,10 @@ mod tests {
                 time,
             );
             out.iter()
-                .find(|o| matches!(o, Output::SetTimeout(addr, _) if addr == &remote))
+                .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if addr == &remote))
                 .expect("a timer should be returned");
 
-            let out = instance.step(Input::Timeout(remote), time);
+            let out = instance.step(Input::Timeout(remote, Component::HandshakeManager), time);
             assert!(out
                 .iter()
                 .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
@@ -1418,10 +1445,10 @@ mod tests {
                 time,
             );
             out.iter()
-                .find(|o| matches!(o, Output::SetTimeout(addr, _) if *addr == remote))
+                .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if *addr == remote))
                 .expect("a timer should be returned");
 
-            let out = instance.step(Input::Timeout(remote), time);
+            let out = instance.step(Input::Timeout(remote, Component::HandshakeManager), time);
             assert!(out
                 .iter()
                 .any(|o| matches!(o, Output::Disconnect(a) if *a == remote)));
