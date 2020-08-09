@@ -23,7 +23,6 @@ use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_network::VersionMessage;
-use bitcoin::util::hash::BitcoinHash;
 
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
@@ -80,6 +79,20 @@ impl Message for RawNetworkMessage {
     }
 }
 
+mod message {
+    use super::*;
+
+    pub fn get_headers((locator_hashes, stop_hash): Locators, version: u32) -> NetworkMessage {
+        NetworkMessage::GetHeaders(GetHeadersMessage {
+            version,
+            // Starting hashes, highest heights first.
+            locator_hashes,
+            // Using the zero hash means *fetch as many blocks as possible*.
+            stop_hash,
+        })
+    }
+}
+
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 /// An instantiation of `Protocol`, for the Bitcoin P2P network. Parametrized over the
@@ -88,8 +101,6 @@ impl Message for RawNetworkMessage {
 pub struct Bitcoin<T> {
     /// Peer states.
     pub peers: HashMap<PeerId, Peer>,
-    /// Protocol state.
-    pub state: State,
     /// Bitcoin network we're connecting to.
     pub network: network::Network,
     /// Services offered by us.
@@ -119,17 +130,6 @@ pub struct Bitcoin<T> {
     name: &'static str,
     /// Random number generator.
     rng: fastrand::Rng,
-}
-
-/// Protocol state.
-#[derive(Debug, PartialEq, Eq)]
-pub enum State {
-    /// Connecting to the network. Syncing hasn't started yet.
-    Connecting,
-    /// We're out of sync, and syncing with the designated peer.
-    Syncing(PeerId),
-    /// We're in sync.
-    Synced,
 }
 
 /// Peer config.
@@ -204,7 +204,6 @@ impl<T: BlockTree> Bitcoin<T> {
 
         Self {
             peers: HashMap::new(),
-            state: State::Connecting,
             network,
             services,
             protocol_version,
@@ -473,9 +472,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 self.ready.remove(&addr);
                 self.connected.remove(&addr);
                 self.disconnected.insert(addr);
-
-                let out = self.syncmgr.peer_disconnected(&addr);
-                outbound.extend(self.syncmgr(out));
+                self.syncmgr.peer_disconnected(&addr);
             }
             Input::Received(addr, msg) => {
                 for out in self.receive(addr, msg) {
@@ -483,62 +480,76 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
             Input::Sent(_addr, _msg) => {}
-            Input::Command(cmd) => match cmd {
-                Command::Connect(addr) => {
-                    debug!("[{}] Received command: Connect({})", self.name, addr);
+            Input::Command(cmd) => {
+                match cmd {
+                    Command::Connect(addr) => {
+                        debug!("[{}] Received command: Connect({})", self.name, addr);
 
-                    if !self.connected.contains(&addr) {
-                        outbound.push(Output::Connect(addr));
-                    }
-                }
-                Command::Receive(addr, msg) => {
-                    debug!(
-                        "[{}] Received command: Receive({}, {:?})",
-                        self.name, addr, msg
-                    );
-
-                    if self.connected.contains(&addr) {
-                        for out in self.receive(
-                            addr,
-                            RawNetworkMessage {
-                                magic: self.network.magic(),
-                                payload: msg,
-                            },
-                        ) {
-                            outbound.push(out);
+                        if !self.connected.contains(&addr) {
+                            outbound.push(Output::Connect(addr));
                         }
                     }
-                }
-                Command::ImportHeaders(headers, reply) => {
-                    debug!("[{}] Received command: ImportHeaders(..)", self.name);
+                    Command::Receive(addr, msg) => {
+                        debug!(
+                            "[{}] Received command: Receive({}, {:?})",
+                            self.name, addr, msg
+                        );
 
-                    let result = self.syncmgr.import_blocks(headers.into_iter(), &self.clock);
-
-                    match result {
-                        Ok((import_result, out)) => {
-                            reply.send(Ok(import_result)).ok();
-                            outbound.extend(self.syncmgr(out));
-                        }
-                        Err(err) => {
-                            reply.send(Err(err)).ok();
+                        if self.connected.contains(&addr) {
+                            for out in self.receive(
+                                addr,
+                                RawNetworkMessage {
+                                    magic: self.network.magic(),
+                                    payload: msg,
+                                },
+                            ) {
+                                outbound.push(out);
+                            }
                         }
                     }
-                }
-                Command::GetTip(_) => todo!(),
-                Command::GetBlock(_) => todo!(),
-                Command::SubmitTransaction(tx) => {
-                    debug!("[{}] Received command: SubmitTransaction(..)", self.name);
+                    Command::ImportHeaders(headers, reply) => {
+                        debug!("[{}] Received command: ImportHeaders(..)", self.name);
 
-                    // TODO: Factor this out when we have a `peermgr`.
-                    let ix = self.rng.usize(..self.ready.len());
-                    let peer = *self.ready.iter().nth(ix).unwrap();
+                        let result = self.syncmgr.import_blocks(headers.into_iter(), &self.clock);
 
-                    outbound.push(self.message(peer, NetworkMessage::Tx(tx)));
+                        match result {
+                            Ok((import_result, send)) => {
+                                reply.send(Ok(import_result.clone())).ok();
+
+                                if let ImportResult::TipChanged(_, height, _) = import_result {
+                                    self.height = height;
+                                }
+
+                                if let Some(syncmgr::SendHeaders { addrs, headers }) = send {
+                                    for addr in addrs {
+                                        outbound.push(self.message(
+                                            addr,
+                                            NetworkMessage::Headers(headers.clone()),
+                                        ));
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                reply.send(Err(err)).ok();
+                            }
+                        }
+                    }
+                    Command::GetTip(_) => todo!(),
+                    Command::GetBlock(_) => todo!(),
+                    Command::SubmitTransaction(tx) => {
+                        debug!("[{}] Received command: SubmitTransaction(..)", self.name);
+
+                        // TODO: Factor this out when we have a `peermgr`.
+                        let ix = self.rng.usize(..self.ready.len());
+                        let peer = *self.ready.iter().nth(ix).unwrap();
+
+                        outbound.push(self.message(peer, NetworkMessage::Tx(tx)));
+                    }
+                    Command::Shutdown => {
+                        outbound.push(Output::Shutdown);
+                    }
                 }
-                Command::Shutdown => {
-                    outbound.push(Output::Shutdown);
-                }
-            },
+            }
             Input::Timeout(addr, component) => {
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
@@ -552,8 +563,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             _ => {}
                         },
                         Component::SyncManager => {
-                            let out = self.syncmgr.handle_timeout(addr);
-                            outbound.extend(self.syncmgr(out));
+                            if let Some(syncmgr::PeerTimeout) = self.syncmgr.handle_timeout(addr) {
+                                outbound.push(Output::Disconnect(addr));
+                            }
                         }
                         _ => {
                             warn!("[{}] Unhandled timeout: {:?}", self.name, (addr, component));
@@ -595,6 +607,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
         };
+        self.drain_sync_events(&mut outbound);
 
         if log::max_level() >= log::Level::Debug {
             outbound.iter().for_each(|o| match o {
@@ -618,21 +631,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 payload,
             },
         )
-    }
-
-    pub fn transition(&mut self, state: State) -> Option<Event<NetworkMessage>> {
-        if state == self.state {
-            return None;
-        }
-        debug!("[{}] state: {:?} -> {:?}", self.name, self.state, state);
-
-        self.state = state;
-
-        match self.state {
-            State::Connecting => Some(Event::Connecting),
-            State::Syncing(_) => Some(Event::Syncing),
-            State::Synced => Some(Event::Synced),
-        }
     }
 
     pub fn receive(
@@ -807,15 +805,24 @@ impl<T: BlockTree> Bitcoin<T> {
                     let link = peer.link;
 
                     let mut out = Vec::new();
-                    let syncmgr_out = self.syncmgr.peer_connected(
-                        peer.address,
-                        peer.height,
-                        peer.tip,
-                        peer.services,
-                        peer.link,
-                    );
 
-                    out.extend(self.syncmgr(syncmgr_out));
+                    if let Some(syncmgr::GetHeaders { addr, locators }) =
+                        self.syncmgr.peer_connected(
+                            peer.address,
+                            peer.height,
+                            peer.tip,
+                            peer.services,
+                            peer.link,
+                        )
+                    {
+                        out.push(
+                            self.message(
+                                addr,
+                                message::get_headers(locators, self.protocol_version),
+                            ),
+                        );
+                    }
+
                     out.extend(match link {
                         Link::Outbound => vec![
                             self.message(addr, NetworkMessage::Verack),
@@ -831,31 +838,40 @@ impl<T: BlockTree> Bitcoin<T> {
                     return out;
                 }
             }
-            PeerState::Ready { .. } if self.state == State::Synced => {
+            PeerState::Ready { .. } => {
                 if let NetworkMessage::GetHeaders(GetHeadersMessage {
                     locator_hashes,
                     stop_hash,
                     ..
                 }) = msg.payload
                 {
-                    let out = self.syncmgr.receive_get_headers(
-                        &addr,
-                        (locator_hashes, stop_hash),
-                        MAX_MESSAGE_HEADERS,
-                    );
-                    return self.syncmgr(out);
+                    if let Some(syncmgr::SendHeaders { addrs, headers }) =
+                        self.syncmgr.receive_get_headers(
+                            &addr,
+                            (locator_hashes, stop_hash),
+                            MAX_MESSAGE_HEADERS,
+                        )
+                    {
+                        return addrs
+                            .into_iter()
+                            .map(|a| self.message(a, NetworkMessage::Headers(headers.clone())))
+                            .collect::<Vec<_>>();
+                    }
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
-                    return self.receive_inv(addr, inventory);
+                    if let Some(syncmgr::GetHeaders { addr, locators }) =
+                        self.syncmgr.receive_inv(addr, inventory)
+                    {
+                        return vec![self
+                            .message(addr, message::get_headers(locators, self.protocol_version))];
+                    }
+                } else {
+                    debug!(
+                        "[{}] Ignoring {} from peer {}",
+                        self.name,
+                        msg.cmd(),
+                        peer.address,
+                    );
                 }
-            }
-            PeerState::Ready { .. } => {
-                debug!(
-                    "[{}] Ignoring {} from peer {} (state = {:?})",
-                    self.name,
-                    msg.cmd(),
-                    peer.address,
-                    self.state,
-                );
             }
             PeerState::Disconnecting => {
                 debug!(
@@ -902,21 +918,14 @@ impl<T: BlockTree> Bitcoin<T> {
         })
     }
 
-    fn get_headers(&self, (locator_hashes, stop_hash): Locators) -> NetworkMessage {
-        NetworkMessage::GetHeaders(GetHeadersMessage {
-            version: self.protocol_version,
-            // Starting hashes, highest heights first.
-            locator_hashes,
-            // Using the zero hash means *fetch as many blocks as possible*.
-            stop_hash,
-        })
-    }
-
     /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Output<RawNetworkMessage>> {
-        let outs = self.syncmgr.receive_inv(addr, inv);
-        self.syncmgr(outs)
+        if let Some(syncmgr::GetHeaders { addr, locators }) = self.syncmgr.receive_inv(addr, inv) {
+            vec![self.message(addr, message::get_headers(locators, self.protocol_version))]
+        } else {
+            vec![]
+        }
     }
 
     fn receive_headers(
@@ -936,100 +945,66 @@ impl<T: BlockTree> Bitcoin<T> {
             addr,
             headers.len()
         );
-
-        let outs = self.syncmgr.receive_headers(&addr, headers, &self.clock);
-        self.syncmgr(outs)
-    }
-
-    fn syncmgr(&mut self, out: syncmgr::Output) -> Vec<Output<RawNetworkMessage>> {
         let mut outbound = Vec::new();
 
-        match out {
-            syncmgr::Output::Empty => {}
-            syncmgr::Output::Outputs(outs) => {
-                for out in outs {
-                    outbound.extend(self.syncmgr(out));
-                }
-            }
-            syncmgr::Output::GetHeaders(addr, locators) => {
-                outbound.push(self.message(addr, self.get_headers(locators)));
-            }
-            syncmgr::Output::ReceivedInvalidHeaders(addr, error) => {
-                // TODO: Bad blocks received!
-                // TODO: Disconnect peer.
-                debug!(
-                    "[{}] {}: Received invalid headers: {}",
-                    self.name, addr, error
+        match self.syncmgr.receive_headers(&addr, headers, &self.clock) {
+            syncmgr::SyncResult::GetHeaders(syncmgr::GetHeaders { addr, locators }) => {
+                outbound.push(
+                    self.message(addr, message::get_headers(locators, self.protocol_version)),
                 );
             }
-            syncmgr::Output::HeadersImported(import_result) => {
-                debug!("[{}] Import result: {:?}", self.name, &import_result);
-
-                if let ImportResult::TipChanged(tip, height, _) = import_result {
-                    self.height = height;
-
-                    info!(
-                        "[{}] Chain height = {}, tip = {}",
-                        self.name, self.height, tip
-                    );
-                }
-                outbound.push(Output::Event(Event::HeadersImported(import_result)));
-            }
-            syncmgr::Output::Synced(_, _) => {
-                outbound.extend(self.transition(State::Synced).into_iter().map(Output::from));
-            }
-            syncmgr::Output::Syncing(addr) => {
-                outbound.extend(
-                    self.transition(State::Syncing(addr))
-                        .into_iter()
-                        .map(Output::from),
-                );
-            }
-            syncmgr::Output::PeerTimeout(addr) => {
-                outbound.push(Output::Disconnect(addr));
-            }
-            syncmgr::Output::WaitingForPeers => {
-                // TODO: Connect to peers!
-                debug!("[{}] syncmgr: Waiting for peers..", self.name);
-
-                outbound.extend(
-                    self.transition(State::Connecting)
-                        .into_iter()
-                        .map(Output::from),
-                );
-            }
-            syncmgr::Output::BlockDiscovered(from, hash) => {
-                debug!("[{}] {}: Discovered new block: {}", self.name, from, &hash);
-            }
-            syncmgr::Output::SendHeaders(peers, headers) => {
-                if !peers.is_empty() {
+            syncmgr::SyncResult::SendHeaders(syncmgr::SendHeaders { addrs, headers }) => {
+                if !addrs.is_empty() {
                     debug!(
                         "[{}] Sending {} header(s) to {} peer(s)..",
                         self.name,
                         headers.len(),
-                        peers.len()
+                        addrs.len()
                     );
                 }
 
-                for peer in peers {
-                    outbound.push(self.message(peer, NetworkMessage::Headers(headers.clone())));
+                for addr in addrs {
+                    outbound.push(self.message(addr, NetworkMessage::Headers(headers.clone())));
                 }
             }
+            syncmgr::SyncResult::Okay => {}
         }
         outbound
     }
 
-    #[allow(dead_code)]
-    fn sample_headers(&self, outbound: &mut Vec<(PeerId, NetworkMessage)>) {
-        let height = self.syncmgr.tree.height();
-        let (tip, _) = self.syncmgr.tree.tip();
+    fn drain_sync_events(&mut self, outbound: &mut Vec<Output<RawNetworkMessage>>) {
+        for event in self.syncmgr.events() {
+            match event {
+                syncmgr::Event::ReceivedInvalidHeaders(addr, error) => {
+                    // TODO: Bad blocks received!
+                    // TODO: Disconnect peer.
+                    debug!(
+                        "[{}] {}: Received invalid headers: {}",
+                        self.name, addr, error
+                    );
+                }
+                syncmgr::Event::HeadersImported(import_result) => {
+                    debug!("[{}] Import result: {:?}", self.name, &import_result);
 
-        if let Some(parent) = self.syncmgr.tree.get_block_by_height(height - 1) {
-            let locators = (vec![parent.bitcoin_hash()], tip);
+                    if let ImportResult::TipChanged(tip, height, _) = import_result {
+                        info!("[{}] Chain height = {}, tip = {}", self.name, height, tip);
+                    }
+                    outbound.push(Output::Event(Event::HeadersImported(import_result)));
+                }
+                syncmgr::Event::Synced(_, _) => {
+                    outbound.push(Output::Event(Event::Synced));
+                }
+                syncmgr::Event::Syncing(_addr) => {
+                    outbound.push(Output::Event(Event::Syncing));
+                }
+                syncmgr::Event::WaitingForPeers => {
+                    // TODO: Connect to peers!
+                    debug!("[{}] syncmgr: Waiting for peers..", self.name);
 
-            for (addr, peer) in self.peers.iter() {
-                if peer.is_ready() && peer.link == Link::Outbound {
-                    outbound.push((*addr, self.get_headers(locators.clone())));
+                    outbound.push(Output::Event(Event::Connecting));
+                }
+                syncmgr::Event::BlockDiscovered(from, hash) => {
+                    debug!("[{}] {}: Discovered new block: {}", self.name, from, &hash);
                 }
             }
         }
