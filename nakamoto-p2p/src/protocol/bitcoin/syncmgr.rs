@@ -135,7 +135,23 @@ impl<T: BlockTree> SyncManager<T> {
         vec![]
     }
 
-    pub fn register(&mut self, id: PeerId, height: Height, tip: BlockHash, services: ServiceFlags) {
+    pub fn peer_connected(
+        &mut self,
+        id: PeerId,
+        height: Height,
+        tip: BlockHash,
+        services: ServiceFlags,
+    ) -> Vec<Output> {
+        self.register(id, height, tip, services);
+        self.sync()
+    }
+
+    pub fn peer_disconnected(&mut self, id: &PeerId) -> Vec<Output> {
+        self.unregister(id);
+        vec![]
+    }
+
+    fn register(&mut self, id: PeerId, height: Height, tip: BlockHash, services: ServiceFlags) {
         self.peers.insert(
             id,
             PeerState {
@@ -148,14 +164,14 @@ impl<T: BlockTree> SyncManager<T> {
         );
     }
 
-    pub fn unregister(&mut self, id: &PeerId) {
+    fn unregister(&mut self, id: &PeerId) {
         self.peers.remove(id);
     }
 
     /// Check whether or not we are in sync with the network.
     /// TODO: Should return the minimum peer height, so that we can
     /// keep track of it in our state, while syncing to it.
-    pub fn is_synced(&self) -> bool {
+    fn is_synced(&self) -> bool {
         let height = self.tree.height();
 
         // TODO: Check actual block hashes once we are caught up on height.
@@ -177,12 +193,19 @@ impl<T: BlockTree> SyncManager<T> {
         if self.peers.is_empty() {
             return vec![Output::WaitingForPeers];
         }
-
         let locators = (self.locator_hashes(), BlockHash::default());
         let mut out = Vec::new();
 
+        if self.is_synced() {
+            return vec![];
+        }
+
         // TODO: Pick a peer whose `height` is high enough.
         // TODO: Factor this out when we have a `peermgr`.
+        // TODO: Threshold should be a parameter.
+        // TODO: Peer should be picked amongst lowest latency ones.
+        // Wait for a certain connection threshold to make sure we choose the best
+        // peer to sync from. For now, we choose a random peer.
         let ix = self.rng.usize(..self.peers.len());
         let (addr, peer) = self.peers.iter_mut().nth(ix).unwrap();
         let addr = *addr;
@@ -210,35 +233,6 @@ impl<T: BlockTree> SyncManager<T> {
             return vec![];
         }
         return vec![Output::SendHeaders(*addr, headers)];
-    }
-
-    fn get_headers(
-        &self,
-        locator_hashes: Vec<BlockHash>,
-        // FIXME(syncmgr): Use this
-        _stop_hash: BlockHash,
-        max: usize,
-    ) -> Vec<BlockHeader> {
-        let tree = &self.tree;
-
-        // Start from the highest locator hash that is on our active chain.
-        // We don't respond with anything if none of the locators were found. Sorry!
-        if let Some(hash) = locator_hashes.iter().find(|h| tree.contains(h)) {
-            let (start_height, _) = self.tree.get_block(hash).unwrap();
-
-            // TODO: Set this to highest locator hash. We can assume that the peer
-            // is at this height if they know this hash.
-            // TODO: If the height is higher than the previous peer height, also
-            // set the peer tip.
-            // peer.height = start_height;
-
-            let start = start_height + 1;
-            let end = Height::min(start + max as Height, tree.height() + 1);
-
-            tree.range(start..end).collect()
-        } else {
-            vec![]
-        }
     }
 
     pub fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
@@ -375,6 +369,35 @@ impl<T: BlockTree> SyncManager<T> {
             State::WaitingForPeers => vec![Output::WaitingForPeers],
             State::Syncing(addr) => vec![Output::Syncing(*addr)],
             State::Synced(hash, height) => vec![Output::FinishedSyncing(*hash, *height)],
+        }
+    }
+
+    fn get_headers(
+        &self,
+        locator_hashes: Vec<BlockHash>,
+        // FIXME(syncmgr): Use this
+        _stop_hash: BlockHash,
+        max: usize,
+    ) -> Vec<BlockHeader> {
+        let tree = &self.tree;
+
+        // Start from the highest locator hash that is on our active chain.
+        // We don't respond with anything if none of the locators were found. Sorry!
+        if let Some(hash) = locator_hashes.iter().find(|h| tree.contains(h)) {
+            let (start_height, _) = self.tree.get_block(hash).unwrap();
+
+            // TODO: Set this to highest locator hash. We can assume that the peer
+            // is at this height if they know this hash.
+            // TODO: If the height is higher than the previous peer height, also
+            // set the peer tip.
+            // peer.height = start_height;
+
+            let start = start_height + 1;
+            let end = Height::min(start + max as Height, tree.height() + 1);
+
+            tree.range(start..end).collect()
+        } else {
+            vec![]
         }
     }
 
