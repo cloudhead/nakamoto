@@ -218,19 +218,13 @@ impl<T: BlockTree> Bitcoin<T> {
 
         let height = tree.height();
 
-        let addrmgr_rng = fastrand::Rng::new();
-        addrmgr_rng.seed(rng.u64(..));
-
-        let syncmgr_rng = fastrand::Rng::new();
-        syncmgr_rng.seed(rng.u64(..));
-
-        let addrmgr = AddressManager::from(address_book, addrmgr_rng);
+        let addrmgr = AddressManager::from(address_book, rng.clone());
         let syncmgr = SyncManager::new(
             tree,
             syncmgr::Config {
                 max_message_headers: MAX_MESSAGE_HEADERS,
             },
-            syncmgr_rng,
+            rng.clone(),
         );
 
         Self {
@@ -257,8 +251,7 @@ impl<T: BlockTree> Bitcoin<T> {
         self.disconnected.remove(&addr);
 
         let nonce = self.rng.u64(..);
-        let rng = fastrand::Rng::new();
-        rng.seed(self.rng.u64(..));
+        let rng = self.rng.clone();
 
         // TODO: Handle case where peer already exists.
         self.peers.insert(
