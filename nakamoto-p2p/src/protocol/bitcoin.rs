@@ -91,6 +91,37 @@ mod message {
             stop_hash,
         })
     }
+
+    pub struct Builder {
+        #[allow(dead_code)]
+        version: u32,
+        magic: u32,
+    }
+
+    impl Builder {
+        pub fn new(version: u32, magic: u32) -> Self {
+            Builder { version, magic }
+        }
+
+        pub fn build(
+            &self,
+            addr: net::SocketAddr,
+            payload: NetworkMessage,
+        ) -> Output<RawNetworkMessage> {
+            Output::Message(
+                addr,
+                RawNetworkMessage {
+                    magic: self.magic,
+                    payload,
+                },
+            )
+        }
+
+        #[allow(dead_code)]
+        pub fn get_headers(&self, locators: Locators) -> NetworkMessage {
+            message::get_headers(locators, self.version)
+        }
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
@@ -807,6 +838,20 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     let mut out = Vec::new();
 
+                    let msg = message::Builder::new(self.protocol_version, self.network.magic());
+
+                    out.extend(match link {
+                        Link::Outbound => vec![
+                            msg.build(addr, NetworkMessage::Verack),
+                            msg.build(addr, NetworkMessage::SendHeaders),
+                            msg.build(addr, ping),
+                        ],
+                        Link::Inbound => vec![
+                            msg.build(addr, NetworkMessage::SendHeaders),
+                            msg.build(addr, ping),
+                        ],
+                    });
+
                     if let Some(syncmgr::GetHeaders { addr, locators }) =
                         self.syncmgr.peer_connected(
                             peer.address,
@@ -823,18 +868,6 @@ impl<T: BlockTree> Bitcoin<T> {
                             ),
                         );
                     }
-
-                    out.extend(match link {
-                        Link::Outbound => vec![
-                            self.message(addr, NetworkMessage::Verack),
-                            self.message(addr, NetworkMessage::SendHeaders),
-                            self.message(addr, ping),
-                        ],
-                        Link::Inbound => vec![
-                            self.message(addr, NetworkMessage::SendHeaders),
-                            self.message(addr, ping),
-                        ],
-                    });
 
                     return out;
                 }
@@ -1234,7 +1267,9 @@ mod tests {
     }
 
     #[test]
-    fn test_initial_sync() {
+    fn test_initial_sync_outbound() {
+        use fastrand::Rng;
+
         let clock = AdjustedTime::default();
         let local_time = LocalTime::from(SystemTime::now());
 
@@ -1252,18 +1287,27 @@ mod tests {
         // Truncate chain to test height.
         alice_tree.rollback(height).unwrap();
 
-        let mut alice = Bitcoin::new(
-            alice_tree,
-            clock.clone(),
-            fastrand::Rng::new(),
-            setup::CONFIG,
-        );
-        let mut bob = Bitcoin::new(bob_tree, clock, fastrand::Rng::new(), setup::CONFIG);
+        let mut alice = Bitcoin::new(alice_tree, clock.clone(), Rng::new(), setup::CONFIG);
 
-        simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
+        {
+            let mut bob = Bitcoin::new(bob_tree.clone(), clock.clone(), Rng::new(), setup::CONFIG);
 
-        assert_eq!(alice.syncmgr.tree.height(), height);
-        assert_eq!(bob.syncmgr.tree.height(), height);
+            // Bob connects to Alice.
+            simulator::handshake(&mut bob, bob_addr, &mut alice, alice_addr, local_time);
+
+            assert_eq!(alice.syncmgr.tree.height(), height);
+            assert_eq!(bob.syncmgr.tree.height(), height);
+        }
+
+        {
+            let mut bob = Bitcoin::new(bob_tree, clock, Rng::new(), setup::CONFIG);
+
+            // Alice connects to Bob.
+            simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
+
+            assert_eq!(alice.syncmgr.tree.height(), height);
+            assert_eq!(bob.syncmgr.tree.height(), height);
+        }
     }
 
     /// Test what happens when a peer is idle for too long.
