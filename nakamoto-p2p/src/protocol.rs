@@ -132,8 +132,6 @@ impl<M: Message> Output<M> {
 pub trait Protocol<M: Message> {
     /// Duration of inactivity before timing out a peer.
     const IDLE_TIMEOUT: LocalDuration;
-    /// How long to wait between sending pings.
-    const PING_INTERVAL: LocalDuration;
 
     /// A command to query or control the protocol.
     type Command;

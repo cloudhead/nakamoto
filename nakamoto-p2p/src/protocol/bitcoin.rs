@@ -45,6 +45,8 @@ pub const MAX_RECORDED_LATENCIES: usize = 64;
 pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 /// Time to wait for response during peer handshake before disconnecting the peer.
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
+/// Time interval to wait between sent pings.
+pub const PING_INTERVAL: LocalDuration = LocalDuration::from_secs(60);
 
 /// A time offset, in seconds.
 pub type TimeOffset = i64;
@@ -430,7 +432,6 @@ impl Peer {
 
 impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(60 * 5);
-    const PING_INTERVAL: LocalDuration = LocalDuration::from_secs(60);
 
     type Command = self::Command;
 
@@ -612,7 +613,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             if now - last_ping >= Self::IDLE_TIMEOUT {
                                 disconnect.push(peer.address);
                             }
-                        } else if now - last_active >= Self::PING_INTERVAL {
+                        } else if now - last_active >= PING_INTERVAL {
                             let ping = peer.ping(now);
 
                             outbound.push(Output::Message(

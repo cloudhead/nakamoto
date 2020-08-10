@@ -241,7 +241,7 @@ where
         let mut timeouts = Vec::with_capacity(32);
 
         loop {
-            let timeout = self.timeouts.next().unwrap_or(P::PING_INTERVAL).into();
+            let timeout = self.timeouts.next().unwrap_or(P::IDLE_TIMEOUT).into();
 
             match self.sources.wait_timeout(&mut events, timeout) {
                 Ok(()) => {
