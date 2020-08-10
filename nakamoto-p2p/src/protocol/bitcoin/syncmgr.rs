@@ -6,11 +6,17 @@ use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_blockdata::Inventory;
 use bitcoin::util::hash::BitcoinHash;
 
-use nakamoto_common::block::time::Clock;
+use nakamoto_common::block::time::{Clock, LocalDuration};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
 use super::{Link, Locators, PeerId};
+
+/// How long to wait for a request, eg. `getheaders` to be fulfilled.
+pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(8);
+
+/// A timeout.
+type Timeout = LocalDuration;
 
 #[must_use]
 #[derive(Debug)]
@@ -70,6 +76,7 @@ impl PeerState {
 #[derive(Debug)]
 pub struct Config {
     pub max_message_headers: usize,
+    pub request_timeout: LocalDuration,
 }
 
 #[derive(Debug)]
@@ -104,6 +111,19 @@ pub enum Event {
 pub struct GetHeaders {
     pub addr: PeerId,
     pub locators: Locators,
+    pub timeout: LocalDuration,
+}
+
+impl GetHeaders {
+    fn new(peer: &mut PeerState, locators: Locators, timeout: Timeout) -> Self {
+        peer.transition(Syncing::AwaitingHeaders(locators.clone()));
+
+        GetHeaders {
+            addr: peer.id,
+            locators,
+            timeout,
+        }
+    }
 }
 
 #[must_use]
@@ -208,6 +228,7 @@ impl<T: BlockTree> SyncManager<T> {
             return SyncResult::Okay;
         }
 
+        let timeout = self.config.request_timeout;
         let peer = self.peers.get_mut(from).unwrap();
 
         // TODO: Before importing, we could check the headers against known checkpoints.
@@ -216,20 +237,15 @@ impl<T: BlockTree> SyncManager<T> {
 
         match result {
             Ok(import_result @ ImportResult::TipUnchanged) => {
+                self.events.push(Event::HeadersImported(import_result));
+
                 // Try to find a common ancestor.
                 let locators = (
                     self.tree.locators_hashes(self.tree.height()),
                     BlockHash::default(),
                 );
 
-                // TODO: What if we already knew these headers?
-                peer.transition(Syncing::AwaitingHeaders(locators.clone()));
-                self.emit(Event::HeadersImported(import_result));
-
-                return SyncResult::GetHeaders(GetHeaders {
-                    addr: *from,
-                    locators,
-                });
+                return SyncResult::GetHeaders(GetHeaders::new(peer, locators, timeout));
             }
             Ok(ImportResult::TipChanged(tip, height, reverted)) => {
                 peer.tip = tip;
@@ -253,17 +269,13 @@ impl<T: BlockTree> SyncManager<T> {
                             .map(|msg| SyncResult::SendHeaders(msg))
                             .unwrap_or(SyncResult::Okay);
                     } else {
+                        self.events.push(Event::HeadersImported(import_result));
+
                         // TODO: If we're already in the state of asking for this header, don't
                         // ask again.
                         let locators = (vec![tip], BlockHash::default());
 
-                        peer.transition(Syncing::AwaitingHeaders(locators.clone()));
-                        self.emit(Event::HeadersImported(import_result));
-
-                        return SyncResult::GetHeaders(GetHeaders {
-                            addr: *from,
-                            locators,
-                        });
+                        return SyncResult::GetHeaders(GetHeaders::new(peer, locators, timeout));
                     }
                 } else {
                     self.emit(Event::HeadersImported(import_result));
@@ -294,10 +306,11 @@ impl<T: BlockTree> SyncManager<T> {
         }
 
         if let Some(stop_hash) = best_block {
-            return Some(GetHeaders {
-                addr,
-                locators: (self.locator_hashes(), *stop_hash),
-            });
+            let locators = (self.locator_hashes(), *stop_hash);
+            let timeout = self.config.request_timeout;
+            let peer = self.peers.get_mut(&addr).unwrap();
+
+            return Some(GetHeaders::new(peer, locators, timeout));
         }
         None
     }
@@ -387,12 +400,13 @@ impl<T: BlockTree> SyncManager<T> {
         // peer to sync from. For now, we choose a random peer.
         let ix = self.rng.usize(..self.peers.len());
         let (addr, peer) = self.peers.iter_mut().nth(ix).unwrap();
+        let timeout = self.config.request_timeout;
         let addr = *addr;
+        let get_headers = GetHeaders::new(peer, locators, timeout);
 
-        peer.transition(Syncing::AwaitingHeaders(locators.clone()));
         self.transition(State::Syncing(addr));
 
-        Some(GetHeaders { addr, locators })
+        Some(get_headers)
     }
 
     /// Broadcast our best block header to connected peers who don't have it.
@@ -460,7 +474,7 @@ impl<T: BlockTree> SyncManager<T> {
     }
 
     #[allow(dead_code)]
-    fn sample_headers(&self) -> Vec<GetHeaders> {
+    fn sample_headers(&mut self) -> Vec<GetHeaders> {
         let height = self.tree.height();
         let (tip, _) = self.tree.tip();
 
@@ -469,12 +483,13 @@ impl<T: BlockTree> SyncManager<T> {
         if let Some(parent) = self.tree.get_block_by_height(height - 1) {
             let locators = (vec![parent.bitcoin_hash()], tip);
 
-            for (addr, peer) in self.peers.iter() {
+            for peer in self.peers.values_mut() {
                 if peer.link == Link::Outbound {
-                    messages.push(GetHeaders {
-                        addr: *addr,
-                        locators: locators.clone(),
-                    });
+                    messages.push(GetHeaders::new(
+                        peer,
+                        locators.clone(),
+                        self.config.request_timeout,
+                    ));
                 }
             }
         }

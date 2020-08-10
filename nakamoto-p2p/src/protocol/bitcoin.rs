@@ -94,6 +94,10 @@ mod message {
         })
     }
 
+    pub fn raw(payload: NetworkMessage, magic: u32) -> RawNetworkMessage {
+        RawNetworkMessage { magic, payload }
+    }
+
     pub struct Builder {
         #[allow(dead_code)]
         version: u32,
@@ -110,13 +114,7 @@ mod message {
             addr: net::SocketAddr,
             payload: NetworkMessage,
         ) -> Output<RawNetworkMessage> {
-            Output::Message(
-                addr,
-                RawNetworkMessage {
-                    magic: self.magic,
-                    payload,
-                },
-            )
+            Output::Message(addr, message::raw(payload, self.magic))
         }
 
         #[allow(dead_code)]
@@ -225,6 +223,7 @@ impl<T: BlockTree> Bitcoin<T> {
             tree,
             syncmgr::Config {
                 max_message_headers: MAX_MESSAGE_HEADERS,
+                request_timeout: syncmgr::REQUEST_TIMEOUT,
             },
             rng.clone(),
         );
@@ -576,6 +575,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
             Input::Timeout(addr, component) => {
+                debug!(
+                    "[{}] Received timeout for {} @ {:?}",
+                    self.name, addr, component
+                );
+
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
                 if let Some(peer) = self.peers.get(&addr) {
@@ -596,6 +600,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             warn!("[{}] Unhandled timeout: {:?}", self.name, (addr, component));
                         }
                     }
+                } else {
+                    debug!("[{}] Peer {} no longer exists (ignoring)", self.name, addr);
                 }
             }
             Input::Idle => {
@@ -639,7 +645,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 Output::Message(addr, msg) => {
                     debug!("[{}] {}: Sending {:?}", self.name, addr, msg.display());
                 }
-                _ => {}
+                _ => debug!("[{}] Output: {:?}", self.name, o),
             });
         }
 
@@ -846,21 +852,24 @@ impl<T: BlockTree> Bitcoin<T> {
                         ],
                     });
 
-                    if let Some(syncmgr::GetHeaders { addr, locators }) =
-                        self.syncmgr.peer_connected(
-                            peer.address,
-                            peer.height,
-                            peer.tip,
-                            peer.services,
-                            peer.link,
-                        )
-                    {
+                    if let Some(syncmgr::GetHeaders {
+                        addr,
+                        locators,
+                        timeout,
+                    }) = self.syncmgr.peer_connected(
+                        peer.address,
+                        peer.height,
+                        peer.tip,
+                        peer.services,
+                        peer.link,
+                    ) {
                         out.push(
                             self.message(
                                 addr,
                                 message::get_headers(locators, self.protocol_version),
                             ),
                         );
+                        out.push(Output::SetTimeout(addr, Component::SyncManager, timeout));
                     }
 
                     return out;
@@ -886,11 +895,19 @@ impl<T: BlockTree> Bitcoin<T> {
                             .collect::<Vec<_>>();
                     }
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
-                    if let Some(syncmgr::GetHeaders { addr, locators }) =
-                        self.syncmgr.receive_inv(addr, inventory)
+                    if let Some(syncmgr::GetHeaders {
+                        addr,
+                        locators,
+                        timeout,
+                    }) = self.syncmgr.receive_inv(addr, inventory)
                     {
-                        return vec![self
-                            .message(addr, message::get_headers(locators, self.protocol_version))];
+                        return vec![
+                            self.message(
+                                addr,
+                                message::get_headers(locators, self.protocol_version),
+                            ),
+                            Output::SetTimeout(addr, Component::SyncManager, timeout),
+                        ];
                     }
                 }
             }
@@ -945,8 +962,16 @@ impl<T: BlockTree> Bitcoin<T> {
     /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Output<RawNetworkMessage>> {
-        if let Some(syncmgr::GetHeaders { addr, locators }) = self.syncmgr.receive_inv(addr, inv) {
-            vec![self.message(addr, message::get_headers(locators, self.protocol_version))]
+        if let Some(syncmgr::GetHeaders {
+            addr,
+            locators,
+            timeout,
+        }) = self.syncmgr.receive_inv(addr, inv)
+        {
+            vec![
+                self.message(addr, message::get_headers(locators, self.protocol_version)),
+                Output::SetTimeout(addr, Component::SyncManager, timeout),
+            ]
         } else {
             vec![]
         }
@@ -972,10 +997,15 @@ impl<T: BlockTree> Bitcoin<T> {
         let mut outbound = Vec::new();
 
         match self.syncmgr.receive_headers(&addr, headers, &self.clock) {
-            syncmgr::SyncResult::GetHeaders(syncmgr::GetHeaders { addr, locators }) => {
+            syncmgr::SyncResult::GetHeaders(syncmgr::GetHeaders {
+                addr,
+                locators,
+                timeout,
+            }) => {
                 outbound.push(
                     self.message(addr, message::get_headers(locators, self.protocol_version)),
                 );
+                outbound.push(Output::SetTimeout(addr, Component::SyncManager, timeout));
             }
             syncmgr::SyncResult::SendHeaders(syncmgr::SendHeaders { addrs, headers }) => {
                 if !addrs.is_empty() {
@@ -1067,6 +1097,7 @@ impl<T: BlockTree> Bitcoin<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bitcoin_hashes::hex::FromHex;
     use std::collections::VecDeque;
     use std::time::SystemTime;
 
@@ -1076,7 +1107,6 @@ mod tests {
     use nakamoto_test::logger;
     use nakamoto_test::TREE;
 
-    #[allow(dead_code)]
     fn payload<M: Message>(o: &Output<M>) -> Option<&M::Payload> {
         match o {
             Output::Message(_, m) => Some(m.payload()),
@@ -1112,6 +1142,34 @@ mod tests {
                 Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG),
                 time,
             )
+        }
+
+        pub fn pair(
+            network: Network,
+        ) -> (
+            (Bitcoin<model::Cache>, PeerId),
+            (Bitcoin<model::Cache>, PeerId),
+            LocalTime,
+        ) {
+            use bitcoin::blockdata::constants;
+
+            let genesis = constants::genesis_block(network.into()).header;
+            let tree = model::Cache::new(genesis);
+            let time = LocalTime::from_secs(genesis.time as u64);
+            let clock = AdjustedTime::new(time);
+
+            let mut alice = Bitcoin::new(tree.clone(), clock.clone(), fastrand::Rng::new(), CONFIG);
+            let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG);
+
+            alice.initialize(time);
+            bob.initialize(time);
+
+            let alice_addr = ([152, 168, 3, 33], 3333).into();
+            let bob_addr = ([152, 168, 7, 77], 7777).into();
+
+            simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, time);
+
+            ((alice, alice_addr), (bob, bob_addr), time)
         }
     }
 
@@ -1160,8 +1218,6 @@ mod tests {
         ) {
             let mut sim: HashMap<PeerId, (&mut P, VecDeque<Input<M, C>>)> = HashMap::new();
             let mut events = Vec::new();
-
-            logger::init(log::Level::Debug);
 
             // Add peers to simulator.
             for (addr, proto, evs) in peers.into_iter() {
@@ -1261,7 +1317,7 @@ mod tests {
     }
 
     #[test]
-    fn test_initial_sync_outbound() {
+    fn test_initial_sync() {
         use fastrand::Rng;
 
         let clock = AdjustedTime::default();
@@ -1283,20 +1339,19 @@ mod tests {
 
         let mut alice = Bitcoin::new(alice_tree, clock.clone(), Rng::new(), setup::CONFIG);
 
+        // Bob connects to Alice.
         {
             let mut bob = Bitcoin::new(bob_tree.clone(), clock.clone(), Rng::new(), setup::CONFIG);
 
-            // Bob connects to Alice.
             simulator::handshake(&mut bob, bob_addr, &mut alice, alice_addr, local_time);
 
             assert_eq!(alice.syncmgr.tree.height(), height);
             assert_eq!(bob.syncmgr.tree.height(), height);
         }
-
+        // Alice connects to Bob.
         {
             let mut bob = Bitcoin::new(bob_tree, clock, Rng::new(), setup::CONFIG);
 
-            // Alice connects to Bob.
             simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 
             assert_eq!(alice.syncmgr.tree.height(), height);
@@ -1376,6 +1431,43 @@ mod tests {
     }
 
     #[test]
+    fn test_getheaders_timeout() {
+        logger::init(log::Level::Trace);
+
+        let network = Network::Mainnet;
+        // TODO: Protocol should try different peers if it can't get the headers from the first
+        // peer. It should keep trying until it succeeds.
+        let ((mut local, _), (_, remote_addr), time) = setup::pair(network);
+        // Some hash for a nonexistent block.
+        let hash =
+            BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+                .unwrap();
+
+        let out = local.step(
+            Input::Received(
+                remote_addr,
+                message::raw(
+                    NetworkMessage::Inv(vec![Inventory::Block(hash)]),
+                    network.magic(),
+                ),
+            ),
+            time,
+        );
+        out.iter()
+            .find(|o| matches!(payload(o), Some(NetworkMessage::GetHeaders(_))))
+            .expect("a `getheaders` message should be returned");
+        out.iter()
+            .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if addr == &remote_addr))
+            .expect("a timer should be returned");
+
+        local
+            .step(Input::Timeout(remote_addr, Component::SyncManager), time)
+            .iter()
+            .find(|o| matches!(o, Output::Disconnect(addr) if addr == &remote_addr))
+            .expect("the unresponsive peer should be disconnected");
+    }
+
+    #[test]
     fn test_handshake_version_timeout() {
         let network = Network::Mainnet;
         let (mut instance, time) = setup::singleton(network);
@@ -1440,11 +1532,5 @@ mod tests {
                 .iter()
                 .any(|o| matches!(o, Output::Disconnect(a) if *a == remote)));
         }
-    }
-
-    #[test]
-    fn test_get_headers_timeout() {
-        // TODO: Protocol should try different peers if it can't get the headers from the first
-        // peer. It should keep trying until it succeeds.
     }
 }
