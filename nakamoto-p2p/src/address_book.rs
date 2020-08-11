@@ -34,6 +34,10 @@ impl AddressBook {
         AddressBook::from(&seeds)
     }
 
+    pub fn push(&mut self, addr: net::SocketAddr) {
+        self.addrs.push(addr);
+    }
+
     pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> io::Result<()> {
         for seed in seeds.into_iter() {
             let addrs = seed.to_socket_addrs()?;

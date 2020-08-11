@@ -12,7 +12,7 @@ use syncmgr::SyncManager;
 
 use crate::address_book::AddressBook;
 use crate::event::Event;
-use crate::protocol::{Component, Input, Link, Message, Output, PeerId, Protocol};
+use crate::protocol::{self, Component, Link, Message, Output, PeerId, Protocol};
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
@@ -53,6 +53,9 @@ pub type TimeOffset = i64;
 
 /// Block locators. Consists of starting hashes and a stop hash.
 pub type Locators = (Vec<BlockHash>, BlockHash);
+
+/// Input into the state machine.
+pub type Input = protocol::Input<RawNetworkMessage, Command>;
 
 /// A command or request that can be sent to the protocol.
 #[derive(Debug, Clone)]
@@ -450,11 +453,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
     // FIXME: This function shouldn't take a time input: what if it gets a timeout
     // which doesn't match the input time?
-    fn step(
-        &mut self,
-        input: Input<RawNetworkMessage, Command>,
-        time: LocalTime,
-    ) -> Vec<Output<RawNetworkMessage>> {
+    fn step(&mut self, input: Input, time: LocalTime) -> Vec<Output<RawNetworkMessage>> {
         let mut outbound = Vec::new();
 
         // The local time is set from outside the protocol.
@@ -1068,11 +1067,7 @@ impl<T: BlockTree> Bitcoin<T> {
         outbound.push(Output::Disconnect(*addr));
     }
 
-    fn generate_events(
-        &self,
-        input: &Input<RawNetworkMessage, Command>,
-        outbound: &mut Vec<Output<RawNetworkMessage>>,
-    ) {
+    fn generate_events(&self, input: &Input, outbound: &mut Vec<Output<RawNetworkMessage>>) {
         match input {
             Input::Connected { addr, link, .. } => {
                 outbound.push(Output::Event(Event::Connected(*addr, *link)));
@@ -1155,15 +1150,83 @@ mod tests {
             let mut alice = Bitcoin::new(tree.clone(), clock.clone(), fastrand::Rng::new(), CONFIG);
             let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG);
 
-            alice.initialize(time);
-            bob.initialize(time);
-
             let alice_addr = ([152, 168, 3, 33], 3333).into();
             let bob_addr = ([152, 168, 7, 77], 7777).into();
 
             simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, time);
 
             ((alice, alice_addr), (bob, bob_addr), time)
+        }
+
+        pub fn network(
+            size: usize,
+            network: Network,
+            rng: fastrand::Rng,
+        ) -> (
+            Vec<(PeerId, Bitcoin<model::Cache>)>,
+            Vec<Vec<Input>>,
+            LocalTime,
+        ) {
+            use bitcoin::blockdata::constants;
+
+            let genesis = constants::genesis_block(network.into()).header;
+            let tree = model::Cache::new(genesis);
+            let time = LocalTime::from_secs(genesis.time as u64);
+            let clock = AdjustedTime::new(time);
+
+            let names = &mut [
+                "alice", "olive", "alfred", "anne", "brad", "david", "ernest", "jesus", "karl",
+                "ludwig", "martin", "neil", "paul", "floyd", "fred", "joan", "jerry", "jack",
+                "mary", "henrik", "rob", "freya", "lea", "alma", "oscar", "igor", "sirius",
+            ];
+            rng.shuffle(names);
+
+            assert!(size <= names.len());
+
+            let mut addrs = Vec::with_capacity(size);
+            while addrs.len() < size {
+                let addr: net::SocketAddr = (
+                    [rng.u8(..), rng.u8(..), rng.u8(..), rng.u8(..)],
+                    rng.u16(1024..),
+                )
+                    .into();
+
+                if !addrmgr::is_routable(&addr.ip()) {
+                    continue;
+                }
+                if addrs.iter().any(|a| addr == *a) {
+                    continue;
+                }
+                addrs.push(addr);
+            }
+
+            let mut peers = Vec::with_capacity(size);
+            let mut inputs = Vec::with_capacity(size);
+            for (i, addr) in addrs.iter().enumerate() {
+                let mut address_book = AddressBook::new();
+
+                for other in addrs.iter().skip(i + 1) {
+                    address_book.push(*other);
+                }
+
+                let peer = Bitcoin::new(
+                    tree.clone(),
+                    clock.clone(),
+                    rng.clone(),
+                    Config {
+                        network,
+                        address_book,
+                        // Pretend that we're a full-node, to fool connections
+                        // between instances of this protocol in tests.
+                        services: ServiceFlags::NETWORK,
+                        name: names[peers.len()],
+                        ..Config::default()
+                    },
+                );
+                peers.push((*addr, peer));
+                inputs.push(vec![]);
+            }
+            (peers, inputs, time)
         }
     }
 
@@ -1179,25 +1242,18 @@ mod tests {
             local_time: LocalTime,
         ) {
             self::run(
+                vec![(alice_addr, alice), (bob_addr, bob)],
                 vec![
-                    (
-                        alice_addr,
-                        alice,
-                        vec![Input::Connected {
-                            addr: bob_addr,
-                            local_addr: alice_addr,
-                            link: Link::Outbound,
-                        }],
-                    ),
-                    (
-                        bob_addr,
-                        bob,
-                        vec![Input::Connected {
-                            addr: alice_addr,
-                            local_addr: bob_addr,
-                            link: Link::Inbound,
-                        }],
-                    ),
+                    vec![Input::Connected {
+                        addr: bob_addr,
+                        local_addr: alice_addr,
+                        link: Link::Outbound,
+                    }],
+                    vec![Input::Connected {
+                        addr: alice_addr,
+                        local_addr: bob_addr,
+                        link: Link::Inbound,
+                    }],
                 ],
                 local_time,
             );
@@ -1207,19 +1263,52 @@ mod tests {
         }
 
         pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
-            peers: Vec<(PeerId, &mut P, Vec<Input<M, C>>)>,
+            peers: Vec<(PeerId, &mut P)>,
+            inputs: Vec<Vec<protocol::Input<M, C>>>,
             local_time: LocalTime,
         ) {
-            let mut sim: HashMap<PeerId, (&mut P, VecDeque<Input<M, C>>)> = HashMap::new();
+            let mut sim: HashMap<PeerId, (&mut P, VecDeque<protocol::Input<M, C>>)> =
+                HashMap::new();
             let mut events = Vec::new();
 
-            // Add peers to simulator.
-            for (addr, proto, evs) in peers.into_iter() {
-                sim.insert(addr, (proto, VecDeque::new()));
+            // Process a protocol output event.
+            let process =
+                |peer: PeerId, events: &mut Vec<(PeerId, protocol::Input<M, C>)>, out| match out {
+                    Output::Message(receiver, msg) => {
+                        debug!("(sim) {} -> {}: {:?}", peer, receiver, msg);
+                        events.push((receiver, protocol::Input::Received(peer, msg)))
+                    }
+                    Output::Connect(remote) => {
+                        debug!("(sim) {} => {}", peer, remote);
+                        events.push((
+                            remote,
+                            protocol::Input::Connected {
+                                addr: peer,
+                                local_addr: remote,
+                                link: Link::Inbound,
+                            },
+                        ));
+                        events.push((
+                            peer,
+                            protocol::Input::Connected {
+                                addr: remote,
+                                local_addr: peer,
+                                link: Link::Outbound,
+                            },
+                        ));
+                    }
+                    _ => {}
+                };
 
+            // Add peers to simulator.
+            for ((addr, proto), evs) in peers.into_iter().zip(inputs.into_iter()) {
+                for o in proto.initialize(local_time).into_iter() {
+                    process(addr, &mut events, o);
+                }
                 for e in evs.into_iter() {
                     events.push((addr, e));
                 }
+                sim.insert(addr, (proto, VecDeque::new()));
             }
 
             while !events.is_empty() || sim.values().any(|(_, q)| !q.is_empty()) {
@@ -1234,13 +1323,7 @@ mod tests {
                         let outs = proto.step(event, local_time);
 
                         for out in outs.into_iter() {
-                            match out {
-                                Output::Message(receiver, msg) => {
-                                    debug!("(sim) {} -> {}: {:?}", peer, receiver, msg);
-                                    events.push((receiver, Input::Received(*peer, msg)))
-                                }
-                                _ => {}
-                            }
+                            process(*peer, &mut events, out);
                         }
                     }
                 }
@@ -1274,25 +1357,18 @@ mod tests {
         let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), setup::CONFIG);
 
         simulator::run(
+            vec![(alice_addr, &mut alice), (bob_addr, &mut bob)],
             vec![
-                (
-                    alice_addr,
-                    &mut alice,
-                    vec![Input::Connected {
-                        addr: bob_addr,
-                        local_addr: alice_addr,
-                        link: Link::Outbound,
-                    }],
-                ),
-                (
-                    bob_addr,
-                    &mut bob,
-                    vec![Input::Connected {
-                        addr: alice_addr,
-                        local_addr: bob_addr,
-                        link: Link::Inbound,
-                    }],
-                ),
+                vec![Input::Connected {
+                    addr: bob_addr,
+                    local_addr: alice_addr,
+                    link: Link::Outbound,
+                }],
+                vec![Input::Connected {
+                    addr: alice_addr,
+                    local_addr: bob_addr,
+                    link: Link::Inbound,
+                }],
             ],
             local_time,
         );
@@ -1459,6 +1535,20 @@ mod tests {
             .iter()
             .find(|o| matches!(o, Output::Disconnect(addr) if addr == &remote_addr))
             .expect("the unresponsive peer should be disconnected");
+    }
+
+    #[test]
+    #[ignore]
+    fn test_getheaders_retry() {
+        logger::init(log::Level::Debug);
+
+        let (mut peers, inputs, time) = setup::network(5, Network::Mainnet, fastrand::Rng::new());
+
+        simulator::run(
+            peers.iter_mut().map(|(a, p)| (*a, p)).collect(),
+            inputs,
+            time,
+        );
     }
 
     #[test]

@@ -269,7 +269,7 @@ impl AddressManager {
 }
 
 /// Check whether an IP address is globally routable.
-fn is_routable(addr: &net::IpAddr) -> bool {
+pub fn is_routable(addr: &net::IpAddr) -> bool {
     match addr {
         net::IpAddr::V4(addr) => ipv4_is_routable(addr),
         net::IpAddr::V6(addr) => ipv6_is_routable(addr),
@@ -277,7 +277,7 @@ fn is_routable(addr: &net::IpAddr) -> bool {
 }
 
 /// Check whether an IP address is locally routable.
-fn is_local(addr: &net::IpAddr) -> bool {
+pub fn is_local(addr: &net::IpAddr) -> bool {
     match addr {
         net::IpAddr::V4(addr) => {
             addr.is_private() || addr.is_loopback() || addr.is_link_local() || addr.is_unspecified()

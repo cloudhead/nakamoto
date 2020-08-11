@@ -46,11 +46,9 @@ fn network(
         handles.push((handle, addr, t));
     }
 
-    for (i, (handle, addr, _)) in handles.iter().enumerate() {
-        for (_, peer, _) in handles.iter().skip(i) {
-            if peer != addr {
-                handle.connect(*peer).unwrap();
-            }
+    for (i, (handle, _, _)) in handles.iter().enumerate() {
+        for (_, peer, _) in handles.iter().skip(i + 1) {
+            handle.connect(*peer).unwrap();
         }
     }
 
