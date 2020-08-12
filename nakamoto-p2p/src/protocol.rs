@@ -23,7 +23,7 @@ pub enum Link {
 /// A message that can be sent to a peer.
 pub trait Message: Send + Sync + 'static {
     /// The message payload.
-    type Payload: Clone;
+    type Payload: Clone + Debug;
 
     /// Retrieve the message payload.
     fn payload(&self) -> &Self::Payload;

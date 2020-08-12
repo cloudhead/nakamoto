@@ -266,6 +266,11 @@ impl AddressManager {
 
         self.addresses.get(&ip).map(|ka| &ka.addr)
     }
+
+    /// Iterate over all addresses.
+    pub fn iter(&self) -> impl Iterator<Item = &Address> {
+        self.addresses.iter().map(|(_, ka)| &ka.addr)
+    }
 }
 
 /// Check whether an IP address is globally routable.

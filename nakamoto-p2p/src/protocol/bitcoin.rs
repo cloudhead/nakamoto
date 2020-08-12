@@ -442,8 +442,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         let mut outbound = Vec::new();
 
-        // FIXME: We should fetch multiple addresses.
-        if let Some(addr) = self.addrmgr.sample() {
+        // TODO: How many addresses to initially connect to?
+        for addr in self.addrmgr.iter() {
             if let Ok(addr) = addr.socket_addr() {
                 outbound.push(Output::Connect(addr));
             }
@@ -701,8 +701,6 @@ impl<T: BlockTree> Bitcoin<T> {
         let now = self.clock.local_time();
         let cmd = msg.cmd();
 
-        debug!("[{}] {}: Received {:?}", self.name, addr, cmd);
-
         if msg.magic != self.network.magic() {
             // TODO: Needs test.
             debug!(
@@ -712,11 +710,18 @@ impl<T: BlockTree> Bitcoin<T> {
             return vec![Output::Disconnect(addr)];
         }
 
-        let mut peer = self
-            .peers
-            .get_mut(&addr)
-            .unwrap_or_else(|| panic!("peer {} is not known", addr));
+        let mut peer = if let Some(peer) = self.peers.get_mut(&addr) {
+            peer
+        } else {
+            debug!("[{}] Peer {} is not known", self.name, addr);
+            return vec![];
+        };
         let local_addr = peer.local_address;
+
+        debug!(
+            "[{}] {}: Received {:?} ({:?})",
+            self.name, addr, cmd, peer.state
+        );
 
         if let PeerState::Ready {
             ref mut last_active,
@@ -726,27 +731,26 @@ impl<T: BlockTree> Bitcoin<T> {
             *last_active = now;
         }
 
-        if let NetworkMessage::Ping(nonce) = msg.payload {
-            if peer.is_ready() {
+        if peer.is_ready() {
+            if let NetworkMessage::Ping(nonce) = msg.payload {
                 return vec![self.message(addr, NetworkMessage::Pong(nonce))];
-            }
-        } else if let NetworkMessage::Pong(nonce) = msg.payload {
-            match peer.last_ping {
-                Some((last_nonce, last_time)) if nonce == last_nonce => {
-                    peer.record_latency(now - last_time);
-                    peer.last_ping = None;
+            } else if let NetworkMessage::Pong(nonce) = msg.payload {
+                match peer.last_ping {
+                    Some((last_nonce, last_time)) if nonce == last_nonce => {
+                        peer.record_latency(now - last_time);
+                        peer.last_ping = None;
+                    }
+                    // Unsolicited or redundant `pong`. Ignore.
+                    _ => {}
                 }
-                // Unsolicited or redundant `pong`. Ignore.
-                _ => return vec![],
+                return vec![];
+            } else if let NetworkMessage::Addr(addrs) = msg.payload {
+                self.addrmgr
+                    .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
+                return vec![];
+            } else if let NetworkMessage::Headers(headers) = msg.payload {
+                return self.receive_headers(addr, headers);
             }
-        } else if let NetworkMessage::Addr(addrs) = msg.payload {
-            self.addrmgr
-                .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
-            return vec![];
-        } else if let NetworkMessage::Headers(headers) = msg.payload {
-            return self.receive_headers(addr, headers);
-        } else if let NetworkMessage::Inv(inventory) = msg.payload {
-            return self.receive_inv(addr, inventory);
         }
 
         // TODO: Make sure we handle all messages at all times in some way.
@@ -853,6 +857,10 @@ impl<T: BlockTree> Bitcoin<T> {
                             ];
                         }
                     }
+                } else {
+                    // TODO: Include disconnect reason.
+                    debug!("[{}] {}: Peer misbehaving", self.name, addr);
+                    return vec![Output::Disconnect(addr)];
                 }
             }
             PeerState::Handshake(Handshake::AwaitingVerack) => {
@@ -893,6 +901,10 @@ impl<T: BlockTree> Bitcoin<T> {
                     );
 
                     return out;
+                } else {
+                    // TODO: Include disconnect reason.
+                    debug!("[{}] {}: Peer misbehaving", self.name, addr);
+                    return vec![Output::Disconnect(addr)];
                 }
             }
             PeerState::Ready { .. } => {
@@ -915,10 +927,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             .collect::<Vec<_>>();
                     }
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
-                    return self
-                        .syncmgr
-                        .receive_inv(addr, inventory)
-                        .map_or(vec![], |req| self.get_headers(req));
+                    return self.receive_inv(addr, inventory);
                 }
             }
             PeerState::Disconnecting => {
@@ -929,10 +938,7 @@ impl<T: BlockTree> Bitcoin<T> {
             }
         }
 
-        debug!(
-            "[{}] {}: Ignoring {:?} (state = {:?})",
-            self.name, peer.address, cmd, peer.state,
-        );
+        debug!("[{}] {}: Ignoring {:?}", self.name, peer.address, cmd,);
 
         vec![]
     }
@@ -1181,6 +1187,7 @@ mod tests {
             ];
             rng.shuffle(names);
 
+            assert!(size > 1);
             assert!(size <= names.len());
 
             let mut addrs = Vec::with_capacity(size);
@@ -1219,10 +1226,12 @@ mod tests {
                         // Pretend that we're a full-node, to fool connections
                         // between instances of this protocol in tests.
                         services: ServiceFlags::NETWORK,
-                        name: names[peers.len()],
+                        name: names[i],
                         ..Config::default()
                     },
                 );
+                info!("(sim) {} = {}", names[i], addr);
+
                 peers.push((*addr, peer));
                 inputs.push(vec![]);
             }
@@ -1275,11 +1284,11 @@ mod tests {
             let process =
                 |peer: PeerId, events: &mut Vec<(PeerId, protocol::Input<M, C>)>, out| match out {
                     Output::Message(receiver, msg) => {
-                        debug!("(sim) {} -> {}: {:?}", peer, receiver, msg);
+                        info!("(sim) {} -> {}: {:#?}", peer, receiver, msg);
                         events.push((receiver, protocol::Input::Received(peer, msg)))
                     }
                     Output::Connect(remote) => {
-                        debug!("(sim) {} => {}", peer, remote);
+                        info!("(sim) {} => {}", peer, remote);
                         events.push((
                             remote,
                             protocol::Input::Connected {
@@ -1542,13 +1551,33 @@ mod tests {
     fn test_getheaders_retry() {
         logger::init(log::Level::Debug);
 
-        let (mut peers, inputs, time) = setup::network(5, Network::Mainnet, fastrand::Rng::new());
+        let network = Network::Mainnet;
+        // Some hash for a nonexistent block.
+        let hash =
+            BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+                .unwrap();
+        let (mut peers, inputs, time) = setup::network(3, network, fastrand::Rng::new());
 
         simulator::run(
             peers.iter_mut().map(|(a, p)| (*a, p)).collect(),
             inputs,
             time,
         );
+
+        let sender_addr = peers.last().map(|(addr, _)| *addr).unwrap();
+        let (_, ref mut receiver) = peers.first_mut().unwrap();
+
+        let result = receiver.step(
+            Input::Received(
+                sender_addr,
+                message::raw(
+                    NetworkMessage::Inv(vec![Inventory::Block(hash)]),
+                    network.magic(),
+                ),
+            ),
+            time,
+        );
+        assert_eq!(result, vec![]);
     }
 
     #[test]
