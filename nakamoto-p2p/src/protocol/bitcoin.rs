@@ -591,8 +591,13 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             _ => {}
                         },
                         Component::SyncManager => {
-                            if let Some(syncmgr::PeerTimeout) = self.syncmgr.handle_timeout(addr) {
+                            let (timeout, get_headers) = self.syncmgr.receive_timeout(addr);
+
+                            if let Some(syncmgr::PeerTimeout) = timeout {
                                 outbound.push(Output::Disconnect(addr));
+                            }
+                            if let Some(req) = get_headers {
+                                outbound.extend(self.get_headers(req));
                             }
                         }
                         _ => {
@@ -1102,9 +1107,9 @@ mod tests {
     use nakamoto_test::logger;
     use nakamoto_test::TREE;
 
-    fn payload<M: Message>(o: &Output<M>) -> Option<&M::Payload> {
+    fn payload<M: Message>(o: &Output<M>) -> Option<(net::SocketAddr, &M::Payload)> {
         match o {
-            Output::Message(_, m) => Some(m.payload()),
+            Output::Message(a, m) => Some((*a, m.payload())),
             _ => None,
         }
     }
@@ -1511,8 +1516,6 @@ mod tests {
 
     #[test]
     fn test_getheaders_timeout() {
-        logger::init(log::Level::Debug);
-
         let network = Network::Mainnet;
         // TODO: Protocol should try different peers if it can't get the headers from the first
         // peer. It should keep trying until it succeeds.
@@ -1533,7 +1536,7 @@ mod tests {
             time,
         );
         out.iter()
-            .find(|o| matches!(payload(o), Some(NetworkMessage::GetHeaders(_))))
+            .find(|o| matches!(payload(o), Some((_, NetworkMessage::GetHeaders(_)))))
             .expect("a `getheaders` message should be returned");
         out.iter()
             .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if addr == &remote_addr))
@@ -1547,7 +1550,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
     fn test_getheaders_retry() {
         logger::init(log::Level::Debug);
 
@@ -1556,7 +1558,7 @@ mod tests {
         let hash =
             BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
                 .unwrap();
-        let (mut peers, inputs, time) = setup::network(3, network, fastrand::Rng::new());
+        let (mut peers, inputs, time) = setup::network(5, network, fastrand::Rng::new());
 
         simulator::run(
             peers.iter_mut().map(|(a, p)| (*a, p)).collect(),
@@ -1564,10 +1566,15 @@ mod tests {
             time,
         );
 
-        let sender_addr = peers.last().map(|(addr, _)| *addr).unwrap();
-        let (_, ref mut receiver) = peers.first_mut().unwrap();
+        let ask = peers.len() - 1;
+        let (sender_addr, _) = peers.pop().unwrap();
+        let (_, ref mut alice) = peers.pop().unwrap();
 
-        let result = receiver.step(
+        // Peers that have been asked.
+        let mut asked = HashSet::new();
+
+        // Trigger a `getheaders` by sending an inventory message to Alice.
+        let result = alice.step(
             Input::Received(
                 sender_addr,
                 message::raw(
@@ -1577,7 +1584,38 @@ mod tests {
             ),
             time,
         );
-        assert_eq!(result, vec![]);
+
+        let (addr, _) = result
+            .iter()
+            .filter_map(payload)
+            .find(|m| matches!(m, (_, NetworkMessage::GetHeaders(_))))
+            .expect("a `getheaders` message should be returned");
+        asked.insert(addr);
+
+        // The first time we ask for headers, we ask the peer who sent us the `inv` message.
+        assert_eq!(addr, sender_addr);
+
+        // Keep track of who we asked last.
+        let mut last_asked = addr;
+
+        // While there's still peers to ask...
+        while asked.len() < ask {
+            let result = alice.step(Input::Timeout(last_asked, Component::SyncManager), time);
+
+            let (addr, _) = result
+                .iter()
+                .filter_map(payload)
+                .find(|m| matches!(m, (_, NetworkMessage::GetHeaders(_))))
+                .expect("a `getheaders` message should be returned");
+            last_asked = addr;
+
+            assert!(
+                !asked.contains(&addr),
+                "Alice shouldn't ask the same peer twice"
+            );
+
+            asked.insert(addr);
+        }
     }
 
     #[test]

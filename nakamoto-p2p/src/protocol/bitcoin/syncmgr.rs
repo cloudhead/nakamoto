@@ -41,6 +41,8 @@ pub enum Syncing {
     Idle,
     /// Syncing. A `getheaders` message was sent and we are expecting a response.
     AwaitingHeaders(Locators),
+    /// The peer is not responding.
+    NotResponding,
 }
 
 impl Default for Syncing {
@@ -315,14 +317,31 @@ impl<T: BlockTree> SyncManager<T> {
         None
     }
 
-    pub fn handle_timeout(&mut self, id: PeerId) -> Option<PeerTimeout> {
-        if let Some(peer) = self.peers.get(&id) {
-            match peer.state {
-                Syncing::AwaitingHeaders(_) => return Some(PeerTimeout),
-                _ => {}
+    pub fn receive_timeout(&mut self, id: PeerId) -> (Option<PeerTimeout>, Option<GetHeaders>) {
+        let peer = if let Some(peer) = self.peers.get_mut(&id) {
+            peer
+        } else {
+            return (None, None);
+        };
+
+        match &peer.state {
+            Syncing::AwaitingHeaders(locators) => {
+                let locators = locators.clone();
+
+                peer.transition(Syncing::NotResponding);
+
+                if let Some(peer) = self.peers.values_mut().find(|p| p.state == Syncing::Idle) {
+                    let timeout = self.config.request_timeout;
+
+                    return (
+                        Some(PeerTimeout),
+                        Some(GetHeaders::new(peer, locators, timeout)),
+                    );
+                }
+                (Some(PeerTimeout), None)
             }
+            _ => (None, None),
         }
-        None
     }
 
     ///////////////////////////////////////////////////////////////////////////
