@@ -1170,27 +1170,20 @@ mod tests {
         }
 
         pub fn network(
-            size: usize,
             network: Network,
             rng: fastrand::Rng,
-        ) -> (
-            Vec<(PeerId, Bitcoin<model::Cache>)>,
-            Vec<Vec<Input>>,
-            LocalTime,
-        ) {
+            peers: &[&'static str],
+        ) -> (Vec<(PeerId, Bitcoin<model::Cache>)>, LocalTime) {
             use bitcoin::blockdata::constants;
 
             let genesis = constants::genesis_block(network.into()).header;
             let tree = model::Cache::new(genesis);
             let time = LocalTime::from_secs(genesis.time as u64);
             let clock = AdjustedTime::new(time);
+            let size = peers.len();
 
-            let names = &mut [
-                "alice", "olive", "alfred", "anne", "brad", "david", "ernest", "jesus", "karl",
-                "ludwig", "martin", "neil", "paul", "floyd", "fred", "joan", "jerry", "jack",
-                "mary", "henrik", "rob", "freya", "lea", "alma", "oscar", "igor", "sirius",
-            ];
-            rng.shuffle(names);
+            let mut names = peers.to_vec();
+            rng.shuffle(&mut names);
 
             assert!(size > 1);
             assert!(size <= names.len());
@@ -1213,7 +1206,6 @@ mod tests {
             }
 
             let mut peers = Vec::with_capacity(size);
-            let mut inputs = Vec::with_capacity(size);
             for (i, addr) in addrs.iter().enumerate() {
                 let mut address_book = AddressBook::new();
 
@@ -1238,15 +1230,196 @@ mod tests {
                 info!("(sim) {} = {}", names[i], addr);
 
                 peers.push((*addr, peer));
-                inputs.push(vec![]);
             }
-            (peers, inputs, time)
+            (peers, time)
         }
     }
 
     /// A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
     mod simulator {
         use super::*;
+
+        pub struct Net<'a> {
+            pub network: Network,
+            pub rng: fastrand::Rng,
+            pub peers: &'a [&'static str],
+        }
+
+        impl<'a> Net<'a> {
+            pub fn into(self) -> Sim {
+                let (peers, time) = setup::network(self.network, self.rng, self.peers);
+                let sim = Sim::new(peers, vec![], time);
+
+                sim
+            }
+        }
+
+        pub struct InputResult {
+            peer: PeerId,
+            outputs: Vec<Output<RawNetworkMessage>>,
+        }
+
+        impl From<InputResult> for Vec<Output<RawNetworkMessage>> {
+            fn from(input: InputResult) -> Self {
+                input.outputs
+            }
+        }
+
+        impl IntoIterator for InputResult {
+            type Item = Output<RawNetworkMessage>;
+            type IntoIter = std::vec::IntoIter<Self::Item>;
+
+            fn into_iter(self) -> Self::IntoIter {
+                self.outputs.into_iter()
+            }
+        }
+
+        impl InputResult {
+            #[allow(dead_code)]
+            pub fn expect<F>(&self, f: F, msg: &str) -> &Output<RawNetworkMessage>
+            where
+                F: Fn(&Output<RawNetworkMessage>) -> bool,
+            {
+                self.outputs.iter().find(|m| f(m)).expect(msg)
+            }
+
+            pub fn message<F>(&self, f: F) -> (PeerId, &NetworkMessage)
+            where
+                F: Fn(&PeerId, &NetworkMessage) -> bool,
+            {
+                self.outputs
+                    .iter()
+                    .filter_map(payload)
+                    .find(|(addr, msg)| f(addr, msg))
+                    .expect("expected message in output was not found")
+            }
+
+            pub fn process(self, sim: &mut Sim) {
+                for o in self.outputs.into_iter() {
+                    Sim::process(&mut sim.events, &self.peer, o);
+                }
+            }
+        }
+
+        pub struct Sim {
+            pub peers: HashMap<PeerId, Bitcoin<model::Cache>>,
+            pub time: LocalTime,
+
+            index: HashMap<&'static str, PeerId>,
+            events: Vec<(PeerId, Input)>,
+        }
+
+        impl Sim {
+            fn new(
+                peers: Vec<(PeerId, Bitcoin<model::Cache>)>,
+                events: Vec<(PeerId, Input)>,
+                time: LocalTime,
+            ) -> Self {
+                let peers = peers.into_iter().collect::<HashMap<_, _>>();
+                let index = peers
+                    .iter()
+                    .map(|(addr, peer)| (peer.name, *addr))
+                    .collect();
+
+                Self {
+                    peers,
+                    index,
+                    events,
+                    time,
+                }
+            }
+
+            pub fn get(&mut self, name: &str) -> PeerId {
+                *self
+                    .index
+                    .get(name)
+                    .unwrap_or_else(|| panic!("Sim::get: peer {:?} doesn't exist", name))
+            }
+
+            pub fn input(&mut self, addr: &PeerId, input: Input) -> InputResult {
+                let peer = self.peers.get_mut(&addr).unwrap();
+
+                InputResult {
+                    peer: *addr,
+                    outputs: peer.step(input, self.time),
+                }
+            }
+
+            pub fn elapse(&mut self, duration: LocalDuration) {
+                self.time = self.time + duration;
+            }
+
+            /// Process a protocol output event.
+            pub fn process<M, C>(
+                events: &mut Vec<(PeerId, protocol::Input<M, C>)>,
+                peer: &PeerId,
+                out: Output<M>,
+            ) where
+                M: Message + Debug,
+                C: Debug,
+            {
+                let peer = *peer;
+
+                match out {
+                    Output::Message(receiver, msg) => {
+                        info!("(sim) {} -> {}: {:#?}", peer, receiver, msg);
+                        events.push((receiver, protocol::Input::Received(peer, msg)))
+                    }
+                    Output::Connect(remote) => {
+                        info!("(sim) {} => {}", peer, remote);
+                        events.push((
+                            remote,
+                            protocol::Input::Connected {
+                                addr: peer,
+                                local_addr: remote,
+                                link: Link::Inbound,
+                            },
+                        ));
+                        events.push((
+                            peer,
+                            protocol::Input::Connected {
+                                addr: remote,
+                                local_addr: peer,
+                                link: Link::Outbound,
+                            },
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+
+            pub fn run(&mut self) {
+                let mut sim = HashMap::new();
+
+                // Add peers to simulator.
+                for (addr, proto) in self.peers.iter_mut() {
+                    let addr = *addr;
+
+                    for o in proto.initialize(self.time).into_iter() {
+                        Sim::process(&mut self.events, &addr, o);
+                    }
+                    sim.insert(addr, (proto, VecDeque::new()));
+                }
+
+                while !self.events.is_empty() || sim.values().any(|(_, q)| !q.is_empty()) {
+                    // Prepare event queues.
+                    for (receiver, event) in self.events.drain(..) {
+                        let (_, q) = sim.get_mut(&receiver).unwrap();
+                        q.push_back(event);
+                    }
+
+                    for (peer, (proto, queue)) in sim.iter_mut() {
+                        if let Some(event) = queue.pop_front() {
+                            let outs = proto.step(event, self.time);
+
+                            for o in outs.into_iter() {
+                                Sim::process(&mut self.events, peer, o);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         pub fn handshake<T: BlockTree>(
             alice: &mut Bitcoin<T>,
@@ -1285,39 +1458,10 @@ mod tests {
                 HashMap::new();
             let mut events = Vec::new();
 
-            // Process a protocol output event.
-            let process =
-                |peer: PeerId, events: &mut Vec<(PeerId, protocol::Input<M, C>)>, out| match out {
-                    Output::Message(receiver, msg) => {
-                        info!("(sim) {} -> {}: {:#?}", peer, receiver, msg);
-                        events.push((receiver, protocol::Input::Received(peer, msg)))
-                    }
-                    Output::Connect(remote) => {
-                        info!("(sim) {} => {}", peer, remote);
-                        events.push((
-                            remote,
-                            protocol::Input::Connected {
-                                addr: peer,
-                                local_addr: remote,
-                                link: Link::Inbound,
-                            },
-                        ));
-                        events.push((
-                            peer,
-                            protocol::Input::Connected {
-                                addr: remote,
-                                local_addr: peer,
-                                link: Link::Outbound,
-                            },
-                        ));
-                    }
-                    _ => {}
-                };
-
             // Add peers to simulator.
             for ((addr, proto), evs) in peers.into_iter().zip(inputs.into_iter()) {
                 for o in proto.initialize(local_time).into_iter() {
-                    process(addr, &mut events, o);
+                    Sim::process(&mut events, &addr, o);
                 }
                 for e in evs.into_iter() {
                     events.push((addr, e));
@@ -1337,7 +1481,7 @@ mod tests {
                         let outs = proto.step(event, local_time);
 
                         for out in outs.into_iter() {
-                            process(*peer, &mut events, out);
+                            Sim::process(&mut events, peer, out);
                         }
                     }
                 }
@@ -1446,47 +1590,24 @@ mod tests {
     /// Test what happens when a peer is idle for too long.
     #[test]
     fn test_idle() {
-        let genesis = BlockHeader {
-            version: 1,
-            prev_blockhash: Default::default(),
-            merkle_root: Default::default(),
-            nonce: 0,
-            time: 0,
-            bits: 0,
-        };
-        let tree = model::Cache::new(genesis);
-        let clock = AdjustedTime::default();
-        let local_time = LocalTime::from(SystemTime::now());
         let idle_timeout = Bitcoin::<model::Cache>::IDLE_TIMEOUT;
 
-        let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
-        let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
+        let mut sim = simulator::Net {
+            network: Network::Mainnet,
+            rng: fastrand::Rng::new(),
+            peers: &["alice", "bob"],
+        }
+        .into();
 
-        let mut alice = Bitcoin::new(
-            tree.clone(),
-            clock.clone(),
-            fastrand::Rng::new(),
-            Config {
-                name: "alice",
-                ..setup::CONFIG
-            },
-        );
-        let mut bob = Bitcoin::new(
-            tree,
-            clock,
-            fastrand::Rng::new(),
-            Config {
-                name: "bob",
-                ..setup::CONFIG
-            },
-        );
-
-        simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
+        // Connect all peers.
+        sim.run();
 
         // Let a certain amount of time pass.
-        let mut out = alice
-            .step(Input::Idle, local_time + idle_timeout)
-            .into_iter();
+        sim.elapse(idle_timeout);
+
+        let bob = sim.get("bob");
+        let alice = sim.get("alice");
+        let mut out = sim.input(&alice, Input::Idle).into_iter();
 
         assert!(
             matches!(
@@ -1496,22 +1617,17 @@ mod tests {
                 RawNetworkMessage {
                     payload: NetworkMessage::Ping(_), ..
                 },
-            )) if addr == bob_addr
+            )) if addr == bob
         ),
             "Alice pings Bob"
         );
 
         // More time passes, and Bob doesn't `pong` back.
-        let mut out = alice
-            .step(Input::Idle, local_time + idle_timeout + idle_timeout)
-            .into_iter();
+        sim.elapse(idle_timeout);
 
         // Alice now decides to disconnect Bob.
-        assert!(alice
-            .peers
-            .values()
-            .all(|p| p.state == PeerState::Disconnecting));
-        assert_eq!(out.next(), Some(Output::Disconnect(bob_addr)));
+        let mut out = sim.input(&alice, Input::Idle).into_iter();
+        assert_eq!(out.next(), Some(Output::Disconnect(bob)));
     }
 
     #[test]
@@ -1553,61 +1669,53 @@ mod tests {
     fn test_getheaders_retry() {
         logger::init(log::Level::Debug);
 
-        let network = Network::Mainnet;
         // Some hash for a nonexistent block.
         let hash =
             BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
                 .unwrap();
-        let (mut peers, inputs, time) = setup::network(5, network, fastrand::Rng::new());
+        let network = Network::Mainnet;
+        let mut sim = simulator::Net {
+            network,
+            rng: fastrand::Rng::new(),
+            peers: &["alice", "bob", "olive"],
+        }
+        .into();
 
-        simulator::run(
-            peers.iter_mut().map(|(a, p)| (*a, p)).collect(),
-            inputs,
-            time,
-        );
+        // Run the simulation until no messages are exchanged.
+        sim.run();
 
-        let ask = peers.len() - 1;
-        let (sender_addr, _) = peers.pop().unwrap();
-        let (_, ref mut alice) = peers.pop().unwrap();
+        let ask = sim.peers.len() - 1;
+        let sender = sim.get("bob");
+        let alice = sim.get("alice");
 
         // Peers that have been asked.
         let mut asked = HashSet::new();
 
         // Trigger a `getheaders` by sending an inventory message to Alice.
-        let result = alice.step(
+        let result = sim.input(
+            &alice,
             Input::Received(
-                sender_addr,
+                sender,
                 message::raw(
                     NetworkMessage::Inv(vec![Inventory::Block(hash)]),
                     network.magic(),
                 ),
             ),
-            time,
         );
 
-        let (addr, _) = result
-            .iter()
-            .filter_map(payload)
-            .find(|m| matches!(m, (_, NetworkMessage::GetHeaders(_))))
-            .expect("a `getheaders` message should be returned");
-        asked.insert(addr);
-
         // The first time we ask for headers, we ask the peer who sent us the `inv` message.
-        assert_eq!(addr, sender_addr);
+        let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
+        assert_eq!(addr, sender);
+
+        asked.insert(addr);
+        result.process(&mut sim);
 
         // Keep track of who we asked last.
         let mut last_asked = addr;
-
         // While there's still peers to ask...
         while asked.len() < ask {
-            let result = alice.step(Input::Timeout(last_asked, Component::SyncManager), time);
-
-            let (addr, _) = result
-                .iter()
-                .filter_map(payload)
-                .find(|m| matches!(m, (_, NetworkMessage::GetHeaders(_))))
-                .expect("a `getheaders` message should be returned");
-            last_asked = addr;
+            let result = sim.input(&alice, Input::Timeout(last_asked, Component::SyncManager));
+            let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
 
             assert!(
                 !asked.contains(&addr),
@@ -1615,6 +1723,9 @@ mod tests {
             );
 
             asked.insert(addr);
+            result.process(&mut sim);
+
+            last_asked = addr;
         }
     }
 
