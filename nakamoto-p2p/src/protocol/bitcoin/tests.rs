@@ -30,6 +30,7 @@ mod setup {
         // between instances of this protocol in tests.
         services: ServiceFlags::NETWORK,
         protocol_version: PROTOCOL_VERSION,
+        target_peers: 8,
         user_agent: USER_AGENT,
         relay: false,
         name: "self",

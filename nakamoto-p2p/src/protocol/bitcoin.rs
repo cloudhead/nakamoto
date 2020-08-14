@@ -36,8 +36,6 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 pub const PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
-/// Minimum number of peers to be connected to.
-pub const PEER_CONNECTION_THRESHOLD: usize = 1;
 /// Maximum time adjustment between network and local time (70 minutes).
 pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
 /// Maximum number of headers sent in a `headers` message.
@@ -50,6 +48,8 @@ pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
 /// Time interval to wait between sent pings.
 pub const PING_INTERVAL: LocalDuration = LocalDuration::from_secs(60);
+/// Target number of concurrent peer connections.
+pub const TARGET_PEER_CONNECTIONS: usize = 32;
 
 /// A time offset, in seconds.
 pub type TimeOffset = i64;
@@ -150,6 +150,8 @@ pub struct Bitcoin<T> {
     pub user_agent: &'static str,
     /// Block height of active chain.
     pub height: Height,
+    /// Target number of peer connections.
+    pub target_peers: usize,
 
     /// Peer address manager.
     addrmgr: AddressManager,
@@ -178,6 +180,7 @@ pub struct Config {
     pub protocol_version: u32,
     pub relay: bool,
     pub user_agent: &'static str,
+    pub target_peers: usize,
     pub name: &'static str,
 }
 
@@ -188,6 +191,7 @@ impl Default for Config {
             address_book: AddressBook::default(),
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
+            target_peers: TARGET_PEER_CONNECTIONS,
             relay: false,
             user_agent: USER_AGENT,
             name: "self",
@@ -217,6 +221,7 @@ impl<T: BlockTree> Bitcoin<T> {
             address_book,
             services,
             protocol_version,
+            target_peers,
             relay,
             user_agent,
             name,
@@ -239,6 +244,7 @@ impl<T: BlockTree> Bitcoin<T> {
             network,
             services,
             protocol_version,
+            target_peers,
             relay,
             user_agent,
             name,
@@ -445,8 +451,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         let mut outbound = Vec::new();
 
-        // TODO: How many addresses to initially connect to?
-        for addr in self.addrmgr.iter() {
+        for addr in self.addrmgr.iter().take(self.target_peers) {
             if let Ok(addr) = addr.socket_addr() {
                 outbound.push(Output::Connect(addr));
             }
@@ -470,26 +475,49 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 local_addr,
                 link,
             } => {
-                let nonce = self.connected(addr, local_addr, link);
-
-                match link {
-                    Link::Outbound => {
-                        info!("[{}] {}: Peer connected (outbound)", self.name, &addr);
-
-                        outbound.push(
-                            self.message(addr, self.version(addr, local_addr, nonce, self.height)),
-                        );
+                if self.ready.len() >= self.target_peers {
+                    match link {
+                        Link::Inbound => {
+                            // Don't allow inbound connections beyond the configured limit.
+                            debug!(
+                                "[{}] {}: Disconnecting: reached target peer connections ({})",
+                                self.name, addr, self.target_peers
+                            );
+                            outbound.push(Output::Disconnect(addr));
+                        }
+                        Link::Outbound => {
+                            // TODO: If we've initiated an outbound connection despite having
+                            // reached our target, or if an inbound connection has been initiated
+                            // while we were attempting to establish an outbound connection,
+                            // we drop one of our existing connections to allow this new connection
+                            // to be established.
+                        }
                     }
-                    Link::Inbound => {
-                        info!("[{}] {}: Peer connected (inbound)", self.name, &addr);
-                    } // Wait to receive remote version.
+                } else {
+                    let nonce = self.connected(addr, local_addr, link);
+
+                    match link {
+                        Link::Outbound => {
+                            info!("[{}] {}: Peer connected (outbound)", self.name, &addr);
+
+                            outbound.push(
+                                self.message(
+                                    addr,
+                                    self.version(addr, local_addr, nonce, self.height),
+                                ),
+                            );
+                        }
+                        Link::Inbound => {
+                            info!("[{}] {}: Peer connected (inbound)", self.name, &addr);
+                        } // Wait to receive remote version.
+                    }
+                    // Set a timeout for receiving the `version` message.
+                    outbound.push(Output::SetTimeout(
+                        addr,
+                        Component::HandshakeManager,
+                        HANDSHAKE_TIMEOUT,
+                    ));
                 }
-                // Set a timeout for receiving the `version` message.
-                outbound.push(Output::SetTimeout(
-                    addr,
-                    Component::HandshakeManager,
-                    HANDSHAKE_TIMEOUT,
-                ));
             }
             Input::Disconnected(addr) => {
                 debug!("[{}] Disconnected from {}", self.name, &addr);
