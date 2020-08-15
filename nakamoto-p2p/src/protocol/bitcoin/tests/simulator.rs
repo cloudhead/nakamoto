@@ -5,13 +5,17 @@ pub struct Net<'a> {
     pub network: Network,
     pub rng: fastrand::Rng,
     pub peers: &'a [&'static str],
+    pub initialize: bool,
 }
 
 impl<'a> Net<'a> {
     pub fn into(self) -> Sim {
-        let (peers, time) = setup::network(self.network, self.rng, self.peers);
-        let sim = Sim::new(peers, vec![], time);
+        let (peers, time) = setup::network(self.network, self.rng.clone(), self.peers);
+        let mut sim = Sim::new(peers, time, self.rng);
 
+        if self.initialize {
+            sim.initialize();
+        }
         sim
     }
 }
@@ -56,9 +60,9 @@ impl InputResult {
             .expect("expected message in output was not found")
     }
 
-    pub fn process(self, sim: &mut Sim) {
+    pub fn schedule(self, sim: &mut Sim) {
         for o in self.outputs.into_iter() {
-            Sim::process(&mut sim.events, &self.peer, o);
+            Sim::schedule(&mut sim.inbox, &self.peer, o);
         }
     }
 }
@@ -68,29 +72,35 @@ pub struct Sim {
     pub time: LocalTime,
 
     index: HashMap<&'static str, PeerId>,
-    events: Vec<(PeerId, Input)>,
+    inbox: VecDeque<(PeerId, Input)>,
+
+    #[allow(dead_code)]
+    rng: fastrand::Rng,
 }
 
 impl Sim {
     fn new(
         peers: Vec<(PeerId, Bitcoin<model::Cache>)>,
-        events: Vec<(PeerId, Input)>,
         time: LocalTime,
+        rng: fastrand::Rng,
     ) -> Self {
         let peers = peers.into_iter().collect::<HashMap<_, _>>();
         let index = peers
             .iter()
             .map(|(addr, peer)| (peer.name, *addr))
             .collect();
+        let inbox = VecDeque::new();
 
         Self {
             peers,
             index,
-            events,
+            inbox,
             time,
+            rng,
         }
     }
 
+    /// Get a peer by name.
     pub fn get(&mut self, name: &str) -> PeerId {
         *self
             .index
@@ -98,6 +108,7 @@ impl Sim {
             .unwrap_or_else(|| panic!("Sim::get: peer {:?} doesn't exist", name))
     }
 
+    /// Send an input directly to a peer and return the result.
     pub fn input(&mut self, addr: &PeerId, input: Input) -> InputResult {
         let peer = self.peers.get_mut(&addr).unwrap();
 
@@ -107,13 +118,14 @@ impl Sim {
         }
     }
 
+    /// Let some time pass.
     pub fn elapse(&mut self, duration: LocalDuration) {
         self.time = self.time + duration;
     }
 
     /// Process a protocol output event.
-    pub fn process<M, C>(
-        events: &mut Vec<(PeerId, protocol::Input<M, C>)>,
+    pub fn schedule<M, C>(
+        inbox: &mut VecDeque<(PeerId, protocol::Input<M, C>)>,
         peer: &PeerId,
         out: Output<M>,
     ) where
@@ -125,11 +137,11 @@ impl Sim {
         match out {
             Output::Message(receiver, msg) => {
                 info!("(sim) {} -> {}: {:#?}", peer, receiver, msg);
-                events.push((receiver, protocol::Input::Received(peer, msg)))
+                inbox.push_back((receiver, protocol::Input::Received(peer, msg)))
             }
             Output::Connect(remote) => {
                 info!("(sim) {} => {}", peer, remote);
-                events.push((
+                inbox.push_back((
                     remote,
                     protocol::Input::Connected {
                         addr: peer,
@@ -137,7 +149,7 @@ impl Sim {
                         link: Link::Inbound,
                     },
                 ));
-                events.push((
+                inbox.push_back((
                     peer,
                     protocol::Input::Connected {
                         addr: remote,
@@ -150,32 +162,27 @@ impl Sim {
         }
     }
 
-    pub fn run(&mut self) {
-        let mut sim = HashMap::new();
-
-        // Add peers to simulator.
+    /// Initialize peers, scheduling events returned by initialization.
+    pub fn initialize(&mut self) {
         for (addr, proto) in self.peers.iter_mut() {
-            let addr = *addr;
-
             for o in proto.initialize(self.time).into_iter() {
-                Sim::process(&mut self.events, &addr, o);
+                Sim::schedule(&mut self.inbox, &addr, o);
             }
-            sim.insert(addr, (proto, VecDeque::new()));
         }
+    }
 
-        while !self.events.is_empty() || sim.values().any(|(_, q)| !q.is_empty()) {
-            // Prepare event queues.
-            for (receiver, event) in self.events.drain(..) {
-                let (_, q) = sim.get_mut(&receiver).unwrap();
-                q.push_back(event);
-            }
+    /// Run the simulation until there are no events left to schedule.
+    pub fn step(&mut self) {
+        while !self.inbox.is_empty() {
+            let mut events: Vec<_> = self.inbox.drain(..).collect();
 
-            for (peer, (proto, queue)) in sim.iter_mut() {
-                if let Some(event) = queue.pop_front() {
-                    let outs = proto.step(event, self.time);
+            for (addr, event) in events.drain(..) {
+                // dbg!((addr, &event));
+                if let Some(ref mut peer) = self.peers.get_mut(&addr) {
+                    let outs = peer.step(event, self.time);
 
                     for o in outs.into_iter() {
-                        Sim::process(&mut self.events, peer, o);
+                        Sim::schedule(&mut self.inbox, &addr, o);
                     }
                 }
             }
@@ -217,15 +224,15 @@ pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
     local_time: LocalTime,
 ) {
     let mut sim: HashMap<PeerId, (&mut P, VecDeque<protocol::Input<M, C>>)> = HashMap::new();
-    let mut events = Vec::new();
+    let mut events = VecDeque::new();
 
     // Add peers to simulator.
     for ((addr, proto), evs) in peers.into_iter().zip(inputs.into_iter()) {
         for o in proto.initialize(local_time).into_iter() {
-            Sim::process(&mut events, &addr, o);
+            Sim::schedule(&mut events, &addr, o);
         }
         for e in evs.into_iter() {
-            events.push((addr, e));
+            events.push_back((addr, e));
         }
         sim.insert(addr, (proto, VecDeque::new()));
     }
@@ -242,7 +249,7 @@ pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
                 let outs = proto.step(event, local_time);
 
                 for out in outs.into_iter() {
-                    Sim::process(&mut events, peer, out);
+                    Sim::schedule(&mut events, peer, out);
                 }
             }
         }

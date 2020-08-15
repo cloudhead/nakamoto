@@ -680,6 +680,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 Output::Message(addr, msg) => {
                     debug!("[{}] {}: Sending {:?}", self.name, addr, msg.display());
                 }
+                Output::Event(Event::Received(_, _)) => {}
                 _ => debug!("[{}] Output: {:?}", self.name, o),
             });
         }

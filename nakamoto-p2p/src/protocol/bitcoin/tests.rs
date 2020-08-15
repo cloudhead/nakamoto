@@ -242,17 +242,20 @@ fn test_initial_sync() {
 /// Test what happens when a peer is idle for too long.
 #[test]
 fn test_idle() {
+    logger::init(log::Level::Debug);
+
     let idle_timeout = Bitcoin::<model::Cache>::IDLE_TIMEOUT;
 
     let mut sim = simulator::Net {
         network: Network::Mainnet,
         rng: fastrand::Rng::new(),
         peers: &["alice", "bob"],
+        initialize: true,
     }
     .into();
 
     // Connect all peers.
-    sim.run();
+    sim.step();
 
     // Let a certain amount of time pass.
     sim.elapse(idle_timeout);
@@ -330,11 +333,12 @@ fn test_getheaders_retry() {
         network,
         rng: fastrand::Rng::new(),
         peers: &["alice", "bob", "olive"],
+        initialize: true,
     }
     .into();
 
     // Run the simulation until no messages are exchanged.
-    sim.run();
+    sim.step();
 
     let ask = sim.peers.len() - 1;
     let sender = sim.get("bob");
@@ -360,7 +364,7 @@ fn test_getheaders_retry() {
     assert_eq!(addr, sender);
 
     asked.insert(addr);
-    result.process(&mut sim);
+    result.schedule(&mut sim);
 
     // Keep track of who we asked last.
     let mut last_asked = addr;
@@ -375,7 +379,7 @@ fn test_getheaders_retry() {
         );
 
         asked.insert(addr);
-        result.process(&mut sim);
+        result.schedule(&mut sim);
 
         last_asked = addr;
     }
