@@ -17,7 +17,7 @@ use crate::address_book::AddressBook;
 use crate::event::Event;
 use crate::protocol::{self, Component, Link, Message, Output, PeerId, Protocol};
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::fmt::Debug;
 use std::net;
 
@@ -30,6 +30,7 @@ use bitcoin::network::message_network::VersionMessage;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::collections::HashMap;
 
 /// Peer-to-peer protocol version.
 /// For now, we only support `70012`, due to lacking `sendcmpct` support.
@@ -240,7 +241,7 @@ impl<T: BlockTree> Bitcoin<T> {
         );
 
         Self {
-            peers: HashMap::new(),
+            peers: HashMap::with_hasher(rng.clone().into()),
             network,
             services,
             protocol_version,

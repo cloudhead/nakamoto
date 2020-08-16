@@ -3,7 +3,7 @@ pub mod simulator;
 
 use super::*;
 use bitcoin_hashes::hex::FromHex;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::SystemTime;
 
 use nakamoto_common::block::BlockHeader;

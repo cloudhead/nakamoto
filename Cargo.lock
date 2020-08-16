@@ -228,6 +228,8 @@ name = "nakamoto-common"
 version = "0.1.0"
 dependencies = [
  "bitcoin",
+ "bitcoin_hashes",
+ "fastrand",
  "log",
  "thiserror",
 ]

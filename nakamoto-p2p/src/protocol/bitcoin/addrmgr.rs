@@ -2,7 +2,7 @@
 //! The peer-to-peer address manager.
 //!
 #![warn(missing_docs)]
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net;
 
 use bitcoin::network::address::Address;
@@ -10,6 +10,7 @@ use bitcoin::network::constants::ServiceFlags;
 
 use nakamoto_common::block::time::LocalTime;
 use nakamoto_common::block::Time;
+use nakamoto_common::collections::HashMap;
 
 use crate::address_book::AddressBook;
 
@@ -68,8 +69,8 @@ impl AddressManager {
     /// Create a new, empty address manager.
     pub fn new(rng: fastrand::Rng) -> Self {
         Self {
-            addresses: HashMap::new(),
-            address_ranges: HashMap::new(),
+            addresses: HashMap::with_hasher(rng.clone().into()),
+            address_ranges: HashMap::with_hasher(rng.clone().into()),
             rng,
         }
     }
