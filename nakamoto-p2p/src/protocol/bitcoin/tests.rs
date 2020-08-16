@@ -3,7 +3,7 @@ pub mod simulator;
 
 use super::*;
 use bitcoin_hashes::hex::FromHex;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::time::SystemTime;
 
 use nakamoto_common::block::BlockHeader;
@@ -79,6 +79,7 @@ mod setup {
         network: Network,
         rng: fastrand::Rng,
         peers: &[&'static str],
+        configure: fn(&mut Config),
     ) -> (Vec<(PeerId, Bitcoin<model::Cache>)>, LocalTime) {
         use bitcoin::blockdata::constants;
 
@@ -119,20 +120,18 @@ mod setup {
                 address_book.push(*other);
             }
 
-            let peer = Bitcoin::new(
-                tree.clone(),
-                clock.clone(),
-                rng.clone(),
-                Config {
-                    network,
-                    address_book,
-                    // Pretend that we're a full-node, to fool connections
-                    // between instances of this protocol in tests.
-                    services: ServiceFlags::NETWORK,
-                    name: names[i],
-                    ..Config::default()
-                },
-            );
+            let mut cfg = Config {
+                network,
+                address_book,
+                // Pretend that we're a full-node, to fool connections
+                // between instances of this protocol in tests.
+                services: ServiceFlags::NETWORK,
+                name: names[i],
+                ..Config::default()
+            };
+            configure(&mut cfg);
+
+            let peer = Bitcoin::new(tree.clone(), clock.clone(), rng.clone(), cfg);
             info!("(sim) {} = {}", names[i], addr);
 
             peers.push((*addr, peer));
@@ -250,7 +249,7 @@ fn test_idle() {
         network: Network::Mainnet,
         rng: fastrand::Rng::new(),
         peers: &["alice", "bob"],
-        initialize: true,
+        ..simulator::Net::default()
     }
     .into();
 
@@ -331,9 +330,8 @@ fn test_getheaders_retry() {
     let network = Network::Mainnet;
     let mut sim = simulator::Net {
         network,
-        rng: fastrand::Rng::new(),
         peers: &["alice", "bob", "olive"],
-        initialize: true,
+        ..Default::default()
     }
     .into();
 

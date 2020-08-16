@@ -476,6 +476,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 local_addr,
                 link,
             } => {
+                // TODO: Should maintain a target for outbound peers only?
                 if self.ready.len() >= self.target_peers {
                     match link {
                         Link::Inbound => {

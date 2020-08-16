@@ -1,16 +1,32 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 use super::*;
 
+use nakamoto_common::collections::HashMap;
+
 pub struct Net<'a> {
     pub network: Network,
     pub rng: fastrand::Rng,
     pub peers: &'a [&'static str],
+    pub configure: fn(&mut Config),
     pub initialize: bool,
+}
+
+impl<'a> Default for Net<'a> {
+    fn default() -> Self {
+        Self {
+            network: Network::default(),
+            rng: fastrand::Rng::new(),
+            peers: &[],
+            configure: |_| {},
+            initialize: true,
+        }
+    }
 }
 
 impl<'a> Net<'a> {
     pub fn into(self) -> Sim {
-        let (peers, time) = setup::network(self.network, self.rng.clone(), self.peers);
+        let (peers, time) =
+            setup::network(self.network, self.rng.clone(), self.peers, self.configure);
         let mut sim = Sim::new(peers, time, self.rng);
 
         if self.initialize {
@@ -20,6 +36,7 @@ impl<'a> Net<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct InputResult {
     peer: PeerId,
     outputs: Vec<Output<RawNetworkMessage>>,
@@ -61,14 +78,32 @@ impl InputResult {
     }
 
     pub fn schedule(self, sim: &mut Sim) {
+        let peer = sim.peers.get_mut(&self.peer).unwrap();
+
         for o in self.outputs.into_iter() {
-            Sim::schedule(&mut sim.inbox, &self.peer, o);
+            peer.schedule(&mut sim.inbox, o);
         }
     }
 }
 
+pub struct Peer {
+    id: PeerId,
+    protocol: Bitcoin<model::Cache>,
+    events: Vec<Event<NetworkMessage>>,
+}
+
+impl Peer {
+    pub fn schedule(
+        &mut self,
+        inbox: &mut VecDeque<(PeerId, Input)>,
+        output: Output<RawNetworkMessage>,
+    ) {
+        Sim::schedule(&mut self.events, inbox, &self.id, output)
+    }
+}
+
 pub struct Sim {
-    pub peers: HashMap<PeerId, Bitcoin<model::Cache>>,
+    pub peers: HashMap<PeerId, Peer>,
     pub time: LocalTime,
 
     index: HashMap<&'static str, PeerId>,
@@ -84,11 +119,25 @@ impl Sim {
         time: LocalTime,
         rng: fastrand::Rng,
     ) -> Self {
-        let peers = peers.into_iter().collect::<HashMap<_, _>>();
-        let index = peers
-            .iter()
-            .map(|(addr, peer)| (peer.name, *addr))
-            .collect();
+        let peers = {
+            let mut hm = HashMap::with_hasher(rng.clone().into());
+            for (id, protocol) in peers.into_iter() {
+                hm.insert(
+                    id,
+                    Peer {
+                        id,
+                        protocol,
+                        events: vec![],
+                    },
+                );
+            }
+            hm
+        };
+
+        let mut index = HashMap::with_hasher(rng.clone().into());
+        for (addr, peer) in &peers {
+            index.insert(peer.protocol.name, *addr);
+        }
         let inbox = VecDeque::new();
 
         Self {
@@ -114,8 +163,16 @@ impl Sim {
 
         InputResult {
             peer: *addr,
-            outputs: peer.step(input, self.time),
+            outputs: peer.protocol.step(input, self.time),
         }
+    }
+
+    /// Drain the outgoing events queue for the given peer.
+    pub fn events<'a>(
+        &'a mut self,
+        addr: &PeerId,
+    ) -> impl Iterator<Item = Event<NetworkMessage>> + 'a {
+        self.peers.get_mut(addr).unwrap().events.drain(..)
     }
 
     /// Let some time pass.
@@ -125,6 +182,7 @@ impl Sim {
 
     /// Process a protocol output event.
     pub fn schedule<M, C>(
+        events: &mut Vec<Event<<M as protocol::Message>::Payload>>,
         inbox: &mut VecDeque<(PeerId, protocol::Input<M, C>)>,
         peer: &PeerId,
         out: Output<M>,
@@ -158,15 +216,18 @@ impl Sim {
                     },
                 ));
             }
+            Output::Event(event) => {
+                events.push(event);
+            }
             _ => {}
         }
     }
 
     /// Initialize peers, scheduling events returned by initialization.
     pub fn initialize(&mut self) {
-        for (addr, proto) in self.peers.iter_mut() {
-            for o in proto.initialize(self.time).into_iter() {
-                Sim::schedule(&mut self.inbox, &addr, o);
+        for peer in self.peers.values_mut() {
+            for o in peer.protocol.initialize(self.time).into_iter() {
+                peer.schedule(&mut self.inbox, o);
             }
         }
     }
@@ -177,12 +238,11 @@ impl Sim {
             let mut events: Vec<_> = self.inbox.drain(..).collect();
 
             for (addr, event) in events.drain(..) {
-                // dbg!((addr, &event));
                 if let Some(ref mut peer) = self.peers.get_mut(&addr) {
-                    let outs = peer.step(event, self.time);
+                    let outs = peer.protocol.step(event, self.time);
 
                     for o in outs.into_iter() {
-                        Sim::schedule(&mut self.inbox, &addr, o);
+                        peer.schedule(&mut self.inbox, o);
                     }
                 }
             }
@@ -223,13 +283,15 @@ pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
     inputs: Vec<Vec<protocol::Input<M, C>>>,
     local_time: LocalTime,
 ) {
-    let mut sim: HashMap<PeerId, (&mut P, VecDeque<protocol::Input<M, C>>)> = HashMap::new();
+    let mut sim: HashMap<PeerId, (&mut P, VecDeque<protocol::Input<M, C>>)> =
+        HashMap::with_hasher(fastrand::Rng::new().into());
     let mut events = VecDeque::new();
+    let mut tmp = Vec::new();
 
     // Add peers to simulator.
     for ((addr, proto), evs) in peers.into_iter().zip(inputs.into_iter()) {
         for o in proto.initialize(local_time).into_iter() {
-            Sim::schedule(&mut events, &addr, o);
+            Sim::schedule(&mut tmp, &mut events, &addr, o);
         }
         for e in evs.into_iter() {
             events.push_back((addr, e));
@@ -249,7 +311,7 @@ pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
                 let outs = proto.step(event, local_time);
 
                 for out in outs.into_iter() {
-                    Sim::schedule(&mut events, peer, out);
+                    Sim::schedule(&mut tmp, &mut events, peer, out);
                 }
             }
         }
