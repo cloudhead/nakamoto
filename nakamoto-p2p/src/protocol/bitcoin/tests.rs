@@ -6,6 +6,8 @@ use bitcoin_hashes::hex::FromHex;
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
+use quickcheck_macros::quickcheck;
+
 use nakamoto_common::block::BlockHeader;
 
 use nakamoto_test::block::cache::model;
@@ -317,6 +319,53 @@ fn test_getheaders_timeout() {
         .iter()
         .find(|o| matches!(o, Output::Disconnect(addr) if addr == &remote_addr))
         .expect("the unresponsive peer should be disconnected");
+}
+
+#[quickcheck]
+#[ignore]
+fn prop_maintain_connections(seed: u64) {
+    let rng = fastrand::Rng::new();
+    rng.seed(seed);
+
+    let network = Network::Mainnet;
+    let mut sim = simulator::Net {
+        network,
+        peers: &["alice", "bob", "olive", "john", "misha", "nacho"],
+        configure: |cfg| {
+            cfg.target_peers = 2;
+        },
+        rng,
+        ..Default::default()
+    }
+    .into();
+
+    let alice = sim.get("alice");
+
+    // Run the simulation until no messages are exchanged.
+    sim.step();
+
+    // Keep track of who Alice is connected to.
+    let mut connected = Vec::new();
+
+    for e in sim.events(&alice) {
+        match e {
+            Event::Connected(addr, _) => connected.push(addr),
+            _ => {}
+        }
+    }
+
+    while !connected.is_empty() {
+        let other = connected.pop().unwrap();
+        let result = sim.input(&alice, Input::Disconnected(other));
+
+        if connected.len() < 2 {
+            result.expect(
+            |o| matches!(o, Output::Connect(addr) if addr != &other && !connected.contains(addr)),
+            "Alice connects to a new peer",
+        );
+            break;
+        }
+    }
 }
 
 #[test]

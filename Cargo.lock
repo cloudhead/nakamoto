@@ -275,6 +275,8 @@ dependencies = [
  "nakamoto-test",
  "nonempty",
  "popol",
+ "quickcheck",
+ "quickcheck_macros",
  "tempfile",
  "thiserror",
 ]

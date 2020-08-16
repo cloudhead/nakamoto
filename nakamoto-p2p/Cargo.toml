@@ -21,3 +21,5 @@ nonempty = "0.5"
 nakamoto-test = { path = "../nakamoto-test" }
 tempfile = "3"
 lazy_static = "1.4"
+quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }
+quickcheck_macros = "0.9"

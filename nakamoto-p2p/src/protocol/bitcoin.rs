@@ -529,6 +529,20 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 self.connected.remove(&addr);
                 self.disconnected.insert(addr);
                 self.syncmgr.peer_disconnected(&addr);
+
+                if self.ready.len() < self.target_peers {
+                    if let Some(addr) = self.addrmgr.sample() {
+                        if let Ok(sockaddr) = addr.socket_addr() {
+                            outbound.push(Output::Connect(sockaddr));
+                        } else {
+                            // TODO: Perhaps the address manager should just return addresses
+                            // that can be converted to socket addresses?
+                            // The only ones that cannot are Tor addresses.
+                        }
+                    } else {
+                        // TODO: Out of addresses, ask for more!
+                    }
+                }
             }
             Input::Received(addr, msg) => {
                 for out in self.receive(addr, msg) {
