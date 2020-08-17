@@ -11,21 +11,21 @@ edition = "2018"
 
 [workspace]
 members = [
-  "nakamoto-common",
-  "nakamoto-p2p",
-  "nakamoto-chain",
-  "nakamoto-node",
-  "nakamoto-test",
-  "nakamoto-daemon",
+  "common",
+  "p2p",
+  "chain",
+  "node",
+  "test",
+  "daemon",
 ]
 
 [features]
 default = ["nakamoto-node", "nakamoto-chain", "nakamoto-p2p", "nakamoto-common"]
 
 [dependencies]
-nakamoto-common = { version = "0.1.0", path = "./nakamoto-common", optional = true }
-nakamoto-node = { version = "0.1.0", path = "./nakamoto-node", optional = true }
-nakamoto-daemon = { version = "0.1.0", path = "./nakamoto-daemon", optional = true }
-nakamoto-chain = { version = "0.1.0", path = "./nakamoto-chain", optional = true }
-nakamoto-p2p = { version = "0.1.0", path = "./nakamoto-p2p", optional = true }
-nakamoto-test = { version = "0.1.0", path = "./nakamoto-test", optional = true }
+nakamoto-common = { version = "0.1.0", path = "./common", optional = true }
+nakamoto-node = { version = "0.1.0", path = "./node", optional = true }
+nakamoto-daemon = { version = "0.1.0", path = "./daemon", optional = true }
+nakamoto-chain = { version = "0.1.0", path = "./chain", optional = true }
+nakamoto-p2p = { version = "0.1.0", path = "./p2p", optional = true }
+nakamoto-test = { version = "0.1.0", path = "./test", optional = true }

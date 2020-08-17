@@ -9,14 +9,14 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.1.0", path = "../nakamoto-common", features = ["log"] }
+nakamoto-common = { version = "0.1.0", path = "../common", features = ["log"] }
 bitcoin = "0.23.0"
 bitcoin_hashes = "0.7.6"
 nonempty = "0.5.0"
 log = "0.4"
 
 [dev-dependencies]
-nakamoto-test = { path = "../nakamoto-test" }
+nakamoto-test = { path = "../test" }
 quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }
 quickcheck_macros = "0.9"
 tempfile = "3"

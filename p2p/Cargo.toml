@@ -7,7 +7,7 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.1.0", path = "../nakamoto-common" }
+nakamoto-common = { version = "0.1.0", path = "../common" }
 bitcoin = "0.23.0"
 log = "0.4"
 thiserror = "1.0"
@@ -18,7 +18,7 @@ popol = "0.3"
 nonempty = "0.5"
 
 [dev-dependencies]
-nakamoto-test = { path = "../nakamoto-test" }
+nakamoto-test = { path = "../test" }
 tempfile = "3"
 lazy_static = "1.4"
 quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }

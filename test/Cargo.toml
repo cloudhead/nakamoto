@@ -7,7 +7,7 @@ edition = "2018"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.1.0", path = "../nakamoto-common" }
+nakamoto-common = { version = "0.1.0", path = "../common" }
 bitcoin = "0.23"
 lazy_static = "1.4"
 log = { version = "0.4", features = ["std"] }
