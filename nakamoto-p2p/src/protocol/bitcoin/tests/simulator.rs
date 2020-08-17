@@ -66,6 +66,13 @@ impl InputResult {
         self.outputs.iter().find(|m| f(m)).expect(msg)
     }
 
+    pub fn find<F, T>(&self, f: F) -> Option<T>
+    where
+        F: Fn(&Output<RawNetworkMessage>) -> Option<T>,
+    {
+        self.outputs.iter().find_map(|m| f(m))
+    }
+
     pub fn message<F>(&self, f: F) -> (PeerId, &NetworkMessage)
     where
         F: Fn(&PeerId, &NetworkMessage) -> bool,
@@ -88,6 +95,7 @@ impl InputResult {
 
 pub struct Peer {
     id: PeerId,
+    name: &'static str,
     protocol: Bitcoin<model::Cache>,
     events: Vec<Event<NetworkMessage>>,
 }
@@ -126,6 +134,7 @@ impl Sim {
                     id,
                     Peer {
                         id,
+                        name: protocol.name,
                         protocol,
                         events: vec![],
                     },
@@ -226,6 +235,8 @@ impl Sim {
     /// Initialize peers, scheduling events returned by initialization.
     pub fn initialize(&mut self) {
         for peer in self.peers.values_mut() {
+            log::debug!("(sim) Initializing {:?}", peer.name);
+
             for o in peer.protocol.initialize(self.time).into_iter() {
                 peer.schedule(&mut self.inbox, o);
             }

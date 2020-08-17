@@ -90,9 +90,7 @@ mod setup {
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
         let size = peers.len();
-
-        let mut names = peers.to_vec();
-        rng.shuffle(&mut names);
+        let names = &peers;
 
         assert!(size > 1);
         assert!(size <= names.len());
@@ -322,23 +320,27 @@ fn test_getheaders_timeout() {
 }
 
 #[quickcheck]
-#[ignore]
-fn prop_maintain_connections(seed: u64) {
+fn test_maintain_connections(seed: u64) {
+    logger::init(log::Level::Debug);
+
+    const TARGET_PEERS: usize = 2;
+
     let rng = fastrand::Rng::new();
     rng.seed(seed);
 
     let network = Network::Mainnet;
     let mut sim = simulator::Net {
         network,
-        peers: &["alice", "bob", "olive", "john", "misha", "nacho"],
+        peers: &["alice", "bob", "olive", "john", "misha"],
         configure: |cfg| {
-            cfg.target_peers = 2;
+            cfg.target_peers = TARGET_PEERS;
         },
         rng,
         ..Default::default()
     }
     .into();
 
+    // The first peer always has the outbound connections.
     let alice = sim.get("alice");
 
     // Run the simulation until no messages are exchanged.
@@ -349,23 +351,24 @@ fn prop_maintain_connections(seed: u64) {
 
     for e in sim.events(&alice) {
         match e {
-            Event::Connected(addr, _) => connected.push(addr),
+            Event::Connected(addr, link) if link == Link::Outbound => connected.push(addr),
             _ => {}
         }
     }
+    assert_eq!(connected.len(), TARGET_PEERS);
 
-    while !connected.is_empty() {
-        let other = connected.pop().unwrap();
-        let result = sim.input(&alice, Input::Disconnected(other));
+    let other = connected.pop().unwrap();
+    let result = sim.input(&alice, Input::Disconnected(other));
 
-        if connected.len() < 2 {
-            result.expect(
-            |o| matches!(o, Output::Connect(addr) if addr != &other && !connected.contains(addr)),
-            "Alice connects to a new peer",
-        );
-            break;
-        }
-    }
+    let addr = result
+        .find(|o| match o {
+            Output::Connect(addr) => Some(*addr),
+            _ => None,
+        })
+        .expect("Alice connects to a peer");
+
+    assert!(addr != other);
+    assert!(!connected.contains(&addr));
 }
 
 #[test]

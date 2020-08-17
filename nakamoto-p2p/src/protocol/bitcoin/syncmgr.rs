@@ -159,7 +159,7 @@ impl<T: BlockTree> SyncManager<T> {
         self.events.drain(..)
     }
 
-    pub fn peer_connected(
+    pub fn peer_negotiated(
         &mut self,
         id: PeerId,
         height: Height,

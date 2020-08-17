@@ -263,6 +263,7 @@ impl<T: BlockTree> Bitcoin<T> {
     fn connected(&mut self, addr: PeerId, local_addr: net::SocketAddr, link: Link) -> u64 {
         self.connected.insert(addr);
         self.disconnected.remove(&addr);
+        self.addrmgr.peer_connected(&addr);
 
         let nonce = self.rng.u64(..);
         let rng = self.rng.clone();
@@ -529,6 +530,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 self.connected.remove(&addr);
                 self.disconnected.insert(addr);
                 self.syncmgr.peer_disconnected(&addr);
+                self.addrmgr.peer_disconnected(&addr);
 
                 if self.ready.len() < self.target_peers {
                     if let Some(addr) = self.addrmgr.sample() {
@@ -538,6 +540,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             // TODO: Perhaps the address manager should just return addresses
                             // that can be converted to socket addresses?
                             // The only ones that cannot are Tor addresses.
+                            todo!();
                         }
                     } else {
                         // TODO: Out of addresses, ask for more!
@@ -922,6 +925,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     self.ready.insert(addr);
                     self.clock.record_offset(addr, peer.time_offset);
+                    self.addrmgr.peer_negotiated(&addr, peer.services.clone());
 
                     let ping = peer.ping(now);
                     let link = peer.link;
@@ -943,7 +947,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     });
                     out.extend(
                         self.syncmgr
-                            .peer_connected(
+                            .peer_negotiated(
                                 peer.address,
                                 peer.height,
                                 peer.tip,

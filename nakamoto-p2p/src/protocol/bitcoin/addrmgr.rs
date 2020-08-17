@@ -62,6 +62,7 @@ pub struct AddressManager {
     // FIXME: HashMap and HashSet are non-deterministic.
     addresses: HashMap<net::IpAddr, KnownAddress>,
     address_ranges: HashMap<u8, HashSet<net::IpAddr>>,
+    connected: HashSet<net::IpAddr>,
     rng: fastrand::Rng,
 }
 
@@ -71,6 +72,7 @@ impl AddressManager {
         Self {
             addresses: HashMap::with_hasher(rng.clone().into()),
             address_ranges: HashMap::with_hasher(rng.clone().into()),
+            connected: HashSet::new(),
             rng,
         }
     }
@@ -112,6 +114,38 @@ impl AddressManager {
             addrs.map(|a| (Time::default(), Address::new(&a, ServiceFlags::NONE))),
             source,
         )
+    }
+
+    /// Called when a peer disconnected.
+    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr) {
+        // TODO: For now, it's enough to remove the address, since we shouldn't
+        // be trying to reconnect to a peer that disconnected. However in the future
+        // we should probably keep it around, or decide based on the reason for
+        // disconnection.
+        self.addresses.remove(&addr.ip());
+        self.connected.remove(&addr.ip());
+
+        let key = self::addr_key(addr.ip());
+        let range = self.address_ranges.entry(key).or_default();
+
+        range.remove(&addr.ip());
+
+        if range.is_empty() {
+            self.address_ranges.remove(&key);
+        }
+    }
+
+    /// Called when a peer has handshaked.
+    pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags) {
+        self.insert(
+            std::iter::once((Time::default(), Address::new(addr.into(), services))),
+            Source::default(),
+        );
+    }
+
+    /// Called when a peer has connected.
+    pub fn peer_connected(&mut self, addr: &net::SocketAddr) {
+        self.connected.insert(addr.ip());
     }
 
     /// Add addresses to the address manager. The input matches that of the `addr` message
@@ -253,17 +287,30 @@ impl AddressManager {
     ///
     /// ```
     pub fn sample(&self) -> Option<&Address> {
+        assert!(self.connected.len() <= self.len());
+
         if self.is_empty() {
             return None;
         }
+        if self.connected.len() == self.len() {
+            return None;
+        }
 
-        // First select a random address range.
-        let ix = self.rng.usize(..self.address_ranges.len());
-        let range = self.address_ranges.values().nth(ix)?;
+        let ip = loop {
+            // First select a random address range.
+            let ix = self.rng.usize(..self.address_ranges.len());
+            let range = self.address_ranges.values().nth(ix)?;
 
-        // Then select a random address in that range.
-        let ix = self.rng.usize(..range.len());
-        let ip = range.iter().nth(ix)?;
+            assert!(!range.is_empty());
+
+            // Then select a random address in that range.
+            let ix = self.rng.usize(..range.len());
+            let ip = range.iter().nth(ix)?;
+
+            if !self.connected.contains(&ip) {
+                break ip;
+            }
+        };
 
         self.addresses.get(&ip).map(|ka| &ka.addr)
     }
