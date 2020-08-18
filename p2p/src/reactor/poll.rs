@@ -23,10 +23,15 @@ use std::io::prelude::*;
 use std::net;
 use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
+use std::time;
 use std::time::SystemTime;
 
 /// Maximum peer-to-peer message size.
 pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+/// Maximum time to wait when reading from a socket.
+pub const READ_TIMEOUT: time::Duration = time::Duration::from_secs(6);
+/// Maximum time to wait when writing to a socket.
+pub const WRITE_TIMEOUT: time::Duration = time::Duration::from_secs(3);
 
 #[derive(Debug)]
 pub struct Socket<R: Read + Write, M> {
@@ -289,14 +294,16 @@ where
                     }
                 }
                 Err(err) if err.kind() == io::ErrorKind::TimedOut => {
-                    self.timeouts.wake(SystemTime::now().into(), &mut timeouts);
+                    let local_time = SystemTime::now().into();
+
+                    self.timeouts.wake(local_time, &mut timeouts);
 
                     if !timeouts.is_empty() {
                         for (peer, ctx) in timeouts.drain(..) {
                             self.events.push_back(Input::Timeout(peer, ctx));
                         }
                     } else {
-                        self.events.push_back(Input::Idle);
+                        self.events.push_back(Input::Tick(local_time));
                     }
                 }
                 Err(err) => return Err(err.into()),
@@ -305,7 +312,7 @@ where
             let local_time = SystemTime::now().into();
 
             while let Some(event) = self.events.pop_front() {
-                let outs = protocol.step(event, local_time);
+                let outs = protocol.step(event);
                 let control = self.process::<P>(outs, local_time)?;
 
                 if control == Control::Shutdown {
@@ -340,7 +347,7 @@ where
                     }
                 }
                 Output::Connect(addr) => {
-                    let stream = self::dial::<_, P>(&addr)?;
+                    let stream = self::dial(&addr)?;
                     let local_addr = stream.local_addr()?;
                     let addr = stream.peer_addr()?;
 
@@ -422,9 +429,7 @@ where
 }
 
 /// Connect to a peer given a remote address.
-pub fn dial<M: Message + Encodable + Decodable + Debug, P: Protocol<M>>(
-    addr: &net::SocketAddr,
-) -> Result<net::TcpStream, Error> {
+pub fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
     fallible! { Error::Io(io::ErrorKind::Other.into()) };
     debug!("Connecting to {}...", &addr);
 
@@ -432,8 +437,8 @@ pub fn dial<M: Message + Encodable + Decodable + Debug, P: Protocol<M>>(
 
     // TODO: We probably don't want the same timeouts for read and write.
     // For _write_, we want something much shorter.
-    sock.set_read_timeout(Some(P::IDLE_TIMEOUT.into()))?;
-    sock.set_write_timeout(Some(P::IDLE_TIMEOUT.into()))?;
+    sock.set_read_timeout(Some(READ_TIMEOUT))?;
+    sock.set_write_timeout(Some(WRITE_TIMEOUT))?;
     sock.set_nonblocking(true)?;
 
     Ok(sock)

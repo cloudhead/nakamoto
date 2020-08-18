@@ -243,8 +243,6 @@ fn test_initial_sync() {
 fn test_idle() {
     logger::init(log::Level::Debug);
 
-    let idle_timeout = Bitcoin::<model::Cache>::IDLE_TIMEOUT;
-
     let mut sim = simulator::Net {
         network: Network::Mainnet,
         rng: fastrand::Rng::new(),
@@ -257,31 +255,29 @@ fn test_idle() {
     sim.step();
 
     // Let a certain amount of time pass.
-    sim.elapse(idle_timeout);
+    sim.elapse(PING_INTERVAL);
 
     let bob = sim.get("bob");
     let alice = sim.get("alice");
-    let mut out = sim.input(&alice, Input::Idle).into_iter();
 
-    assert!(
-        matches!(
-            out.next(),
-            Some(Output::Message(
+    sim.input(&alice, Input::Timeout(bob, Component::PingManager))
+        .any(|o| {
+            matches!(o, Output::Message(
                 addr,
                 RawNetworkMessage {
                     payload: NetworkMessage::Ping(_), ..
                 },
-            )) if addr == bob
-        ),
-        "Alice pings Bob"
-    );
+            ) if addr == &bob)
+        })
+        .expect("Alice pings Bob");
 
     // More time passes, and Bob doesn't `pong` back.
-    sim.elapse(idle_timeout);
+    sim.elapse(PING_TIMEOUT);
 
     // Alice now decides to disconnect Bob.
-    let mut out = sim.input(&alice, Input::Idle).into_iter();
-    assert_eq!(out.next(), Some(Output::Disconnect(bob)));
+    sim.input(&alice, Input::Timeout(bob, Component::PingManager))
+        .any(|o| matches!(o, Output::Disconnect(addr) if addr == &bob))
+        .expect("Alice disconnects Bob");
 }
 
 #[test]
@@ -289,22 +285,19 @@ fn test_getheaders_timeout() {
     let network = Network::Mainnet;
     // TODO: Protocol should try different peers if it can't get the headers from the first
     // peer. It should keep trying until it succeeds.
-    let ((mut local, _), (_, remote_addr), time) = setup::pair(network);
+    let ((mut local, _), (_, remote_addr), _time) = setup::pair(network);
     // Some hash for a nonexistent block.
     let hash =
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
-    let out = local.step(
-        Input::Received(
-            remote_addr,
-            message::raw(
-                NetworkMessage::Inv(vec![Inventory::Block(hash)]),
-                network.magic(),
-            ),
+    let out = local.step(Input::Received(
+        remote_addr,
+        message::raw(
+            NetworkMessage::Inv(vec![Inventory::Block(hash)]),
+            network.magic(),
         ),
-        time,
-    );
+    ));
     out.iter()
         .find(|o| matches!(payload(o), Some((_, NetworkMessage::GetHeaders(_)))))
         .expect("a `getheaders` message should be returned");
@@ -313,7 +306,7 @@ fn test_getheaders_timeout() {
         .expect("a timer should be returned");
 
     local
-        .step(Input::Timeout(remote_addr, Component::SyncManager), time)
+        .step(Input::Timeout(remote_addr, Component::SyncManager))
         .iter()
         .find(|o| matches!(o, Output::Disconnect(addr) if addr == &remote_addr))
         .expect("the unresponsive peer should be disconnected");
@@ -438,25 +431,22 @@ fn test_getheaders_retry() {
 #[test]
 fn test_handshake_version_timeout() {
     let network = Network::Mainnet;
-    let (mut instance, time) = setup::singleton(network);
+    let (mut instance, _time) = setup::singleton(network);
 
     let remote = ([131, 31, 11, 33], 11111).into();
     let local = ([0, 0, 0, 0], 0).into();
 
     for link in &[Link::Outbound, Link::Inbound] {
-        let out = instance.step(
-            Input::Connected {
-                addr: remote,
-                local_addr: local,
-                link: *link,
-            },
-            time,
-        );
+        let out = instance.step(Input::Connected {
+            addr: remote,
+            local_addr: local,
+            link: *link,
+        });
         out.iter()
             .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if addr == &remote))
             .expect("a timer should be returned");
 
-        let out = instance.step(Input::Timeout(remote, Component::HandshakeManager), time);
+        let out = instance.step(Input::Timeout(remote, Component::HandshakeManager));
         assert!(out
             .iter()
             .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
@@ -466,36 +456,30 @@ fn test_handshake_version_timeout() {
 #[test]
 fn test_handshake_verack_timeout() {
     let network = Network::Mainnet;
-    let (mut instance, time) = setup::singleton(network);
+    let (mut instance, _time) = setup::singleton(network);
 
     let remote = ([131, 31, 11, 33], 11111).into();
     let local = ([0, 0, 0, 0], 0).into();
 
     for link in &[Link::Outbound, Link::Inbound] {
-        instance.step(
-            Input::Connected {
-                addr: remote,
-                local_addr: local,
-                link: *link,
-            },
-            time,
-        );
+        instance.step(Input::Connected {
+            addr: remote,
+            local_addr: local,
+            link: *link,
+        });
 
-        let out = instance.step(
-            Input::Received(
-                remote,
-                RawNetworkMessage {
-                    magic: network.magic(),
-                    payload: instance.version(local, remote, 0, 0),
-                },
-            ),
-            time,
-        );
+        let out = instance.step(Input::Received(
+            remote,
+            RawNetworkMessage {
+                magic: network.magic(),
+                payload: instance.version(local, remote, 0, 0),
+            },
+        ));
         out.iter()
             .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if *addr == remote))
             .expect("a timer should be returned");
 
-        let out = instance.step(Input::Timeout(remote, Component::HandshakeManager), time);
+        let out = instance.step(Input::Timeout(remote, Component::HandshakeManager));
         assert!(out
             .iter()
             .any(|o| matches!(o, Output::Disconnect(a) if *a == remote)));

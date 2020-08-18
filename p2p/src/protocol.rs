@@ -36,7 +36,7 @@ pub trait Message: Send + Sync + 'static {
 pub enum Component {
     SyncManager,
     HandshakeManager,
-    Main,
+    PingManager,
 }
 
 /// A protocol input event, parametrized over the network message type.
@@ -60,9 +60,8 @@ pub enum Input<M, C> {
     Sent(PeerId, usize),
     /// An external command has been received.
     Command(C),
-    /// Nothing has happened in some time.. This event is useful for checking
-    /// timeouts or running periodic tasks.
-    Idle,
+    /// Clock is ticking! Used to signify time passing.
+    Tick(LocalTime),
     /// A timeout on a peer has been reached.
     Timeout(PeerId, Component),
 }
@@ -85,7 +84,7 @@ impl<M: Message, C: Clone> Input<M, C> {
             Received(p, m) => Received(*p, Message::payload(m).clone()),
             Sent(p, n) => Sent(*p, *n),
             Command(c) => Command(c.clone()),
-            Idle => Idle,
+            Tick(t) => Tick(*t),
             Timeout(p, c) => Timeout(*p, *c),
         }
     }
@@ -141,5 +140,5 @@ pub trait Protocol<M: Message> {
 
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
-    fn step(&mut self, event: Input<M, Self::Command>, time: LocalTime) -> Vec<Output<M>>;
+    fn step(&mut self, event: Input<M, Self::Command>) -> Vec<Output<M>>;
 }

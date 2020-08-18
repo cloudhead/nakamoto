@@ -58,19 +58,18 @@ impl IntoIterator for InputResult {
 }
 
 impl InputResult {
-    #[allow(dead_code)]
-    pub fn expect<F>(&self, f: F, msg: &str) -> &Output<RawNetworkMessage>
-    where
-        F: Fn(&Output<RawNetworkMessage>) -> bool,
-    {
-        self.outputs.iter().find(|m| f(m)).expect(msg)
-    }
-
     pub fn find<F, T>(&self, f: F) -> Option<T>
     where
         F: Fn(&Output<RawNetworkMessage>) -> Option<T>,
     {
         self.outputs.iter().find_map(|m| f(m))
+    }
+
+    pub fn any<F>(&self, f: F) -> Option<&Output<RawNetworkMessage>>
+    where
+        F: Fn(&Output<RawNetworkMessage>) -> bool,
+    {
+        self.outputs.iter().find(|m| f(m))
     }
 
     pub fn message<F>(&self, f: F) -> (PeerId, &NetworkMessage)
@@ -172,7 +171,7 @@ impl Sim {
 
         InputResult {
             peer: *addr,
-            outputs: peer.protocol.step(input, self.time),
+            outputs: peer.protocol.step(input),
         }
     }
 
@@ -186,7 +185,15 @@ impl Sim {
 
     /// Let some time pass.
     pub fn elapse(&mut self, duration: LocalDuration) {
+        log::info!("(sim) Elasing {} seconds", duration.as_secs());
+
         self.time = self.time + duration;
+
+        for peer in self.peers.values_mut() {
+            for output in peer.protocol.step(Input::Tick(self.time)).drain(..) {
+                peer.schedule(&mut self.inbox, output);
+            }
+        }
     }
 
     /// Process a protocol output event.
@@ -250,7 +257,7 @@ impl Sim {
 
             for (addr, event) in events.drain(..) {
                 if let Some(ref mut peer) = self.peers.get_mut(&addr) {
-                    let outs = peer.protocol.step(event, self.time);
+                    let outs = peer.protocol.step(event);
 
                     for o in outs.into_iter() {
                         peer.schedule(&mut self.inbox, o);
@@ -319,7 +326,7 @@ pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
 
         for (peer, (proto, queue)) in sim.iter_mut() {
             if let Some(event) = queue.pop_front() {
-                let outs = proto.step(event, local_time);
+                let outs = proto.step(event);
 
                 for out in outs.into_iter() {
                     Sim::schedule(&mut tmp, &mut events, peer, out);

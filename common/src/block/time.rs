@@ -125,6 +125,11 @@ impl LocalDuration {
     pub const fn from_millis(millis: u128) -> Self {
         Self(millis)
     }
+
+    /// Return the number of seconds in this duration.
+    pub const fn as_secs(&self) -> u64 {
+        (self.0 / 1000) as u64
+    }
 }
 
 impl<'a> std::iter::Sum<&'a LocalDuration> for LocalDuration {

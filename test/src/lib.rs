@@ -38,7 +38,6 @@ pub mod headers {
 }
 
 pub mod logger {
-    use chrono::prelude::*;
     use log::*;
 
     struct Logger {
@@ -58,13 +57,7 @@ pub mod logger {
                     record.module_path().unwrap_or_default()
                 };
 
-                println!(
-                    "{} {:<5} [{}] {}",
-                    Local::now().to_rfc3339_opts(SecondsFormat::Millis, true),
-                    record.level(),
-                    target,
-                    record.args()
-                )
+                println!("[{}] {}", target, record.args())
             }
         }
 

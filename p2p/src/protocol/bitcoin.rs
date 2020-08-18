@@ -49,6 +49,8 @@ pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
 /// Time interval to wait between sent pings.
 pub const PING_INTERVAL: LocalDuration = LocalDuration::from_secs(60);
+/// Time to wait to receive a pong when sending a ping.
+pub const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 /// Target number of concurrent peer connections.
 pub const TARGET_PEER_CONNECTIONS: usize = 32;
 
@@ -444,7 +446,7 @@ impl Peer {
 }
 
 impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
-    const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(60 * 5);
+    const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(6);
 
     type Command = self::Command;
 
@@ -461,17 +463,19 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         outbound
     }
 
-    // FIXME: This function shouldn't take a time input: what if it gets a timeout
-    // which doesn't match the input time?
-    fn step(&mut self, input: Input, time: LocalTime) -> Vec<Output<RawNetworkMessage>> {
+    fn step(&mut self, input: Input) -> Vec<Output<RawNetworkMessage>> {
         let mut outbound = Vec::new();
 
-        // The local time is set from outside the protocol.
-        self.clock.set_local_time(time);
         // Generate `Event` outputs from the input.
         self.generate_events(&input, &mut outbound);
 
         match input {
+            Input::Tick(time) => {
+                debug!("[{}] Tick: local_time = {}", self.name, time);
+
+                // The local time is set from outside the protocol.
+                self.clock.set_local_time(time);
+            }
             Input::Connected {
                 addr,
                 local_addr,
@@ -631,7 +635,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
-                if let Some(peer) = self.peers.get(&addr) {
+                if let Some(peer) = self.peers.get_mut(&addr) {
                     match component {
                         Component::HandshakeManager => match peer.state {
                             PeerState::Handshake(Handshake::AwaitingVerack)
@@ -650,45 +654,52 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 outbound.extend(self.get_headers(req));
                             }
                         }
-                        _ => {
-                            warn!("[{}] Unhandled timeout: {:?}", self.name, (addr, component));
+                        Component::PingManager => {
+                            if let PeerState::Ready { last_active, .. } = peer.state {
+                                let now = self.clock.local_time();
+
+                                if let Some((_, last_ping)) = peer.last_ping {
+                                    // A ping was sent and we're waiting for a `pong`. If too much
+                                    // time has passed, we consider this peer dead, and disconnect
+                                    // from them.
+                                    if now - last_ping >= PING_TIMEOUT {
+                                        let address = peer.address;
+
+                                        log::debug!(
+                                            "[{}] {}: Disconnecting (ping timeout)",
+                                            self.name,
+                                            address
+                                        );
+                                        self.disconnect(&address, &mut outbound);
+                                    }
+                                } else if now - last_active >= PING_INTERVAL {
+                                    let ping = peer.ping(now);
+
+                                    outbound.extend(vec![
+                                        Output::Message(
+                                            peer.address,
+                                            RawNetworkMessage {
+                                                magic: self.network.magic(),
+                                                payload: ping,
+                                            },
+                                        ),
+                                        Output::SetTimeout(
+                                            addr,
+                                            Component::PingManager,
+                                            PING_TIMEOUT,
+                                        ),
+                                        Output::SetTimeout(
+                                            addr,
+                                            Component::PingManager,
+                                            PING_INTERVAL,
+                                        ),
+                                    ]);
+                                }
+                            }
                         }
                     }
                 } else {
                     debug!("[{}] Peer {} no longer exists (ignoring)", self.name, addr);
-                }
-            }
-            Input::Idle => {
-                let now = self.clock.local_time();
-                let mut disconnect = Vec::new();
-
-                debug!("[{}] Idle: local_time = {}", self.name, now);
-
-                for (_, peer) in self.peers.iter_mut() {
-                    if let PeerState::Ready { last_active, .. } = peer.state {
-                        if let Some((_, last_ping)) = peer.last_ping {
-                            // A ping was sent and we're waiting for a `pong`. If too much
-                            // time has passed, we consider this peer dead, and disconnect
-                            // from them.
-                            if now - last_ping >= Self::IDLE_TIMEOUT {
-                                disconnect.push(peer.address);
-                            }
-                        } else if now - last_active >= PING_INTERVAL {
-                            let ping = peer.ping(now);
-
-                            outbound.push(Output::Message(
-                                peer.address,
-                                RawNetworkMessage {
-                                    magic: self.network.magic(),
-                                    payload: ping,
-                                },
-                            ));
-                        }
-                    }
-                }
-
-                for addr in &disconnect {
-                    self.disconnect(&addr, &mut outbound);
                 }
             }
         };
