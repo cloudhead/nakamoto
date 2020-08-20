@@ -32,7 +32,8 @@ mod setup {
         // between instances of this protocol in tests.
         services: ServiceFlags::NETWORK,
         protocol_version: PROTOCOL_VERSION,
-        target_peers: 8,
+        target_outbound_peers: 8,
+        max_inbound_peers: 8,
         user_agent: USER_AGENT,
         relay: false,
         name: "self",
@@ -227,6 +228,8 @@ fn test_initial_sync() {
         assert_eq!(alice.syncmgr.tree.height(), height);
         assert_eq!(bob.syncmgr.tree.height(), height);
     }
+    alice.step(Input::Disconnected(bob_addr));
+
     // Alice connects to Bob.
     {
         let mut bob = Bitcoin::new(bob_tree, clock, Rng::new(), setup::CONFIG);
@@ -326,7 +329,7 @@ fn test_maintain_connections(seed: u64) {
         network,
         peers: &["alice", "bob", "olive", "john", "misha"],
         configure: |cfg| {
-            cfg.target_peers = TARGET_PEERS;
+            cfg.target_outbound_peers = TARGET_PEERS;
         },
         rng,
         ..Default::default()
@@ -450,11 +453,15 @@ fn test_handshake_version_timeout() {
         assert!(out
             .iter()
             .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
+
+        instance.step(Input::Disconnected(remote));
     }
 }
 
 #[test]
 fn test_handshake_verack_timeout() {
+    logger::init(log::Level::Debug);
+
     let network = Network::Mainnet;
     let (mut instance, _time) = setup::singleton(network);
 
@@ -483,5 +490,7 @@ fn test_handshake_verack_timeout() {
         assert!(out
             .iter()
             .any(|o| matches!(o, Output::Disconnect(a) if *a == remote)));
+
+        instance.step(Input::Disconnected(remote));
     }
 }
