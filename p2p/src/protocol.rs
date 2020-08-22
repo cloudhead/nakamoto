@@ -92,7 +92,7 @@ impl<M: Message, C: Clone> Input<M, C> {
 
 /// Output of a state transition (step) of the `Protocol` state machine.
 #[derive(Debug, Eq, PartialEq)]
-pub enum Output<M: Message> {
+pub enum Out<M: Message> {
     /// Send a message to a peer.
     Message(PeerId, M),
     /// Connect to a peer.
@@ -107,13 +107,13 @@ pub enum Output<M: Message> {
     Shutdown,
 }
 
-impl<M: Message> From<Event<M::Payload>> for Output<M> {
+impl<M: Message> From<Event<M::Payload>> for Out<M> {
     fn from(event: Event<M::Payload>) -> Self {
-        Output::Event(event)
+        Out::Event(event)
     }
 }
 
-impl<M: Message> Output<M> {
+impl<M: Message> Out<M> {
     pub fn address(&self) -> Option<PeerId> {
         match self {
             Self::Message(addr, _) => Some(*addr),
@@ -134,11 +134,13 @@ pub trait Protocol<M: Message> {
 
     /// A command to query or control the protocol.
     type Command;
+    /// The output of a state machine transition.
+    type Output: Iterator<Item = Out<M>>;
 
     /// Initialize the protocol. Called once before any event is sent to the state machine.
-    fn initialize(&mut self, time: LocalTime) -> Vec<Output<M>>;
+    fn initialize(&mut self, time: LocalTime) -> Self::Output;
 
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
-    fn step(&mut self, event: Input<M, Self::Command>) -> Vec<Output<M>>;
+    fn step(&mut self, event: Input<M, Self::Command>) -> Self::Output;
 }

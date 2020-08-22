@@ -11,7 +11,7 @@ use nakamoto_common::block::time::LocalTime;
 use crate::error::Error;
 use crate::event::Event;
 use crate::fallible;
-use crate::protocol::{Component, Input, Link, Message, Output, Protocol};
+use crate::protocol::{Component, Input, Link, Message, Out, Protocol};
 use crate::reactor::time::TimeoutManager;
 
 use log::*;
@@ -234,7 +234,7 @@ where
             let local_time = SystemTime::now().into();
             let outs = protocol.initialize(local_time);
 
-            match self.process::<P>(outs, local_time)? {
+            match self.process::<P, _>(outs, local_time)? {
                 Control::Shutdown => return Ok(()),
                 _ => {}
             }
@@ -313,7 +313,7 @@ where
 
             while let Some(event) = self.events.pop_front() {
                 let outs = protocol.step(event);
-                let control = self.process::<P>(outs, local_time)?;
+                let control = self.process::<P, _>(outs, local_time)?;
 
                 if control == Control::Shutdown {
                     return Ok(());
@@ -323,16 +323,16 @@ where
     }
 
     /// Process protocol state machine outputs.
-    fn process<P: Protocol<M>>(
+    fn process<P: Protocol<M>, I: Iterator<Item = Out<M>>>(
         &mut self,
-        outputs: Vec<Output<M>>,
+        outputs: I,
         local_time: LocalTime,
     ) -> Result<Control, Error> {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
-        for out in outputs.into_iter() {
+        for out in outputs {
             match out {
-                Output::Message(addr, msg) => {
+                Out::Message(addr, msg) => {
                     if let Some(peer) = self.peers.get_mut(&addr) {
                         let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
@@ -346,7 +346,7 @@ where
                         }
                     }
                 }
-                Output::Connect(addr) => {
+                Out::Connect(addr) => {
                     let stream = self::dial(&addr)?;
                     let local_addr = stream.local_addr()?;
                     let addr = stream.peer_addr()?;
@@ -355,7 +355,7 @@ where
 
                     self.register_peer(addr, local_addr, stream, Link::Outbound);
                 }
-                Output::Disconnect(addr) => {
+                Out::Disconnect(addr) => {
                     if let Some(peer) = self.peers.get(&addr) {
                         debug!("{}: Disconnecting..", addr);
 
@@ -368,16 +368,16 @@ where
                         self.unregister_peer(addr);
                     }
                 }
-                Output::SetTimeout(key, component, timeout) => {
+                Out::SetTimeout(key, component, timeout) => {
                     self.timeouts
                         .register((key, component), local_time + timeout);
                 }
-                Output::Event(event) => {
+                Out::Event(event) => {
                     trace!("Event: {:?}", event);
 
                     self.subscriber.try_send(event).unwrap(); // FIXME
                 }
-                Output::Shutdown => {
+                Out::Shutdown => {
                     info!("Shutdown received");
 
                     return Ok(Control::Shutdown);

@@ -39,17 +39,17 @@ impl<'a> Net<'a> {
 #[derive(Debug)]
 pub struct InputResult {
     peer: PeerId,
-    outputs: Vec<Output<RawNetworkMessage>>,
+    outputs: Vec<Out<RawNetworkMessage>>,
 }
 
-impl From<InputResult> for Vec<Output<RawNetworkMessage>> {
+impl From<InputResult> for Vec<Out<RawNetworkMessage>> {
     fn from(input: InputResult) -> Self {
         input.outputs
     }
 }
 
 impl IntoIterator for InputResult {
-    type Item = Output<RawNetworkMessage>;
+    type Item = Out<RawNetworkMessage>;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -60,14 +60,14 @@ impl IntoIterator for InputResult {
 impl InputResult {
     pub fn find<F, T>(&self, f: F) -> Option<T>
     where
-        F: Fn(&Output<RawNetworkMessage>) -> Option<T>,
+        F: Fn(&Out<RawNetworkMessage>) -> Option<T>,
     {
         self.outputs.iter().find_map(|m| f(m))
     }
 
-    pub fn any<F>(&self, f: F) -> Option<&Output<RawNetworkMessage>>
+    pub fn any<F>(&self, f: F) -> Option<&Out<RawNetworkMessage>>
     where
-        F: Fn(&Output<RawNetworkMessage>) -> bool,
+        F: Fn(&Out<RawNetworkMessage>) -> bool,
     {
         self.outputs.iter().find(|m| f(m))
     }
@@ -103,7 +103,7 @@ impl Peer {
     pub fn schedule(
         &mut self,
         inbox: &mut VecDeque<(PeerId, Input)>,
-        output: Output<RawNetworkMessage>,
+        output: Out<RawNetworkMessage>,
     ) {
         Sim::schedule(&mut self.events, inbox, &self.id, output)
     }
@@ -171,7 +171,7 @@ impl Sim {
 
         InputResult {
             peer: *addr,
-            outputs: peer.protocol.step(input),
+            outputs: peer.protocol.step(input).collect(),
         }
     }
 
@@ -190,7 +190,7 @@ impl Sim {
         self.time = self.time + duration;
 
         for peer in self.peers.values_mut() {
-            for output in peer.protocol.step(Input::Tick(self.time)).drain(..) {
+            for output in peer.protocol.step(Input::Tick(self.time)) {
                 peer.schedule(&mut self.inbox, output);
             }
         }
@@ -201,7 +201,7 @@ impl Sim {
         events: &mut Vec<Event<<M as protocol::Message>::Payload>>,
         inbox: &mut VecDeque<(PeerId, protocol::Input<M, C>)>,
         peer: &PeerId,
-        out: Output<M>,
+        out: Out<M>,
     ) where
         M: Message + Debug,
         C: Debug,
@@ -209,11 +209,11 @@ impl Sim {
         let peer = *peer;
 
         match out {
-            Output::Message(receiver, msg) => {
+            Out::Message(receiver, msg) => {
                 info!("(sim) {} -> {}: {:#?}", peer, receiver, msg);
                 inbox.push_back((receiver, protocol::Input::Received(peer, msg)))
             }
-            Output::Connect(remote) => {
+            Out::Connect(remote) => {
                 info!("(sim) {} => {}", peer, remote);
                 inbox.push_back((
                     remote,
@@ -232,7 +232,7 @@ impl Sim {
                     },
                 ));
             }
-            Output::Event(event) => {
+            Out::Event(event) => {
                 events.push(event);
             }
             _ => {}
@@ -257,9 +257,7 @@ impl Sim {
 
             for (addr, event) in events.drain(..) {
                 if let Some(ref mut peer) = self.peers.get_mut(&addr) {
-                    let outs = peer.protocol.step(event);
-
-                    for o in outs.into_iter() {
+                    for o in peer.protocol.step(event) {
                         peer.schedule(&mut self.inbox, o);
                     }
                 }
@@ -326,9 +324,7 @@ pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
 
         for (peer, (proto, queue)) in sim.iter_mut() {
             if let Some(event) = queue.pop_front() {
-                let outs = proto.step(event);
-
-                for out in outs.into_iter() {
+                for out in proto.step(event) {
                     Sim::schedule(&mut tmp, &mut events, peer, out);
                 }
             }

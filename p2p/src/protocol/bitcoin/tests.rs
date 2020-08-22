@@ -14,9 +14,9 @@ use nakamoto_test::block::cache::model;
 use nakamoto_test::logger;
 use nakamoto_test::TREE;
 
-fn payload<M: Message>(o: &Output<M>) -> Option<(net::SocketAddr, &M::Payload)> {
+fn payload<M: Message>(o: &Out<M>) -> Option<(net::SocketAddr, &M::Payload)> {
     match o {
-        Output::Message(a, m) => Some((*a, m.payload())),
+        Out::Message(a, m) => Some((*a, m.payload())),
         _ => None,
     }
 }
@@ -265,7 +265,7 @@ fn test_idle() {
 
     sim.input(&alice, Input::Timeout(bob, Component::PingManager))
         .any(|o| {
-            matches!(o, Output::Message(
+            matches!(o, Out::Message(
                 addr,
                 RawNetworkMessage {
                     payload: NetworkMessage::Ping(_), ..
@@ -279,7 +279,7 @@ fn test_idle() {
 
     // Alice now decides to disconnect Bob.
     sim.input(&alice, Input::Timeout(bob, Component::PingManager))
-        .any(|o| matches!(o, Output::Disconnect(addr) if addr == &bob))
+        .any(|o| matches!(o, Out::Disconnect(addr) if addr == &bob))
         .expect("Alice disconnects Bob");
 }
 
@@ -294,24 +294,26 @@ fn test_getheaders_timeout() {
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
-    let out = local.step(Input::Received(
-        remote_addr,
-        message::raw(
-            NetworkMessage::Inv(vec![Inventory::Block(hash)]),
-            network.magic(),
-        ),
-    ));
+    let out = local
+        .step(Input::Received(
+            remote_addr,
+            message::raw(
+                NetworkMessage::Inv(vec![Inventory::Block(hash)]),
+                network.magic(),
+            ),
+        ))
+        .collect::<Vec<_>>();
+
     out.iter()
         .find(|o| matches!(payload(o), Some((_, NetworkMessage::GetHeaders(_)))))
         .expect("a `getheaders` message should be returned");
     out.iter()
-        .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if addr == &remote_addr))
+        .find(|o| matches!(o, Out::SetTimeout(addr, _, _) if addr == &remote_addr))
         .expect("a timer should be returned");
 
     local
         .step(Input::Timeout(remote_addr, Component::SyncManager))
-        .iter()
-        .find(|o| matches!(o, Output::Disconnect(addr) if addr == &remote_addr))
+        .find(|o| matches!(o, Out::Disconnect(addr) if addr == &remote_addr))
         .expect("the unresponsive peer should be disconnected");
 }
 
@@ -358,7 +360,7 @@ fn test_maintain_connections(seed: u64) {
 
     let addr = result
         .find(|o| match o {
-            Output::Connect(addr) => Some(*addr),
+            Out::Connect(addr) => Some(*addr),
             _ => None,
         })
         .expect("Alice connects to a peer");
@@ -440,19 +442,17 @@ fn test_handshake_version_timeout() {
     let local = ([0, 0, 0, 0], 0).into();
 
     for link in &[Link::Outbound, Link::Inbound] {
-        let out = instance.step(Input::Connected {
-            addr: remote,
-            local_addr: local,
-            link: *link,
-        });
-        out.iter()
-            .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if addr == &remote))
+        instance
+            .step(Input::Connected {
+                addr: remote,
+                local_addr: local,
+                link: *link,
+            })
+            .find(|o| matches!(o, Out::SetTimeout(addr, _, _) if addr == &remote))
             .expect("a timer should be returned");
 
-        let out = instance.step(Input::Timeout(remote, Component::HandshakeManager));
-        assert!(out
-            .iter()
-            .any(|o| matches!(o, Output::Disconnect(a) if a == &remote)));
+        let mut out = instance.step(Input::Timeout(remote, Component::HandshakeManager));
+        assert!(out.any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
 
         instance.step(Input::Disconnected(remote));
     }
@@ -475,21 +475,19 @@ fn test_handshake_verack_timeout() {
             link: *link,
         });
 
-        let out = instance.step(Input::Received(
-            remote,
-            RawNetworkMessage {
-                magic: network.magic(),
-                payload: instance.version(local, remote, 0, 0),
-            },
-        ));
-        out.iter()
-            .find(|o| matches!(o, Output::SetTimeout(addr, _, _) if *addr == remote))
+        instance
+            .step(Input::Received(
+                remote,
+                RawNetworkMessage {
+                    magic: network.magic(),
+                    payload: instance.version(local, remote, 0, 0),
+                },
+            ))
+            .find(|o| matches!(o, Out::SetTimeout(addr, _, _) if *addr == remote))
             .expect("a timer should be returned");
 
-        let out = instance.step(Input::Timeout(remote, Component::HandshakeManager));
-        assert!(out
-            .iter()
-            .any(|o| matches!(o, Output::Disconnect(a) if *a == remote)));
+        let mut out = instance.step(Input::Timeout(remote, Component::HandshakeManager));
+        assert!(out.any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
 
         instance.step(Input::Disconnected(remote));
     }
