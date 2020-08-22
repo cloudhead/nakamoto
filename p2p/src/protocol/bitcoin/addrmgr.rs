@@ -63,6 +63,7 @@ pub struct AddressManager {
     addresses: HashMap<net::IpAddr, KnownAddress>,
     address_ranges: HashMap<u8, HashSet<net::IpAddr>>,
     connected: HashSet<net::IpAddr>,
+    local_addrs: HashSet<net::SocketAddr>,
     rng: fastrand::Rng,
 }
 
@@ -73,6 +74,7 @@ impl AddressManager {
             addresses: HashMap::with_hasher(rng.clone().into()),
             address_ranges: HashMap::with_hasher(rng.clone().into()),
             connected: HashSet::new(),
+            local_addrs: HashSet::new(),
             rng,
         }
     }
@@ -101,6 +103,12 @@ impl AddressManager {
     pub fn clear(&mut self) {
         self.addresses.clear();
         self.address_ranges.clear();
+    }
+
+    /// Record an address of ours as seen by a remote peer.
+    /// This helps avoid self-connections.
+    pub fn record_local_addr(&mut self, addr: net::SocketAddr) {
+        self.local_addrs.insert(addr);
     }
 
     /// Same as `insert`, but supports adding bare socket addresses to the address manager.
@@ -189,6 +197,11 @@ impl AddressManager {
                 Err(_) => continue,
             };
             let ip = net_addr.ip();
+
+            // Ensure no self-connections.
+            if self.local_addrs.contains(&net_addr) {
+                continue;
+            }
 
             // Ignore non-routable addresses if they come from a peer.
             // Allow local addresses when the source is `Other`.
@@ -286,6 +299,8 @@ impl AddressManager {
     /// assert!(safe > adversary * 2, "safe addresses are picked twice more often");
     ///
     /// ```
+    /// TODO: Should return an iterator.
+    ///
     pub fn sample(&self) -> Option<&Address> {
         assert!(self.connected.len() <= self.len());
 

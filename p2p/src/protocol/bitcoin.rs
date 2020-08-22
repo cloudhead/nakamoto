@@ -41,6 +41,8 @@ pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
 pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
 /// Maximum number of headers sent in a `headers` message.
 pub const MAX_MESSAGE_HEADERS: usize = 2000;
+/// Maximum number of addresses to return when receiving a `getaddr` message.
+pub const MAX_GETADDR_ADDRESSES: usize = 8;
 /// Maximum number of latencies recorded per peer.
 pub const MAX_RECORDED_LATENCIES: usize = 64;
 /// Maximum height difference for a stale peer, to maintain the connection (2 weeks).
@@ -537,6 +539,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 info!("[{}] {}: Peer connected ({:?})", self.name, &addr, link);
                 debug_assert!(!self.connected.contains(&addr));
 
+                self.addrmgr.record_local_addr(local_addr);
+
                 match link {
                     Link::Inbound if self.connected.len() >= self.max_inbound_peers => {
                         // Don't allow inbound connections beyond the configured limit.
@@ -578,27 +582,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                 // If an outbound peer disconnected, we should make sure to maintain
                 // our target outbound connection count.
-                if link == Link::Outbound
-                    && self
-                        .peers
-                        .values()
-                        .filter(|p| p.is_ready() && p.is_outbound())
-                        .count()
-                        < self.target_outbound_peers
-                {
-                    if let Some(addr) = self.addrmgr.sample() {
-                        if let Ok(sockaddr) = addr.socket_addr() {
-                            out.push(Out::Connect(sockaddr));
-                        } else {
-                            // TODO: Perhaps the address manager should just return addresses
-                            // that can be converted to socket addresses?
-                            // The only ones that cannot are Tor addresses.
-                            todo!();
-                        }
-                    } else {
-                        // We're out of addresses, ask for more!
-                        out.extend(self.get_addresses());
-                    }
+                if link == Link::Outbound {
+                    self.maintain_outbound_peers(&mut out);
                 }
             }
             Input::Received(addr, msg) => {
@@ -821,6 +806,38 @@ impl<T: BlockTree> Bitcoin<T> {
         out.finish()
     }
 
+    /// Attempt to maintain a certain number of outbound peers.
+    fn maintain_outbound_peers(&mut self, out: &mut OutputBuilder<RawNetworkMessage>) {
+        let current = self
+            .peers
+            .values()
+            .filter(|p| p.is_ready() && p.is_outbound())
+            .count();
+
+        if current < self.target_outbound_peers {
+            debug!(
+                "[{}] Peer outbound connections ({}) below target ({})",
+                self.name, current, self.target_outbound_peers
+            );
+
+            if let Some(addr) = self.addrmgr.sample() {
+                if let Ok(sockaddr) = addr.socket_addr() {
+                    debug_assert!(!self.connected.contains(&sockaddr));
+
+                    out.push(Out::Connect(sockaddr));
+                } else {
+                    // TODO: Perhaps the address manager should just return addresses
+                    // that can be converted to socket addresses?
+                    // The only ones that cannot are Tor addresses.
+                    todo!();
+                }
+            } else {
+                // We're out of addresses, ask for more!
+                out.extend(self.get_addresses());
+            }
+        }
+    }
+
     pub fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) -> Vec<Out<RawNetworkMessage>> {
         let now = self.clock.local_time();
         let cmd = msg.cmd();
@@ -893,6 +910,8 @@ impl<T: BlockTree> Bitcoin<T> {
                     user_agent,
                     // Peer nonce.
                     nonce,
+                    // Our address, as seen by the remote peer.
+                    receiver,
                     ..
                 }) = msg.payload
                 {
@@ -944,6 +963,11 @@ impl<T: BlockTree> Bitcoin<T> {
                             );
                             return vec![Out::Disconnect(addr)];
                         }
+                    }
+
+                    // Record the address this peer has of us.
+                    if let Ok(addr) = receiver.socket_addr() {
+                        self.addrmgr.record_local_addr(addr);
                     }
 
                     let mut peer = self
@@ -1006,6 +1030,7 @@ impl<T: BlockTree> Bitcoin<T> {
                         Link::Outbound => vec![
                             msg.build(addr, NetworkMessage::Verack),
                             msg.build(addr, NetworkMessage::SendHeaders),
+                            msg.build(addr, NetworkMessage::GetAddr),
                             msg.build(addr, ping),
                         ],
                         Link::Inbound => vec![
@@ -1053,6 +1078,16 @@ impl<T: BlockTree> Bitcoin<T> {
                     }
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
                     return self.receive_inv(addr, inventory);
+                } else if let NetworkMessage::GetAddr = msg.payload {
+                    // TODO: Use `sample` here when it returns an iterator.
+                    let addrs = self
+                        .addrmgr
+                        .iter()
+                        .take(MAX_GETADDR_ADDRESSES)
+                        // TODO: Return a non-zero time value.
+                        .map(|a| (0, a.clone()))
+                        .collect();
+                    return vec![self.message(addr, NetworkMessage::Addr(addrs))];
                 }
             }
             PeerState::Disconnecting => {
