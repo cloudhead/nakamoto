@@ -80,11 +80,13 @@ pub enum Command {
     Shutdown,
 }
 
-pub struct Output<M: Message> {
+type Output = std::vec::IntoIter<Out<RawNetworkMessage>>;
+
+pub struct OutputBuilder<M: Message> {
     queue: Vec<Out<M>>,
 }
 
-impl<M: Message> Output<M> {
+impl<M: Message> OutputBuilder<M> {
     fn push(&mut self, output: Out<M>) {
         self.queue.push(output);
     }
@@ -99,6 +101,10 @@ impl<M: Message> Output<M> {
 
     fn into_iter(self) -> std::vec::IntoIter<Out<M>> {
         self.queue.into_iter()
+    }
+
+    fn finish(self) -> std::vec::IntoIter<Out<M>> {
+        self.into_iter()
     }
 
     pub fn with_capacity(cap: usize) -> Self {
@@ -495,12 +501,12 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(6);
 
     type Command = self::Command;
-    type Output = std::vec::IntoIter<Out<RawNetworkMessage>>;
+    type Output = self::Output;
 
     fn initialize(&mut self, time: LocalTime) -> Self::Output {
         self.clock.set_local_time(time);
 
-        let mut out = Output::with_capacity(self.target_outbound_peers);
+        let mut out = OutputBuilder::with_capacity(self.target_outbound_peers);
 
         for addr in self.addrmgr.iter().take(self.target_outbound_peers) {
             if let Ok(addr) = addr.socket_addr() {
@@ -511,7 +517,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     }
 
     fn step(&mut self, input: Input) -> Self::Output {
-        let mut out = Output::with_capacity(16);
+        let mut out = OutputBuilder::with_capacity(16);
 
         // Generate `Event` outputs from the input.
         self.generate_events(&input, &mut out);
@@ -1129,7 +1135,7 @@ impl<T: BlockTree> Bitcoin<T> {
         outbound
     }
 
-    fn drain_sync_events(&mut self, outbound: &mut Output<RawNetworkMessage>) {
+    fn drain_sync_events(&mut self, outbound: &mut OutputBuilder<RawNetworkMessage>) {
         for event in self.syncmgr.events() {
             match event {
                 syncmgr::Event::ReceivedInvalidHeaders(addr, error) => {
@@ -1167,7 +1173,7 @@ impl<T: BlockTree> Bitcoin<T> {
         }
     }
 
-    fn disconnect(&mut self, addr: &PeerId, out: &mut Output<RawNetworkMessage>) {
+    fn disconnect(&mut self, addr: &PeerId, out: &mut OutputBuilder<RawNetworkMessage>) {
         let peer = self
             .peers
             .get_mut(&addr)
@@ -1177,7 +1183,7 @@ impl<T: BlockTree> Bitcoin<T> {
         out.push(Out::Disconnect(*addr));
     }
 
-    fn generate_events(&self, input: &Input, out: &mut Output<RawNetworkMessage>) {
+    fn generate_events(&self, input: &Input, out: &mut OutputBuilder<RawNetworkMessage>) {
         match input {
             Input::Connected { addr, link, .. } => {
                 out.push(Out::Event(Event::Connected(*addr, *link)));
