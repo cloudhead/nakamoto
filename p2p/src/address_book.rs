@@ -38,6 +38,10 @@ impl AddressBook {
         self.addrs.push(addr);
     }
 
+    pub fn pop(&mut self) -> Option<net::SocketAddr> {
+        self.addrs.pop()
+    }
+
     pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> io::Result<()> {
         for seed in seeds.into_iter() {
             let addrs = seed.to_socket_addrs()?;

@@ -93,9 +93,10 @@ impl InputResult {
 }
 
 pub struct Peer {
-    id: PeerId,
-    name: &'static str,
-    protocol: Bitcoin<model::Cache>,
+    pub id: PeerId,
+    pub name: &'static str,
+    pub protocol: Bitcoin<model::Cache>,
+
     events: Vec<Event<NetworkMessage>>,
 }
 
@@ -165,6 +166,15 @@ impl Sim {
             .unwrap_or_else(|| panic!("Sim::get: peer {:?} doesn't exist", name))
     }
 
+    /// Get a peer instance by name.
+    pub fn peer(&mut self, name: &str) -> &Peer {
+        let id = self.get(name);
+
+        self.peers
+            .get(&id)
+            .unwrap_or_else(|| panic!("Sim::instance: peer {:?} doesn't exist", id))
+    }
+
     /// Send an input directly to a peer and return the result.
     pub fn input(&mut self, addr: &PeerId, input: Input) -> InputResult {
         let peer = self.peers.get_mut(&addr).unwrap();
@@ -214,7 +224,9 @@ impl Sim {
                 inbox.push_back((receiver, protocol::Input::Received(peer, msg)))
             }
             Out::Connect(remote) => {
+                assert!(remote != peer, "self-connections are not allowed");
                 info!("(sim) {} => {}", peer, remote);
+
                 inbox.push_back((
                     remote,
                     protocol::Input::Connected {
