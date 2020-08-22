@@ -117,7 +117,7 @@ impl AddressManager {
         &mut self,
         addrs: impl Iterator<Item = net::SocketAddr>,
         source: Source,
-    ) {
+    ) -> bool {
         self.insert(
             addrs.map(|a| (Time::default(), Address::new(&a, ServiceFlags::NONE))),
             source,
@@ -189,7 +189,10 @@ impl AddressManager {
     ///
     /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
     /// ```
-    pub fn insert(&mut self, addrs: impl Iterator<Item = (Time, Address)>, source: Source) {
+    pub fn insert(&mut self, addrs: impl Iterator<Item = (Time, Address)>, source: Source) -> bool {
+        // True if at least one address was added into the map.
+        let mut okay = false;
+
         // TODO: Store timestamp.
         for (_, addr) in addrs {
             let net_addr = match addr.socket_addr() {
@@ -213,13 +216,16 @@ impl AddressManager {
                 Source::Other if !self::is_routable(&ip) && !self::is_local(&ip) => continue,
                 _ => {}
             }
-            // Ignore addresses we already know.
-            if self.addresses.contains_key(&ip) {
+
+            if self
+                .addresses
+                .insert(ip, KnownAddress::new(addr, source.clone()))
+                .is_some()
+            {
+                // Ignore addresses we already know.
                 continue;
             }
-
-            self.addresses
-                .insert(ip, KnownAddress::new(addr, source.clone()));
+            okay = true; // As soon as one addresse was inserted, consider it a success.
 
             let key = self::addr_key(net_addr.ip());
             let range = self.address_ranges.entry(key).or_default();
@@ -239,6 +245,7 @@ impl AddressManager {
             }
             range.insert(ip);
         }
+        okay
     }
 
     /// Pick an address at random from the set of known addresses.

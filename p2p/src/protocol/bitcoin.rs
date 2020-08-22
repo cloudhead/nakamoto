@@ -539,6 +539,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 info!("[{}] {}: Peer connected ({:?})", self.name, &addr, link);
                 debug_assert!(!self.connected.contains(&addr));
 
+                // This is usually not that useful, except when our local address is actually the
+                // address our peers see.
                 self.addrmgr.record_local_addr(local_addr);
 
                 match link {
@@ -886,9 +888,15 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
                 return vec![];
             } else if let NetworkMessage::Addr(addrs) = msg.payload {
-                self.addrmgr
-                    .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
-                return vec![];
+                let mut out = OutputBuilder::with_capacity(TARGET_OUTBOUND_PEERS);
+
+                if self
+                    .addrmgr
+                    .insert(addrs.into_iter(), addrmgr::Source::Peer(addr))
+                {
+                    self.maintain_outbound_peers(&mut out);
+                }
+                return out.finish().collect();
             } else if let NetworkMessage::Headers(headers) = msg.payload {
                 return self.receive_headers(addr, headers);
             }
@@ -1083,6 +1091,8 @@ impl<T: BlockTree> Bitcoin<T> {
                     let addrs = self
                         .addrmgr
                         .iter()
+                        // Don't send the peer their own address, nor non-TCP addresses.
+                        .filter(|a| a.socket_addr().map_or(false, |s| s != addr))
                         .take(MAX_GETADDR_ADDRESSES)
                         // TODO: Return a non-zero time value.
                         .map(|a| (0, a.clone()))
