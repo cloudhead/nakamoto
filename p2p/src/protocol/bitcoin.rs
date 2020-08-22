@@ -73,6 +73,7 @@ pub enum Command {
     GetTip(chan::Sender<BlockHeader>),
     GetBlock(BlockHash),
     Connect(net::SocketAddr),
+    Disconnect(net::SocketAddr),
     Receive(net::SocketAddr, NetworkMessage),
     ImportHeaders(
         Vec<BlockHeader>,
@@ -601,6 +602,13 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                         if !self.connected.contains(&addr) {
                             out.push(Out::Connect(addr));
+                        }
+                    }
+                    Command::Disconnect(addr) => {
+                        debug!("[{}] Received command: Disconnect({})", self.name, addr);
+
+                        if self.connected.contains(&addr) {
+                            out.push(Out::Disconnect(addr));
                         }
                     }
                     Command::Receive(addr, msg) => {
