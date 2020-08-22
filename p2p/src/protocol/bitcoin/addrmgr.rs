@@ -21,6 +21,8 @@ const MAX_RANGE_SIZE: usize = 256;
 pub enum Source {
     /// An address that was shared by another peer.
     Peer(net::SocketAddr),
+    /// An address that was discovered by connecting to a peer.
+    Connected,
     /// An address from an unspecified source.
     Other,
 }
@@ -146,7 +148,7 @@ impl AddressManager {
     pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags) {
         self.insert(
             std::iter::once((Time::default(), Address::new(addr, services))),
-            Source::default(),
+            Source::Connected,
         );
     }
 
