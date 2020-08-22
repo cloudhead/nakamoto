@@ -596,7 +596,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             todo!();
                         }
                     } else {
-                        // TODO: Out of addresses, ask for more!
+                        // We're out of addresses, ask for more!
+                        out.extend(self.get_addresses());
                     }
                 }
             }
@@ -804,6 +805,20 @@ impl<T: BlockTree> Bitcoin<T> {
             &mut out,
         );
         out
+    }
+
+    /// Send a `getaddr` message to all our outbound peers.
+    fn get_addresses(&self) -> Output {
+        let mut out = OutputBuilder::with_capacity(1);
+
+        for (addr, _) in self
+            .peers
+            .iter()
+            .filter(|(_, p)| p.is_ready() && p.is_outbound())
+        {
+            out.push(self.message(*addr, NetworkMessage::GetAddr));
+        }
+        out.finish()
     }
 
     pub fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) -> Vec<Out<RawNetworkMessage>> {
