@@ -138,7 +138,7 @@ impl AddressManager {
     /// Called when a peer has handshaked.
     pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags) {
         self.insert(
-            std::iter::once((Time::default(), Address::new(addr.into(), services))),
+            std::iter::once((Time::default(), Address::new(addr, services))),
             Source::default(),
         );
     }

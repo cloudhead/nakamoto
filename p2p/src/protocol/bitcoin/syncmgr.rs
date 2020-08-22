@@ -190,10 +190,10 @@ impl<T: BlockTree> SyncManager<T> {
             return None;
         }
 
-        return Some(SendHeaders {
+        Some(SendHeaders {
             addrs: vec![*addr],
             headers,
-        });
+        })
     }
 
     pub fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
@@ -268,7 +268,7 @@ impl<T: BlockTree> SyncManager<T> {
 
                         return self
                             .broadcast_tip(&tip)
-                            .map(|msg| SyncResult::SendHeaders(msg))
+                            .map(SyncResult::SendHeaders)
                             .unwrap_or(SyncResult::Okay);
                     } else {
                         self.events.push(Event::HeadersImported(import_result));

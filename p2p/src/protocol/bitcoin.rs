@@ -572,26 +572,25 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                 // If an outbound peer disconnected, we should make sure to maintain
                 // our target outbound connection count.
-                if link == Link::Outbound {
-                    if self
+                if link == Link::Outbound
+                    && self
                         .peers
                         .values()
                         .filter(|p| p.is_ready() && p.is_outbound())
                         .count()
                         < self.target_outbound_peers
-                    {
-                        if let Some(addr) = self.addrmgr.sample() {
-                            if let Ok(sockaddr) = addr.socket_addr() {
-                                out.push(Out::Connect(sockaddr));
-                            } else {
-                                // TODO: Perhaps the address manager should just return addresses
-                                // that can be converted to socket addresses?
-                                // The only ones that cannot are Tor addresses.
-                                todo!();
-                            }
+                {
+                    if let Some(addr) = self.addrmgr.sample() {
+                        if let Ok(sockaddr) = addr.socket_addr() {
+                            out.push(Out::Connect(sockaddr));
                         } else {
-                            // TODO: Out of addresses, ask for more!
+                            // TODO: Perhaps the address manager should just return addresses
+                            // that can be converted to socket addresses?
+                            // The only ones that cannot are Tor addresses.
+                            todo!();
                         }
+                    } else {
+                        // TODO: Out of addresses, ask for more!
                     }
                 }
             }
@@ -973,7 +972,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     self.ready.insert(addr);
                     self.clock.record_offset(addr, peer.time_offset);
-                    self.addrmgr.peer_negotiated(&addr, peer.services.clone());
+                    self.addrmgr.peer_negotiated(&addr, peer.services);
 
                     let ping = peer.ping(now);
                     let link = peer.link;
