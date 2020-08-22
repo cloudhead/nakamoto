@@ -888,6 +888,10 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
                 return vec![];
             } else if let NetworkMessage::Addr(addrs) = msg.payload {
+                if addrs.is_empty() {
+                    // Peer misbehaving, got empty message.
+                    return vec![];
+                }
                 let mut out = OutputBuilder::with_capacity(TARGET_OUTBOUND_PEERS);
 
                 if self
