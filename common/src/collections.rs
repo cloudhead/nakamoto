@@ -3,6 +3,9 @@ use bitcoin_hashes::siphash24::Hash;
 /// A `HashMap` which uses `fastrand::Rng` for its random state.
 pub type HashMap<K, V> = std::collections::HashMap<K, V, RandomState>;
 
+/// A `HashSet` which uses `fastrand::Rng` for its random state.
+pub type HashSet<K> = std::collections::HashSet<K, RandomState>;
+
 #[derive(Default)]
 pub struct Hasher {
     data: Vec<u8>,

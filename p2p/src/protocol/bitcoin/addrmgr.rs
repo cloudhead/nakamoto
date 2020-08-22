@@ -2,7 +2,6 @@
 //! The peer-to-peer address manager.
 //!
 #![warn(missing_docs)]
-use std::collections::HashSet;
 use std::net;
 
 use bitcoin::network::address::Address;
@@ -10,7 +9,7 @@ use bitcoin::network::constants::ServiceFlags;
 
 use nakamoto_common::block::time::LocalTime;
 use nakamoto_common::block::Time;
-use nakamoto_common::collections::HashMap;
+use nakamoto_common::collections::{HashMap, HashSet};
 
 use crate::address_book::AddressBook;
 
@@ -59,7 +58,6 @@ impl KnownAddress {
 /// Manages peer network addresses.
 #[derive(Debug)]
 pub struct AddressManager {
-    // FIXME: HashMap and HashSet are non-deterministic.
     addresses: HashMap<net::IpAddr, KnownAddress>,
     address_ranges: HashMap<u8, HashSet<net::IpAddr>>,
     connected: HashSet<net::IpAddr>,
@@ -73,8 +71,8 @@ impl AddressManager {
         Self {
             addresses: HashMap::with_hasher(rng.clone().into()),
             address_ranges: HashMap::with_hasher(rng.clone().into()),
-            connected: HashSet::new(),
-            local_addrs: HashSet::new(),
+            connected: HashSet::with_hasher(rng.clone().into()),
+            local_addrs: HashSet::with_hasher(rng.clone().into()),
             rng,
         }
     }
@@ -134,12 +132,13 @@ impl AddressManager {
         self.connected.remove(&addr.ip());
 
         let key = self::addr_key(addr.ip());
-        let range = self.address_ranges.entry(key).or_default();
 
-        range.remove(&addr.ip());
+        if let Some(range) = self.address_ranges.get_mut(&key) {
+            range.remove(&addr.ip());
 
-        if range.is_empty() {
-            self.address_ranges.remove(&key);
+            if range.is_empty() {
+                self.address_ranges.remove(&key);
+            }
         }
     }
 
@@ -228,7 +227,10 @@ impl AddressManager {
             okay = true; // As soon as one addresse was inserted, consider it a success.
 
             let key = self::addr_key(net_addr.ip());
-            let range = self.address_ranges.entry(key).or_default();
+            let range = self
+                .address_ranges
+                .entry(key)
+                .or_insert(HashSet::with_hasher(self.rng.clone().into()));
 
             // If the address range is already full, remove a random address
             // before inserting this new one.
