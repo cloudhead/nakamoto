@@ -220,7 +220,7 @@ impl Sim {
 
         match out {
             Out::Message(receiver, msg) => {
-                info!("(sim) {} -> {}: {:#?}", peer, receiver, msg);
+                info!("(sim) {} -> {}: {:?}", peer, receiver, msg);
                 inbox.push_back((receiver, protocol::Input::Received(peer, msg)))
             }
             Out::Connect(remote) => {
@@ -243,6 +243,12 @@ impl Sim {
                         link: Link::Outbound,
                     },
                 ));
+            }
+            Out::Disconnect(remote) => {
+                info!("(sim) {} =/= {}", peer, remote);
+
+                inbox.push_back((remote, protocol::Input::Disconnected(peer)));
+                inbox.push_back((peer, protocol::Input::Disconnected(remote)));
             }
             Out::Event(event) => {
                 events.push(event);

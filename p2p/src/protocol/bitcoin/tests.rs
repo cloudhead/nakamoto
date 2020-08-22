@@ -492,3 +492,46 @@ fn test_handshake_verack_timeout() {
         instance.step(Input::Disconnected(remote));
     }
 }
+
+#[test]
+fn test_getaddr() {
+    let network = Network::Mainnet;
+    let mut sim = simulator::Net {
+        network,
+        peers: &["alice", "bob", "olive", "fred"],
+        configure: |cfg| {
+            // Each peer only needs to connect to three other peers.
+            cfg.target_outbound_peers = 3;
+        },
+        ..Default::default()
+    }
+    .into();
+
+    // Run the simulation until no messages are exchanged.
+    sim.step();
+
+    // Pick a peer to test.
+    let alice = sim.get("alice");
+
+    // Disconnect a peer.
+    let peer = *sim.peer("alice").protocol.ready.iter().next().unwrap();
+    let result = sim.input(&alice, Input::Disconnected(peer));
+
+    // This should trigger a `getaddr` because Alice isn't connected to enough peers now.
+    let (peer, _) = result.message(|_, msg| matches!(msg, NetworkMessage::GetAddr));
+
+    // We respond to the `getaddr` with a new peer address, Toto.
+    let toto: net::SocketAddr = ([14, 45, 16, 57], 8333).into();
+    sim.input(
+        &alice,
+        Input::Received(
+            peer,
+            message::raw(
+                NetworkMessage::Addr(vec![(0, Address::new(&toto, ServiceFlags::NETWORK))]),
+                network.magic(),
+            ),
+        ),
+    )
+    .any(|o| matches!(o, Out::Connect(addr) if addr == &toto))
+    .expect("Alice tries to connect to Toto");
+}

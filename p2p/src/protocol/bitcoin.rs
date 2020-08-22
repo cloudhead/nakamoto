@@ -804,7 +804,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
     /// Send a `getaddr` message to all our outbound peers.
     fn get_addresses(&self) -> Output {
-        let mut out = OutputBuilder::with_capacity(1);
+        let mut out = OutputBuilder::with_capacity(self.ready.len());
 
         for (addr, _) in self
             .peers
@@ -842,6 +842,8 @@ impl<T: BlockTree> Bitcoin<T> {
                     todo!();
                 }
             } else {
+                debug!("[{}] Address book exhausted, asking peers..", self.name);
+
                 // We're out of addresses, ask for more!
                 out.extend(self.get_addresses());
             }
