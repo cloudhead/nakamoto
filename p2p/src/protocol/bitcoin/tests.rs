@@ -566,3 +566,43 @@ fn test_getaddr() {
     .any(|o| matches!(o, Out::Connect(addr) if addr == &toto))
     .expect("Alice tries to connect to Toto");
 }
+
+#[test]
+fn test_stale_tip() {
+    let network = Network::Mainnet;
+    let mut sim = simulator::Net {
+        network,
+        peers: &["alice", "bob"],
+        configure: |cfg| {
+            // Each peer only needs to connect to three other peers.
+            cfg.target_outbound_peers = 1;
+        },
+        ..Default::default()
+    }
+    .into();
+
+    // Run the simulation until no messages are exchanged.
+    sim.step();
+
+    let alice = sim.get("alice");
+    let bob = sim.get("bob");
+
+    // Some time has passed.
+    sim.elapse(LocalDuration::from_secs(3600));
+    sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
+        .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+
+    let header = TREE.get_block_by_height(1).unwrap();
+    sim.input(
+        &alice,
+        Input::Received(
+            bob,
+            message::raw(NetworkMessage::Headers(vec![*header]), network.magic()),
+        ),
+    );
+
+    // Some more time has passed.
+    sim.elapse(LocalDuration::from_secs(3600));
+    sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
+        .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+}
