@@ -23,10 +23,6 @@ pub enum Error {
     InvalidTimestamp(Time, std::cmp::Ordering),
     #[error("duplicate block {0}")]
     DuplicateBlock(BlockHash),
-    #[error("invalid chain")]
-    InvalidChain,
-    #[error("empty chain")]
-    EmptyChain,
     #[error("block missing: {0}")]
     BlockMissing(BlockHash),
     #[error("block import aborted at height {2}: {0} ({1} block(s) imported)")]
