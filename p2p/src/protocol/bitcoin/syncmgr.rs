@@ -323,16 +323,15 @@ impl<T: BlockTree> SyncManager<T> {
             }
             // Header announcement.
             _ if length <= MAX_HEADERS_ANNOUNCED => {
-                // TODO: Before importing, we could check the headers against known checkpoints.
+                let root = headers.first().bitcoin_hash();
+
                 match self.tree.import_blocks(headers.into_iter(), clock) {
                     Ok(import_result @ ImportResult::TipUnchanged) => {
                         self.emit(Event::HeadersImported(import_result));
 
-                        // Try to find a common ancestor.
-                        let locators = (
-                            self.tree.locators_hashes(self.tree.height()),
-                            BlockHash::default(),
-                        );
+                        // Try to find a common ancestor that leads up to the first header in
+                        // the list we received.
+                        let locators = (self.tree.locators_hashes(self.tree.height()), root);
 
                         let peer = self.peers.get_mut(from).unwrap();
                         let timeout = self.config.request_timeout;
