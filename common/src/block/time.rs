@@ -126,6 +126,11 @@ impl LocalDuration {
         Self(secs as u128 * 1000)
     }
 
+    /// Create a new duration from whole minutes.
+    pub const fn from_mins(mins: u64) -> Self {
+        Self::from_secs(mins * 60)
+    }
+
     /// Construct a new duration from milliseconds.
     pub const fn from_millis(millis: u128) -> Self {
         Self(millis)

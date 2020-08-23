@@ -51,7 +51,7 @@ pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 /// Time to wait for response during peer handshake before disconnecting the peer.
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
 /// Time interval to wait between sent pings.
-pub const PING_INTERVAL: LocalDuration = LocalDuration::from_secs(60);
+pub const PING_INTERVAL: LocalDuration = LocalDuration::from_mins(2);
 /// Time to wait to receive a pong when sending a ping.
 pub const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 /// Target number of concurrent outbound peer connections.
@@ -512,7 +512,7 @@ impl Peer {
 }
 
 impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
-    const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(6);
+    const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(10);
 
     type Command = self::Command;
     type Output = self::Output;
