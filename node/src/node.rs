@@ -20,8 +20,8 @@ use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage}
 use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
 use nakamoto_p2p::protocol::bitcoin::Command;
 use nakamoto_p2p::protocol::bitcoin::{self, Network};
-use nakamoto_p2p::protocol::Component;
 use nakamoto_p2p::protocol::Link;
+use nakamoto_p2p::protocol::TimeoutSource;
 use nakamoto_p2p::reactor::poll::{Reactor, Waker};
 
 pub use nakamoto_p2p::event::Event;
@@ -69,7 +69,7 @@ pub struct Node {
     commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
     events: chan::Receiver<Event<NetworkMessage>>,
-    reactor: Reactor<net::TcpStream, RawNetworkMessage, Command, Component>,
+    reactor: Reactor<net::TcpStream, RawNetworkMessage, Command, TimeoutSource>,
 }
 
 impl Node {

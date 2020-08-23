@@ -31,12 +31,13 @@ pub trait Message: Send + Sync + 'static {
     fn display(&self) -> &'static str;
 }
 
-/// Component of the protocol.
+/// Timeout source descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Component {
-    SyncManager,
-    HandshakeManager,
-    PingManager,
+pub enum TimeoutSource {
+    Synch(PeerId),
+    Handshake(PeerId),
+    Ping(PeerId),
+    Global,
 }
 
 /// A protocol input event, parametrized over the network message type.
@@ -60,10 +61,8 @@ pub enum Input<M, C> {
     Sent(PeerId, usize),
     /// An external command has been received.
     Command(C),
-    /// Clock is ticking! Used to signify time passing.
-    Tick(LocalTime),
-    /// A timeout on a peer has been reached.
-    Timeout(PeerId, Component),
+    /// A timeout has been reached.
+    Timeout(TimeoutSource, LocalTime),
 }
 
 impl<M: Message, C: Clone> Input<M, C> {
@@ -84,8 +83,7 @@ impl<M: Message, C: Clone> Input<M, C> {
             Received(p, m) => Received(*p, Message::payload(m).clone()),
             Sent(p, n) => Sent(*p, *n),
             Command(c) => Command(c.clone()),
-            Tick(t) => Tick(*t),
-            Timeout(p, c) => Timeout(*p, *c),
+            Timeout(s, t) => Timeout(*s, *t),
         }
     }
 }
@@ -100,7 +98,7 @@ pub enum Out<M: Message> {
     /// Disconnect from a peer.
     Disconnect(PeerId),
     /// Set a timeout associated with a peer.
-    SetTimeout(PeerId, Component, LocalDuration),
+    SetTimeout(TimeoutSource, LocalDuration),
     /// An event has occured.
     Event(Event<M::Payload>),
     /// Shutdown protocol.
@@ -119,7 +117,7 @@ impl<M: Message> Out<M> {
             Self::Message(addr, _) => Some(*addr),
             Self::Connect(addr) => Some(*addr),
             Self::Disconnect(addr) => Some(*addr),
-            Self::SetTimeout(addr, _, _) => Some(*addr),
+            Self::SetTimeout(_, _) => None,
             Self::Event(_) => None,
             Self::Shutdown => None,
         }

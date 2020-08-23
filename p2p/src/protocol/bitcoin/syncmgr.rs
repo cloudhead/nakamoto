@@ -165,6 +165,16 @@ impl<T: BlockTree> SyncManager<T> {
         self.events.drain(..)
     }
 
+    /// Called periodically in case no new blocks are received.
+    pub fn tick<'a>(&mut self, time: LocalTime) -> impl Iterator<Item = GetHeaders> + 'a {
+        if self.is_tip_stale(time) {
+            self.force_sync()
+        } else {
+            None
+        }
+        .into_iter()
+    }
+
     pub fn peer_negotiated(
         &mut self,
         id: PeerId,
@@ -359,7 +369,6 @@ impl<T: BlockTree> SyncManager<T> {
     /// Check whether our current tip is stale.
     ///
     /// *Nb. This doesn't check whether we've already requested new blocks.*
-    #[allow(dead_code)]
     fn is_tip_stale(&self, now: LocalTime) -> bool {
         let last = self.last_tip_update.unwrap_or_else(|| {
             // If we don't have the time of the last update, it's probably because we
@@ -421,13 +430,11 @@ impl<T: BlockTree> SyncManager<T> {
         }
     }
 
-    /// Start syncing with the given peer.
+    /// Start syncing if we're out of sync.
     fn sync(&mut self) -> Option<GetHeaders> {
         if self.peers.is_empty() {
             return None;
         }
-        let locators = (self.locator_hashes(), BlockHash::default());
-
         if self.is_synced() {
             let (tip, _) = self.tree.tip();
             let height = self.tree.height();
@@ -436,6 +443,12 @@ impl<T: BlockTree> SyncManager<T> {
 
             return None;
         }
+        self.force_sync()
+    }
+
+    /// Try to sync now without checking our peer state.
+    fn force_sync(&mut self) -> Option<GetHeaders> {
+        let locators = (self.locator_hashes(), BlockHash::default());
 
         // TODO: Pick a peer whose `height` is high enough.
         // TODO: Factor this out when we have a `peermgr`.

@@ -280,24 +280,30 @@ fn test_idle() {
     let bob = sim.get("bob");
     let alice = sim.get("alice");
 
-    sim.input(&alice, Input::Timeout(bob, Component::PingManager))
-        .any(|o| {
-            matches!(o, Out::Message(
+    sim.input(
+        &alice,
+        Input::Timeout(TimeoutSource::Ping(bob), sim.time + PING_INTERVAL),
+    )
+    .any(|o| {
+        matches!(o, Out::Message(
                 addr,
                 RawNetworkMessage {
                     payload: NetworkMessage::Ping(_), ..
                 },
             ) if addr == &bob)
-        })
-        .expect("Alice pings Bob");
+    })
+    .expect("Alice pings Bob");
 
     // More time passes, and Bob doesn't `pong` back.
     sim.elapse(PING_TIMEOUT);
 
     // Alice now decides to disconnect Bob.
-    sim.input(&alice, Input::Timeout(bob, Component::PingManager))
-        .any(|o| matches!(o, Out::Disconnect(addr) if addr == &bob))
-        .expect("Alice disconnects Bob");
+    sim.input(
+        &alice,
+        Input::Timeout(TimeoutSource::Ping(bob), sim.time + PING_TIMEOUT),
+    )
+    .any(|o| matches!(o, Out::Disconnect(addr) if addr == &bob))
+    .expect("Alice disconnects Bob");
 }
 
 #[test]
@@ -305,7 +311,7 @@ fn test_getheaders_timeout() {
     let network = Network::Mainnet;
     // TODO: Protocol should try different peers if it can't get the headers from the first
     // peer. It should keep trying until it succeeds.
-    let ((mut local, _), (_, remote_addr), _time) = setup::pair(network);
+    let ((mut local, _), (_, remote_addr), time) = setup::pair(network);
     // Some hash for a nonexistent block.
     let hash =
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
@@ -325,11 +331,13 @@ fn test_getheaders_timeout() {
         .find(|o| matches!(payload(o), Some((_, NetworkMessage::GetHeaders(_)))))
         .expect("a `getheaders` message should be returned");
     out.iter()
-        .find(|o| matches!(o, Out::SetTimeout(addr, _, _) if addr == &remote_addr))
+        .find(
+            |o| matches!(o, Out::SetTimeout(TimeoutSource::Synch(addr), _) if addr == &remote_addr),
+        )
         .expect("a timer should be returned");
 
     local
-        .step(Input::Timeout(remote_addr, Component::SyncManager))
+        .step(Input::Timeout(TimeoutSource::Synch(remote_addr), time))
         .find(|o| matches!(o, Out::Disconnect(addr) if addr == &remote_addr))
         .expect("the unresponsive peer should be disconnected");
 }
@@ -435,7 +443,10 @@ fn test_getheaders_retry() {
     let mut last_asked = addr;
     // While there's still peers to ask...
     while asked.len() < ask {
-        let result = sim.input(&alice, Input::Timeout(last_asked, Component::SyncManager));
+        let result = sim.input(
+            &alice,
+            Input::Timeout(TimeoutSource::Synch(last_asked), sim.time),
+        );
         let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
 
         assert!(
@@ -453,7 +464,7 @@ fn test_getheaders_retry() {
 #[test]
 fn test_handshake_version_timeout() {
     let network = Network::Mainnet;
-    let (mut instance, _time) = setup::singleton(network);
+    let (mut instance, time) = setup::singleton(network);
 
     let remote = ([131, 31, 11, 33], 11111).into();
     let local = ([0, 0, 0, 0], 0).into();
@@ -465,10 +476,10 @@ fn test_handshake_version_timeout() {
                 local_addr: local,
                 link: *link,
             })
-            .find(|o| matches!(o, Out::SetTimeout(addr, _, _) if addr == &remote))
+            .find(|o| matches!(o, Out::SetTimeout(TimeoutSource::Handshake(addr), _) if addr == &remote))
             .expect("a timer should be returned");
 
-        let mut out = instance.step(Input::Timeout(remote, Component::HandshakeManager));
+        let mut out = instance.step(Input::Timeout(TimeoutSource::Handshake(remote), time));
         assert!(out.any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
 
         instance.step(Input::Disconnected(remote));
@@ -480,7 +491,7 @@ fn test_handshake_verack_timeout() {
     logger::init(log::Level::Debug);
 
     let network = Network::Mainnet;
-    let (mut instance, _time) = setup::singleton(network);
+    let (mut instance, time) = setup::singleton(network);
 
     let remote = ([131, 31, 11, 33], 11111).into();
     let local = ([0, 0, 0, 0], 0).into();
@@ -500,10 +511,13 @@ fn test_handshake_verack_timeout() {
                     payload: instance.version(local, remote, 0, 0),
                 },
             ))
-            .find(|o| matches!(o, Out::SetTimeout(addr, _, _) if *addr == remote))
+            .find(|o| matches!(o, Out::SetTimeout(TimeoutSource::Handshake(addr), _) if *addr == remote))
             .expect("a timer should be returned");
 
-        let mut out = instance.step(Input::Timeout(remote, Component::HandshakeManager));
+        let mut out = instance.step(Input::Timeout(
+            TimeoutSource::Handshake(remote),
+            time + LocalDuration::from_secs(60),
+        ));
         assert!(out.any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
 
         instance.step(Input::Disconnected(remote));

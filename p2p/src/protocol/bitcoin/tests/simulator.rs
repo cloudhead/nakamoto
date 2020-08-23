@@ -200,7 +200,10 @@ impl Sim {
         self.time = self.time + duration;
 
         for peer in self.peers.values_mut() {
-            for output in peer.protocol.step(Input::Tick(self.time)) {
+            for output in peer
+                .protocol
+                .step(Input::Timeout(TimeoutSource::Global, self.time))
+            {
                 peer.schedule(&mut self.inbox, output);
             }
         }

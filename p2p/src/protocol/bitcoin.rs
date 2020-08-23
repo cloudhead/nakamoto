@@ -15,7 +15,7 @@ use syncmgr::SyncManager;
 
 use crate::address_book::AddressBook;
 use crate::event::Event;
-use crate::protocol::{self, Component, Link, Message, Out, PeerId, Protocol};
+use crate::protocol::{self, Link, Message, Out, PeerId, Protocol, TimeoutSource};
 
 use std::collections::{HashSet, VecDeque};
 use std::fmt::Debug;
@@ -350,7 +350,7 @@ impl<T: BlockTree> Bitcoin<T> {
         );
 
         // Set a timeout for receiving the `version` message.
-        Out::SetTimeout(addr, Component::HandshakeManager, HANDSHAKE_TIMEOUT)
+        Out::SetTimeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT)
     }
 }
 
@@ -527,6 +527,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 out.push(Out::Connect(addr));
             }
         }
+        out.push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
         out.into_iter()
     }
 
@@ -537,12 +538,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         self.generate_events(&input, &mut out);
 
         match input {
-            Input::Tick(time) => {
-                debug!("[{}] Tick: local_time = {}", self.name, time);
-
-                // The local time is set from outside the protocol.
-                self.clock.set_local_time(time);
-            }
             Input::Connected {
                 addr,
                 local_addr,
@@ -683,34 +678,37 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     }
                 }
             }
-            Input::Timeout(addr, component) => {
-                debug!(
-                    "[{}] Received timeout for {} @ {:?}",
-                    self.name, addr, component
-                );
+            Input::Timeout(source, local_time) => {
+                debug!("[{}] Received timeout for {:?}", self.name, source);
 
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
-                if let Some(peer) = self.peers.get_mut(&addr) {
-                    match component {
-                        Component::HandshakeManager => match peer.state {
-                            PeerState::Handshake(Handshake::AwaitingVerack)
-                            | PeerState::Handshake(Handshake::AwaitingVersion) => {
-                                out.push(Out::Disconnect(addr));
+                match source {
+                    TimeoutSource::Handshake(addr) => {
+                        if let Some(peer) = self.peers.get_mut(&addr) {
+                            match peer.state {
+                                PeerState::Handshake(Handshake::AwaitingVerack)
+                                | PeerState::Handshake(Handshake::AwaitingVersion) => {
+                                    out.push(Out::Disconnect(addr));
+                                }
+                                _ => {}
                             }
-                            _ => {}
-                        },
-                        Component::SyncManager => {
-                            let (timeout, get_headers) = self.syncmgr.receive_timeout(addr);
-
-                            if let Some(syncmgr::PeerTimeout) = timeout {
-                                out.push(Out::Disconnect(addr));
-                            }
-                            if let Some(req) = get_headers {
-                                out.extend(self.get_headers(req));
-                            }
+                        } else {
+                            debug!("[{}] Peer {} no longer exists (ignoring)", self.name, addr);
                         }
-                        Component::PingManager => {
+                    }
+                    TimeoutSource::Synch(addr) => {
+                        let (timeout, get_headers) = self.syncmgr.receive_timeout(addr);
+
+                        if let Some(syncmgr::PeerTimeout) = timeout {
+                            out.push(Out::Disconnect(addr));
+                        }
+                        if let Some(req) = get_headers {
+                            out.extend(self.get_headers(req));
+                        }
+                    }
+                    TimeoutSource::Ping(addr) => {
+                        if let Some(peer) = self.peers.get_mut(&addr) {
                             if let PeerState::Ready { last_active, .. } = peer.state {
                                 let now = self.clock.local_time();
 
@@ -739,21 +737,28 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                         },
                                     ));
                                     out.push(Out::SetTimeout(
-                                        addr,
-                                        Component::PingManager,
+                                        TimeoutSource::Ping(addr),
                                         PING_TIMEOUT,
                                     ));
                                     out.push(Out::SetTimeout(
-                                        addr,
-                                        Component::PingManager,
+                                        TimeoutSource::Ping(addr),
                                         PING_INTERVAL,
                                     ));
                                 }
                             }
                         }
                     }
-                } else {
-                    debug!("[{}] Peer {} no longer exists (ignoring)", self.name, addr);
+                    TimeoutSource::Global => {
+                        debug!("[{}] Tick: local_time = {}", self.name, local_time);
+
+                        // The local time is set from outside the protocol.
+                        self.clock.set_local_time(local_time);
+                        self.syncmgr
+                            .tick(local_time)
+                            .for_each(|e| out.extend(self.get_headers(e)));
+
+                        out.push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
+                    }
                 }
             }
         };
@@ -787,12 +792,12 @@ impl<T: BlockTree> Bitcoin<T> {
         &self,
         addr: PeerId,
         message: NetworkMessage,
+        source: TimeoutSource,
         timeout: LocalDuration,
-        component: Component,
         out: &mut Vec<Out<RawNetworkMessage>>,
     ) {
         out.push(self.message(addr, message));
-        out.push(Out::SetTimeout(addr, component, timeout));
+        out.push(Out::SetTimeout(source, timeout));
     }
 
     fn get_headers(&self, request: syncmgr::GetHeaders) -> Vec<Out<RawNetworkMessage>> {
@@ -806,8 +811,8 @@ impl<T: BlockTree> Bitcoin<T> {
         self.request(
             addr,
             message::get_headers(locators, self.protocol_version),
+            TimeoutSource::Synch(addr),
             timeout,
-            Component::SyncManager,
             &mut out,
         );
         out
@@ -1016,8 +1021,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     match peer.link {
                         Link::Outbound => {
                             return vec![Out::SetTimeout(
-                                addr,
-                                Component::HandshakeManager,
+                                TimeoutSource::Handshake(addr),
                                 HANDSHAKE_TIMEOUT,
                             )]
                         }
@@ -1030,11 +1034,7 @@ impl<T: BlockTree> Bitcoin<T> {
                                     self.version(addr, local_addr, nonce, self.height),
                                 ),
                                 self.message(addr, NetworkMessage::Verack),
-                                Out::SetTimeout(
-                                    addr,
-                                    Component::HandshakeManager,
-                                    HANDSHAKE_TIMEOUT,
-                                ),
+                                Out::SetTimeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT),
                             ];
                         }
                     }

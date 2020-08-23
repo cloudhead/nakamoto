@@ -11,7 +11,7 @@ use nakamoto_common::block::time::LocalTime;
 use crate::error::Error;
 use crate::event::Event;
 use crate::fallible;
-use crate::protocol::{Component, Input, Link, Message, Out, Protocol};
+use crate::protocol::{Input, Link, Message, Out, Protocol, TimeoutSource};
 use crate::reactor::time::TimeoutManager;
 
 use log::*;
@@ -148,7 +148,7 @@ pub struct Reactor<R: Write + Read, M: Message, C, T> {
     subscriber: chan::Sender<Event<M::Payload>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
-    timeouts: TimeoutManager<(net::SocketAddr, T)>,
+    timeouts: TimeoutManager<T>,
 }
 
 impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C, T>
@@ -202,7 +202,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C, T
 }
 
 impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
-    Reactor<net::TcpStream, M, C, Component>
+    Reactor<net::TcpStream, M, C, TimeoutSource>
 where
     M::Payload: Debug + Send + Sync,
 {
@@ -299,11 +299,9 @@ where
                     self.timeouts.wake(local_time, &mut timeouts);
 
                     if !timeouts.is_empty() {
-                        for (peer, ctx) in timeouts.drain(..) {
-                            self.events.push_back(Input::Timeout(peer, ctx));
+                        for t in timeouts.drain(..) {
+                            self.events.push_back(Input::Timeout(t, local_time));
                         }
-                    } else {
-                        self.events.push_back(Input::Tick(local_time));
                     }
                 }
                 Err(err) => return Err(err.into()),
@@ -368,9 +366,8 @@ where
                         self.unregister_peer(addr);
                     }
                 }
-                Out::SetTimeout(key, component, timeout) => {
-                    self.timeouts
-                        .register((key, component), local_time + timeout);
+                Out::SetTimeout(key, timeout) => {
+                    self.timeouts.register(key, local_time + timeout);
                 }
                 Out::Event(event) => {
                     trace!("Event: {:?}", event);
