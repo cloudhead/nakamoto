@@ -78,6 +78,13 @@ pub trait BlockTree {
         chain: I,
         context: &C,
     ) -> Result<ImportResult, Error>;
+    /// Attempts to extend the active chain. Returns `Ok` with `ImportResult::TipUnchanged` if
+    /// the block didn't connect, and `Err` if the block was invalid.
+    fn extend_tip<C: Clock>(
+        &mut self,
+        header: BlockHeader,
+        context: &C,
+    ) -> Result<ImportResult, Error>;
     /// Get a block by hash.
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)>;
     /// Get a block by height.

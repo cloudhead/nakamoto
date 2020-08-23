@@ -1231,6 +1231,12 @@ impl<T: BlockTree> Bitcoin<T> {
                         self.name, addr, error
                     );
                 }
+                syncmgr::Event::ReceivedUnsolicitedHeaders(from, count) => {
+                    debug!(
+                        "[{}] Received {} unsolicited headers from {}",
+                        self.name, count, from
+                    );
+                }
                 syncmgr::Event::HeadersImported(import_result) => {
                     debug!("[{}] Import result: {:?}", self.name, &import_result);
 

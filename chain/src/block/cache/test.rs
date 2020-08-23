@@ -78,6 +78,10 @@ impl BlockTree for HeightCache {
         unimplemented!()
     }
 
+    fn extend_tip<C>(&mut self, _header: BlockHeader, _context: &C) -> Result<ImportResult, Error> {
+        unimplemented!()
+    }
+
     fn get_block(&self, _hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         unimplemented!()
     }

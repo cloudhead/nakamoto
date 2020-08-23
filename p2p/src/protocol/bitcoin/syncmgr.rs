@@ -15,6 +15,8 @@ use super::{Link, Locators, PeerId};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(8);
+/// Maximum headers announced in a `headers` message, when unsolicited.
+pub const MAX_HEADERS_ANNOUNCED: usize = 8;
 
 /// A timeout.
 type Timeout = LocalDuration;
@@ -105,6 +107,7 @@ pub struct SyncManager<T> {
 #[derive(Debug)]
 pub enum Event {
     ReceivedInvalidHeaders(PeerId, Error),
+    ReceivedUnsolicitedHeaders(PeerId, usize),
     HeadersImported(ImportResult),
     BlockDiscovered(PeerId, BlockHash),
     Syncing(PeerId),
@@ -246,26 +249,45 @@ impl<T: BlockTree> SyncManager<T> {
             return SyncResult::Okay;
         }
 
-        let timeout = self.config.request_timeout;
-        let peer = self.peers.get_mut(from).unwrap();
+        match &self.peers.get_mut(from).unwrap().state {
+            // Requested headers. These should extend our main chain.
+            Syncing::AwaitingHeaders((locators, _)) => {
+                let (mut tip, _) = self.tree.tip();
+                let mut height = self.tree.height();
 
-        // TODO: Before importing, we could check the headers against known checkpoints.
-        // TODO: Check that headers form a chain.
-        let result = self.tree.import_blocks(headers.into_iter(), clock);
+                // Check whether the start of the header chain matches one of the locators we
+                // supplied to the peer. Otherwise, don't accept these headers.
+                if !headers.iter().any(|h| locators.contains(&h.prev_blockhash)) {
+                    self.record_misbehavior(from);
+                    // TODO: Fetch headers from somewhere else.
+                    return SyncResult::Okay;
+                }
 
-        match result {
-            Ok(import_result @ ImportResult::TipUnchanged) => {
-                self.events.push(Event::HeadersImported(import_result));
+                for header in headers.into_iter() {
+                    match self.tree.extend_tip(header, clock) {
+                        Ok(ImportResult::TipChanged(t, h, _)) => {
+                            tip = t;
+                            height = h;
+                        }
+                        Ok(ImportResult::TipUnchanged) => {
+                            // We must have received headers from a different peer in the meantime,
+                            // keep processing in case one of the headers extends our chain.
+                            continue;
+                        }
+                        Err(err) => {
+                            self.record_misbehavior(from);
+                            self.emit(Event::ReceivedInvalidHeaders(*from, err));
 
-                // Try to find a common ancestor.
-                let locators = (
-                    self.tree.locators_hashes(self.tree.height()),
-                    BlockHash::default(),
-                );
+                            // TODO: Ask different peer.
+                            // TODO: Transition peer.
 
-                return SyncResult::GetHeaders(GetHeaders::new(peer, locators, timeout));
-            }
-            Ok(ImportResult::TipChanged(tip, height, reverted)) => {
+                            return SyncResult::Okay;
+                        }
+                    }
+                }
+
+                let peer = self.peers.get_mut(from).unwrap();
+
                 peer.tip = tip;
                 peer.height = height;
 
@@ -273,40 +295,66 @@ impl<T: BlockTree> SyncManager<T> {
                 // whether our tip is stale.
                 self.last_tip_update = Some(LocalTime::from_timestamp(clock.time()));
 
-                let import_result = ImportResult::TipChanged(tip, height, reverted);
+                let import_result = ImportResult::TipChanged(tip, height, vec![]);
 
-                // TODO: Check that the headers received match the headers awaited.
-                if let Syncing::AwaitingHeaders(_locators) = &peer.state {
-                    // If we received less than the maximum number of headers, we must be in sync.
-                    // Otherwise, ask for the next batch of headers.
-                    if length < self.config.max_message_headers {
-                        // If these headers were unsolicited, we may already be ready/synced.
-                        // Otherwise, we're finally in sync.
-                        peer.transition(Syncing::Idle);
+                // If we received less than the maximum number of headers, we must be in sync.
+                // Otherwise, ask for the next batch of headers.
+                if length < self.config.max_message_headers {
+                    // If these headers were unsolicited, we may already be ready/synced.
+                    // Otherwise, we're finally in sync.
+                    peer.transition(Syncing::Idle);
+                    self.emit(Event::HeadersImported(import_result));
+                    self.transition(State::Synced(tip, height));
+
+                    return self
+                        .broadcast_tip(&tip)
+                        .map(SyncResult::SendHeaders)
+                        .unwrap_or(SyncResult::Okay);
+                } else {
+                    self.events.push(Event::HeadersImported(import_result));
+
+                    // TODO: If we're already in the state of asking for this header, don't
+                    // ask again.
+                    let locators = (vec![tip], BlockHash::default());
+                    let timeout = self.config.request_timeout;
+
+                    return SyncResult::GetHeaders(GetHeaders::new(peer, locators, timeout));
+                }
+            }
+            // Header announcement.
+            _ if length <= MAX_HEADERS_ANNOUNCED => {
+                // TODO: Before importing, we could check the headers against known checkpoints.
+                match self.tree.import_blocks(headers.into_iter(), clock) {
+                    Ok(import_result @ ImportResult::TipUnchanged) => {
                         self.emit(Event::HeadersImported(import_result));
-                        self.transition(State::Synced(tip, height));
 
-                        return self
-                            .broadcast_tip(&tip)
-                            .map(SyncResult::SendHeaders)
-                            .unwrap_or(SyncResult::Okay);
-                    } else {
-                        self.events.push(Event::HeadersImported(import_result));
+                        // Try to find a common ancestor.
+                        let locators = (
+                            self.tree.locators_hashes(self.tree.height()),
+                            BlockHash::default(),
+                        );
 
-                        // TODO: If we're already in the state of asking for this header, don't
-                        // ask again.
-                        let locators = (vec![tip], BlockHash::default());
+                        let peer = self.peers.get_mut(from).unwrap();
+                        let timeout = self.config.request_timeout;
 
                         return SyncResult::GetHeaders(GetHeaders::new(peer, locators, timeout));
                     }
-                } else {
-                    self.emit(Event::HeadersImported(import_result));
+                    Ok(import_result) => {
+                        self.emit(Event::HeadersImported(import_result));
+                    }
+                    Err(err) => {
+                        self.emit(Event::ReceivedInvalidHeaders(*from, err));
+                    }
                 }
             }
-            Err(err) => {
-                self.emit(Event::ReceivedInvalidHeaders(*from, err));
+            _ => {
+                // We've received a large number of unsolicited headers. This is more than the
+                // typical headers sent during a header announcement, and we haven't asked
+                // this peer for any headers. We choose to ignore it.
+                self.emit(Event::ReceivedUnsolicitedHeaders(*from, length));
             }
         }
+
         SyncResult::Okay
     }
 
@@ -365,6 +413,10 @@ impl<T: BlockTree> SyncManager<T> {
     }
 
     ///////////////////////////////////////////////////////////////////////////
+
+    fn record_misbehavior(&mut self, _peer: &PeerId) {
+        todo!();
+    }
 
     /// Check whether our current tip is stale.
     ///

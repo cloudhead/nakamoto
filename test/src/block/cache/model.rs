@@ -127,6 +127,20 @@ impl BlockTree for Cache {
         }
     }
 
+    fn extend_tip<C>(&mut self, header: BlockHeader, _context: &C) -> Result<ImportResult, Error> {
+        if header.prev_blockhash == self.tip {
+            let hash = header.bitcoin_hash();
+
+            self.headers.insert(hash, header);
+            self.chain.push(header);
+            self.tip = hash;
+
+            Ok(ImportResult::TipChanged(self.tip, self.height(), vec![]))
+        } else {
+            Ok(ImportResult::TipUnchanged)
+        }
+    }
+
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         for (height, header) in self.chain.iter().enumerate() {
             if hash == &header.bitcoin_hash() {

@@ -131,7 +131,7 @@ impl<S: Store> BlockCache<S> {
         let best = tip.hash;
 
         // Block extends the active chain.
-        if header.prev_blockhash == tip.hash {
+        if header.prev_blockhash == best {
             let height = tip.height + 1;
 
             self.validate(&tip, &header, clock)?;
@@ -430,6 +430,27 @@ impl<S: Store> BlockTree for BlockCache<S> {
             }
         }
         Ok(result.unwrap_or(ImportResult::TipUnchanged))
+    }
+
+    fn extend_tip<C: Clock>(
+        &mut self,
+        header: BlockHeader,
+        clock: &C,
+    ) -> Result<ImportResult, Error> {
+        let tip = self.chain.last();
+        let hash = header.bitcoin_hash();
+
+        if header.prev_blockhash == tip.hash {
+            let height = tip.height + 1;
+
+            self.validate(&tip, &header, clock)?;
+            self.extend_chain(height, hash, header);
+            self.store.put(std::iter::once(header))?;
+
+            Ok(ImportResult::TipChanged(hash, height, vec![]))
+        } else {
+            Ok(ImportResult::TipUnchanged)
+        }
     }
 
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
