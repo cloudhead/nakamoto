@@ -338,11 +338,13 @@ impl<S: Store> BlockCache<S> {
     }
 
     fn last_checkpoint(&self) -> Height {
+        let height = self.height();
+
         self.checkpoints
             .iter()
             .rev()
-            .next()
-            .map(|(height, _)| *height)
+            .map(|(h, _)| *h)
+            .find(|h| *h <= height)
             .unwrap_or(0)
     }
 
@@ -476,7 +478,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
         self.headers.contains_key(hash)
     }
 
-    /// Get the locator hashes for the active chain.
+    /// Get the locator hashes for the active chain, starting at the given height.
     ///
     /// *Panics* if the given starting height is out of bounds.
     ///
@@ -485,7 +487,14 @@ impl<S: Store> BlockTree for BlockCache<S> {
 
         assert!(from <= self.height());
 
+        let last_checkpoint = self.last_checkpoint();
+
         for height in block::locators_indexes(from).into_iter() {
+            if height < last_checkpoint {
+                // Don't go past the latest checkpoint. We never want to accept a fork
+                // older than our last checkpoint.
+                break;
+            }
             if let Some(blk) = self.chain.get(height as usize) {
                 hashes.push(blk.hash);
             }

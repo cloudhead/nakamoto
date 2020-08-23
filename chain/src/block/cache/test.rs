@@ -1080,6 +1080,40 @@ fn test_cache_import_fork_with_checkpoints() {
 }
 
 #[test]
+fn test_cache_import_fork_with_future_checkpoint() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
+    let g = &mut rand::thread_rng();
+
+    let a0 = Tree::new(genesis);
+
+    // a0 <- a1 <- a2 * ... [c4]
+    let a1 = a0.next(g);
+    let a2 = a1.next(g);
+
+    // Create a checkpoint block [c4] in the future, at height 4.
+    let checkpoints = &[(0, genesis.bitcoin_hash()), (4, BlockHash::default())];
+    let mut cache = BlockCache::from(store, params, checkpoints).unwrap();
+
+    cache.import_blocks(a0.branch([&a1, &a2]), &ctx).unwrap();
+    assert_eq!(cache.tip().0, a2.hash, "{:#?}", cache);
+
+    //            <- b2
+    //           /          ... [c4]
+    // a0 <- a1 <- a2 *
+    //
+    let b2 = a1.next(g);
+
+    // We can do this because we don't know yet whether a2 or b2 is the correct branch.
+    cache
+        .import_block(b2.block(), &ctx)
+        .expect("we can import a fork before the next checkpoint");
+}
+
+#[test]
 #[allow(unused_variables)]
 fn test_cache_import_duplicate() {
     let network = bitcoin::Network::Regtest;
