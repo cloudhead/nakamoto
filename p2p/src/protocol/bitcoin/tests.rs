@@ -2,7 +2,10 @@
 pub mod simulator;
 
 use super::*;
+
+use bitcoin::consensus::params::Params;
 use bitcoin_hashes::hex::FromHex;
+
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
@@ -24,20 +27,23 @@ fn payload<M: Message>(o: &Out<M>) -> Option<(net::SocketAddr, &M::Payload)> {
 mod setup {
     use super::*;
 
-    /// Test protocol config.
-    pub const CONFIG: Config = Config {
-        network: network::Network::Mainnet,
-        address_book: AddressBook::new(),
-        // Pretend that we're a full-node, to fool connections
-        // between instances of this protocol in tests.
-        services: ServiceFlags::NETWORK,
-        protocol_version: PROTOCOL_VERSION,
-        target_outbound_peers: 8,
-        max_inbound_peers: 8,
-        user_agent: USER_AGENT,
-        relay: false,
-        name: "self",
-    };
+    lazy_static! {
+        /// Test protocol config.
+        pub static ref CONFIG: Config = Config {
+            network: network::Network::Mainnet,
+            params: Params::new(network::Network::Mainnet.into()),
+            address_book: AddressBook::new(),
+            // Pretend that we're a full-node, to fool connections
+            // between instances of this protocol in tests.
+            services: ServiceFlags::NETWORK,
+            protocol_version: PROTOCOL_VERSION,
+            target_outbound_peers: 8,
+            max_inbound_peers: 8,
+            user_agent: USER_AGENT,
+            relay: false,
+            name: "self",
+        };
+    }
 
     pub fn singleton(network: Network) -> (Bitcoin<model::Cache>, LocalTime) {
         use bitcoin::blockdata::constants;
@@ -48,7 +54,7 @@ mod setup {
         let clock = AdjustedTime::new(time);
 
         (
-            Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG),
+            Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG.clone()),
             time,
         )
     }
@@ -67,8 +73,13 @@ mod setup {
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
 
-        let mut alice = Bitcoin::new(tree.clone(), clock.clone(), fastrand::Rng::new(), CONFIG);
-        let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG);
+        let mut alice = Bitcoin::new(
+            tree.clone(),
+            clock.clone(),
+            fastrand::Rng::new(),
+            CONFIG.clone(),
+        );
+        let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), CONFIG.clone());
 
         let alice_addr = ([152, 168, 3, 33], 3333).into();
         let bob_addr = ([152, 168, 7, 77], 7777).into();
@@ -162,9 +173,9 @@ fn test_handshake() {
         tree.clone(),
         clock.clone(),
         fastrand::Rng::new(),
-        setup::CONFIG,
+        setup::CONFIG.clone(),
     );
-    let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), setup::CONFIG);
+    let mut bob = Bitcoin::new(tree, clock, fastrand::Rng::new(), setup::CONFIG.clone());
 
     simulator::run(
         vec![(alice_addr, &mut alice), (bob_addr, &mut bob)],
@@ -202,6 +213,7 @@ fn test_initial_sync() {
 
     let clock = AdjustedTime::default();
     let local_time = LocalTime::from(SystemTime::now());
+    let config = setup::CONFIG.clone();
 
     let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
     let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
@@ -217,11 +229,16 @@ fn test_initial_sync() {
     // Truncate chain to test height.
     alice_tree.rollback(height).unwrap();
 
-    let mut alice = Bitcoin::new(alice_tree, clock.clone(), Rng::new(), setup::CONFIG);
+    let mut alice = Bitcoin::new(alice_tree, clock.clone(), Rng::new(), config.clone());
 
     // Bob connects to Alice.
     {
-        let mut bob = Bitcoin::new(bob_tree.clone(), clock.clone(), Rng::new(), setup::CONFIG);
+        let mut bob = Bitcoin::new(
+            bob_tree.clone(),
+            clock.clone(),
+            Rng::new(),
+            setup::CONFIG.clone(),
+        );
 
         simulator::handshake(&mut bob, bob_addr, &mut alice, alice_addr, local_time);
 
@@ -232,7 +249,7 @@ fn test_initial_sync() {
 
     // Alice connects to Bob.
     {
-        let mut bob = Bitcoin::new(bob_tree, clock, Rng::new(), setup::CONFIG);
+        let mut bob = Bitcoin::new(bob_tree, clock, Rng::new(), config);
 
         simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
 

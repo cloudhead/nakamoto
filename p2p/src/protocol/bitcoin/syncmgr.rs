@@ -2,11 +2,12 @@ use std::collections::HashMap;
 
 use nonempty::NonEmpty;
 
+use bitcoin::consensus::params::Params;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_blockdata::Inventory;
 use bitcoin::util::hash::BitcoinHash;
 
-use nakamoto_common::block::time::{Clock, LocalDuration};
+use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
@@ -79,6 +80,7 @@ impl PeerState {
 pub struct Config {
     pub max_message_headers: usize,
     pub request_timeout: LocalDuration,
+    pub params: Params,
 }
 
 #[derive(Debug)]
@@ -92,6 +94,8 @@ pub struct SyncManager<T> {
     config: Config,
     /// Sync state.
     state: State,
+    /// Last time our tip was updated.
+    last_tip_update: Option<LocalTime>,
     /// Random number generator.
     rng: fastrand::Rng,
     /// Output event queue.
@@ -144,12 +148,14 @@ impl<T: BlockTree> SyncManager<T> {
         let peers = HashMap::new();
         let state = State::WaitingForPeers;
         let events = Vec::new();
+        let last_tip_update = None;
 
         Self {
             tree,
             peers,
             config,
             state,
+            last_tip_update,
             rng,
             events,
         }
@@ -253,6 +259,10 @@ impl<T: BlockTree> SyncManager<T> {
                 peer.tip = tip;
                 peer.height = height;
 
+                // Keep track of when we last updated our tip. This is useful to check
+                // whether our tip is stale.
+                self.last_tip_update = Some(LocalTime::from_timestamp(clock.time()));
+
                 let import_result = ImportResult::TipChanged(tip, height, reverted);
 
                 // TODO: Check that the headers received match the headers awaited.
@@ -345,6 +355,22 @@ impl<T: BlockTree> SyncManager<T> {
     }
 
     ///////////////////////////////////////////////////////////////////////////
+
+    /// Check whether our current tip is stale.
+    ///
+    /// *Nb. This doesn't check whether we've already requested new blocks.*
+    #[allow(dead_code)]
+    fn is_tip_stale(&self, now: LocalTime) -> bool {
+        let last = self.last_tip_update.unwrap_or_else(|| {
+            // If we don't have the time of the last update, it's probably because we
+            // are fresh or restarted our node. In that case it's sufficient to get the
+            // last block time.
+            let (_, tip) = self.tree.tip();
+            LocalTime::from_timestamp(tip.time)
+        });
+
+        last < now - LocalDuration::from_secs(self.config.params.pow_target_spacing * 3)
+    }
 
     fn emit(&mut self, event: Event) {
         self.events.push(event);

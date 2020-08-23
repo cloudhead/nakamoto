@@ -21,6 +21,7 @@ use std::collections::{HashSet, VecDeque};
 use std::fmt::Debug;
 use std::net;
 
+use bitcoin::consensus::params::Params;
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
@@ -200,6 +201,8 @@ pub struct Bitcoin<T> {
     pub target_outbound_peers: usize,
     /// Maximum number of inbound peer connections.
     pub max_inbound_peers: usize,
+    /// Consensus parameters.
+    pub params: Params,
 
     /// Peer address manager.
     addrmgr: AddressManager,
@@ -225,6 +228,7 @@ pub struct Config {
     pub network: network::Network,
     pub address_book: AddressBook,
     pub services: ServiceFlags,
+    pub params: Params,
     pub protocol_version: u32,
     pub relay: bool,
     pub user_agent: &'static str,
@@ -237,6 +241,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             network: network::Network::Mainnet,
+            params: Params::new(network::Network::Mainnet.into()),
             address_book: AddressBook::default(),
             services: ServiceFlags::NONE,
             protocol_version: PROTOCOL_VERSION,
@@ -251,10 +256,13 @@ impl Default for Config {
 
 impl Config {
     pub fn from(name: &'static str, network: network::Network, address_book: AddressBook) -> Self {
+        let params = Params::new(network.into());
+
         Self {
             network,
             address_book,
             name,
+            params,
             ..Self::default()
         }
     }
@@ -276,6 +284,7 @@ impl<T: BlockTree> Bitcoin<T> {
             relay,
             user_agent,
             name,
+            params,
         } = config;
 
         let height = tree.height();
@@ -286,6 +295,7 @@ impl<T: BlockTree> Bitcoin<T> {
             syncmgr::Config {
                 max_message_headers: MAX_MESSAGE_HEADERS,
                 request_timeout: syncmgr::REQUEST_TIMEOUT,
+                params: params.clone(),
             },
             rng.clone(),
         );
@@ -300,6 +310,7 @@ impl<T: BlockTree> Bitcoin<T> {
             relay,
             user_agent,
             name,
+            params,
             clock,
             height,
             addrmgr,

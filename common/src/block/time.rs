@@ -62,6 +62,11 @@ impl LocalTime {
         }
     }
 
+    /// Convert a block time into a local time.
+    pub fn from_timestamp(t: Time) -> Self {
+        Self::from_secs(t as u64)
+    }
+
     /// Return the local time as seconds since Epoch.
     /// This is the same representation as used in block header timestamps.
     pub fn as_secs(&self) -> Time {
