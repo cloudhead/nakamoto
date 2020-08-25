@@ -518,9 +518,12 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     type Output = self::Output;
 
     fn initialize(&mut self, time: LocalTime) -> Self::Output {
-        self.clock.set_local_time(time);
-
         let mut out = OutputBuilder::with_capacity(self.target_outbound_peers);
+
+        self.clock.set_local_time(time);
+        self.syncmgr
+            .initialize(time)
+            .for_each(|e| out.extend(self.get_headers(e)));
 
         for addr in self.addrmgr.iter().take(self.target_outbound_peers) {
             if let Ok(addr) = addr.socket_addr() {
@@ -1079,6 +1082,7 @@ impl<T: BlockTree> Bitcoin<T> {
                                 peer.tip,
                                 peer.services,
                                 peer.link,
+                                &self.clock,
                             )
                             .map_or(vec![], |req| self.get_headers(req)),
                     );
@@ -1133,7 +1137,7 @@ impl<T: BlockTree> Bitcoin<T> {
             }
         }
 
-        debug!("[{}] {}: Ignoring {:?}", self.name, peer.address, cmd,);
+        debug!("[{}] {}: Ignoring {:?}", self.name, peer.address, cmd);
 
         vec![]
     }

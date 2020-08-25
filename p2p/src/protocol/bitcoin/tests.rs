@@ -581,17 +581,36 @@ fn test_stale_tip() {
     }
     .into();
 
-    // Run the simulation until no messages are exchanged.
-    sim.step();
-
     let alice = sim.get("alice");
     let bob = sim.get("bob");
 
-    // Some time has passed.
-    sim.elapse(LocalDuration::from_secs(3600));
+    // Pretend `Bob` has a chain of height 144.
+    let version = sim.peer("bob").protocol.version(alice, bob, 1, 144);
+
+    // Handshake.
+    sim.input(
+        &alice,
+        Input::Connected {
+            addr: bob,
+            local_addr: alice,
+            link: Link::Outbound,
+        },
+    );
+    sim.input(
+        &alice,
+        Input::Received(bob, message::raw(version, network.magic())),
+    );
+    sim.input(
+        &alice,
+        Input::Received(bob, message::raw(NetworkMessage::Verack, network.magic())),
+    );
+
+    // Some time has passed. The tip timestamp should be considered stale now.
+    sim.elapse(syncmgr::TIP_STALE_DURATION);
     sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
 
+    // Now send a header and wait until the chain update is stale.
     let header = TREE.get_block_by_height(1).unwrap();
     sim.input(
         &alice,
@@ -600,9 +619,7 @@ fn test_stale_tip() {
             message::raw(NetworkMessage::Headers(vec![*header]), network.magic()),
         ),
     );
-
-    // Some more time has passed.
-    sim.elapse(LocalDuration::from_secs(3600));
+    sim.elapse(syncmgr::TIP_STALE_DURATION); // Some more time has passed.
     sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
 }

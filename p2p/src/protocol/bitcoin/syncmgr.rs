@@ -17,6 +17,9 @@ use super::{Link, Locators, PeerId};
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(8);
 /// Maximum headers announced in a `headers` message, when unsolicited.
 pub const MAX_HEADERS_ANNOUNCED: usize = 8;
+/// How long before the tip of the chain is considered stale. This takes into account
+/// that the block timestamp may have been set sometime in the future.
+pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
 
 /// A timeout.
 type Timeout = LocalDuration;
@@ -146,7 +149,7 @@ pub struct SendHeaders {
 #[derive(Debug)]
 pub struct PeerTimeout;
 
-impl<T: BlockTree> SyncManager<T> {
+impl<'a, T: 'a + BlockTree> SyncManager<T> {
     pub fn new(tree: T, config: Config, rng: fastrand::Rng) -> Self {
         let peers = HashMap::new();
         let state = State::WaitingForPeers;
@@ -164,18 +167,17 @@ impl<T: BlockTree> SyncManager<T> {
         }
     }
 
-    pub fn events<'a>(&'a mut self) -> impl Iterator<Item = Event> + 'a {
+    pub fn initialize(&mut self, time: LocalTime) -> impl Iterator<Item = GetHeaders> + 'a {
+        self.tick(time)
+    }
+
+    pub fn events(&'a mut self) -> impl Iterator<Item = Event> + 'a {
         self.events.drain(..)
     }
 
-    /// Called periodically in case no new blocks are received.
-    pub fn tick<'a>(&mut self, time: LocalTime) -> impl Iterator<Item = GetHeaders> + 'a {
-        if self.is_tip_stale(time) {
-            self.force_sync()
-        } else {
-            None
-        }
-        .into_iter()
+    /// Called periodically.
+    pub fn tick(&mut self, now: LocalTime) -> impl Iterator<Item = GetHeaders> + 'a {
+        self.sync(now).into_iter()
     }
 
     pub fn peer_negotiated(
@@ -185,9 +187,10 @@ impl<T: BlockTree> SyncManager<T> {
         tip: BlockHash,
         services: ServiceFlags,
         link: Link,
+        clock: &impl Clock,
     ) -> Option<GetHeaders> {
         self.register(id, height, tip, services, link);
-        self.sync()
+        self.sync(clock.local_time())
     }
 
     pub fn peer_disconnected(&mut self, id: &PeerId) {
@@ -205,7 +208,7 @@ impl<T: BlockTree> SyncManager<T> {
         if headers.is_empty() {
             return None;
         }
-        if !self.is_synced() {
+        if self.is_syncing() {
             return None;
         }
 
@@ -223,7 +226,9 @@ impl<T: BlockTree> SyncManager<T> {
         match self.tree.import_blocks(chain, context) {
             Ok(ImportResult::TipChanged(tip, height, reverted)) => {
                 let result = ImportResult::TipChanged(tip, height, reverted);
+
                 self.emit(Event::HeadersImported(result.clone()));
+                self.transition(State::Synced(tip, height));
 
                 Ok((result, self.broadcast_tip(&tip)))
             }
@@ -251,17 +256,13 @@ impl<T: BlockTree> SyncManager<T> {
 
         match &self.peers.get_mut(from).unwrap().state {
             // Requested headers. These should extend our main chain.
-            Syncing::AwaitingHeaders((locators, _)) => {
+            // Check whether the start of the header chain matches one of the locators we
+            // supplied to the peer. Otherwise, we consider them unsolicited.
+            Syncing::AwaitingHeaders((locators, _))
+                if headers.iter().any(|h| locators.contains(&h.prev_blockhash)) =>
+            {
                 let (mut tip, _) = self.tree.tip();
                 let mut height = self.tree.height();
-
-                // Check whether the start of the header chain matches one of the locators we
-                // supplied to the peer. Otherwise, don't accept these headers.
-                if !headers.iter().any(|h| locators.contains(&h.prev_blockhash)) {
-                    self.record_misbehavior(from);
-                    // TODO: Fetch headers from somewhere else.
-                    return SyncResult::Okay;
-                }
 
                 for header in headers.into_iter() {
                     match self.tree.extend_tip(header, clock) {
@@ -288,12 +289,14 @@ impl<T: BlockTree> SyncManager<T> {
 
                 let peer = self.peers.get_mut(from).unwrap();
 
-                peer.tip = tip;
-                peer.height = height;
+                if height > peer.height {
+                    peer.tip = tip;
+                    peer.height = height;
+                }
 
                 // Keep track of when we last updated our tip. This is useful to check
                 // whether our tip is stale.
-                self.last_tip_update = Some(LocalTime::from_timestamp(clock.time()));
+                self.last_tip_update = Some(clock.local_time());
 
                 let import_result = ImportResult::TipChanged(tip, height, vec![]);
 
@@ -342,6 +345,7 @@ impl<T: BlockTree> SyncManager<T> {
                         self.emit(Event::HeadersImported(import_result));
                     }
                     Err(err) => {
+                        self.record_misbehavior(from);
                         self.emit(Event::ReceivedInvalidHeaders(*from, err));
                     }
                 }
@@ -421,15 +425,25 @@ impl<T: BlockTree> SyncManager<T> {
     ///
     /// *Nb. This doesn't check whether we've already requested new blocks.*
     fn is_tip_stale(&self, now: LocalTime) -> bool {
-        let last = self.last_tip_update.unwrap_or_else(|| {
-            // If we don't have the time of the last update, it's probably because we
-            // are fresh or restarted our node. In that case it's sufficient to get the
-            // last block time.
-            let (_, tip) = self.tree.tip();
-            LocalTime::from_timestamp(tip.time)
-        });
+        if let Some(last_update) = self.last_tip_update {
+            if last_update
+                < now - LocalDuration::from_secs(self.config.params.pow_target_spacing * 3)
+            {
+                return true;
+            }
+        }
+        // If we don't have the time of the last update, it's probably because we
+        // are fresh, or restarted our node. In that case we check the last block time
+        // instead.
+        let (_, tip) = self.tree.tip();
+        let time = LocalTime::from_timestamp(tip.time);
 
-        last < now - LocalDuration::from_secs(self.config.params.pow_target_spacing * 3)
+        time <= now - TIP_STALE_DURATION
+    }
+
+    /// Are we currently syncing?
+    fn is_syncing(&self) -> bool {
+        matches!(self.state, State::Syncing(_))
     }
 
     fn emit(&mut self, event: Event) {
@@ -464,7 +478,10 @@ impl<T: BlockTree> SyncManager<T> {
     /// Check whether or not we are in sync with the network.
     /// TODO: Should return the minimum peer height, so that we can
     /// keep track of it in our state, while syncing to it.
-    fn is_synced(&self) -> bool {
+    fn is_synced(&self, now: LocalTime) -> bool {
+        if self.is_tip_stale(now) {
+            return false;
+        }
         let height = self.tree.height();
 
         // TODO: Check actual block hashes once we are caught up on height.
@@ -473,20 +490,20 @@ impl<T: BlockTree> SyncManager<T> {
             .values()
             .filter(|p| p.is_candidate())
             .map(|p| p.height)
-            .min()
+            .max()
         {
-            height >= peer_height
-        } else {
-            true
+            return height >= peer_height;
         }
+
+        false
     }
 
     /// Start syncing if we're out of sync.
-    fn sync(&mut self) -> Option<GetHeaders> {
+    fn sync(&mut self, now: LocalTime) -> Option<GetHeaders> {
         if self.peers.is_empty() {
             return None;
         }
-        if self.is_synced() {
+        if self.is_synced(now) {
             let (tip, _) = self.tree.tip();
             let height = self.tree.height();
 
@@ -501,21 +518,27 @@ impl<T: BlockTree> SyncManager<T> {
     fn force_sync(&mut self) -> Option<GetHeaders> {
         let locators = (self.locator_hashes(), BlockHash::default());
 
-        // TODO: Pick a peer whose `height` is high enough.
         // TODO: Factor this out when we have a `peermgr`.
         // TODO: Threshold should be a parameter.
         // TODO: Peer should be picked amongst lowest latency ones.
-        // Wait for a certain connection threshold to make sure we choose the best
-        // peer to sync from. For now, we choose a random peer.
-        let ix = self.rng.usize(..self.peers.len());
-        let (addr, peer) = self.peers.iter_mut().nth(ix).unwrap();
-        let timeout = self.config.request_timeout;
-        let addr = *addr;
-        let get_headers = GetHeaders::new(peer, locators, timeout);
 
-        self.transition(State::Syncing(addr));
+        let height = self.tree.height();
+        let mut candidates = self
+            .peers
+            .iter_mut()
+            .filter(|(_, p)| p.is_candidate() && p.height > height);
 
-        Some(get_headers)
+        if let Some((addr, peer)) = candidates.next() {
+            let timeout = self.config.request_timeout;
+            let addr = *addr;
+            let get_headers = GetHeaders::new(peer, locators, timeout);
+
+            self.transition(State::Syncing(addr));
+
+            return Some(get_headers);
+        }
+
+        None
     }
 
     /// Broadcast our best block header to connected peers who don't have it.

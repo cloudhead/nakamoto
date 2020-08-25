@@ -26,8 +26,10 @@ pub type TimeOffset = i64;
 
 /// Clock that tells the time.
 pub trait Clock {
-    /// Tell the time.
+    /// Tell the time in block time.
     fn time(&self) -> Time;
+    /// Tell the time in local time.
+    fn local_time(&self) -> LocalTime;
 }
 
 /// Local time.
@@ -199,6 +201,10 @@ pub struct AdjustedTime<K> {
 impl<K: Eq + Hash> Clock for AdjustedTime<K> {
     fn time(&self) -> Time {
         self.get()
+    }
+
+    fn local_time(&self) -> LocalTime {
+        self.local_time()
     }
 }
 

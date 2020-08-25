@@ -9,6 +9,8 @@ pub mod protocol;
 pub mod reactor;
 pub use bitcoin;
 
+pub use protocol::PeerId;
+
 #[cfg(test)]
 mod fallible;
 
