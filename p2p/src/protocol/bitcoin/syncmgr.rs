@@ -69,8 +69,11 @@ struct PeerState {
 
 impl PeerState {
     fn is_candidate(&self) -> bool {
-        // TODO
-        true
+        matches!(self.state, Syncing::Idle)
+    }
+
+    fn is_outbound(&self) -> bool {
+        self.link == Link::Outbound
     }
 
     fn transition(&mut self, state: Syncing) {
@@ -399,8 +402,10 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             Syncing::AwaitingHeaders(locators) => {
                 let locators = locators.clone();
 
+                // TODO: Should we just remove this peer?
                 peer.transition(Syncing::NotResponding);
 
+                // TODO: Get random peer. Random peer iterator?
                 if let Some(peer) = self.peers.values_mut().find(|p| p.state == Syncing::Idle) {
                     let timeout = self.config.request_timeout;
 
@@ -475,6 +480,26 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         self.peers.remove(id);
     }
 
+    fn random_peer(&self) -> Option<&PeerState> {
+        let height = self.tree.height();
+
+        let candidates = self
+            .peers
+            .values()
+            .filter(|p| p.is_candidate() && p.height > height);
+        let prefered = candidates.clone().filter(|p| p.is_outbound());
+
+        if let Some(peers) = NonEmpty::from_vec(prefered.collect())
+            .or_else(|| NonEmpty::from_vec(candidates.collect()))
+        {
+            let ix = self.rng.usize(..peers.len());
+
+            return peers.get(ix).cloned();
+        }
+
+        None
+    }
+
     /// Check whether or not we are in sync with the network.
     /// TODO: Should return the minimum peer height, so that we can
     /// keep track of it in our state, while syncing to it.
@@ -485,13 +510,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         let height = self.tree.height();
 
         // TODO: Check actual block hashes once we are caught up on height.
-        if let Some(peer_height) = self
-            .peers
-            .values()
-            .filter(|p| p.is_candidate())
-            .map(|p| p.height)
-            .max()
-        {
+        if let Some(peer_height) = self.peers.values().map(|p| p.height).max() {
             return height >= peer_height;
         }
 
@@ -522,15 +541,10 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         // TODO: Threshold should be a parameter.
         // TODO: Peer should be picked amongst lowest latency ones.
 
-        let height = self.tree.height();
-        let mut candidates = self
-            .peers
-            .iter_mut()
-            .filter(|(_, p)| p.is_candidate() && p.height > height);
-
-        if let Some((addr, peer)) = candidates.next() {
+        if let Some(peer) = self.random_peer() {
             let timeout = self.config.request_timeout;
-            let addr = *addr;
+            let addr = peer.id;
+            let peer = self.peers.get_mut(&addr).expect("the peer exists");
             let get_headers = GetHeaders::new(peer, locators, timeout);
 
             self.transition(State::Syncing(addr));
@@ -608,21 +622,17 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
     #[allow(dead_code)]
     fn sample_headers(&mut self) -> Vec<GetHeaders> {
         let height = self.tree.height();
-        let (tip, _) = self.tree.tip();
 
         let mut messages = Vec::new();
+        let locators = self.tree.locators_hashes(height);
 
-        if let Some(parent) = self.tree.get_block_by_height(height - 1) {
-            let locators = (vec![parent.bitcoin_hash()], tip);
-
-            for peer in self.peers.values_mut() {
-                if peer.link == Link::Outbound {
-                    messages.push(GetHeaders::new(
-                        peer,
-                        locators.clone(),
-                        self.config.request_timeout,
-                    ));
-                }
+        for peer in self.peers.values_mut() {
+            if peer.is_candidate() {
+                messages.push(GetHeaders::new(
+                    peer,
+                    (locators.clone(), BlockHash::default()),
+                    self.config.request_timeout,
+                ));
             }
         }
         messages

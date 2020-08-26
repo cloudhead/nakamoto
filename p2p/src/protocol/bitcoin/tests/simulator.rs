@@ -195,9 +195,14 @@ impl Sim {
 
     /// Let some time pass.
     pub fn elapse(&mut self, duration: LocalDuration) {
-        log::info!("(sim) Elasing {} seconds", duration.as_secs());
+        log::info!("(sim) Elapsing {} seconds", duration.as_secs());
 
         self.time = self.time + duration;
+    }
+
+    /// Let some time pass and trigger the global timeout.
+    pub fn timeout(&mut self, duration: LocalDuration) {
+        self.elapse(duration);
 
         for peer in self.peers.values_mut() {
             for output in peer

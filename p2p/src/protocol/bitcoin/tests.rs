@@ -275,7 +275,7 @@ fn test_idle() {
     sim.step();
 
     // Let a certain amount of time pass.
-    sim.elapse(PING_INTERVAL);
+    sim.timeout(PING_INTERVAL);
 
     let bob = sim.get("bob");
     let alice = sim.get("alice");
@@ -295,7 +295,7 @@ fn test_idle() {
     .expect("Alice pings Bob");
 
     // More time passes, and Bob doesn't `pong` back.
-    sim.elapse(PING_TIMEOUT);
+    sim.timeout(PING_TIMEOUT);
 
     // Alice now decides to disconnect Bob.
     sim.input(
@@ -577,6 +577,7 @@ fn test_stale_tip() {
             // Each peer only needs to connect to three other peers.
             cfg.target_outbound_peers = 1;
         },
+        initialize: false,
         ..Default::default()
     }
     .into();
@@ -604,22 +605,37 @@ fn test_stale_tip() {
         &alice,
         Input::Received(bob, message::raw(NetworkMessage::Verack, network.magic())),
     );
+    sim.input(
+        &alice,
+        Input::Received(
+            bob,
+            message::raw(
+                NetworkMessage::Headers(vec![*TREE.get_block_by_height(1).unwrap()]),
+                network.magic(),
+            ),
+        ),
+    );
 
     // Some time has passed. The tip timestamp should be considered stale now.
     sim.elapse(syncmgr::TIP_STALE_DURATION);
     sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
 
-    // Now send a header and wait until the chain update is stale.
-    let header = TREE.get_block_by_height(1).unwrap();
+    // Now send another header and wait until the chain update is stale.
     sim.input(
         &alice,
         Input::Received(
             bob,
-            message::raw(NetworkMessage::Headers(vec![*header]), network.magic()),
+            message::raw(
+                NetworkMessage::Headers(vec![*TREE.get_block_by_height(2).unwrap()]),
+                network.magic(),
+            ),
         ),
     );
-    sim.elapse(syncmgr::TIP_STALE_DURATION); // Some more time has passed.
+
+    // Some more time has passed.
+    // Chain update should be stale this time.
+    sim.elapse(syncmgr::TIP_STALE_DURATION);
     sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
 }
