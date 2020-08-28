@@ -335,7 +335,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
 
                         // Try to find a common ancestor that leads up to the first header in
                         // the list we received.
-                        let locators = (self.tree.locators_hashes(self.tree.height()), root);
+                        let locators = (self.tree.locator_hashes(self.tree.height()), root);
 
                         let peer = self.peers.get_mut(from).unwrap();
                         let timeout = self.config.request_timeout;
@@ -362,7 +362,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         SyncResult::Okay
     }
 
-    /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
+    /// Receive an `inv` message. This will happen if we are out of sync with a peer, and blocks
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     pub fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Option<GetHeaders> {
         let mut best_block = None;
@@ -380,7 +380,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         }
 
         if let Some(stop_hash) = best_block {
-            let locators = (self.locator_hashes(), *stop_hash);
+            let locators = (self.tree.locator_hashes(self.tree.height()), *stop_hash);
             let timeout = self.config.request_timeout;
             let peer = self.peers.get_mut(&addr).unwrap();
 
@@ -532,7 +532,10 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
 
     /// Try to sync now without checking our peer state.
     fn force_sync(&mut self) -> Option<GetHeaders> {
-        let locators = (self.locator_hashes(), BlockHash::default());
+        let locators = (
+            self.tree.locator_hashes(self.tree.height()),
+            BlockHash::default(),
+        );
 
         // TODO: Factor this out when we have a `peermgr`.
         // TODO: Threshold should be a parameter.
@@ -621,7 +624,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         let height = self.tree.height();
 
         let mut messages = Vec::new();
-        let locators = self.tree.locators_hashes(height);
+        let locators = self.tree.locator_hashes(height);
 
         for peer in self.peers.values_mut() {
             if peer.is_candidate() {
@@ -633,11 +636,5 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             }
         }
         messages
-    }
-
-    fn locator_hashes(&self) -> Vec<BlockHash> {
-        let (hash, _) = self.tree.tip();
-
-        vec![hash]
     }
 }

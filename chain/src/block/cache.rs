@@ -503,7 +503,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
     ///
     /// *Panics* if the given starting height is out of bounds.
     ///
-    fn locators_hashes(&self, from: Height) -> Vec<BlockHash> {
+    fn locator_hashes(&self, from: Height) -> Vec<BlockHash> {
         let mut hashes = Vec::new();
 
         assert!(from <= self.height());

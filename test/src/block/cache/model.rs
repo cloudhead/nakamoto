@@ -150,8 +150,8 @@ impl BlockTree for Cache {
         None
     }
 
-    fn locators_hashes(&self, _from: Height) -> Vec<BlockHash> {
-        todo!()
+    fn locator_hashes(&self, _from: Height) -> Vec<BlockHash> {
+        vec![self.chain.last().bitcoin_hash()]
     }
 
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {

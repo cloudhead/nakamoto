@@ -128,7 +128,7 @@ pub trait BlockTree {
     /// Check whether a block hash is part of the active chain.
     fn contains(&self, hash: &BlockHash) -> bool;
     /// Get the locator hashes starting from the given height and going backwards.
-    fn locators_hashes(&self, from: Height) -> Vec<BlockHash>;
+    fn locator_hashes(&self, from: Height) -> Vec<BlockHash>;
     /// Get the next difficulty given a block height, time and bits.
     fn next_difficulty_target(
         &self,
