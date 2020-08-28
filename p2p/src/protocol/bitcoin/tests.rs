@@ -246,16 +246,6 @@ fn test_initial_sync() {
         assert_eq!(bob.syncmgr.tree.height(), height);
     }
     alice.step(Input::Disconnected(bob_addr));
-
-    // Alice connects to Bob.
-    {
-        let mut bob = Bitcoin::new(bob_tree, clock, Rng::new(), config);
-
-        simulator::handshake(&mut alice, alice_addr, &mut bob, bob_addr, local_time);
-
-        assert_eq!(alice.syncmgr.tree.height(), height);
-        assert_eq!(bob.syncmgr.tree.height(), height);
-    }
 }
 
 /// Test what happens when a peer is idle for too long.

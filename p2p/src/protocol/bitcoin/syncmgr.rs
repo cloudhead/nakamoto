@@ -20,6 +20,8 @@ pub const MAX_HEADERS_ANNOUNCED: usize = 8;
 /// How long before the tip of the chain is considered stale. This takes into account
 /// that the block timestamp may have been set sometime in the future.
 pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
+/// How long to wait between checks for longer chains from peers.
+pub const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
 
 /// A timeout.
 type Timeout = LocalDuration;
@@ -58,7 +60,7 @@ struct PeerState {
 }
 
 impl PeerState {
-    fn is_candidate(&self) -> bool {
+    fn is_idle(&self) -> bool {
         matches!(self.state, Syncing::Idle)
     }
 
@@ -92,6 +94,8 @@ pub struct SyncManager<T> {
     config: Config,
     /// Last time our tip was updated.
     last_tip_update: Option<LocalTime>,
+    /// Last time we sampled our peers for their active chain.
+    last_peer_sample: Option<LocalTime>,
     /// Random number generator.
     rng: fastrand::Rng,
     /// Output event queue.
@@ -181,12 +185,14 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         let peers = HashMap::new();
         let events = Vec::new();
         let last_tip_update = None;
+        let last_peer_sample = None;
 
         Self {
             tree,
             peers,
             config,
             last_tip_update,
+            last_peer_sample,
             rng,
             events,
         }
@@ -508,24 +514,20 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         self.peers.remove(id);
     }
 
-    fn random_peer(&self) -> Option<&PeerState> {
-        let height = self.tree.height();
+    fn random_sync_candidate(&self) -> Option<&PeerState> {
+        let candidates = self.peers.values().filter(|p| self.is_sync_candidate(p));
 
-        let candidates = self
-            .peers
-            .values()
-            .filter(|p| p.is_candidate() && p.height > height);
-        let prefered = candidates.clone().filter(|p| p.is_outbound());
-
-        if let Some(peers) = NonEmpty::from_vec(prefered.collect())
-            .or_else(|| NonEmpty::from_vec(candidates.collect()))
-        {
+        if let Some(peers) = NonEmpty::from_vec(candidates.collect()) {
             let ix = self.rng.usize(..peers.len());
 
             return peers.get(ix).cloned();
         }
 
         None
+    }
+
+    fn is_sync_candidate(&self, peer: &PeerState) -> bool {
+        self::is_sync_candidate(peer, self.tree.height())
     }
 
     /// Check whether or not we are in sync with the network.
@@ -555,7 +557,19 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
 
             self.emit(Event::Synced(tip, height));
 
-            return GetHeaders::empty();
+            // If we think we're in sync and we haven't asked other peers in a while, then
+            // sample their headers just to make sure we're on the right chain.
+            if self
+                .last_peer_sample
+                .map(|t| now.duration_since(t) >= PEER_SAMPLE_INTERVAL)
+                .unwrap_or(true)
+            {
+                self.last_peer_sample = Some(now);
+
+                return self.sample_peers();
+            } else {
+                return GetHeaders::empty();
+            }
         }
 
         // It looks like we're out of sync...
@@ -565,7 +579,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             BlockHash::default(),
         );
 
-        if let Some(peer) = self.random_peer() {
+        if let Some(peer) = self.random_sync_candidate() {
             let timeout = self.config.request_timeout;
             let addr = peer.id;
             let peer = self.peers.get_mut(&addr).expect("the peer exists");
@@ -629,22 +643,22 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
     }
 
     /// Ask all our outbound peers whether they have better block headers.
-    #[allow(dead_code)]
     fn sample_peers(&mut self) -> GetHeaders {
         let height = self.tree.height();
-
-        let mut messages = Vec::new();
         let locators = self.tree.locator_hashes(height);
+        let timeout = self.config.request_timeout;
 
-        for peer in self.peers.values_mut() {
-            if peer.is_candidate() && peer.is_outbound() {
-                messages.push(Request::new(
-                    peer,
-                    (locators.clone(), BlockHash::default()),
-                    self.config.request_timeout,
-                ));
-            }
-        }
+        let messages = self
+            .peers
+            .values_mut()
+            .filter(|p| self::is_sync_candidate(p, height))
+            .map(|peer| Request::new(peer, (locators.clone(), BlockHash::default()), timeout))
+            .collect::<Vec<_>>();
+
         GetHeaders::from(messages)
     }
+}
+
+fn is_sync_candidate(peer: &PeerState, height: Height) -> bool {
+    peer.is_outbound() && peer.is_idle() && peer.height > height
 }

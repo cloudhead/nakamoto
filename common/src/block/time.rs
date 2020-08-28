@@ -76,6 +76,19 @@ impl LocalTime {
 
         (self.millis / 1000).try_into().unwrap()
     }
+
+    /// Get the duration since the given time.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if `earlier` is later than `self`.
+    pub fn duration_since(&self, earlier: LocalTime) -> LocalDuration {
+        LocalDuration::from_millis(
+            self.millis
+                .checked_sub(earlier.millis)
+                .expect("supplied time is later than self"),
+        )
+    }
 }
 
 /// Convert a `SystemTime` into a local time.
