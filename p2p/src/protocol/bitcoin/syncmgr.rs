@@ -13,6 +13,8 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
 use super::{Link, Locators, PeerId};
 
+pub use result::Message;
+
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(8);
 /// Maximum headers announced in a `headers` message, when unsolicited.
@@ -26,12 +28,41 @@ pub const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
 /// A timeout.
 type Timeout = LocalDuration;
 
-#[must_use]
-#[derive(Debug)]
-pub enum SyncResult<G, S> {
-    GetHeaders(G),
-    SendHeaders(S),
-    Okay,
+mod result {
+    use super::{GetHeaders, Request, SendHeaders};
+
+    #[must_use]
+    #[derive(Debug)]
+    pub enum Message {
+        GetHeaders(GetHeaders),
+        SendHeaders(SendHeaders),
+    }
+
+    impl From<GetHeaders> for Message {
+        fn from(other: GetHeaders) -> Self {
+            Self::GetHeaders(other)
+        }
+    }
+
+    impl From<SendHeaders> for Message {
+        fn from(other: SendHeaders) -> Self {
+            Self::SendHeaders(other)
+        }
+    }
+
+    impl From<Request> for Message {
+        fn from(other: Request) -> Self {
+            Self::GetHeaders(GetHeaders::from(vec![other]))
+        }
+    }
+
+    pub fn empty() -> Vec<Message> {
+        vec![]
+    }
+
+    pub fn once(item: impl Into<Message>) -> Vec<Message> {
+        vec![item.into()]
+    }
 }
 
 /// Synchronization states.
@@ -259,7 +290,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         &mut self,
         blocks: I,
         context: &C,
-    ) -> Result<(ImportResult, Option<SendHeaders>), Error> {
+    ) -> Result<(ImportResult, Vec<SendHeaders>), Error> {
         match self.tree.import_blocks(blocks, context) {
             Ok(ImportResult::TipChanged(tip, height, reverted)) => {
                 let result = ImportResult::TipChanged(tip, height, reverted);
@@ -271,7 +302,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             }
             Ok(result @ ImportResult::TipUnchanged) => {
                 self.emit(Event::HeadersImported(result.clone()));
-                Ok((result, None))
+                Ok((result, vec![]))
             }
             Err(err) => Err(err),
         }
@@ -283,13 +314,13 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         from: &PeerId,
         headers: NonEmpty<BlockHeader>,
         clock: &impl Clock,
-    ) -> SyncResult<GetHeaders, SendHeaders> {
+    ) -> Vec<result::Message> {
         let length = headers.len();
         let best = headers.last().bitcoin_hash();
 
         if self.tree.contains(&best) {
             // Ignore duplicate headers on the active chain.
-            return SyncResult::Okay;
+            return result::empty();
         }
 
         match &self.peers.get_mut(from).unwrap().state {
@@ -320,7 +351,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
                             // TODO: Ask different peer.
                             // TODO: Transition peer.
 
-                            return SyncResult::Okay;
+                            return result::empty();
                         }
                     }
                 }
@@ -345,12 +376,12 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
                     // Otherwise, we're finally in sync.
                     peer.transition(Syncing::Idle);
                     self.emit(Event::HeadersImported(import_result));
-                    self.emit(Event::Synced(tip, height));
 
                     return self
                         .broadcast_tip(&tip)
-                        .map(SyncResult::SendHeaders)
-                        .unwrap_or(SyncResult::Okay);
+                        .into_iter()
+                        .map(Message::from)
+                        .collect();
                 } else {
                     self.events.push(Event::HeadersImported(import_result));
 
@@ -359,7 +390,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
                     let locators = (vec![tip], BlockHash::default());
                     let timeout = self.config.request_timeout;
 
-                    return SyncResult::GetHeaders(GetHeaders::new(peer, locators, timeout));
+                    return result::once(GetHeaders::new(peer, locators, timeout));
                 }
             }
             // Header announcement.
@@ -377,7 +408,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
                         let peer = self.peers.get_mut(from).unwrap();
                         let timeout = self.config.request_timeout;
 
-                        return SyncResult::GetHeaders(GetHeaders::new(peer, locators, timeout));
+                        return result::once(GetHeaders::new(peer, locators, timeout));
                     }
                     Ok(import_result) => {
                         self.emit(Event::HeadersImported(import_result));
@@ -396,7 +427,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             }
         }
 
-        SyncResult::Okay
+        result::empty()
     }
 
     /// Called when we received an `inv` message. This will happen if we are out of sync with a
@@ -594,7 +625,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
     }
 
     /// Broadcast our best block header to connected peers who don't have it.
-    fn broadcast_tip(&self, hash: &BlockHash) -> Option<SendHeaders> {
+    fn broadcast_tip(&self, hash: &BlockHash) -> Vec<SendHeaders> {
         if let Some((height, best)) = self.tree.get_block(hash) {
             let mut addrs = Vec::new();
 
@@ -605,12 +636,13 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
                     // TODO: Update peer inventory?
                 }
             }
-            return Some(SendHeaders {
+            return vec![SendHeaders {
                 addrs,
                 headers: vec![*best],
-            });
+            }];
         }
-        None
+
+        vec![]
     }
 
     fn get_headers(

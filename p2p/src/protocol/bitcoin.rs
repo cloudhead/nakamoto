@@ -651,7 +651,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                     self.height = height;
                                 }
 
-                                if let Some(syncmgr::SendHeaders { addrs, headers }) = send {
+                                for syncmgr::SendHeaders { addrs, headers } in send {
                                     for addr in addrs {
                                         out.push(self.message(
                                             addr,
@@ -1201,25 +1201,26 @@ impl<T: BlockTree> Bitcoin<T> {
         );
         let mut outbound = Vec::new();
 
-        match self.syncmgr.received_headers(&addr, headers, &self.clock) {
-            syncmgr::SyncResult::GetHeaders(reqs) => {
-                reqs.for_each(|gh| outbound.extend(self.get_headers(gh)));
-            }
-            syncmgr::SyncResult::SendHeaders(syncmgr::SendHeaders { addrs, headers }) => {
-                if !addrs.is_empty() {
-                    debug!(
-                        "[{}] Sending {} header(s) to {} peer(s)..",
-                        self.name,
-                        headers.len(),
-                        addrs.len()
-                    );
+        for message in self.syncmgr.received_headers(&addr, headers, &self.clock) {
+            match message {
+                syncmgr::Message::GetHeaders(reqs) => {
+                    reqs.for_each(|gh| outbound.extend(self.get_headers(gh)));
                 }
+                syncmgr::Message::SendHeaders(syncmgr::SendHeaders { addrs, headers }) => {
+                    if !addrs.is_empty() {
+                        debug!(
+                            "[{}] Sending {} header(s) to {} peer(s)..",
+                            self.name,
+                            headers.len(),
+                            addrs.len()
+                        );
+                    }
 
-                for addr in addrs {
-                    outbound.push(self.message(addr, NetworkMessage::Headers(headers.clone())));
+                    for addr in addrs {
+                        outbound.push(self.message(addr, NetworkMessage::Headers(headers.clone())));
+                    }
                 }
             }
-            syncmgr::SyncResult::Okay => {}
         }
         outbound
     }
