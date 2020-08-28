@@ -47,8 +47,6 @@ pub enum Syncing {
     Idle,
     /// Syncing. A `getheaders` message was sent and we are expecting a response.
     AwaitingHeaders(Locators),
-    /// The peer is not responding.
-    NotResponding,
 }
 
 impl Default for Syncing {
@@ -402,8 +400,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             Syncing::AwaitingHeaders(locators) => {
                 let locators = locators.clone();
 
-                // TODO: Should we just remove this peer?
-                peer.transition(Syncing::NotResponding);
+                self.unregister(&id);
 
                 // TODO: Get random peer. Random peer iterator?
                 if let Some(peer) = self.peers.values_mut().find(|p| p.state == Syncing::Idle) {
