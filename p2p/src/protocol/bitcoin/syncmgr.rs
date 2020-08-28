@@ -32,14 +32,6 @@ pub enum SyncResult<G, S> {
     Okay,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum State {
-    WaitingForPeers,
-    Syncing(PeerId),
-    // TODO: Add confidence parameter to synced state.
-    Synced(BlockHash, Height),
-}
-
 /// Synchronization states.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Syncing {
@@ -98,8 +90,6 @@ pub struct SyncManager<T> {
     peers: HashMap<PeerId, PeerState>,
     /// Sync manager configuration.
     config: Config,
-    /// Sync state.
-    state: State,
     /// Last time our tip was updated.
     last_tip_update: Option<LocalTime>,
     /// Random number generator.
@@ -116,7 +106,6 @@ pub enum Event {
     BlockDiscovered(PeerId, BlockHash),
     Syncing(PeerId),
     Synced(BlockHash, Height),
-    WaitingForPeers,
 }
 
 #[must_use]
@@ -153,7 +142,6 @@ pub struct PeerTimeout;
 impl<'a, T: 'a + BlockTree> SyncManager<T> {
     pub fn new(tree: T, config: Config, rng: fastrand::Rng) -> Self {
         let peers = HashMap::new();
-        let state = State::WaitingForPeers;
         let events = Vec::new();
         let last_tip_update = None;
 
@@ -161,7 +149,6 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             tree,
             peers,
             config,
-            state,
             last_tip_update,
             rng,
             events,
@@ -229,7 +216,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
                 let result = ImportResult::TipChanged(tip, height, reverted);
 
                 self.emit(Event::HeadersImported(result.clone()));
-                self.transition(State::Synced(tip, height));
+                self.emit(Event::Synced(tip, height));
 
                 Ok((result, self.broadcast_tip(&tip)))
             }
@@ -308,7 +295,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
                     // Otherwise, we're finally in sync.
                     peer.transition(Syncing::Idle);
                     self.emit(Event::HeadersImported(import_result));
-                    self.transition(State::Synced(tip, height));
+                    self.emit(Event::Synced(tip, height));
 
                     return self
                         .broadcast_tip(&tip)
@@ -445,7 +432,9 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
 
     /// Are we currently syncing?
     fn is_syncing(&self) -> bool {
-        matches!(self.state, State::Syncing(_))
+        self.peers
+            .values()
+            .any(|p| matches!(p.state, Syncing::AwaitingHeaders(_)))
     }
 
     fn emit(&mut self, event: Event) {
@@ -523,7 +512,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             let (tip, _) = self.tree.tip();
             let height = self.tree.height();
 
-            self.transition(State::Synced(tip, height));
+            self.emit(Event::Synced(tip, height));
 
             return None;
         }
@@ -547,7 +536,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             let peer = self.peers.get_mut(&addr).expect("the peer exists");
             let get_headers = GetHeaders::new(peer, locators, timeout);
 
-            self.transition(State::Syncing(addr));
+            self.emit(Event::Syncing(addr));
 
             return Some(get_headers);
         }
@@ -573,21 +562,6 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             });
         }
         None
-    }
-
-    fn transition(&mut self, state: State) {
-        let previous = self.state.clone();
-
-        if state == previous {
-            return;
-        }
-
-        match &state {
-            State::WaitingForPeers => self.emit(Event::WaitingForPeers),
-            State::Syncing(addr) => self.emit(Event::Syncing(*addr)),
-            State::Synced(hash, height) => self.emit(Event::Synced(*hash, *height)),
-        }
-        self.state = state;
     }
 
     fn get_headers(
@@ -619,6 +593,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         }
     }
 
+    /// Ask all our outbound peers whether they have better block headers.
     #[allow(dead_code)]
     fn sample_headers(&mut self) -> Vec<GetHeaders> {
         let height = self.tree.height();
@@ -627,7 +602,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         let locators = self.tree.locator_hashes(height);
 
         for peer in self.peers.values_mut() {
-            if peer.is_candidate() {
+            if peer.is_candidate() && peer.is_outbound() {
                 messages.push(GetHeaders::new(
                     peer,
                     (locators.clone(), BlockHash::default()),

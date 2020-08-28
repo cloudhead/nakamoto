@@ -1255,12 +1255,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 syncmgr::Event::Syncing(_addr) => {
                     outbound.push(Out::Event(Event::Syncing));
                 }
-                syncmgr::Event::WaitingForPeers => {
-                    // TODO: Connect to peers!
-                    debug!("[{}] syncmgr: Waiting for peers..", self.name);
-
-                    outbound.push(Out::Event(Event::Connecting));
-                }
                 syncmgr::Event::BlockDiscovered(from, hash) => {
                     debug!("[{}] {}: Discovered new block: {}", self.name, from, &hash);
                 }
