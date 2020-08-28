@@ -706,9 +706,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         if let Some(syncmgr::PeerTimeout) = timeout {
                             out.push(Out::Disconnect(addr));
                         }
-                        if let Some(req) = get_headers {
-                            out.extend(self.get_headers(req));
-                        }
+                        get_headers.for_each(|req| out.extend(self.get_headers(req)));
                     }
                     TimeoutSource::Ping(addr) => {
                         if let Some(peer) = self.peers.get_mut(&addr) {
@@ -803,9 +801,10 @@ impl<T: BlockTree> Bitcoin<T> {
         out.push(Out::SetTimeout(source, timeout));
     }
 
-    fn get_headers(&self, request: syncmgr::GetHeaders) -> Vec<Out<RawNetworkMessage>> {
+    fn get_headers(&self, request: syncmgr::Request) -> Vec<Out<RawNetworkMessage>> {
         let mut out = Vec::new();
-        let syncmgr::GetHeaders {
+
+        let syncmgr::Request {
             addr,
             locators,
             timeout,
@@ -1074,18 +1073,17 @@ impl<T: BlockTree> Bitcoin<T> {
                             msg.build(addr, ping),
                         ],
                     });
-                    out.extend(
-                        self.syncmgr
-                            .peer_negotiated(
-                                peer.address,
-                                peer.height,
-                                peer.tip,
-                                peer.services,
-                                peer.link,
-                                &self.clock,
-                            )
-                            .map_or(vec![], |req| self.get_headers(req)),
-                    );
+
+                    self.syncmgr
+                        .peer_negotiated(
+                            peer.address,
+                            peer.height,
+                            peer.tip,
+                            peer.services,
+                            peer.link,
+                            &self.clock,
+                        )
+                        .for_each(|req| out.extend(self.get_headers(req)));
 
                     return out;
                 } else {
@@ -1179,7 +1177,9 @@ impl<T: BlockTree> Bitcoin<T> {
     fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Out<RawNetworkMessage>> {
         self.syncmgr
             .received_inv(addr, inv)
-            .map_or(vec![], |req| self.get_headers(req))
+            .map(|req| self.get_headers(req))
+            .flatten()
+            .collect()
     }
 
     fn receive_headers(
@@ -1202,8 +1202,8 @@ impl<T: BlockTree> Bitcoin<T> {
         let mut outbound = Vec::new();
 
         match self.syncmgr.received_headers(&addr, headers, &self.clock) {
-            syncmgr::SyncResult::GetHeaders(req) => {
-                outbound.extend(self.get_headers(req));
+            syncmgr::SyncResult::GetHeaders(reqs) => {
+                reqs.for_each(|gh| outbound.extend(self.get_headers(gh)));
             }
             syncmgr::SyncResult::SendHeaders(syncmgr::SendHeaders { addrs, headers }) => {
                 if !addrs.is_empty() {
