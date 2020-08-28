@@ -140,6 +140,7 @@ pub struct SendHeaders {
 pub struct PeerTimeout;
 
 impl<'a, T: 'a + BlockTree> SyncManager<T> {
+    /// Create a new sync manager.
     pub fn new(tree: T, config: Config, rng: fastrand::Rng) -> Self {
         let peers = HashMap::new();
         let events = Vec::new();
@@ -155,10 +156,12 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         }
     }
 
+    /// Initialize the sync manager. Should only be called once.
     pub fn initialize(&mut self, time: LocalTime) -> impl Iterator<Item = GetHeaders> + 'a {
         self.tick(time)
     }
 
+    /// Drain the event queue.
     pub fn events(&'a mut self) -> impl Iterator<Item = Event> + 'a {
         self.events.drain(..)
     }
@@ -168,6 +171,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         self.sync(now).into_iter()
     }
 
+    /// Called when a new peer was negotiated.
     pub fn peer_negotiated(
         &mut self,
         id: PeerId,
@@ -181,22 +185,24 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         self.sync(clock.local_time())
     }
 
+    /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, id: &PeerId) {
         self.unregister(id);
     }
 
-    pub fn receive_get_headers(
+    /// Called when we received a `getheaders` message from a peer.
+    pub fn received_getheaders(
         &self,
         addr: &PeerId,
         (locator_hashes, stop_hash): Locators,
         max: usize,
     ) -> Option<SendHeaders> {
+        if locator_hashes.is_empty() || self.is_syncing() || max == 0 {
+            return None;
+        }
         let headers = self.get_headers(locator_hashes, stop_hash, max);
 
         if headers.is_empty() {
-            return None;
-        }
-        if self.is_syncing() {
             return None;
         }
 
@@ -206,12 +212,13 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         })
     }
 
+    /// Import blocks into our block tree.
     pub fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
         &mut self,
-        chain: I,
+        blocks: I,
         context: &C,
     ) -> Result<(ImportResult, Option<SendHeaders>), Error> {
-        match self.tree.import_blocks(chain, context) {
+        match self.tree.import_blocks(blocks, context) {
             Ok(ImportResult::TipChanged(tip, height, reverted)) => {
                 let result = ImportResult::TipChanged(tip, height, reverted);
 
@@ -228,7 +235,8 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         }
     }
 
-    pub fn receive_headers(
+    /// Called when we receive headers from a peer.
+    pub fn received_headers(
         &mut self,
         from: &PeerId,
         headers: NonEmpty<BlockHeader>,
@@ -349,9 +357,9 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         SyncResult::Okay
     }
 
-    /// Receive an `inv` message. This will happen if we are out of sync with a peer, and blocks
-    /// are being announced. Otherwise, we expect to receive a `headers` message.
-    pub fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Option<GetHeaders> {
+    /// Called when we received an `inv` message. This will happen if we are out of sync with a
+    /// peer, and blocks are being announced. Otherwise, we expect to receive a `headers` message.
+    pub fn received_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Option<GetHeaders> {
         let mut best_block = None;
 
         for i in &inv {
@@ -376,7 +384,8 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         None
     }
 
-    pub fn receive_timeout(&mut self, id: PeerId) -> (Option<PeerTimeout>, Option<GetHeaders>) {
+    /// Called when we received a timeout previously set on a peer.
+    pub fn received_timeout(&mut self, id: PeerId) -> (Option<PeerTimeout>, Option<GetHeaders>) {
         let peer = if let Some(peer) = self.peers.get_mut(&id) {
             peer
         } else {

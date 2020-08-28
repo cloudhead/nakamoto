@@ -701,7 +701,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         }
                     }
                     TimeoutSource::Synch(addr) => {
-                        let (timeout, get_headers) = self.syncmgr.receive_timeout(addr);
+                        let (timeout, get_headers) = self.syncmgr.received_timeout(addr);
 
                         if let Some(syncmgr::PeerTimeout) = timeout {
                             out.push(Out::Disconnect(addr));
@@ -1102,7 +1102,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 }) = msg.payload
                 {
                     if let Some(syncmgr::SendHeaders { addrs, headers }) =
-                        self.syncmgr.receive_get_headers(
+                        self.syncmgr.received_getheaders(
                             &addr,
                             (locator_hashes, stop_hash),
                             MAX_MESSAGE_HEADERS,
@@ -1178,7 +1178,7 @@ impl<T: BlockTree> Bitcoin<T> {
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Out<RawNetworkMessage>> {
         self.syncmgr
-            .receive_inv(addr, inv)
+            .received_inv(addr, inv)
             .map_or(vec![], |req| self.get_headers(req))
     }
 
@@ -1201,7 +1201,7 @@ impl<T: BlockTree> Bitcoin<T> {
         );
         let mut outbound = Vec::new();
 
-        match self.syncmgr.receive_headers(&addr, headers, &self.clock) {
+        match self.syncmgr.received_headers(&addr, headers, &self.clock) {
             syncmgr::SyncResult::GetHeaders(req) => {
                 outbound.extend(self.get_headers(req));
             }
