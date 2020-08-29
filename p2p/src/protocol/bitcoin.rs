@@ -203,6 +203,8 @@ pub struct Bitcoin<T> {
     pub max_inbound_peers: usize,
     /// Consensus parameters.
     pub params: Params,
+    /// Peer whitelist.
+    pub whitelist: Whitelist,
 
     /// Peer address manager.
     addrmgr: AddressManager,
@@ -228,6 +230,7 @@ pub struct Config {
     pub network: network::Network,
     pub address_book: AddressBook,
     pub services: ServiceFlags,
+    pub whitelist: Whitelist,
     pub params: Params,
     pub protocol_version: u32,
     pub relay: bool,
@@ -244,6 +247,7 @@ impl Default for Config {
             params: Params::new(network::Network::Mainnet.into()),
             address_book: AddressBook::default(),
             services: ServiceFlags::NONE,
+            whitelist: Whitelist::default(),
             protocol_version: PROTOCOL_VERSION,
             target_outbound_peers: TARGET_OUTBOUND_PEERS,
             max_inbound_peers: MAX_INBOUND_PEERS,
@@ -272,12 +276,35 @@ impl Config {
     }
 }
 
+/// Peer whitelist.
+#[derive(Debug, Clone)]
+pub struct Whitelist {
+    addr: HashSet<net::IpAddr>,
+    user_agent: HashSet<String>,
+}
+
+impl Default for Whitelist {
+    fn default() -> Self {
+        Whitelist {
+            addr: HashSet::new(),
+            user_agent: HashSet::new(),
+        }
+    }
+}
+
+impl Whitelist {
+    fn contains(&self, addr: &net::IpAddr, user_agent: &str) -> bool {
+        self.addr.contains(addr) || self.user_agent.contains(user_agent)
+    }
+}
+
 impl<T: BlockTree> Bitcoin<T> {
     pub fn new(tree: T, clock: AdjustedTime<PeerId>, rng: fastrand::Rng, config: Config) -> Self {
         let Config {
             network,
             address_book,
             services,
+            whitelist,
             protocol_version,
             target_outbound_peers,
             max_inbound_peers,
@@ -309,6 +336,7 @@ impl<T: BlockTree> Bitcoin<T> {
             max_inbound_peers,
             relay,
             user_agent,
+            whitelist,
             name,
             params,
             clock,
@@ -335,6 +363,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
         let rng = self.rng.clone();
 
+        // TODO: Keep negotiated peers in a different set with a user agent.
         // TODO: Handle case where peer already exists.
         self.peers.insert(
             addr,
@@ -427,6 +456,8 @@ pub struct Peer {
     pub latencies: VecDeque<LocalDuration>,
     /// Peer nonce. Used to detect self-connections.
     pub nonce: u64,
+    /// Peer user agent string.
+    pub user_agent: String,
     /// Random number generator.
     pub rng: fastrand::Rng,
     /// Informational context for this peer. Used for logging purposes only.
@@ -454,6 +485,7 @@ impl Peer {
             last_ping: None,
             latencies: VecDeque::new(),
             services: ServiceFlags::NONE,
+            user_agent: String::default(),
             ctx,
             nonce,
             rng,
@@ -608,6 +640,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 match cmd {
                     Command::Connect(addr) => {
                         debug!("[{}] Received command: Connect({})", self.name, addr);
+
+                        self.whitelist.addr.insert(addr.ip());
 
                         if !self.connected.contains(&addr) {
                             out.push(Out::Connect(addr));
@@ -956,6 +990,8 @@ impl<T: BlockTree> Bitcoin<T> {
                 }) = msg.payload
                 {
                     let height = self.height;
+                    let whitelisted = self.whitelist.contains(&addr.ip(), &user_agent)
+                        || addrmgr::is_local(&addr.ip());
 
                     info!(
                         "[{}] {}: Peer version = {}, height = {}, agent = {}, timestamp = {}",
@@ -974,9 +1010,10 @@ impl<T: BlockTree> Bitcoin<T> {
                     // Peers that don't advertise the `NETWORK` service are not full nodes.
                     // It's not so useful for us to connect to them, because they're likely
                     // to be less secure.
-                    if !services.has(ServiceFlags::NETWORK)
+                    if peer.link == Link::Outbound
+                        && !services.has(ServiceFlags::NETWORK)
                         && !services.has(ServiceFlags::NETWORK_LIMITED)
-                        && !user_agent.starts_with("/nakamoto:")
+                        && !whitelisted
                     {
                         debug!(
                             "[{}] {}: Disconnecting: peer doesn't have required services",
@@ -986,7 +1023,9 @@ impl<T: BlockTree> Bitcoin<T> {
                     }
                     // If the peer is too far behind, there's no use connecting to it, we'll
                     // have to wait for it to catch up.
-                    if height.saturating_sub(start_height as Height) > MAX_STALE_HEIGHT_DIFFERENCE {
+                    if height.saturating_sub(start_height as Height) > MAX_STALE_HEIGHT_DIFFERENCE
+                        && !whitelisted
+                    {
                         debug!(
                             "[{}] {}: Disconnecting: peer is too far behind",
                             self.name, addr
@@ -1018,6 +1057,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     peer.height = start_height as Height;
                     peer.time_offset = timestamp - now.as_secs() as i64;
                     peer.services = services;
+                    peer.user_agent = user_agent;
                     peer.transition(PeerState::Handshake(Handshake::AwaitingVerack));
 
                     match peer.link {

@@ -40,6 +40,10 @@ mod setup {
             target_outbound_peers: 8,
             max_inbound_peers: 8,
             user_agent: USER_AGENT,
+            whitelist: Whitelist {
+                addr: HashSet::new(),
+                user_agent: vec![USER_AGENT.to_owned()].into_iter().collect(),
+            },
             relay: false,
             name: "self",
         };
