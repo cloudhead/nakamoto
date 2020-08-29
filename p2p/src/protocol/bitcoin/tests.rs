@@ -301,7 +301,7 @@ fn test_getheaders_timeout() {
     let network = Network::Mainnet;
     // TODO: Protocol should try different peers if it can't get the headers from the first
     // peer. It should keep trying until it succeeds.
-    let ((mut local, _), (_, remote_addr), time) = setup::pair(network);
+    let ((mut local, _), (_, remote_addr), _) = setup::pair(network);
     // Some hash for a nonexistent block.
     let hash =
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
