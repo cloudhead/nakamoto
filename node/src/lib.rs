@@ -5,16 +5,18 @@ pub mod node;
 use std::net;
 use std::time;
 
-use nakamoto_p2p::address_book::AddressBook;
-use nakamoto_p2p::protocol::bitcoin::Network;
+pub use nakamoto_p2p::address_book::AddressBook;
+pub use nakamoto_p2p::protocol::bitcoin::Network;
 
 #[cfg(test)]
 mod tests;
 
-pub fn run(connect: &[net::SocketAddr], listen: &[net::SocketAddr]) -> Result<(), error::Error> {
+pub fn run(
+    connect: &[net::SocketAddr],
+    listen: &[net::SocketAddr],
+    network: Network,
+) -> Result<(), error::Error> {
     use node::*;
-
-    let network = Network::Mainnet;
 
     let address_book = if connect.is_empty() {
         match AddressBook::load("peers") {

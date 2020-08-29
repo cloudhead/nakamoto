@@ -3,6 +3,7 @@ use std::net;
 use argh::FromArgs;
 
 use nakamoto_daemon::logger;
+use nakamoto_node::Network;
 
 #[derive(FromArgs)]
 /// A Bitcoin light client.
@@ -35,7 +36,13 @@ fn main() {
 
     logger::init(opts.log).expect("initializing logger for the first time");
 
-    if let Err(err) = nakamoto_node::run(&opts.connect, &opts.listen) {
+    let network = if opts.testnet {
+        Network::Testnet
+    } else {
+        Network::Mainnet
+    };
+
+    if let Err(err) = nakamoto_node::run(&opts.connect, &opts.listen, network) {
         log::error!("{}", err);
         std::process::exit(1);
     }
