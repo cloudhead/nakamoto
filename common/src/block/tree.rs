@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::block::store;
 use crate::block::time::Clock;
-use crate::block::{self, Bits, Height, Target, Time, Work};
+use crate::block::{Height, Target, Time, Work};
 
 /// An error related to the block tree.
 #[derive(Debug, Error)]
@@ -134,13 +134,13 @@ pub trait BlockTree {
         &self,
         last_height: Height,
         last_time: Time,
-        last_bits: Bits,
+        last_target: Target,
         params: &Params,
-    ) -> Bits {
+    ) -> Target {
         // Only adjust on set intervals. Otherwise return current target.
         // Since the height is 0-indexed, we add `1` to check it against the interval.
         if (last_height + 1) % params.difficulty_adjustment_interval() != 0 {
-            return last_bits;
+            return last_target;
         }
 
         let last_adjustment_height =
@@ -151,7 +151,7 @@ pub trait BlockTree {
         let last_adjustment_time = last_adjustment_block.time;
 
         if params.no_pow_retargeting {
-            return last_adjustment_block.bits;
+            return last_adjustment_block.target();
         }
 
         let actual_timespan = last_time - last_adjustment_time;
@@ -163,7 +163,7 @@ pub trait BlockTree {
             adjusted_timespan = params.pow_target_timespan as Time * 4;
         }
 
-        let mut target = block::target_from_bits(last_bits);
+        let mut target = last_target;
 
         target = target.mul_u32(adjusted_timespan);
         target = target / Target::from_u64(params.pow_target_timespan).unwrap();
@@ -173,6 +173,6 @@ pub trait BlockTree {
             target = params.pow_limit;
         }
 
-        BlockHeader::compact_target_from_u256(&target)
+        target
     }
 }

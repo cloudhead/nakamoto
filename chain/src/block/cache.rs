@@ -17,7 +17,7 @@ use nakamoto_common::block::{
     self,
     store::Store,
     time::{self, Clock},
-    Bits, CachedBlock, Height, Time,
+    CachedBlock, Height, Target, Time,
 };
 
 /// A chain candidate, forking off the active chain.
@@ -291,17 +291,16 @@ impl<S: Store> BlockCache<S> {
     ) -> Result<(), Error> {
         assert_eq!(tip.hash, header.prev_blockhash);
 
-        let bits = if self.params.allow_min_difficulty_blocks {
+        let target = if self.params.allow_min_difficulty_blocks {
             if header.time > tip.time + self.params.pow_target_spacing as Time * 2 {
-                BlockHeader::compact_target_from_u256(&self.params.pow_limit)
+                self.params.pow_limit
             } else {
-                self.next_min_difficulty_target(tip.bits, &self.params)
+                self.next_min_difficulty_target(tip.target(), &self.params)
             }
         } else {
-            self.next_difficulty_target(tip.height, tip.time, tip.bits, &self.params)
+            self.next_difficulty_target(tip.height, tip.time, tip.target(), &self.params)
         };
 
-        let target = block::target_from_bits(bits);
         match header.validate_pow(&target) {
             Err(bitcoin::util::Error::BlockBadProofOfWork) => {
                 return Err(Error::InvalidBlockPoW);
@@ -348,19 +347,19 @@ impl<S: Store> BlockCache<S> {
             .unwrap_or(0)
     }
 
-    fn next_min_difficulty_target(&self, last_bits: Bits, params: &Params) -> Bits {
+    fn next_min_difficulty_target(&self, last_target: Target, params: &Params) -> Target {
         let pow_limit = BlockHeader::compact_target_from_u256(&params.pow_limit);
-        let mut bits = last_bits;
+        let mut target = last_target;
 
         for (height, header) in self.chain.tail.iter().enumerate().rev() {
             if height as Height % self.params.difficulty_adjustment_interval() == 0
                 || header.bits != pow_limit
             {
-                bits = header.bits;
+                target = header.target();
                 break;
             }
         }
-        bits
+        target
     }
 
     /// Rollback active chain to the given height. Returns the list of rolled-back headers.

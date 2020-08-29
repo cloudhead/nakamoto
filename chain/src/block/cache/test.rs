@@ -479,10 +479,15 @@ fn test_bitcoin_difficulty() {
     let mut cache = HeightCache::new(genesis);
 
     for (height, prev_time, prev_bits, time, bits) in tests::TARGETS.iter().cloned() {
-        let target = cache.next_difficulty_target(height - 1, prev_time, prev_bits, &params);
+        let target = cache.next_difficulty_target(
+            height - 1,
+            prev_time,
+            block::target_from_bits(prev_bits),
+            &params,
+        );
 
         assert_eq!(height % params.difficulty_adjustment_interval(), 0);
-        assert_eq!(target, bits);
+        assert_eq!(BlockHeader::compact_target_from_u256(&target), bits);
 
         // We store the retargeting blocks, since they are used in the difficulty calculation.
         cache.import(
