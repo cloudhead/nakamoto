@@ -11,7 +11,7 @@ use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
-use super::{Link, Locators, PeerId};
+use super::{Link, Locators, PeerId, Timeout};
 
 pub use result::Message;
 
@@ -24,9 +24,6 @@ pub const MAX_HEADERS_ANNOUNCED: usize = 8;
 pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
 /// How long to wait between checks for longer chains from peers.
 pub const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
-
-/// A timeout.
-type Timeout = LocalDuration;
 
 mod result {
     use super::{GetHeaders, Request, SendHeaders};

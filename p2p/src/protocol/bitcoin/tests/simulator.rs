@@ -235,7 +235,7 @@ impl Sim {
                 info!("(sim) {} -> {}: {:?}", peer, receiver, msg);
                 inbox.push_back((receiver, protocol::Input::Received(peer, msg)))
             }
-            Out::Connect(remote) => {
+            Out::Connect(remote, _timeout) => {
                 assert!(remote != peer, "self-connections are not allowed");
                 info!("(sim) {} => {}", peer, remote);
 

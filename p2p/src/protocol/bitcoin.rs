@@ -15,7 +15,7 @@ use syncmgr::SyncManager;
 
 use crate::address_book::AddressBook;
 use crate::event::Event;
-use crate::protocol::{self, Link, Message, Out, PeerId, Protocol, TimeoutSource};
+use crate::protocol::{self, Link, Message, Out, PeerId, Protocol, Timeout, TimeoutSource};
 
 use std::collections::{HashSet, VecDeque};
 use std::fmt::Debug;
@@ -54,6 +54,8 @@ pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
 pub const PING_INTERVAL: LocalDuration = LocalDuration::from_mins(2);
 /// Time to wait to receive a pong when sending a ping.
 pub const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
+/// Time to wait for a new connection.
+pub const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
 /// Target number of concurrent outbound peer connections.
 pub const TARGET_OUTBOUND_PEERS: usize = 8;
 /// Maximum number of inbound peer connections.
@@ -559,7 +561,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         for addr in self.addrmgr.iter().take(self.target_outbound_peers) {
             if let Ok(addr) = addr.socket_addr() {
-                out.push(Out::Connect(addr));
+                out.push(Out::Connect(addr, CONNECTION_TIMEOUT));
             }
         }
         out.push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
@@ -644,7 +646,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         self.whitelist.addr.insert(addr.ip());
 
                         if !self.connected.contains(&addr) {
-                            out.push(Out::Connect(addr));
+                            out.push(Out::Connect(addr, CONNECTION_TIMEOUT));
                         }
                     }
                     Command::Disconnect(addr) => {
@@ -886,7 +888,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 if let Ok(sockaddr) = addr.socket_addr() {
                     debug_assert!(!self.connected.contains(&sockaddr));
 
-                    out.push(Out::Connect(sockaddr));
+                    out.push(Out::Connect(sockaddr, CONNECTION_TIMEOUT));
                 } else {
                     // TODO: Perhaps the address manager should just return addresses
                     // that can be converted to socket addresses?

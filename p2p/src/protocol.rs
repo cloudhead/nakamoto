@@ -11,6 +11,9 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
 
+/// A timeout.
+pub type Timeout = LocalDuration;
+
 /// Link direction of the peer connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Link {
@@ -94,11 +97,11 @@ pub enum Out<M: Message> {
     /// Send a message to a peer.
     Message(PeerId, M),
     /// Connect to a peer.
-    Connect(PeerId),
+    Connect(PeerId, Timeout),
     /// Disconnect from a peer.
     Disconnect(PeerId),
     /// Set a timeout associated with a peer.
-    SetTimeout(TimeoutSource, LocalDuration),
+    SetTimeout(TimeoutSource, Timeout),
     /// An event has occured.
     Event(Event<M::Payload>),
     /// Shutdown protocol.
@@ -115,7 +118,7 @@ impl<M: Message> Out<M> {
     pub fn address(&self) -> Option<PeerId> {
         match self {
             Self::Message(addr, _) => Some(*addr),
-            Self::Connect(addr) => Some(*addr),
+            Self::Connect(addr, _) => Some(*addr),
             Self::Disconnect(addr) => Some(*addr),
             Self::SetTimeout(_, _) => None,
             Self::Event(_) => None,

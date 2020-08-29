@@ -374,7 +374,7 @@ fn test_maintain_connections(seed: u64) {
 
     let addr = result
         .find(|o| match o {
-            Out::Connect(addr) => Some(*addr),
+            Out::Connect(addr, CONNECTION_TIMEOUT) => Some(*addr),
             _ => None,
         })
         .expect("Alice connects to a peer");
@@ -552,7 +552,7 @@ fn test_getaddr() {
             ),
         ),
     )
-    .any(|o| matches!(o, Out::Connect(addr) if addr == &toto))
+    .any(|o| matches!(o, Out::Connect(addr, CONNECTION_TIMEOUT) if addr == &toto))
     .expect("Alice tries to connect to Toto");
 }
 

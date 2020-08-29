@@ -344,14 +344,22 @@ where
                         }
                     }
                 }
-                Out::Connect(addr) => {
-                    let stream = self::dial(&addr)?;
-                    let local_addr = stream.local_addr()?;
-                    let addr = stream.peer_addr()?;
+                Out::Connect(addr, timeout) => {
+                    debug!("Connecting to {}...", &addr);
 
-                    trace!("{:#?}", stream);
+                    match self::dial(&addr, timeout.into()) {
+                        Ok(stream) => {
+                            let local_addr = stream.local_addr()?;
+                            let addr = stream.peer_addr()?;
 
-                    self.register_peer(addr, local_addr, stream, Link::Outbound);
+                            trace!("{:#?}", stream);
+
+                            self.register_peer(addr, local_addr, stream, Link::Outbound);
+                        }
+                        Err(err) => {
+                            error!("{}: Connection error: {}", addr, err.to_string());
+                        }
+                    }
                 }
                 Out::Disconnect(addr) => {
                     if let Some(peer) = self.peers.get(&addr) {
@@ -426,11 +434,10 @@ where
 }
 
 /// Connect to a peer given a remote address.
-pub fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
+pub fn dial(addr: &net::SocketAddr, timeout: time::Duration) -> Result<net::TcpStream, Error> {
     fallible! { Error::Io(io::ErrorKind::Other.into()) };
-    debug!("Connecting to {}...", &addr);
 
-    let sock = net::TcpStream::connect(addr)?;
+    let sock = net::TcpStream::connect_timeout(addr, timeout)?;
 
     // TODO: We probably don't want the same timeouts for read and write.
     // For _write_, we want something much shorter.
