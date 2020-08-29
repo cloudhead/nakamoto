@@ -76,8 +76,15 @@ impl Network {
                 "seed.btc.petertodd.org",        // Peter Todd
                 "seed.bitcoin.sprovoost.nl",     // Sjors Provoost
                 "dnsseed.emzy.de",               // Stephan Oeste
+                "seed.bitcoin.wiz.biz",          // Jason Maurice
             ],
-            _ => &[],
+            Network::Testnet => &[
+                "testnet-seed.bitcoin.jonasschnelli.ch",
+                "seed.tbtc.petertodd.org",
+                "seed.testnet.bitcoin.sprovoost.nl",
+                "testnet-seed.bluematt.me",
+            ],
+            Network::Regtest => &[], // No seeds
         }
     }
 }
