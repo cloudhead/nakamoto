@@ -293,7 +293,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         (locator_hashes, stop_hash): Locators,
         max: usize,
     ) -> Option<SendHeaders> {
-        if locator_hashes.is_empty() || self.is_syncing() || max == 0 {
+        if self.is_syncing() || max == 0 {
             return None;
         }
         let headers = self.get_headers(locator_hashes, stop_hash, max);
@@ -689,8 +689,7 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
     fn get_headers(
         &self,
         locator_hashes: Vec<BlockHash>,
-        // FIXME(syncmgr): Use this
-        _stop_hash: BlockHash,
+        stop_hash: BlockHash,
         max: usize,
     ) -> Vec<BlockHeader> {
         let tree = &self.tree;
@@ -707,12 +706,21 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
             // peer.height = start_height;
 
             let start = start_height + 1;
-            let end = Height::min(start + max as Height, tree.height() + 1);
+            let stop = self
+                .tree
+                .get_block(&stop_hash)
+                .map(|(h, _)| h)
+                .unwrap_or(tree.height());
+            let stop = Height::min(start + max as Height, stop + 1);
 
-            tree.range(start..end).collect()
-        } else {
-            vec![]
+            return tree.range(start..stop).collect();
         }
+
+        if let Some((_, header)) = self.tree.get_block(&stop_hash) {
+            return vec![*header];
+        }
+
+        vec![]
     }
 
     /// Ask all our outbound peers whether they have better block headers.
