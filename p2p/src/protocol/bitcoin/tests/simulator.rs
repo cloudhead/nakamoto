@@ -72,6 +72,7 @@ impl InputResult {
         self.outputs.iter().find(|m| f(m))
     }
 
+    #[track_caller]
     pub fn message<F>(&self, f: F) -> (PeerId, &NetworkMessage)
     where
         F: Fn(&PeerId, &NetworkMessage) -> bool,
@@ -80,7 +81,10 @@ impl InputResult {
             .iter()
             .filter_map(payload)
             .find(|(addr, msg)| f(addr, msg))
-            .expect("expected message in output was not found")
+            .expect(&format!(
+                "expected message was not found in output: {:?}",
+                self.outputs
+            ))
     }
 
     pub fn schedule(self, sim: &mut Sim) {

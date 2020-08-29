@@ -703,7 +703,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     TimeoutSource::Synch(addr) => {
                         let (timeout, get_headers) = self.syncmgr.received_timeout(addr);
 
-                        if let Some(syncmgr::PeerTimeout) = timeout {
+                        if let syncmgr::OnTimeout::Disconnect = timeout {
                             out.push(Out::Disconnect(addr));
                         }
                         get_headers.for_each(|req| out.extend(self.get_headers(req)));
@@ -1235,6 +1235,9 @@ impl<T: BlockTree> Bitcoin<T> {
                         "[{}] {}: Received invalid headers: {}",
                         self.name, addr, error
                     );
+                }
+                syncmgr::Event::TimedOut(addr) => {
+                    debug!("[{}] Peer {} timed out", self.name, addr);
                 }
                 syncmgr::Event::ReceivedUnsolicitedHeaders(from, count) => {
                     debug!(

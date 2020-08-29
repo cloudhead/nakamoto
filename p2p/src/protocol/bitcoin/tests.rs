@@ -325,11 +325,6 @@ fn test_getheaders_timeout() {
             |o| matches!(o, Out::SetTimeout(TimeoutSource::Synch(addr), _) if addr == &remote_addr),
         )
         .expect("a timer should be returned");
-
-    local
-        .step(Input::Timeout(TimeoutSource::Synch(remote_addr), time))
-        .find(|o| matches!(o, Out::Disconnect(addr) if addr == &remote_addr))
-        .expect("the unresponsive peer should be disconnected");
 }
 
 #[quickcheck]
@@ -604,12 +599,21 @@ fn test_stale_tip() {
                 network.magic(),
             ),
         ),
-    );
+    )
+    .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+
+    // Timeout the request.
+    sim.elapse(syncmgr::REQUEST_TIMEOUT);
+    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(bob), sim.time));
 
     // Some time has passed. The tip timestamp should be considered stale now.
     sim.elapse(syncmgr::TIP_STALE_DURATION);
     sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+
+    // Timeout the request.
+    sim.elapse(syncmgr::REQUEST_TIMEOUT);
+    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(bob), sim.time));
 
     // Now send another header and wait until the chain update is stale.
     sim.input(
