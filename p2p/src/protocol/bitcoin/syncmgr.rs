@@ -16,7 +16,7 @@ use super::{Link, Locators, PeerId, Timeout};
 pub use result::Message;
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
-pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(8);
+pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 /// Maximum headers announced in a `headers` message, when unsolicited.
 pub const MAX_HEADERS_ANNOUNCED: usize = 8;
 /// How long before the tip of the chain is considered stale. This takes into account
@@ -347,87 +347,77 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
     ) -> Vec<result::Message> {
         let length = headers.len();
         let best = headers.last().bitcoin_hash();
+        let peer = self.peers.get_mut(from).unwrap();
 
         if self.tree.contains(&best) {
-            // Ignore duplicate headers on the active chain.
-            return result::empty();
+            peer.transition(Syncing::Idle);
+            return result::empty(); // Ignore duplicate headers on the active chain.
         }
 
-        match &self.peers.get_mut(from).unwrap().state {
+        match &peer.state {
             // Requested headers. These should extend our main chain.
             // Check whether the start of the header chain matches one of the locators we
             // supplied to the peer. Otherwise, we consider them unsolicited.
             Syncing::AwaitingHeaders((locators, _), _, _)
                 if headers.iter().any(|h| locators.contains(&h.prev_blockhash)) =>
             {
-                let (mut tip, _) = self.tree.tip();
-                let mut height = self.tree.height();
+                let result = self.extend_chain(headers, clock);
 
-                for header in headers.into_iter() {
-                    match self.tree.extend_tip(header, clock) {
-                        Ok(ImportResult::TipChanged(t, h, _)) => {
-                            tip = t;
-                            height = h;
+                if let Ok(ref imported) = result {
+                    self.emit(Event::HeadersImported(imported.clone()));
+                }
+
+                match result {
+                    Ok(ImportResult::TipUnchanged) => {
+                        self.peers.get_mut(from).unwrap().transition(Syncing::Idle);
+                    }
+                    Ok(ImportResult::TipChanged(tip, height, _)) => {
+                        let peer = self.peers.get_mut(from).unwrap();
+
+                        if height > peer.height {
+                            peer.tip = tip;
+                            peer.height = height;
                         }
-                        Ok(ImportResult::TipUnchanged) => {
-                            // We must have received headers from a different peer in the meantime,
-                            // keep processing in case one of the headers extends our chain.
-                            continue;
-                        }
-                        Err(err) => {
-                            self.record_misbehavior(from);
-                            self.emit(Event::ReceivedInvalidHeaders(*from, err));
 
-                            // TODO: Ask different peer.
-                            // TODO: Transition peer.
+                        // Keep track of when we last updated our tip. This is useful to check
+                        // whether our tip is stale.
+                        self.last_tip_update = Some(clock.local_time());
 
-                            return result::empty();
+                        // If we received less than the maximum number of headers, we must be in sync.
+                        // Otherwise, ask for the next batch of headers.
+                        if length < self.config.max_message_headers {
+                            // If these headers were unsolicited, we may already be ready/synced.
+                            // Otherwise, we're finally in sync.
+                            peer.transition(Syncing::Idle);
+
+                            return self
+                                .broadcast_tip(&tip)
+                                .into_iter()
+                                .map(Message::from)
+                                .chain(self.sync(clock.local_time()).map(Message::from))
+                                .collect();
+                        } else {
+                            // TODO: If we're already in the state of asking for this header, don't
+                            // ask again.
+                            // TODO: Should we use stop-hash for the single locator?
+                            let locators = (vec![tip], BlockHash::default());
+                            let timeout = self.config.request_timeout;
+
+                            return result::once(GetHeaders::new(
+                                peer,
+                                locators,
+                                clock.local_time(),
+                                timeout,
+                                OnTimeout::Disconnect,
+                            ));
                         }
                     }
-                }
+                    Err(err) => {
+                        self.record_misbehavior(from);
+                        self.emit(Event::ReceivedInvalidHeaders(*from, err));
 
-                let peer = self.peers.get_mut(from).unwrap();
-
-                if height > peer.height {
-                    peer.tip = tip;
-                    peer.height = height;
-                }
-
-                // Keep track of when we last updated our tip. This is useful to check
-                // whether our tip is stale.
-                self.last_tip_update = Some(clock.local_time());
-
-                let import_result = ImportResult::TipChanged(tip, height, vec![]);
-
-                // If we received less than the maximum number of headers, we must be in sync.
-                // Otherwise, ask for the next batch of headers.
-                if length < self.config.max_message_headers {
-                    // If these headers were unsolicited, we may already be ready/synced.
-                    // Otherwise, we're finally in sync.
-                    peer.transition(Syncing::Idle);
-                    self.emit(Event::HeadersImported(import_result));
-
-                    return self
-                        .broadcast_tip(&tip)
-                        .into_iter()
-                        .map(Message::from)
-                        .chain(self.sync(clock.local_time()).map(Message::from))
-                        .collect();
-                } else {
-                    self.events.push(Event::HeadersImported(import_result));
-
-                    // TODO: If we're already in the state of asking for this header, don't
-                    // ask again.
-                    let locators = (vec![tip], BlockHash::default());
-                    let timeout = self.config.request_timeout;
-
-                    return result::once(GetHeaders::new(
-                        peer,
-                        locators,
-                        clock.local_time(),
-                        timeout,
-                        OnTimeout::Disconnect,
-                    ));
+                        return result::empty();
+                    }
                 }
             }
             // Header announcement.
@@ -471,6 +461,35 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         }
 
         result::empty()
+    }
+
+    fn extend_chain(
+        &mut self,
+        headers: NonEmpty<BlockHeader>,
+        clock: &impl Clock,
+    ) -> Result<ImportResult, Error> {
+        let mut import_result = ImportResult::TipUnchanged;
+
+        for header in headers.into_iter() {
+            match self.tree.extend_tip(header, clock) {
+                Ok(ImportResult::TipChanged(tip, height, _)) => {
+                    import_result = ImportResult::TipChanged(tip, height, vec![]);
+                }
+                Ok(ImportResult::TipUnchanged) => {
+                    // We must have received headers from a different peer in the meantime,
+                    // keep processing in case one of the headers extends our chain.
+                    continue;
+                }
+                Err(err) => {
+                    // TODO: Ask different peer.
+                    // TODO: Transition peer.
+
+                    return Err(err);
+                }
+            }
+        }
+
+        Ok(import_result)
     }
 
     /// Called when we received an `inv` message. This will happen if we are out of sync with a
