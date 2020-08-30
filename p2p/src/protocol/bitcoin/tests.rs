@@ -432,6 +432,8 @@ fn test_getheaders_retry() {
     let mut last_asked = addr;
     // While there's still peers to ask...
     while asked.len() < ask {
+        sim.elapse(syncmgr::REQUEST_TIMEOUT);
+
         let result = sim.input(
             &alice,
             Input::Timeout(TimeoutSource::Synch(last_asked), sim.time),

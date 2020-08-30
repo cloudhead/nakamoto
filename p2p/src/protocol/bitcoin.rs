@@ -737,7 +737,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         }
                     }
                     TimeoutSource::Synch(addr) => {
-                        let (timeout, get_headers) = self.syncmgr.received_timeout(addr);
+                        let (timeout, get_headers) =
+                            self.syncmgr.received_timeout(addr, local_time);
 
                         if let syncmgr::OnTimeout::Disconnect = timeout {
                             out.push(Out::Disconnect(addr));
@@ -1218,7 +1219,7 @@ impl<T: BlockTree> Bitcoin<T> {
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Out<RawNetworkMessage>> {
         self.syncmgr
-            .received_inv(addr, inv)
+            .received_inv(addr, inv, &self.clock)
             .map(|req| self.get_headers(req))
             .flatten()
             .collect()
