@@ -138,7 +138,7 @@ impl Sim {
                     id,
                     Peer {
                         id,
-                        name: protocol.name,
+                        name: protocol.target,
                         protocol,
                         events: vec![],
                     },
@@ -149,7 +149,7 @@ impl Sim {
 
         let mut index = HashMap::with_hasher(rng.clone().into());
         for (addr, peer) in &peers {
-            index.insert(peer.protocol.name, *addr);
+            index.insert(peer.protocol.target, *addr);
         }
         let inbox = VecDeque::new();
 

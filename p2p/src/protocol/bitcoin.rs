@@ -221,7 +221,7 @@ pub struct Bitcoin<T> {
     /// Set of disconnected peers.
     disconnected: HashSet<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
-    name: &'static str,
+    target: &'static str,
     /// Random number generator.
     rng: fastrand::Rng,
 }
@@ -239,7 +239,7 @@ pub struct Config {
     pub user_agent: &'static str,
     pub target_outbound_peers: usize,
     pub max_inbound_peers: usize,
-    pub name: &'static str,
+    pub target: &'static str,
 }
 
 impl Default for Config {
@@ -255,19 +255,23 @@ impl Default for Config {
             max_inbound_peers: MAX_INBOUND_PEERS,
             relay: false,
             user_agent: USER_AGENT,
-            name: "self",
+            target: "self",
         }
     }
 }
 
 impl Config {
-    pub fn from(name: &'static str, network: network::Network, address_book: AddressBook) -> Self {
+    pub fn from(
+        target: &'static str,
+        network: network::Network,
+        address_book: AddressBook,
+    ) -> Self {
         let params = Params::new(network.into());
 
         Self {
             network,
             address_book,
-            name,
+            target,
             params,
             ..Self::default()
         }
@@ -312,7 +316,7 @@ impl<T: BlockTree> Bitcoin<T> {
             max_inbound_peers,
             relay,
             user_agent,
-            name,
+            target,
             params,
         } = config;
 
@@ -339,7 +343,7 @@ impl<T: BlockTree> Bitcoin<T> {
             relay,
             user_agent,
             whitelist,
-            name,
+            target,
             params,
             clock,
             height,
@@ -376,7 +380,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 nonce,
                 link,
                 rng,
-                self.name,
+                self.target,
             ),
         );
 
@@ -536,10 +540,7 @@ impl Peer {
         if state == self.state {
             return;
         }
-        debug!(
-            "[{}] {}: {:?} -> {:?}",
-            self.ctx, self.address, self.state, state
-        );
+        debug!(target: self.ctx, "{}: {:?} -> {:?}", self.address, self.state, state);
 
         self.state = state;
     }
@@ -580,7 +581,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 local_addr,
                 link,
             } => {
-                info!("[{}] {}: Peer connected ({:?})", self.name, &addr, link);
+                info!(target: self.target, "{}: Peer connected ({:?})", &addr, link);
                 debug_assert!(!self.connected.contains(&addr));
 
                 // This is usually not that useful, except when our local address is actually the
@@ -591,8 +592,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     Link::Inbound if self.connected.len() >= self.max_inbound_peers => {
                         // Don't allow inbound connections beyond the configured limit.
                         debug!(
-                            "[{}] {}: Disconnecting: reached target peer connections ({})",
-                            self.name, addr, self.target_outbound_peers
+                            target: self.target,
+                            "{}: Disconnecting: reached target peer connections ({})",
+                            addr, self.target_outbound_peers
                         );
                         out.push(Out::Disconnect(addr));
                     }
@@ -608,7 +610,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 };
             }
             Input::Disconnected(addr) => {
-                debug!("[{}] Disconnected from {}", self.name, &addr);
+                debug!(target: self.target, "Disconnected from {}", &addr);
                 debug_assert!(self.connected.contains(&addr));
                 debug_assert!(!self.disconnected.contains(&addr));
 
@@ -641,7 +643,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             Input::Command(cmd) => {
                 match cmd {
                     Command::Connect(addr) => {
-                        debug!("[{}] Received command: Connect({})", self.name, addr);
+                        debug!(target: self.target, "Received command: Connect({})", addr);
 
                         self.whitelist.addr.insert(addr.ip());
 
@@ -650,7 +652,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         }
                     }
                     Command::Disconnect(addr) => {
-                        debug!("[{}] Received command: Disconnect({})", self.name, addr);
+                        debug!(target: self.target, "Received command: Disconnect({})", addr);
 
                         if self.connected.contains(&addr) {
                             out.push(Out::Disconnect(addr));
@@ -658,8 +660,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     }
                     Command::Receive(addr, msg) => {
                         debug!(
-                            "[{}] Received command: Receive({}, {:?})",
-                            self.name, addr, msg
+                            target: self.target, "Received command: Receive({}, {:?})",
+                            addr, msg
                         );
 
                         if self.connected.contains(&addr) {
@@ -675,7 +677,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         }
                     }
                     Command::ImportHeaders(headers, reply) => {
-                        debug!("[{}] Received command: ImportHeaders(..)", self.name);
+                        debug!(target: self.target, "Received command: ImportHeaders(..)");
 
                         let result = self.syncmgr.import_blocks(headers.into_iter(), &self.clock);
 
@@ -704,7 +706,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     Command::GetTip(_) => todo!(),
                     Command::GetBlock(_) => todo!(),
                     Command::SubmitTransaction(tx) => {
-                        debug!("[{}] Received command: SubmitTransaction(..)", self.name);
+                        debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
                         // TODO: Factor this out when we have a `peermgr`.
                         let ix = self.rng.usize(..self.ready.len());
@@ -718,7 +720,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
             Input::Timeout(source, local_time) => {
-                debug!("[{}] Received timeout for {:?}", self.name, source);
+                debug!(target: self.target, "Received timeout for {:?}", source);
 
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
@@ -733,7 +735,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 _ => {}
                             }
                         } else {
-                            debug!("[{}] Peer {} no longer exists (ignoring)", self.name, addr);
+                            debug!(target: self.target, "Peer {} no longer exists (ignoring)", addr);
                         }
                     }
                     TimeoutSource::Synch(addr) => {
@@ -758,8 +760,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                         let address = peer.address;
 
                                         log::debug!(
-                                            "[{}] {}: Disconnecting (ping timeout)",
-                                            self.name,
+                                            target: self.target, "{}: Disconnecting (ping timeout)",
+
                                             address
                                         );
                                         self.disconnect(&address, &mut out);
@@ -787,7 +789,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         }
                     }
                     TimeoutSource::Global => {
-                        debug!("[{}] Tick: local_time = {}", self.name, local_time);
+                        debug!(target: self.target, "Tick: local_time = {}", local_time);
 
                         // The local time is set from outside the protocol.
                         self.clock.set_local_time(local_time);
@@ -805,10 +807,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         if log::max_level() >= log::Level::Debug {
             out.iter().for_each(|o| match o {
                 Out::Message(addr, msg) => {
-                    debug!("[{}] {}: Sending {:?}", self.name, addr, msg.display());
+                    debug!(target: self.target, "{}: Sending {:?}", addr, msg.display());
                 }
                 Out::Event(Event::Received(_, _)) => {}
-                _ => debug!("[{}] Out: {:?}", self.name, o),
+                _ => debug!(target: self.target, "Out: {:?}", o),
             });
         }
         out.into_iter()
@@ -881,8 +883,8 @@ impl<T: BlockTree> Bitcoin<T> {
 
         if current < self.target_outbound_peers {
             debug!(
-                "[{}] Peer outbound connections ({}) below target ({})",
-                self.name, current, self.target_outbound_peers
+                target: self.target, "Peer outbound connections ({}) below target ({})",
+                current, self.target_outbound_peers
             );
 
             if let Some(addr) = self.addrmgr.sample() {
@@ -897,7 +899,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     todo!();
                 }
             } else {
-                debug!("[{}] Address book exhausted, asking peers..", self.name);
+                debug!(target: self.target, "Address book exhausted, asking peers..");
 
                 // We're out of addresses, ask for more!
                 out.extend(self.get_addresses());
@@ -912,8 +914,8 @@ impl<T: BlockTree> Bitcoin<T> {
         if msg.magic != self.network.magic() {
             // TODO: Needs test.
             debug!(
-                "[{}] {}: Received message with invalid magic: {}",
-                self.name, addr, msg.magic
+                target: self.target, "{}: Received message with invalid magic: {}",
+                addr, msg.magic
             );
             return vec![Out::Disconnect(addr)];
         }
@@ -921,14 +923,14 @@ impl<T: BlockTree> Bitcoin<T> {
         let mut peer = if let Some(peer) = self.peers.get_mut(&addr) {
             peer
         } else {
-            debug!("[{}] Peer {} is not known", self.name, addr);
+            debug!(target: self.target, "Peer {} is not known", addr);
             return vec![];
         };
         let local_addr = peer.local_address;
 
         debug!(
-            "[{}] {}: Received {:?} ({:?})",
-            self.name, addr, cmd, peer.state
+            target: self.target, "{}: Received {:?} ({:?})",
+            addr, cmd, peer.state
         );
 
         if let PeerState::Ready {
@@ -997,16 +999,16 @@ impl<T: BlockTree> Bitcoin<T> {
                         || addrmgr::is_local(&addr.ip());
 
                     info!(
-                        "[{}] {}: Peer version = {}, height = {}, agent = {}, timestamp = {}",
-                        self.name, addr, version, start_height, user_agent, timestamp
+                        target: self.target, "{}: Peer version = {}, height = {}, agent = {}, timestamp = {}",
+                        addr, version, start_height, user_agent, timestamp
                     );
 
                     // Don't support peers with an older protocol than ours, we won't be
                     // able to handle it correctly.
                     if version < self.protocol_version {
                         debug!(
-                            "[{}] {}: Disconnecting: peer protocol version is too old: {}",
-                            self.name, addr, version
+                            target: self.target, "{}: Disconnecting: peer protocol version is too old: {}",
+                            addr, version
                         );
                         return vec![Out::Disconnect(addr)];
                     }
@@ -1019,8 +1021,8 @@ impl<T: BlockTree> Bitcoin<T> {
                         && !whitelisted
                     {
                         debug!(
-                            "[{}] {}: Disconnecting: peer doesn't have required services",
-                            self.name, addr
+                            target: self.target, "{}: Disconnecting: peer doesn't have required services",
+                            addr
                         );
                         return vec![Out::Disconnect(addr)];
                     }
@@ -1030,8 +1032,8 @@ impl<T: BlockTree> Bitcoin<T> {
                         && !whitelisted
                     {
                         debug!(
-                            "[{}] {}: Disconnecting: peer is too far behind",
-                            self.name, addr
+                            target: self.target, "{}: Disconnecting: peer is too far behind",
+                            addr
                         );
                         return vec![Out::Disconnect(addr)];
                     }
@@ -1040,8 +1042,8 @@ impl<T: BlockTree> Bitcoin<T> {
                     for (_, peer) in self.peers.iter() {
                         if peer.link == Link::Outbound && peer.nonce == nonce {
                             debug!(
-                                "[{}] {}: Disconnecting: detected self-connection",
-                                self.name, addr
+                                target: self.target, "{}: Disconnecting: detected self-connection",
+                                addr
                             );
                             return vec![Out::Disconnect(addr)];
                         }
@@ -1085,7 +1087,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     }
                 } else {
                     // TODO: Include disconnect reason.
-                    debug!("[{}] {}: Peer misbehaving", self.name, addr);
+                    debug!(target: self.target, "{}: Peer misbehaving", addr);
                     return vec![Out::Disconnect(addr)];
                 }
             }
@@ -1131,7 +1133,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     return out;
                 } else {
                     // TODO: Include disconnect reason.
-                    debug!("[{}] {}: Peer misbehaving", self.name, addr);
+                    debug!(target: self.target, "{}: Peer misbehaving", addr);
                     return vec![Out::Disconnect(addr)];
                 }
             }
@@ -1172,13 +1174,13 @@ impl<T: BlockTree> Bitcoin<T> {
             }
             PeerState::Disconnecting => {
                 debug!(
-                    "[{}] Ignoring {} from peer {} (disconnecting)",
-                    self.name, cmd, peer.address
+                    target: self.target, "Ignoring {} from peer {} (disconnecting)",
+                    cmd, peer.address
                 );
             }
         }
 
-        debug!("[{}] {}: Ignoring {:?}", self.name, peer.address, cmd);
+        debug!(target: self.target, "{}: Ignoring {:?}", peer.address, cmd);
 
         vec![]
     }
@@ -1237,8 +1239,8 @@ impl<T: BlockTree> Bitcoin<T> {
         };
 
         debug!(
-            "[{}] {}: Received {} header(s)",
-            self.name,
+            target: self.target, "{}: Received {} header(s)",
+
             addr,
             headers.len()
         );
@@ -1252,8 +1254,8 @@ impl<T: BlockTree> Bitcoin<T> {
                 syncmgr::Message::SendHeaders(syncmgr::SendHeaders { addrs, headers }) => {
                     if !addrs.is_empty() {
                         debug!(
-                            "[{}] Sending {} header(s) to {} peer(s)..",
-                            self.name,
+                            target: self.target, "Sending {} header(s) to {} peer(s)..",
+
                             headers.len(),
                             addrs.len()
                         );
@@ -1275,24 +1277,24 @@ impl<T: BlockTree> Bitcoin<T> {
                     // TODO: Bad blocks received!
                     // TODO: Disconnect peer.
                     debug!(
-                        "[{}] {}: Received invalid headers: {}",
-                        self.name, addr, error
+                        target: self.target, "{}: Received invalid headers: {}",
+                        addr, error
                     );
                 }
                 syncmgr::Event::TimedOut(addr) => {
-                    debug!("[{}] Peer {} timed out", self.name, addr);
+                    debug!(target: self.target, "Peer {} timed out", addr);
                 }
                 syncmgr::Event::ReceivedUnsolicitedHeaders(from, count) => {
                     debug!(
-                        "[{}] Received {} unsolicited headers from {}",
-                        self.name, count, from
+                        target: self.target, "Received {} unsolicited headers from {}",
+                        count, from
                     );
                 }
                 syncmgr::Event::HeadersImported(import_result) => {
-                    debug!("[{}] Import result: {:?}", self.name, &import_result);
+                    debug!(target: self.target, "Import result: {:?}", &import_result);
 
                     if let ImportResult::TipChanged(tip, height, _) = import_result {
-                        info!("[{}] Chain height = {}, tip = {}", self.name, height, tip);
+                        info!(target: self.target, "Chain height = {}, tip = {}", height, tip);
                     }
                     outbound.push(Out::Event(Event::HeadersImported(import_result)));
                 }
@@ -1303,7 +1305,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     outbound.push(Out::Event(Event::Syncing));
                 }
                 syncmgr::Event::BlockDiscovered(from, hash) => {
-                    debug!("[{}] {}: Discovered new block: {}", self.name, from, &hash);
+                    debug!(target: self.target, "{}: Discovered new block: {}", from, &hash);
                 }
             }
         }

@@ -15,19 +15,15 @@ impl Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let target = if !record.target().is_empty() {
-                record.target()
-            } else {
-                record.module_path().unwrap_or_default()
-            };
+            let module = record.module_path().unwrap_or_default();
 
             if record.level() == Level::Error {
-                write(record, target, io::stderr());
+                write(record, module, io::stderr());
             } else {
-                write(record, target, io::stdout());
+                write(record, module, io::stdout());
             }
 
-            fn write(record: &log::Record, target: &str, mut stream: impl io::Write) {
+            fn write(record: &log::Record, module: &str, mut stream: impl io::Write) {
                 let level_string = match record.level() {
                     Level::Error => record.level().to_string().red(),
                     Level::Warn => record.level().to_string().yellow(),
@@ -38,13 +34,13 @@ impl Log for Logger {
 
                 writeln!(
                     stream,
-                    "{} {:<5} {} {}",
+                    "{}  {:<5} {}  {}",
                     Local::now()
                         .to_rfc3339_opts(SecondsFormat::Millis, true)
                         .white(),
                     level_string,
-                    target.bold(),
-                    record.args()
+                    module.bold(),
+                    record.args().to_string()
                 )
                 .expect("write shouldn't fail");
             };

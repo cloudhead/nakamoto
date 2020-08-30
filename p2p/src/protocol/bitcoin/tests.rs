@@ -45,7 +45,7 @@ mod setup {
                 user_agent: vec![USER_AGENT.to_owned()].into_iter().collect(),
             },
             relay: false,
-            name: "self",
+            target: "self",
         };
     }
 
@@ -142,7 +142,7 @@ mod setup {
                 // Pretend that we're a full-node, to fool connections
                 // between instances of this protocol in tests.
                 services: ServiceFlags::NETWORK,
-                name: names[i],
+                target: names[i],
                 ..Config::default()
             };
             configure(&mut cfg);

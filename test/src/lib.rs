@@ -51,7 +51,7 @@ pub mod logger {
 
         fn log(&self, record: &Record) {
             if self.enabled(record.metadata()) {
-                println!("test> {}", record.args())
+                println!("test> [{}] {}", record.target(), record.args())
             }
         }
 
