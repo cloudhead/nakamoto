@@ -615,6 +615,19 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
         false
     }
 
+    /// Check if we're currently syncing with these locators.
+    fn syncing(&self, locators: &Locators) -> bool {
+        for peer in self.peers.values() {
+            match &peer.state {
+                Syncing::AwaitingHeaders(l, _) if l == locators => {
+                    return true;
+                }
+                _ => {}
+            }
+        }
+        false
+    }
+
     /// Start syncing if we're out of sync.
     fn sync(&mut self, now: LocalTime) -> GetHeaders {
         if self.peers.is_empty() {
@@ -640,13 +653,17 @@ impl<'a, T: 'a + BlockTree> SyncManager<T> {
                 return GetHeaders::empty();
             }
         }
-
         // It looks like we're out of sync...
 
         let locators = (
             self.tree.locator_hashes(self.tree.height()),
             BlockHash::default(),
         );
+
+        // If we're already fetching these headers, just wait.
+        if self.syncing(&locators) {
+            return GetHeaders::empty();
+        }
 
         if let Some(peer) = self.random_sync_candidate() {
             let timeout = self.config.request_timeout;
