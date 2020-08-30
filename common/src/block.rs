@@ -93,3 +93,12 @@ pub fn target_from_bits(bits: u32) -> Target {
         Target::from_u64(mant as u64).unwrap() << (expt as usize)
     }
 }
+
+/// Get the proof-of-work limit for the network, in bits.
+pub fn pow_limit_bits(network: &bitcoin::Network) -> Bits {
+    match network {
+        bitcoin::Network::Bitcoin => 0x1d00ffff,
+        bitcoin::Network::Testnet => 0x1d00ffff,
+        bitcoin::Network::Regtest => 0x207fffff,
+    }
+}

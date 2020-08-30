@@ -291,22 +291,29 @@ impl<S: Store> BlockCache<S> {
     ) -> Result<(), Error> {
         assert_eq!(tip.hash, header.prev_blockhash);
 
-        let target = if self.params.allow_min_difficulty_blocks {
+        let target = if self.params.allow_min_difficulty_blocks
+            && (tip.height + 1) % self.params.difficulty_adjustment_interval() != 0
+        {
             if header.time > tip.time + self.params.pow_target_spacing as Time * 2 {
                 self.params.pow_limit
             } else {
-                self.next_min_difficulty_target(tip.target(), &self.params)
+                self.next_min_difficulty_target(&self.params)
             }
         } else {
             self.next_difficulty_target(tip.height, tip.time, tip.target(), &self.params)
         };
 
-        match header.validate_pow(&target) {
+        // Convert the target back and forth to make sure it has 32 bits of precision instead of
+        // 256 bits, since the block header target only has 32 bits.
+        let compact_target =
+            block::target_from_bits(BlockHeader::compact_target_from_u256(&target));
+
+        match header.validate_pow(&compact_target) {
             Err(bitcoin::util::Error::BlockBadProofOfWork) => {
                 return Err(Error::InvalidBlockPoW);
             }
             Err(bitcoin::util::Error::BlockBadTarget) => {
-                return Err(Error::InvalidBlockTarget(header.target(), target));
+                return Err(Error::InvalidBlockTarget(header.target(), compact_target));
             }
             Err(_) => unreachable!(),
             Ok(_) => {}
@@ -347,19 +354,19 @@ impl<S: Store> BlockCache<S> {
             .unwrap_or(0)
     }
 
-    fn next_min_difficulty_target(&self, last_target: Target, params: &Params) -> Target {
-        let pow_limit = BlockHeader::compact_target_from_u256(&params.pow_limit);
-        let mut target = last_target;
+    fn next_min_difficulty_target(&self, params: &Params) -> Target {
+        let pow_limit_bits = block::pow_limit_bits(&params.network);
 
         for (height, header) in self.chain.tail.iter().enumerate().rev() {
-            if height as Height % self.params.difficulty_adjustment_interval() == 0
-                || header.bits != pow_limit
+            let height = height as Height + 1;
+
+            if header.bits != pow_limit_bits
+                || height % self.params.difficulty_adjustment_interval() == 0
             {
-                target = header.target();
-                break;
+                return header.target();
             }
         }
-        target
+        block::target_from_bits(pow_limit_bits)
     }
 
     /// Rollback active chain to the given height. Returns the list of rolled-back headers.
@@ -471,9 +478,9 @@ impl<S: Store> BlockTree for BlockCache<S> {
         &self.chain.first().header
     }
 
-    /// Iterate over the longest chain, starting from the tip.
+    /// Iterate over the longest chain, starting from genesis.
     fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
-        // TODO: Don't copy the whole chain!
+        // FIXME: Don't copy the whole chain!
         Box::new(
             self.chain
                 .clone()
