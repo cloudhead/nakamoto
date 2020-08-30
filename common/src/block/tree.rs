@@ -90,13 +90,16 @@ pub trait BlockTree {
     /// Get a block by height.
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader>;
     /// Iterate over the longest chain, starting from genesis.
-    fn chain(&self) -> Box<dyn Iterator<Item = BlockHeader>> {
+    fn chain<'a>(&'a self) -> Box<dyn Iterator<Item = BlockHeader> + 'a> {
         Box::new(self.iter().map(|(_, h)| h))
     }
     /// Iterate over the longest chain, starting from genesis, including heights.
-    fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>>;
+    fn iter<'a>(&'a self) -> Box<dyn DoubleEndedIterator<Item = (Height, BlockHeader)> + 'a>;
     /// Iterate over a range of blocks.
-    fn range(&self, range: std::ops::Range<Height>) -> Box<dyn Iterator<Item = BlockHeader>> {
+    fn range<'a>(
+        &'a self,
+        range: std::ops::Range<Height>,
+    ) -> Box<dyn Iterator<Item = BlockHeader> + 'a> {
         // TODO: Don't box twice?
         Box::new(
             self.iter()

@@ -99,7 +99,7 @@ impl BlockTree for HeightCache {
         self.height
     }
 
-    fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
+    fn iter(&self) -> Box<dyn DoubleEndedIterator<Item = (Height, BlockHeader)>> {
         unimplemented!()
     }
 

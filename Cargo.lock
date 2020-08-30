@@ -231,6 +231,7 @@ dependencies = [
  "bitcoin_hashes",
  "fastrand",
  "log",
+ "nonempty",
  "thiserror",
 ]
 

@@ -1,5 +1,6 @@
 //! Block cache model.
 //! Not for production use.
+use nakamoto_common::block::iter::Iter;
 use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::Height;
 
@@ -167,15 +168,8 @@ impl BlockTree for Cache {
         self.chain.len() as Height - 1
     }
 
-    fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
-        let iter = self
-            .chain
-            .clone()
-            .into_iter()
-            .enumerate()
-            .map(|(i, h)| (i as Height, h));
-
-        Box::new(iter)
+    fn iter<'a>(&'a self) -> Box<dyn DoubleEndedIterator<Item = (Height, BlockHeader)> + 'a> {
+        Box::new(Iter::new(&self.chain).map(|(i, h)| (i, *h)))
     }
 
     fn contains(&self, hash: &BlockHash) -> bool {

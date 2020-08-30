@@ -15,6 +15,7 @@ use nonempty::NonEmpty;
 use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::{
     self,
+    iter::Iter,
     store::Store,
     time::{self, Clock},
     CachedBlock, Height, Target, Time,
@@ -357,9 +358,7 @@ impl<S: Store> BlockCache<S> {
     fn next_min_difficulty_target(&self, params: &Params) -> Target {
         let pow_limit_bits = block::pow_limit_bits(&params.network);
 
-        for (height, header) in self.chain.tail.iter().enumerate().rev() {
-            let height = height as Height + 1;
-
+        for (height, header) in self.iter().rev() {
             if header.bits != pow_limit_bits
                 || height % self.params.difficulty_adjustment_interval() == 0
             {
@@ -479,15 +478,8 @@ impl<S: Store> BlockTree for BlockCache<S> {
     }
 
     /// Iterate over the longest chain, starting from genesis.
-    fn iter(&self) -> Box<dyn Iterator<Item = (Height, BlockHeader)>> {
-        // FIXME: Don't copy the whole chain!
-        Box::new(
-            self.chain
-                .clone()
-                .into_iter()
-                .enumerate()
-                .map(|(i, h)| (i as Height, h.header)),
-        )
+    fn iter<'a>(&'a self) -> Box<dyn DoubleEndedIterator<Item = (Height, BlockHeader)> + 'a> {
+        Box::new(Iter::new(&self.chain).map(|(i, h)| (i, h.header)))
     }
 
     /// Return the height of the longest chain.
