@@ -38,6 +38,7 @@ pub trait Message: Send + Sync + 'static {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeoutSource {
     Synch(PeerId),
+    Connect(PeerId),
     Handshake(PeerId),
     Ping(PeerId),
     Global,

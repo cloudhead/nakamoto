@@ -234,9 +234,17 @@ where
             let local_time = SystemTime::now().into();
             let outs = protocol.initialize(local_time);
 
-            match self.process::<P, _>(outs, local_time)? {
-                Control::Shutdown => return Ok(()),
-                _ => {}
+            if let Control::Shutdown = self.process::<P, _>(outs, local_time)? {
+                return Ok(());
+            }
+
+            // Drain input events in case some were added during the processing of outputs.
+            while let Some(event) = self.events.pop_front() {
+                let outs = protocol.step(event);
+
+                if let Control::Shutdown = self.process::<P, _>(outs, local_time)? {
+                    return Ok(());
+                }
             }
         }
 
@@ -357,6 +365,11 @@ where
                             self.register_peer(addr, local_addr, stream, Link::Outbound);
                         }
                         Err(err) => {
+                            self.events.push_back(Input::Timeout(
+                                TimeoutSource::Connect(addr),
+                                local_time,
+                            ));
+
                             error!("{}: Connection error: {}", addr, err.to_string());
                         }
                     }

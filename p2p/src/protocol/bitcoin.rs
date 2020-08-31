@@ -725,6 +725,12 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
                 match source {
+                    TimeoutSource::Connect(addr) => {
+                        debug_assert!(!self.peers.contains_key(&addr));
+                        debug_assert!(!self.connected.contains(&addr));
+
+                        self.maintain_outbound_peers(&mut out);
+                    }
                     TimeoutSource::Handshake(addr) => {
                         if let Some(peer) = self.peers.get_mut(&addr) {
                             match peer.state {
