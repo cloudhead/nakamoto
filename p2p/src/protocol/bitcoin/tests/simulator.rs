@@ -72,6 +72,17 @@ impl InputResult {
         self.outputs.iter().find(|m| f(m))
     }
 
+    pub fn all<F>(&self, f: F) -> Option<()>
+    where
+        F: Fn(&Out<RawNetworkMessage>) -> bool,
+    {
+        if self.outputs.iter().all(|m| f(m)) {
+            Some(())
+        } else {
+            None
+        }
+    }
+
     #[track_caller]
     pub fn message<F>(&self, f: F) -> (PeerId, &NetworkMessage)
     where
@@ -105,6 +116,13 @@ pub struct Peer {
 }
 
 impl Peer {
+    pub fn initialize(
+        &mut self,
+        time: LocalTime,
+    ) -> impl IntoIterator<Item = Out<RawNetworkMessage>> {
+        self.protocol.initialize(time).into_iter()
+    }
+
     pub fn schedule(
         &mut self,
         inbox: &mut VecDeque<(PeerId, Input)>,
@@ -171,12 +189,12 @@ impl Sim {
     }
 
     /// Get a peer instance by name.
-    pub fn peer(&mut self, name: &str) -> &Peer {
+    pub fn peer(&mut self, name: &str) -> &mut Peer {
         let id = self.get(name);
 
         self.peers
-            .get(&id)
-            .unwrap_or_else(|| panic!("Sim::instance: peer {:?} doesn't exist", id))
+            .get_mut(&id)
+            .unwrap_or_else(|| panic!("Sim::peer: peer {:?} doesn't exist", id))
     }
 
     /// Send an input directly to a peer and return the result.
@@ -274,7 +292,7 @@ impl Sim {
         for peer in self.peers.values_mut() {
             log::debug!("(sim) Initializing {:?}", peer.name);
 
-            for o in peer.protocol.initialize(self.time).into_iter() {
+            for o in peer.initialize(self.time) {
                 peer.schedule(&mut self.inbox, o);
             }
         }

@@ -561,10 +561,16 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             .for_each(|e| out.extend(self.get_headers(e)));
 
         // FIXME: Should be random
-        for addr in self.addrmgr.iter().take(self.target_outbound_peers) {
-            if let Some(addr) = addr.socket_addr().ok() {
-                out.push(Out::Connect(addr, CONNECTION_TIMEOUT));
-            }
+        let addrs = self
+            .addrmgr
+            .iter()
+            .take(self.target_outbound_peers)
+            .map(|a| a.socket_addr().ok())
+            .flatten()
+            .collect::<Vec<_>>();
+
+        for addr in addrs {
+            self.connect(&addr, &mut out);
         }
 
         out.push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
@@ -931,7 +937,7 @@ impl<T: BlockTree> Bitcoin<T> {
         let mut peer = if let Some(peer) = self.peers.get_mut(&addr) {
             peer
         } else {
-            debug!(target: self.target, "Peer {} is not known", addr);
+            debug!(target: self.target, "Received {:?} from unknown peer {}", cmd, addr);
             return vec![];
         };
         let local_addr = peer.local_address;
@@ -1105,7 +1111,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     self.ready.insert(addr);
                     self.clock.record_offset(addr, peer.time_offset);
-                    self.addrmgr.peer_negotiated(&addr, peer.services);
+                    self.addrmgr.peer_negotiated(&addr, peer.services, now);
 
                     let ping = peer.ping(now);
                     let link = peer.link;

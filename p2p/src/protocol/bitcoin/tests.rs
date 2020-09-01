@@ -108,7 +108,7 @@ mod setup {
         let size = peers.len();
         let names = &peers;
 
-        assert!(size > 1);
+        assert!(size > 0);
         assert!(size <= names.len());
 
         let mut addrs = Vec::with_capacity(size);
@@ -255,8 +255,6 @@ fn test_initial_sync() {
 /// Test what happens when a peer is idle for too long.
 #[test]
 fn test_idle() {
-    logger::init(log::Level::Debug);
-
     let mut sim = simulator::Net {
         network: Network::Mainnet,
         rng: fastrand::Rng::new(),
@@ -333,8 +331,6 @@ fn test_getheaders_timeout() {
 
 #[quickcheck]
 fn test_maintain_connections(seed: u64) {
-    logger::init(log::Level::Debug);
-
     const TARGET_PEERS: usize = 2;
 
     let rng = fastrand::Rng::new();
@@ -385,8 +381,6 @@ fn test_maintain_connections(seed: u64) {
 
 #[test]
 fn test_getheaders_retry() {
-    logger::init(log::Level::Debug);
-
     // Some hash for a nonexistent block.
     let hash =
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
@@ -479,8 +473,6 @@ fn test_handshake_version_timeout() {
 
 #[test]
 fn test_handshake_verack_timeout() {
-    logger::init(log::Level::Debug);
-
     let network = Network::Mainnet;
     let (mut instance, time) = setup::singleton(network);
 
@@ -638,4 +630,129 @@ fn test_stale_tip() {
     sim.elapse(syncmgr::TIP_STALE_DURATION);
     sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+}
+
+#[test]
+fn test_addrs() {
+    let network = Network::Mainnet;
+    let mut sim = simulator::Net {
+        network,
+        peers: &["alice", "bob"],
+        configure: |cfg| {
+            // Each peer only needs to connect to three other peers.
+            cfg.target_outbound_peers = 3;
+        },
+        ..Default::default()
+    }
+    .into();
+
+    // Run handshake.
+    sim.step();
+
+    let alice = sim.get("alice");
+    let bob = sim.get("bob");
+
+    let jak: net::SocketAddr = ([88, 13, 16, 59], 8333).into();
+    let jim: net::SocketAddr = ([99, 45, 180, 58], 8333).into();
+    let jon: net::SocketAddr = ([14, 48, 141, 57], 8333).into();
+
+    // Let alice know about these amazing peers.
+    sim.input(
+        &alice,
+        Input::Received(
+            bob,
+            message::raw(
+                NetworkMessage::Addr(vec![
+                    (0, Address::new(&jak, ServiceFlags::NETWORK)),
+                    (0, Address::new(&jim, ServiceFlags::NETWORK)),
+                    (0, Address::new(&jon, ServiceFlags::NETWORK)),
+                ]),
+                network.magic(),
+            ),
+        ),
+    );
+
+    // Let's make sure Alice has these addresses.
+    let result = sim.input(
+        &alice,
+        Input::Received(bob, message::raw(NetworkMessage::GetAddr, network.magic())),
+    );
+    let (_, msg) = result.message(|_, msg| matches!(msg, NetworkMessage::Addr(_)));
+
+    match msg {
+        NetworkMessage::Addr(addrs) => {
+            let addrs: HashSet<net::SocketAddr> = addrs
+                .into_iter()
+                .map(|(_, a)| a.socket_addr().unwrap())
+                .collect();
+
+            assert!(addrs.contains(&jak));
+            assert!(addrs.contains(&jim));
+            assert!(addrs.contains(&jon));
+
+            assert_eq!(addrs.len(), 3);
+        }
+        _ => unreachable!(),
+    }
+}
+
+#[quickcheck]
+fn prop_connect_timeout(seed: u64) {
+    logger::init(Level::Debug);
+
+    let rng = fastrand::Rng::new();
+    rng.seed(seed);
+
+    let network = Network::Mainnet;
+    let mut sim = simulator::Net {
+        network,
+        peers: &["alice"],
+        configure: |cfg| {
+            cfg.target_outbound_peers = 2;
+
+            cfg.address_book.push(([88, 13, 16, 59], 8333).into());
+            cfg.address_book.push(([99, 45, 180, 58], 8333).into());
+            cfg.address_book.push(([14, 48, 141, 57], 8333).into());
+        },
+        rng: rng.clone(),
+        initialize: false,
+        ..Default::default()
+    }
+    .into();
+
+    let time = sim.time;
+    let alice = sim.peer("alice");
+
+    let result = alice
+        .initialize(time)
+        .into_iter()
+        .filter(|o| matches!(o, Out::Connect(_, _)))
+        .collect::<Vec<_>>();
+
+    assert_eq!(result.len(), alice.protocol.target_outbound_peers);
+
+    let mut attempted: Vec<net::SocketAddr> = result
+        .into_iter()
+        .map(|r| match r {
+            Out::Connect(addr, _) => addr,
+            _ => panic!(),
+        })
+        .collect();
+
+    rng.shuffle(&mut attempted);
+
+    // ... after a while, the connections time out.
+
+    let alice = alice.id;
+    let peer = attempted.pop().unwrap();
+
+    sim.elapse(CONNECTION_TIMEOUT);
+    let result = sim.input(
+        &alice,
+        Input::Timeout(TimeoutSource::Connect(peer), sim.time),
+    );
+
+    result
+        .all(|o| matches!(o, Out::Connect(addr, _) if !attempted.contains(&addr)))
+        .expect("Alice tries to connect to another peer");
 }

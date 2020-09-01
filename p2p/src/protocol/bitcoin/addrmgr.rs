@@ -126,43 +126,53 @@ impl AddressManager {
 
     /// Called when a peer connection timed out while attempting to connect.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr, time: LocalTime) {
-        self.addresses
-            .get_mut(&addr.ip())
-            .expect("the address must exist")
-            .last_attempt = Some(time);
+        if let Some(ka) = self.addresses.get_mut(&addr.ip()) {
+            ka.last_attempt = Some(time);
+        }
     }
 
     /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, addr: &net::SocketAddr) {
-        // TODO: For now, it's enough to remove the address, since we shouldn't
-        // be trying to reconnect to a peer that disconnected. However in the future
-        // we should probably keep it around, or decide based on the reason for
-        // disconnection.
-        self.addresses.remove(&addr.ip());
-        self.connected.remove(&addr.ip());
-
-        let key = self::addr_key(addr.ip());
-
-        if let Some(range) = self.address_ranges.get_mut(&key) {
-            range.remove(&addr.ip());
-
-            if range.is_empty() {
-                self.address_ranges.remove(&key);
-            }
+        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
+            return;
         }
+        debug_assert!(self.connected.contains(&addr.ip()));
+
+        // TODO: We shouldn't remove. We should keep for later.
+        self.remove_address(&addr.ip());
     }
 
     /// Called when a peer has handshaked.
-    pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags) {
-        self.insert(
-            std::iter::once((Time::default(), Address::new(addr, services))),
-            Source::Connected,
-        );
+    pub fn peer_negotiated(
+        &mut self,
+        addr: &net::SocketAddr,
+        services: ServiceFlags,
+        time: LocalTime,
+    ) {
+        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
+            return;
+        }
+
+        let ka = self
+            .addresses
+            .get_mut(&addr.ip())
+            .expect("the address must exist");
+
+        ka.last_success = Some(time);
+        ka.addr.services = services;
     }
 
     /// Called when a peer has connected.
     pub fn peer_connected(&mut self, addr: &net::SocketAddr) {
+        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
+            return;
+        }
+
         self.connected.insert(addr.ip());
+        self.insert(
+            std::iter::once((Time::default(), Address::new(addr, ServiceFlags::NONE))),
+            Source::Connected,
+        );
     }
 
     /// Add addresses to the address manager. The input matches that of the `addr` message
@@ -220,6 +230,9 @@ impl AddressManager {
             //
             // Nb. This is perhaps still not quite correct. A local peer may want to share
             // another local address.
+            //
+            // FIXME: Local addresses don't really work because they have the same IP, so they
+            // overwrite each other.
             match source {
                 Source::Peer(_) if !self::is_routable(&ip) => continue,
                 Source::Other if !self::is_routable(&ip) && !self::is_local(&ip) => continue,
@@ -236,7 +249,7 @@ impl AddressManager {
             }
             okay = true; // As soon as one addresse was inserted, consider it a success.
 
-            let key = self::addr_key(net_addr.ip());
+            let key = self::addr_key(&net_addr.ip());
             let range = self
                 .address_ranges
                 .entry(key)
@@ -330,7 +343,7 @@ impl AddressManager {
             return None;
         }
 
-        let ip = loop {
+        let ka = loop {
             // First select a random address range.
             let ix = self.rng.usize(..self.address_ranges.len());
             let range = self.address_ranges.values().nth(ix)?;
@@ -340,18 +353,48 @@ impl AddressManager {
             // Then select a random address in that range.
             let ix = self.rng.usize(..range.len());
             let ip = range.iter().nth(ix)?;
+            let ka = self.addresses.get(&ip).expect("address must exist");
+
+            // FIXME
+            if ka.last_attempt.is_some() {
+                continue;
+            }
 
             if !self.connected.contains(&ip) {
-                break ip;
+                break ka;
             }
         };
 
-        self.addresses.get(&ip).map(|ka| &ka.addr)
+        Some(&ka.addr)
     }
 
     /// Iterate over all addresses.
     pub fn iter(&self) -> impl Iterator<Item = &Address> {
         self.addresses.iter().map(|(_, ka)| &ka.addr)
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+
+    /// Remove an address permanently.
+    fn remove_address(&mut self, addr: &net::IpAddr) -> (Option<KnownAddress>, bool) {
+        // TODO: For now, it's enough to remove the address, since we shouldn't
+        // be trying to reconnect to a peer that disconnected. However in the future
+        // we should probably keep it around, or decide based on the reason for
+        // disconnection.
+        let ka = self.addresses.remove(addr);
+        let co = self.connected.remove(addr);
+
+        let key = self::addr_key(addr);
+
+        if let Some(range) = self.address_ranges.get_mut(&key) {
+            range.remove(&addr);
+
+            if range.is_empty() {
+                self.address_ranges.remove(&key);
+            }
+        }
+
+        (ka, co)
     }
 }
 
@@ -375,7 +418,7 @@ pub fn is_local(addr: &net::IpAddr) -> bool {
 
 /// Get the 8-bit key of an IP address. This key is based on the IP address's
 /// range, and is used as a key to group IP addresses by range.
-fn addr_key(ip: net::IpAddr) -> u8 {
+fn addr_key(ip: &net::IpAddr) -> u8 {
     match ip {
         net::IpAddr::V4(ip) => {
             // Use the /16 range (first two components) of the IP address to key into the
@@ -468,15 +511,15 @@ mod tests {
     #[test]
     fn test_addr_key() {
         assert_eq!(
-            addr_key(net::IpAddr::V4(net::Ipv4Addr::new(255, 0, 3, 4))),
+            addr_key(&net::IpAddr::V4(net::Ipv4Addr::new(255, 0, 3, 4))),
             0
         );
         assert_eq!(
-            addr_key(net::IpAddr::V4(net::Ipv4Addr::new(255, 1, 3, 4))),
+            addr_key(&net::IpAddr::V4(net::Ipv4Addr::new(255, 1, 3, 4))),
             1
         );
         assert_eq!(
-            addr_key(net::IpAddr::V4(net::Ipv4Addr::new(1, 255, 3, 4))),
+            addr_key(&net::IpAddr::V4(net::Ipv4Addr::new(1, 255, 3, 4))),
             1
         );
     }
