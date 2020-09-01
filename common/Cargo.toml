@@ -11,6 +11,6 @@ edition = "2018"
 bitcoin = "0.23"
 bitcoin_hashes = "0.7.6"
 thiserror = "1.0"
-fastrand = "1.3.4"
+fastrand = "1.3.5"
 nonempty = "0.5"
 log = { version = "0.4", optional = true }

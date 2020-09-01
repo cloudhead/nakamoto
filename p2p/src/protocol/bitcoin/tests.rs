@@ -327,9 +327,7 @@ fn test_getheaders_timeout() {
 fn test_maintain_connections(seed: u64) {
     const TARGET_PEERS: usize = 2;
 
-    let rng = fastrand::Rng::new();
-    rng.seed(seed);
-
+    let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
     let mut sim = simulator::Net {
         network,
@@ -694,9 +692,7 @@ fn test_addrs() {
 fn prop_connect_timeout(seed: u64) {
     logger::init(Level::Debug);
 
-    let rng = fastrand::Rng::new();
-    rng.seed(seed);
-
+    let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
     let mut sim = simulator::Net {
         network,
