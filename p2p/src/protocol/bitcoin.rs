@@ -560,11 +560,13 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             .initialize(time)
             .for_each(|e| out.extend(self.get_headers(e)));
 
+        // FIXME: Should be random
         for addr in self.addrmgr.iter().take(self.target_outbound_peers) {
-            if let Ok(addr) = addr.socket_addr() {
+            if let Some(addr) = addr.socket_addr().ok() {
                 out.push(Out::Connect(addr, CONNECTION_TIMEOUT));
             }
         }
+
         out.push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
         out.into_iter()
     }
@@ -648,7 +650,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         self.whitelist.addr.insert(addr.ip());
 
                         if !self.connected.contains(&addr) {
-                            out.push(Out::Connect(addr, CONNECTION_TIMEOUT));
+                            self.connect(&addr, &mut out);
                         }
                     }
                     Command::Disconnect(addr) => {
@@ -897,7 +899,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 if let Ok(sockaddr) = addr.socket_addr() {
                     debug_assert!(!self.connected.contains(&sockaddr));
 
-                    out.push(Out::Connect(sockaddr, CONNECTION_TIMEOUT));
+                    self.connect(&sockaddr, out);
                 } else {
                     // TODO: Perhaps the address manager should just return addresses
                     // that can be converted to socket addresses?
@@ -1325,6 +1327,12 @@ impl<T: BlockTree> Bitcoin<T> {
 
         peer.transition(PeerState::Disconnecting);
         out.push(Out::Disconnect(*addr));
+    }
+
+    fn connect(&mut self, addr: &PeerId, out: &mut OutputBuilder<RawNetworkMessage>) {
+        out.push(Out::Connect(*addr, CONNECTION_TIMEOUT));
+
+        self.addrmgr.peer_attempted(&addr, self.clock.local_time());
     }
 
     fn generate_events(&self, input: &Input, out: &mut OutputBuilder<RawNetworkMessage>) {

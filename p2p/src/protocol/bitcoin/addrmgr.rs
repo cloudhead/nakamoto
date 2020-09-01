@@ -124,6 +124,14 @@ impl AddressManager {
         )
     }
 
+    /// Called when a peer connection timed out while attempting to connect.
+    pub fn peer_attempted(&mut self, addr: &net::SocketAddr, time: LocalTime) {
+        self.addresses
+            .get_mut(&addr.ip())
+            .expect("the address must exist")
+            .last_attempt = Some(time);
+    }
+
     /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, addr: &net::SocketAddr) {
         // TODO: For now, it's enough to remove the address, since we shouldn't
