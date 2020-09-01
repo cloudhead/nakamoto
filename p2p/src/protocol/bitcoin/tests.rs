@@ -272,30 +272,24 @@ fn test_idle() {
     let bob = sim.get("bob");
     let alice = sim.get("alice");
 
-    sim.input(
-        &alice,
-        Input::Timeout(TimeoutSource::Ping(bob), sim.time + PING_INTERVAL),
-    )
-    .any(|o| {
-        matches!(o, Out::Message(
+    sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob), sim.time))
+        .any(|o| {
+            matches!(o, Out::Message(
                 addr,
                 RawNetworkMessage {
                     payload: NetworkMessage::Ping(_), ..
                 },
             ) if addr == &bob)
-    })
-    .expect("Alice pings Bob");
+        })
+        .expect("Alice pings Bob");
 
     // More time passes, and Bob doesn't `pong` back.
     sim.timeout(PING_TIMEOUT);
 
     // Alice now decides to disconnect Bob.
-    sim.input(
-        &alice,
-        Input::Timeout(TimeoutSource::Ping(bob), sim.time + PING_TIMEOUT),
-    )
-    .any(|o| matches!(o, Out::Disconnect(addr) if addr == &bob))
-    .expect("Alice disconnects Bob");
+    sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob), sim.time))
+        .any(|o| matches!(o, Out::Disconnect(addr) if addr == &bob))
+        .expect("Alice disconnects Bob");
 }
 
 #[test]

@@ -730,6 +730,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             Input::Timeout(source, local_time) => {
                 debug!(target: self.target, "Received timeout for {:?}", source);
 
+                self.clock.set_local_time(local_time);
+
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
                 match source {
