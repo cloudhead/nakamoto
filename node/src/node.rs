@@ -21,7 +21,7 @@ use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
 use nakamoto_p2p::protocol::bitcoin::Command;
-use nakamoto_p2p::protocol::bitcoin::{self, Network};
+use nakamoto_p2p::protocol::bitcoin::{self, syncmgr, Network};
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::TimeoutSource;
 use nakamoto_p2p::reactor::poll::{Reactor, Waker};
@@ -321,7 +321,7 @@ impl Handle for NodeHandle {
 
     fn wait_for_ready(&self) -> Result<(), handle::Error> {
         self.wait(|e| match e {
-            Event::Synced => Some(()),
+            Event::SyncManager(syncmgr::Event::Synced(_, _)) => Some(()),
             _ => None,
         })
     }

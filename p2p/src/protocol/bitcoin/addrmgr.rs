@@ -2,6 +2,7 @@
 //! The peer-to-peer address manager.
 //!
 #![warn(missing_docs)]
+use std::collections::VecDeque;
 use std::net;
 
 use bitcoin::network::address::Address;
@@ -16,8 +17,15 @@ use crate::address_book::AddressBook;
 /// Maximum number of addresses we store for a given address range.
 const MAX_RANGE_SIZE: usize = 256;
 
+/// An event emitted by the address manager.
+#[derive(Debug)]
+pub enum Event {
+    /// A new peer address was discovered.
+    AddressDiscovered(Address, Source),
+}
+
 /// Address source. Specifies where an address originated from.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Source {
     /// An address that was shared by another peer.
     Peer(net::SocketAddr),
@@ -64,6 +72,7 @@ pub struct AddressManager {
     address_ranges: HashMap<u8, HashSet<net::IpAddr>>,
     connected: HashSet<net::IpAddr>,
     local_addrs: HashSet<net::SocketAddr>,
+    events: VecDeque<Event>,
     rng: fastrand::Rng,
 }
 
@@ -75,6 +84,7 @@ impl AddressManager {
             address_ranges: HashMap::with_hasher(rng.clone().into()),
             connected: HashSet::with_hasher(rng.clone().into()),
             local_addrs: HashSet::with_hasher(rng.clone().into()),
+            events: VecDeque::new(),
             rng,
         }
     }
@@ -103,6 +113,11 @@ impl AddressManager {
     pub fn clear(&mut self) {
         self.addresses.clear();
         self.address_ranges.clear();
+    }
+
+    /// Drain the event queue.
+    pub fn events<'a>(&'a mut self) -> impl Iterator<Item = Event> + 'a {
+        self.events.drain(..)
     }
 
     /// Record an address of ours as seen by a remote peer.
@@ -241,13 +256,16 @@ impl AddressManager {
 
             if self
                 .addresses
-                .insert(ip, KnownAddress::new(addr, source.clone()))
+                .insert(ip, KnownAddress::new(addr.clone(), source.clone()))
                 .is_some()
             {
                 // Ignore addresses we already know.
                 continue;
             }
-            okay = true; // As soon as one addresse was inserted, consider it a success.
+            okay = true; // As soon as one address was inserted, consider it a success.
+
+            self.events
+                .push_back(Event::AddressDiscovered(addr, source.clone()));
 
             let key = self::addr_key(&net_addr.ip());
             let range = self

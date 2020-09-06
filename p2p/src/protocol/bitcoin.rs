@@ -819,6 +819,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             }
         };
         self.drain_sync_events(&mut out);
+        self.drain_addr_events(&mut out);
 
         if log::max_level() >= log::Level::Debug {
             out.iter().for_each(|o| match o {
@@ -1288,23 +1289,12 @@ impl<T: BlockTree> Bitcoin<T> {
 
     fn drain_sync_events(&mut self, outbound: &mut OutputBuilder<RawNetworkMessage>) {
         for event in self.syncmgr.events() {
-            match event {
-                syncmgr::Event::ReceivedInvalidHeaders(addr, error) => {
+            debug!(target: self.target, "[sync] {}", &event);
+
+            match &event {
+                syncmgr::Event::ReceivedInvalidHeaders(_, _) => {
                     // TODO: Bad blocks received!
                     // TODO: Disconnect peer.
-                    debug!(
-                        target: self.target, "{}: Received invalid headers: {}",
-                        addr, error
-                    );
-                }
-                syncmgr::Event::TimedOut(addr) => {
-                    debug!(target: self.target, "Peer {} timed out", addr);
-                }
-                syncmgr::Event::ReceivedUnsolicitedHeaders(from, count) => {
-                    debug!(
-                        target: self.target, "Received {} unsolicited headers from {}",
-                        count, from
-                    );
                 }
                 syncmgr::Event::HeadersImported(import_result) => {
                     debug!(target: self.target, "Import result: {:?}", &import_result);
@@ -1312,18 +1302,17 @@ impl<T: BlockTree> Bitcoin<T> {
                     if let ImportResult::TipChanged(tip, height, _) = import_result {
                         info!(target: self.target, "Chain height = {}, tip = {}", height, tip);
                     }
-                    outbound.push(Out::Event(Event::HeadersImported(import_result)));
+                    outbound.push(Out::Event(Event::HeadersImported(import_result.clone())));
                 }
-                syncmgr::Event::Synced(_, _) => {
-                    outbound.push(Out::Event(Event::Synced));
-                }
-                syncmgr::Event::Syncing(_addr) => {
-                    outbound.push(Out::Event(Event::Syncing));
-                }
-                syncmgr::Event::BlockDiscovered(from, hash) => {
-                    debug!(target: self.target, "{}: Discovered new block: {}", from, &hash);
-                }
+                _ => {}
             }
+            outbound.push(Out::Event(Event::SyncManager(event)));
+        }
+    }
+
+    fn drain_addr_events(&mut self, outbound: &mut OutputBuilder<RawNetworkMessage>) {
+        for event in self.addrmgr.events() {
+            outbound.push(Out::Event(Event::AddrManager(event)));
         }
     }
 

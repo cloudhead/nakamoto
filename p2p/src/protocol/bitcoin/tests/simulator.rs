@@ -76,7 +76,12 @@ impl InputResult {
     where
         F: Fn(&Out<RawNetworkMessage>) -> bool,
     {
-        if self.outputs.iter().all(|m| f(m)) {
+        if self
+            .outputs
+            .iter()
+            .filter(|o| !matches!(o, Out::Event(_)))
+            .all(|m| f(m))
+        {
             Some(())
         } else {
             None

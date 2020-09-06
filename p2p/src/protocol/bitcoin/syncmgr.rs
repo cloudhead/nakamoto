@@ -145,9 +145,36 @@ pub enum Event {
     ReceivedUnsolicitedHeaders(PeerId, usize),
     HeadersImported(ImportResult),
     BlockDiscovered(PeerId, BlockHash),
+    /// The node started syncing with the network.
     Syncing(PeerId),
+    /// The node has finished syncing and is ready to accept
+    /// connections and process commands.
     Synced(BlockHash, Height),
     TimedOut(PeerId),
+}
+
+impl std::fmt::Display for Event {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Event::ReceivedInvalidHeaders(addr, error) => {
+                write!(fmt, "{}: Received invalid headers: {}", addr, error)
+            }
+            Event::TimedOut(addr) => write!(fmt, "Peer {} timed out", addr),
+            Event::ReceivedUnsolicitedHeaders(from, count) => {
+                write!(fmt, "Received {} unsolicited headers from {}", count, from)
+            }
+            Event::HeadersImported(import_result) => {
+                write!(fmt, "Headers imported: {:?}", &import_result)
+            }
+            Event::Synced(hash, height) => {
+                write!(fmt, "Headers synced up to hash={} height={}", hash, height)
+            }
+            Event::Syncing(addr) => write!(fmt, "Syncing headers with {}", addr),
+            Event::BlockDiscovered(from, hash) => {
+                write!(fmt, "{}: Discovered new block: {}", from, &hash)
+            }
+        }
+    }
 }
 
 #[must_use]

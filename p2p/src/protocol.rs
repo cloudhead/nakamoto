@@ -93,7 +93,7 @@ impl<M: Message, C: Clone> Input<M, C> {
 }
 
 /// Output of a state transition (step) of the `Protocol` state machine.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub enum Out<M: Message> {
     /// Send a message to a peer.
     Message(PeerId, M),
