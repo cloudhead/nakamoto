@@ -44,7 +44,6 @@ mod setup {
                 addr: HashSet::new(),
                 user_agent: vec![USER_AGENT.to_owned()].into_iter().collect(),
             },
-            relay: false,
             target: "self",
         };
     }

@@ -210,8 +210,6 @@ pub struct Bitcoin<T> {
     pub services: ServiceFlags,
     /// Our protocol version.
     pub protocol_version: u32,
-    /// Whether or not we should relay transactions.
-    pub relay: bool,
     /// Our user agent.
     pub user_agent: &'static str,
     /// Block height of active chain.
@@ -252,7 +250,6 @@ pub struct Config {
     pub whitelist: Whitelist,
     pub params: Params,
     pub protocol_version: u32,
-    pub relay: bool,
     pub user_agent: &'static str,
     pub target_outbound_peers: usize,
     pub max_inbound_peers: usize,
@@ -270,7 +267,6 @@ impl Default for Config {
             protocol_version: PROTOCOL_VERSION,
             target_outbound_peers: TARGET_OUTBOUND_PEERS,
             max_inbound_peers: MAX_INBOUND_PEERS,
-            relay: false,
             user_agent: USER_AGENT,
             target: "self",
         }
@@ -331,7 +327,6 @@ impl<T: BlockTree> Bitcoin<T> {
             protocol_version,
             target_outbound_peers,
             max_inbound_peers,
-            relay,
             user_agent,
             target,
             params,
@@ -357,7 +352,6 @@ impl<T: BlockTree> Bitcoin<T> {
             protocol_version,
             target_outbound_peers,
             max_inbound_peers,
-            relay,
             user_agent,
             whitelist,
             target,
@@ -1256,7 +1250,7 @@ impl<T: BlockTree> Bitcoin<T> {
             // Our best height.
             start_height,
             // Whether we want to receive transaction `inv` messages.
-            relay: self.relay,
+            relay: false,
         })
     }
 
