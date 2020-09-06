@@ -1,6 +1,8 @@
+use std::env;
+use std::fs;
 use std::io;
 use std::net;
-use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{self, SystemTime};
 
@@ -37,6 +39,7 @@ pub struct NodeConfig {
     pub network: Network,
     pub address_book: AddressBook,
     pub timeout: time::Duration,
+    pub home: PathBuf,
     pub name: &'static str,
 }
 
@@ -57,6 +60,7 @@ impl Default for NodeConfig {
             network: Network::default(),
             address_book: AddressBook::default(),
             timeout: time::Duration::from_secs(60),
+            home: PathBuf::from(env::var("HOME").unwrap_or_default()),
             name: "self",
         }
     }
@@ -95,6 +99,11 @@ impl Node {
 
     /// Start the node process. This function is meant to be run in its own thread.
     pub fn run(mut self) -> Result<(), Error> {
+        let home = self.config.home.join(".nakamoto");
+        let dir = home.join(self.config.network.as_str());
+
+        fs::create_dir_all(&dir)?;
+
         let cfg = bitcoin::Config::from(
             self.config.name,
             self.config.network,
@@ -106,9 +115,8 @@ impl Node {
         log::info!("Initializing node ({:?})..", cfg.network);
         log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
 
-        // FIXME: Get path from `NodeConfig`.
-        let path = Path::new("headers.db");
-        let mut store = match store::File::create(path, genesis) {
+        let path = dir.join("headers.db");
+        let mut store = match store::File::create(&path, genesis) {
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", path);
                 store::File::open(path, genesis)?

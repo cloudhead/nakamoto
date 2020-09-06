@@ -64,6 +64,15 @@ impl Network {
         Box::new(iter)
     }
 
+    /// Return the short string representation of this network.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Network::Mainnet => "mainnet",
+            Network::Testnet => "testnet",
+            Network::Regtest => "regtest",
+        }
+    }
+
     /// DNS seeds. Used to bootstrap the client's address book.
     pub fn seeds(&self) -> &[&str] {
         match self {
