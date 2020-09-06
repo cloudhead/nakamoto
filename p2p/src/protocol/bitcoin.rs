@@ -97,6 +97,15 @@ impl<M: Message> OutputBuilder<M> {
         self.queue.push(output);
     }
 
+    fn request(&mut self, addr: PeerId, message: M, source: TimeoutSource, timeout: LocalDuration) {
+        self.push(Out::Message(addr, message));
+        self.push(Out::SetTimeout(source, timeout));
+    }
+
+    fn message(&mut self, addr: PeerId, message: M::Payload, magic: u32) {
+        self.push(Out::Message(addr, M::from_parts(message, magic)));
+    }
+
     fn extend<T: IntoIterator<Item = Out<M>>>(&mut self, outputs: T) {
         self.queue.extend(outputs);
     }
@@ -127,12 +136,20 @@ impl<M: Message> OutputBuilder<M> {
 impl Message for RawNetworkMessage {
     type Payload = NetworkMessage;
 
+    fn from_parts(payload: NetworkMessage, magic: u32) -> Self {
+        Self { payload, magic }
+    }
+
     fn payload(&self) -> &Self::Payload {
         &self.payload
     }
 
     fn display(&self) -> &'static str {
         self.payload.cmd()
+    }
+
+    fn magic(&self) -> u32 {
+        self.magic
     }
 }
 
@@ -556,9 +573,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         let mut out = OutputBuilder::with_capacity(self.target_outbound_peers);
 
         self.clock.set_local_time(time);
-        self.syncmgr
-            .initialize(time)
-            .for_each(|e| out.extend(self.get_headers(e)));
+        self.syncmgr.initialize(time);
+
+        self.drain_sync_requests(&mut out);
 
         // FIXME: Should be random
         let addrs = self
@@ -690,20 +707,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let result = self.syncmgr.import_blocks(headers.into_iter(), &self.clock);
 
                         match result {
-                            Ok((import_result, send)) => {
+                            Ok(import_result) => {
                                 reply.send(Ok(import_result.clone())).ok();
 
                                 if let ImportResult::TipChanged(_, height, _) = import_result {
                                     self.height = height;
-                                }
-
-                                for syncmgr::SendHeaders { addrs, headers } in send {
-                                    for addr in addrs {
-                                        out.push(self.message(
-                                            addr,
-                                            NetworkMessage::Headers(headers.clone()),
-                                        ));
-                                    }
                                 }
                             }
                             Err(err) => {
@@ -755,13 +763,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         }
                     }
                     TimeoutSource::Synch(addr) => {
-                        let (timeout, get_headers) =
-                            self.syncmgr.received_timeout(addr, local_time);
+                        let timeout = self.syncmgr.received_timeout(addr, local_time);
 
                         if let syncmgr::OnTimeout::Disconnect = timeout {
                             out.push(Out::Disconnect(addr));
                         }
-                        get_headers.for_each(|req| out.extend(self.get_headers(req)));
                     }
                     TimeoutSource::Ping(addr) => {
                         if let Some(peer) = self.peers.get_mut(&addr) {
@@ -809,9 +815,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                         // The local time is set from outside the protocol.
                         self.clock.set_local_time(local_time);
-                        self.syncmgr
-                            .tick(local_time)
-                            .for_each(|e| out.extend(self.get_headers(e)));
+                        self.syncmgr.tick(local_time);
 
                         out.push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
                     }
@@ -819,6 +823,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             }
         };
         self.drain_sync_events(&mut out);
+        self.drain_sync_requests(&mut out);
+        self.drain_sync_responses(&mut out);
+
         self.drain_addr_events(&mut out);
 
         if log::max_level() >= log::Level::Debug {
@@ -851,29 +858,50 @@ impl<T: BlockTree> Bitcoin<T> {
         message: NetworkMessage,
         source: TimeoutSource,
         timeout: LocalDuration,
-        out: &mut Vec<Out<RawNetworkMessage>>,
+        out: &mut OutputBuilder<RawNetworkMessage>,
     ) {
         out.push(self.message(addr, message));
         out.push(Out::SetTimeout(source, timeout));
     }
 
-    fn get_headers(&self, request: syncmgr::Request) -> Vec<Out<RawNetworkMessage>> {
-        let mut out = Vec::new();
+    fn drain_sync_requests(&mut self, out: &mut OutputBuilder<RawNetworkMessage>) {
+        let magic = self.network.magic();
 
-        let syncmgr::Request {
-            addr,
-            locators,
-            timeout,
-        } = request;
+        for req in self.syncmgr.requests() {
+            let syncmgr::GetHeaders {
+                addr,
+                locators,
+                timeout,
+            } = req;
 
-        self.request(
-            addr,
-            message::get_headers(locators, self.protocol_version),
-            TimeoutSource::Synch(addr),
-            timeout,
-            &mut out,
-        );
-        out
+            out.request(
+                addr,
+                message::raw(message::get_headers(locators, self.protocol_version), magic),
+                TimeoutSource::Synch(addr),
+                timeout,
+            );
+        }
+    }
+
+    fn drain_sync_responses(&mut self, out: &mut OutputBuilder<RawNetworkMessage>) {
+        let magic = self.network.magic();
+
+        for resp in self.syncmgr.responses() {
+            let syncmgr::SendHeaders { addrs, headers } = resp;
+
+            if !addrs.is_empty() {
+                debug!(
+                    target: self.target,
+                    "Sending {} header(s) to {} peer(s)..",
+                    headers.len(),
+                    addrs.len()
+                );
+            }
+
+            for addr in addrs {
+                out.message(addr, NetworkMessage::Headers(headers.clone()), magic);
+            }
+        }
     }
 
     /// Send a `getaddr` message to all our outbound peers.
@@ -1136,16 +1164,14 @@ impl<T: BlockTree> Bitcoin<T> {
                         ],
                     });
 
-                    self.syncmgr
-                        .peer_negotiated(
-                            peer.address,
-                            peer.height,
-                            peer.tip,
-                            peer.services,
-                            peer.link,
-                            &self.clock,
-                        )
-                        .for_each(|req| out.extend(self.get_headers(req)));
+                    self.syncmgr.peer_negotiated(
+                        peer.address,
+                        peer.height,
+                        peer.tip,
+                        peer.services,
+                        peer.link,
+                        &self.clock,
+                    );
 
                     return out;
                 } else {
@@ -1237,11 +1263,8 @@ impl<T: BlockTree> Bitcoin<T> {
     /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
     /// are being announced. Otherwise, we expect to receive a `headers` message.
     fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) -> Vec<Out<RawNetworkMessage>> {
-        self.syncmgr
-            .received_inv(addr, inv, &self.clock)
-            .map(|req| self.get_headers(req))
-            .flatten()
-            .collect()
+        self.syncmgr.received_inv(addr, inv, &self.clock);
+        return vec![];
     }
 
     fn receive_headers(
@@ -1261,30 +1284,9 @@ impl<T: BlockTree> Bitcoin<T> {
             addr,
             headers.len()
         );
-        let mut outbound = Vec::new();
+        self.syncmgr.received_headers(&addr, headers, &self.clock);
 
-        for message in self.syncmgr.received_headers(&addr, headers, &self.clock) {
-            match message {
-                syncmgr::Message::GetHeaders(reqs) => {
-                    reqs.for_each(|gh| outbound.extend(self.get_headers(gh)));
-                }
-                syncmgr::Message::SendHeaders(syncmgr::SendHeaders { addrs, headers }) => {
-                    if !addrs.is_empty() {
-                        debug!(
-                            target: self.target, "Sending {} header(s) to {} peer(s)..",
-
-                            headers.len(),
-                            addrs.len()
-                        );
-                    }
-
-                    for addr in addrs {
-                        outbound.push(self.message(addr, NetworkMessage::Headers(headers.clone())));
-                    }
-                }
-            }
-        }
-        outbound
+        vec![]
     }
 
     fn drain_sync_events(&mut self, outbound: &mut OutputBuilder<RawNetworkMessage>) {

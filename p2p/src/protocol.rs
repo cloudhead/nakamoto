@@ -28,8 +28,12 @@ pub trait Message: Send + Sync + 'static {
     /// The message payload.
     type Payload: Clone + Debug;
 
+    /// Construct a message from a payload and magic.
+    fn from_parts(payload: Self::Payload, magic: u32) -> Self;
     /// Retrieve the message payload.
     fn payload(&self) -> &Self::Payload;
+    /// Retrieve the message magic.
+    fn magic(&self) -> u32;
     /// Display the message.
     fn display(&self) -> &'static str;
 }
