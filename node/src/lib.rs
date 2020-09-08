@@ -33,7 +33,7 @@ pub fn run(
         AddressBook::from(connect)?
     };
 
-    let node = Node::new(NodeConfig {
+    let mut cfg = NodeConfig {
         discovery: true,
         network,
         listen: if listen.is_empty() {
@@ -44,7 +44,10 @@ pub fn run(
         address_book,
         timeout: time::Duration::from_secs(30),
         ..NodeConfig::default()
-    })?;
+    };
+    if !connect.is_empty() {
+        cfg.target_outbound_peers = connect.len();
+    }
 
-    node.run()
+    Node::new(cfg)?.run()
 }

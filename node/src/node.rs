@@ -38,6 +38,8 @@ pub struct NodeConfig {
     pub listen: Vec<net::SocketAddr>,
     pub network: Network,
     pub address_book: AddressBook,
+    pub target_outbound_peers: usize,
+    pub max_inbound_peers: usize,
     pub timeout: time::Duration,
     pub home: PathBuf,
     pub name: &'static str,
@@ -52,6 +54,19 @@ impl NodeConfig {
     }
 }
 
+impl From<NodeConfig> for bitcoin::Config {
+    fn from(cfg: NodeConfig) -> Self {
+        Self {
+            network: cfg.network,
+            target: cfg.name,
+            address_book: cfg.address_book,
+            target_outbound_peers: cfg.target_outbound_peers,
+            max_inbound_peers: cfg.max_inbound_peers,
+            ..Self::default()
+        }
+    }
+}
+
 impl Default for NodeConfig {
     fn default() -> Self {
         Self {
@@ -61,6 +76,8 @@ impl Default for NodeConfig {
             address_book: AddressBook::default(),
             timeout: time::Duration::from_secs(60),
             home: PathBuf::from(env::var("HOME").unwrap_or_default()),
+            target_outbound_peers: bitcoin::TARGET_OUTBOUND_PEERS,
+            max_inbound_peers: bitcoin::MAX_INBOUND_PEERS,
             name: "self",
         }
     }
@@ -101,14 +118,11 @@ impl Node {
     pub fn run(mut self) -> Result<(), Error> {
         let home = self.config.home.join(".nakamoto");
         let dir = home.join(self.config.network.as_str());
+        let listen = self.config.listen.clone();
 
         fs::create_dir_all(&dir)?;
 
-        let cfg = bitcoin::Config::from(
-            self.config.name,
-            self.config.network,
-            self.config.address_book,
-        );
+        let cfg: bitcoin::Config = self.config.into();
         let genesis = cfg.network.genesis();
         let params = cfg.network.params();
 
@@ -144,8 +158,7 @@ impl Node {
         log::debug!("{:?}", cfg.address_book);
         let protocol = p2p::protocol::Bitcoin::new(cache, clock, rng, cfg);
 
-        self.reactor
-            .run(protocol, self.commands, &self.config.listen)?;
+        self.reactor.run(protocol, self.commands, &listen)?;
 
         Ok(())
     }
