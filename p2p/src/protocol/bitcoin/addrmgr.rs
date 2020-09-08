@@ -268,10 +268,11 @@ impl AddressManager {
                 .push_back(Event::AddressDiscovered(addr, source.clone()));
 
             let key = self::addr_key(&net_addr.ip());
-            let range = self
-                .address_ranges
-                .entry(key)
-                .or_insert(HashSet::with_hasher(self.rng.clone().into()));
+            let range = self.address_ranges.entry(key).or_insert_with({
+                let rng = self.rng.clone();
+
+                || HashSet::with_hasher(rng.into())
+            });
 
             // If the address range is already full, remove a random address
             // before inserting this new one.

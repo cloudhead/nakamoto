@@ -718,7 +718,7 @@ impl<T: BlockTree> SyncManager<T> {
                 .tree
                 .get_block(&stop_hash)
                 .map(|(h, _)| h)
-                .unwrap_or(tree.height());
+                .unwrap_or_else(|| tree.height());
             let stop = Height::min(start + max as Height, stop + 1);
 
             return tree.range(start..stop).collect();

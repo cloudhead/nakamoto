@@ -110,10 +110,6 @@ impl<M: Message> OutputBuilder<M> {
         self.queue.extend(outputs);
     }
 
-    fn iter(&self) -> impl Iterator<Item = &Out<M>> {
-        self.queue.iter()
-    }
-
     fn into_iter(self) -> std::vec::IntoIter<Out<M>> {
         self.queue.into_iter()
     }
