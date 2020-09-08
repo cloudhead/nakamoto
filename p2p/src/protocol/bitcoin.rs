@@ -732,6 +732,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             Input::Timeout(source, local_time) => {
                 debug!(target: self.target, "Received timeout for {:?}", source);
 
+                // The local time is set from outside the protocol.
                 self.clock.set_local_time(local_time);
 
                 // We may not have the peer anymore, if it was disconnected and remove in
@@ -807,8 +808,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     TimeoutSource::Global => {
                         debug!(target: self.target, "Tick: local_time = {}", local_time);
 
-                        // The local time is set from outside the protocol.
-                        self.clock.set_local_time(local_time);
                         self.syncmgr.tick(local_time);
 
                         out.push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
@@ -822,15 +821,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         self.drain_addr_events(&mut out);
 
-        if log::max_level() >= log::Level::Debug {
-            out.iter().for_each(|o| match o {
-                Out::Message(addr, msg) => {
-                    debug!(target: self.target, "{}: Sending {:?}", addr, msg.display());
-                }
-                Out::Event(Event::Received(_, _)) => {}
-                _ => debug!(target: self.target, "Out: {:?}", o),
-            });
-        }
         out.into_iter()
     }
 }

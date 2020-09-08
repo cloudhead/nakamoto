@@ -342,6 +342,16 @@ where
                     if let Some(peer) = self.peers.get_mut(&addr) {
                         let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
+                        {
+                            let mut s = format!("{:?}", msg);
+
+                            if s.len() > 96 {
+                                s.truncate(96);
+                                s.push_str("...");
+                            }
+                            debug!("{}: Sending: {}", addr, s);
+                        }
+
                         peer.queue.push_back(msg);
 
                         if let Err(err) = peer.drain(&mut self.events, src) {
