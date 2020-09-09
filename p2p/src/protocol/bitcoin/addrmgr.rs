@@ -362,7 +362,11 @@ impl AddressManager {
             return None;
         }
 
-        let ka = loop {
+        // Keep track of the addresses we've visited, to make sure we don't
+        // loop forever.
+        let mut visited = HashSet::with_hasher(self.rng.clone().into());
+
+        while visited.len() < self.addresses.len() {
             // First select a random address range.
             let ix = self.rng.usize(..self.address_ranges.len());
             let range = self.address_ranges.values().nth(ix)?;
@@ -374,17 +378,19 @@ impl AddressManager {
             let ip = range.iter().nth(ix)?;
             let ka = self.addresses.get(&ip).expect("address must exist");
 
+            visited.insert(ip);
+
             // FIXME
             if ka.last_attempt.is_some() {
                 continue;
             }
 
             if !self.connected.contains(&ip) {
-                break ka;
+                return Some(&ka.addr);
             }
-        };
+        }
 
-        Some(&ka.addr)
+        None
     }
 
     /// Iterate over all addresses.
