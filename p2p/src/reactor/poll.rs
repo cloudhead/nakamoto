@@ -240,7 +240,7 @@ where
 
             // Drain input events in case some were added during the processing of outputs.
             while let Some(event) = self.events.pop_front() {
-                let outs = protocol.step(event);
+                let outs = protocol.step(event, local_time);
 
                 if let Control::Shutdown = self.process::<P, _>(outs, local_time)? {
                     return Ok(());
@@ -255,8 +255,10 @@ where
 
         loop {
             let timeout = self.timeouts.next().unwrap_or(P::IDLE_TIMEOUT).into();
+            let result = self.sources.wait_timeout(&mut events, timeout); // Blocking.
+            let local_time = SystemTime::now().into();
 
-            match self.sources.wait_timeout(&mut events, timeout) {
+            match result {
                 Ok(()) => {
                     for (source, ev) in events.iter() {
                         match source {
@@ -302,23 +304,19 @@ where
                     }
                 }
                 Err(err) if err.kind() == io::ErrorKind::TimedOut => {
-                    let local_time = SystemTime::now().into();
-
                     self.timeouts.wake(local_time, &mut timeouts);
 
                     if !timeouts.is_empty() {
                         for t in timeouts.drain(..) {
-                            self.events.push_back(Input::Timeout(t, local_time));
+                            self.events.push_back(Input::Timeout(t));
                         }
                     }
                 }
                 Err(err) => return Err(err.into()),
             }
 
-            let local_time = SystemTime::now().into();
-
             while let Some(event) = self.events.pop_front() {
-                let outs = protocol.step(event);
+                let outs = protocol.step(event, local_time);
                 let control = self.process::<P, _>(outs, local_time)?;
 
                 if control == Control::Shutdown {
@@ -375,10 +373,8 @@ where
                             self.register_peer(addr, local_addr, stream, Link::Outbound);
                         }
                         Err(err) => {
-                            self.events.push_back(Input::Timeout(
-                                TimeoutSource::Connect(addr),
-                                local_time,
-                            ));
+                            self.events
+                                .push_back(Input::Timeout(TimeoutSource::Connect(addr)));
 
                             error!("{}: Connection error: {}", addr, err.to_string());
                         }

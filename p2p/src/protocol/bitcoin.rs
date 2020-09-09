@@ -584,8 +584,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         out.into_iter()
     }
 
-    fn step(&mut self, input: Input) -> Self::Output {
+    fn step(&mut self, input: Input, local_time: LocalTime) -> Self::Output {
         let mut out = OutputBuilder::with_capacity(16);
+
+        // The local time is set from outside the protocol.
+        self.clock.set_local_time(local_time);
 
         // Generate `Event` outputs from the input.
         self.generate_events(&input, &mut out);
@@ -725,11 +728,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     }
                 }
             }
-            Input::Timeout(source, local_time) => {
-                debug!(target: self.target, "Received timeout for {:?}", source);
-
-                // The local time is set from outside the protocol.
-                self.clock.set_local_time(local_time);
+            Input::Timeout(source) => {
+                trace!(target: self.target, "Received timeout for {:?}", source);
 
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.

@@ -248,7 +248,7 @@ fn test_initial_sync() {
         assert_eq!(alice.syncmgr.tree.height(), height);
         assert_eq!(bob.syncmgr.tree.height(), height);
     }
-    alice.step(Input::Disconnected(bob_addr));
+    alice.step(Input::Disconnected(bob_addr), local_time);
 }
 
 /// Test what happens when a peer is idle for too long.
@@ -271,7 +271,7 @@ fn test_idle() {
     let bob = sim.get("bob");
     let alice = sim.get("alice");
 
-    sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob), sim.time))
+    sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob)))
         .any(|o| {
             matches!(o, Out::Message(
                 addr,
@@ -286,7 +286,7 @@ fn test_idle() {
     sim.timeout(PING_TIMEOUT);
 
     // Alice now decides to disconnect Bob.
-    sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob), sim.time))
+    sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob)))
         .any(|o| matches!(o, Out::Disconnect(addr) if addr == &bob))
         .expect("Alice disconnects Bob");
 }
@@ -296,20 +296,23 @@ fn test_getheaders_timeout() {
     let network = Network::Mainnet;
     // TODO: Protocol should try different peers if it can't get the headers from the first
     // peer. It should keep trying until it succeeds.
-    let ((mut local, _), (_, remote_addr), _) = setup::pair(network);
+    let ((mut local, _), (_, remote_addr), local_time) = setup::pair(network);
     // Some hash for a nonexistent block.
     let hash =
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
     let out = local
-        .step(Input::Received(
-            remote_addr,
-            message::raw(
-                NetworkMessage::Inv(vec![Inventory::Block(hash)]),
-                network.magic(),
+        .step(
+            Input::Received(
+                remote_addr,
+                message::raw(
+                    NetworkMessage::Inv(vec![Inventory::Block(hash)]),
+                    network.magic(),
+                ),
             ),
-        ))
+            local_time,
+        )
         .collect::<Vec<_>>();
 
     out.iter()
@@ -419,10 +422,7 @@ fn test_getheaders_retry() {
     while asked.len() < ask {
         sim.elapse(syncmgr::REQUEST_TIMEOUT);
 
-        let result = sim.input(
-            &alice,
-            Input::Timeout(TimeoutSource::Synch(last_asked), sim.time),
-        );
+        let result = sim.input(&alice, Input::Timeout(TimeoutSource::Synch(last_asked)));
         let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
 
         assert!(
@@ -451,31 +451,34 @@ fn test_handshake_version_timeout() {
                 addr: remote,
                 local_addr: local,
                 link: *link,
-            })
+            }, time)
             .find(|o| matches!(o, Out::SetTimeout(TimeoutSource::Handshake(addr), _) if addr == &remote))
             .expect("a timer should be returned");
 
-        let mut out = instance.step(Input::Timeout(TimeoutSource::Handshake(remote), time));
+        let mut out = instance.step(Input::Timeout(TimeoutSource::Handshake(remote)), time);
         assert!(out.any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
 
-        instance.step(Input::Disconnected(remote));
+        instance.step(Input::Disconnected(remote), time);
     }
 }
 
 #[test]
 fn test_handshake_verack_timeout() {
     let network = Network::Mainnet;
-    let (mut instance, time) = setup::singleton(network);
+    let (mut instance, mut time) = setup::singleton(network);
 
     let remote = ([131, 31, 11, 33], 11111).into();
     let local = ([0, 0, 0, 0], 0).into();
 
     for link in &[Link::Outbound, Link::Inbound] {
-        instance.step(Input::Connected {
-            addr: remote,
-            local_addr: local,
-            link: *link,
-        });
+        instance.step(
+            Input::Connected {
+                addr: remote,
+                local_addr: local,
+                link: *link,
+            },
+            time,
+        );
 
         instance
             .step(Input::Received(
@@ -484,17 +487,16 @@ fn test_handshake_verack_timeout() {
                     magic: network.magic(),
                     payload: instance.version(local, remote, 0, 0),
                 },
-            ))
+            ), time)
             .find(|o| matches!(o, Out::SetTimeout(TimeoutSource::Handshake(addr), _) if *addr == remote))
             .expect("a timer should be returned");
 
-        let mut out = instance.step(Input::Timeout(
-            TimeoutSource::Handshake(remote),
-            time + LocalDuration::from_secs(60),
-        ));
+        time = time + LocalDuration::from_secs(60);
+
+        let mut out = instance.step(Input::Timeout(TimeoutSource::Handshake(remote)), time);
         assert!(out.any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
 
-        instance.step(Input::Disconnected(remote));
+        instance.step(Input::Disconnected(remote), time);
     }
 }
 
@@ -593,16 +595,16 @@ fn test_stale_tip() {
 
     // Timeout the request.
     sim.elapse(syncmgr::REQUEST_TIMEOUT);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(bob), sim.time));
+    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(bob)));
 
     // Some time has passed. The tip timestamp should be considered stale now.
     sim.elapse(syncmgr::TIP_STALE_DURATION);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
+    sim.input(&alice, Input::Timeout(TimeoutSource::Global))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
 
     // Timeout the request.
     sim.elapse(syncmgr::REQUEST_TIMEOUT);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(bob), sim.time));
+    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(bob)));
 
     // Now send another header and wait until the chain update is stale.
     sim.input(
@@ -619,7 +621,7 @@ fn test_stale_tip() {
     // Some more time has passed.
     // Chain update should be stale this time.
     sim.elapse(syncmgr::TIP_STALE_DURATION);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Global, sim.time))
+    sim.input(&alice, Input::Timeout(TimeoutSource::Global))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
 }
 
@@ -736,10 +738,7 @@ fn prop_connect_timeout(seed: u64) {
     let peer = attempted.pop().unwrap();
 
     sim.elapse(CONNECTION_TIMEOUT);
-    let result = sim.input(
-        &alice,
-        Input::Timeout(TimeoutSource::Connect(peer), sim.time),
-    );
+    let result = sim.input(&alice, Input::Timeout(TimeoutSource::Connect(peer)));
 
     result
         .all(|o| matches!(o, Out::Connect(addr, _) if !attempted.contains(&addr)))

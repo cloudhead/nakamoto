@@ -70,30 +70,7 @@ pub enum Input<M, C> {
     /// An external command has been received.
     Command(C),
     /// A timeout has been reached.
-    Timeout(TimeoutSource, LocalTime),
-}
-
-impl<M: Message, C: Clone> Input<M, C> {
-    pub fn payload(&self) -> Input<M::Payload, C> {
-        use Input::*;
-
-        match self {
-            Connected {
-                addr,
-                local_addr,
-                link,
-            } => Connected {
-                addr: *addr,
-                local_addr: *local_addr,
-                link: *link,
-            },
-            Disconnected(p) => Disconnected(*p),
-            Received(p, m) => Received(*p, Message::payload(m).clone()),
-            Sent(p, n) => Sent(*p, *n),
-            Command(c) => Command(c.clone()),
-            Timeout(s, t) => Timeout(*s, *t),
-        }
-    }
+    Timeout(TimeoutSource),
 }
 
 /// Output of a state transition (step) of the `Protocol` state machine.
@@ -148,5 +125,5 @@ pub trait Protocol<M: Message> {
 
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
-    fn step(&mut self, event: Input<M, Self::Command>) -> Self::Output;
+    fn step(&mut self, event: Input<M, Self::Command>, local_time: LocalTime) -> Self::Output;
 }

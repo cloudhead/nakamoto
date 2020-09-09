@@ -208,7 +208,7 @@ impl Sim {
 
         InputResult {
             peer: *addr,
-            outputs: peer.protocol.step(input).collect(),
+            outputs: peer.protocol.step(input, self.time).collect(),
         }
     }
 
@@ -234,7 +234,7 @@ impl Sim {
         for peer in self.peers.values_mut() {
             for output in peer
                 .protocol
-                .step(Input::Timeout(TimeoutSource::Global, self.time))
+                .step(Input::Timeout(TimeoutSource::Global), self.time)
             {
                 peer.schedule(&mut self.inbox, output);
             }
@@ -310,7 +310,7 @@ impl Sim {
 
             for (addr, event) in events.drain(..) {
                 if let Some(ref mut peer) = self.peers.get_mut(&addr) {
-                    for o in peer.protocol.step(event) {
+                    for o in peer.protocol.step(event, self.time) {
                         peer.schedule(&mut self.inbox, o);
                     }
                 }
@@ -377,7 +377,7 @@ pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
 
         for (peer, (proto, queue)) in sim.iter_mut() {
             if let Some(event) = queue.pop_front() {
-                for out in proto.step(event) {
+                for out in proto.step(event, local_time) {
                     Sim::schedule(&mut tmp, &mut events, peer, out);
                 }
             }
