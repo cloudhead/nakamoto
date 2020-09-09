@@ -341,7 +341,7 @@ where
                         let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
                         {
-                            let mut s = format!("{:?}", msg);
+                            let mut s = format!("{:?}", msg.payload());
 
                             if s.len() > 96 {
                                 s.truncate(96);
