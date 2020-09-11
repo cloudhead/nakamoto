@@ -197,6 +197,9 @@ impl<S: Store> BlockCache<S> {
             return Err(Error::BlockMissing(header.prev_blockhash));
         }
 
+        // Stale blocks after potential re-org.
+        let mut stale = Vec::new();
+
         // TODO: Don't switch multiple times. Switch to the best branch in one go.
         for branch in candidates.iter() {
             let candidate_work = Branch(&branch.headers).work();
@@ -204,7 +207,7 @@ impl<S: Store> BlockCache<S> {
 
             // TODO: Validate branch before switching to it.
             if candidate_work > main_work {
-                self.switch_to_fork(branch)?;
+                stale = self.switch_to_fork(branch)?;
             } else if self.params.network != Network::Bitcoin {
                 if candidate_work == main_work {
                     // Nb. We intend here to compare the hashes as integers, and pick the lowest
@@ -213,7 +216,7 @@ impl<S: Store> BlockCache<S> {
                     // comparison). Since this code isn't run on Mainnet, it's okay, as it serves
                     // its purpose of being determinstic when choosing the active chain.
                     if branch.tip < self.chain.last().hash {
-                        self.switch_to_fork(branch)?;
+                        stale = self.switch_to_fork(branch)?;
                     }
                 }
             }
@@ -221,7 +224,12 @@ impl<S: Store> BlockCache<S> {
 
         let (hash, _) = self.tip();
         if hash != best {
-            Ok(ImportResult::TipChanged(hash, self.height(), vec![]))
+            // TODO: Test the reverted blocks.
+            Ok(ImportResult::TipChanged(
+                hash,
+                self.height(),
+                stale.into_iter().map(|h| h.bitcoin_hash()).collect(),
+            ))
         } else {
             Ok(ImportResult::TipUnchanged)
         }
