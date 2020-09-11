@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::SystemTime;
 
 use nonempty::NonEmpty;
 
@@ -116,6 +117,7 @@ pub enum Event {
     /// connections and process commands.
     Synced(BlockHash, Height),
     TimedOut(PeerId),
+    StaleTipDetected(LocalTime),
 }
 
 impl std::fmt::Display for Event {
@@ -137,6 +139,15 @@ impl std::fmt::Display for Event {
             Event::Syncing(addr) => write!(fmt, "Syncing headers with {}", addr),
             Event::BlockDiscovered(from, hash) => {
                 write!(fmt, "{}: Discovered new block: {}", from, &hash)
+            }
+            Event::StaleTipDetected(last_update) => {
+                let elapsed = LocalTime::from(SystemTime::now()) - *last_update;
+
+                write!(
+                    fmt,
+                    "Potential stale tip detected (last update is {} ago)",
+                    elapsed
+                )
             }
         }
     }
@@ -519,18 +530,18 @@ impl<T: BlockTree> SyncManager<T> {
     ///////////////////////////////////////////////////////////////////////////
 
     fn record_misbehavior(&mut self, _peer: &PeerId) {
-        todo!();
+        // TODO
     }
 
     /// Check whether our current tip is stale.
     ///
     /// *Nb. This doesn't check whether we've already requested new blocks.*
-    fn is_tip_stale(&self, now: LocalTime) -> bool {
+    fn stale_tip(&self, now: LocalTime) -> Option<LocalTime> {
         if let Some(last_update) = self.last_tip_update {
             if last_update
                 < now - LocalDuration::from_secs(self.config.params.pow_target_spacing * 3)
             {
-                return true;
+                return Some(last_update);
             }
         }
         // If we don't have the time of the last update, it's probably because we
@@ -539,7 +550,11 @@ impl<T: BlockTree> SyncManager<T> {
         let (_, tip) = self.tree.tip();
         let time = LocalTime::from_block_time(tip.time);
 
-        time <= now - TIP_STALE_DURATION
+        if time <= now - TIP_STALE_DURATION {
+            return Some(time);
+        }
+
+        None
     }
 
     /// Are we currently syncing?
@@ -595,8 +610,10 @@ impl<T: BlockTree> SyncManager<T> {
     }
 
     /// Check whether or not we are in sync with the network.
-    fn is_synced(&self, now: LocalTime) -> bool {
-        if self.is_tip_stale(now) {
+    fn is_synced(&mut self, now: LocalTime) -> bool {
+        if let Some(last_update) = self.stale_tip(now) {
+            self.emit(Event::StaleTipDetected(last_update));
+
             return false;
         }
         let height = self.tree.height();

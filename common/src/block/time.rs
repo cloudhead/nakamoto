@@ -151,9 +151,31 @@ impl LocalDuration {
         Self(millis)
     }
 
+    /// Return the number of minutes in this duration.
+    pub const fn as_mins(&self) -> u64 {
+        self.as_secs() / 60
+    }
+
     /// Return the number of seconds in this duration.
     pub const fn as_secs(&self) -> u64 {
         (self.0 / 1000) as u64
+    }
+
+    /// Return the number of milliseconds in this duration.
+    pub const fn as_millis(&self) -> u128 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for LocalDuration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.as_millis() < 1000 {
+            write!(f, "{}ms", self.as_millis())
+        } else if self.as_secs() < 60 {
+            write!(f, "{}s", self.as_secs())
+        } else {
+            write!(f, "{}m", self.as_mins())
+        }
     }
 }
 
