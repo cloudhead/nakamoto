@@ -9,8 +9,8 @@ use crate::protocol::{Link, PeerId};
 pub enum Event<M> {
     /// The node is now listening for incoming connections.
     Listening(net::SocketAddr),
-    /// The node is connecting to the network and isn't ready to start syncing.
-    Connecting,
+    /// The node is connecting to peers.
+    Connecting(usize, usize),
     /// A new peer has connected and is ready to accept messages.
     /// This event is triggered *after* the peer handshake
     /// has successfully completed.

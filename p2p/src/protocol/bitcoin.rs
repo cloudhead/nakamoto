@@ -110,6 +110,10 @@ impl<M: Message> OutputBuilder<M> {
         self.push(self.builder.message(addr, message));
     }
 
+    fn event(&mut self, event: Event<M::Payload>) {
+        self.push(Out::Event(event));
+    }
+
     fn extend<T: IntoIterator<Item = Out<M>>>(&mut self, outputs: T) {
         self.queue.extend(outputs);
     }
@@ -892,10 +896,12 @@ impl<T: BlockTree> Bitcoin<T> {
         let current = self.outbound().count();
 
         if current < self.target_outbound_peers {
+            // FIXME: This debug statement shouldn't be here. Listen on events instead.
             debug!(
                 target: self.target, "Peer outbound connections ({}) below target ({})",
                 current, self.target_outbound_peers
             );
+            out.event(Event::Connecting(current, self.target_outbound_peers));
 
             if let Some(addr) = self.addrmgr.sample() {
                 if let Ok(sockaddr) = addr.socket_addr() {
