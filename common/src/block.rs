@@ -22,8 +22,8 @@ pub type Bits = u32;
 /// Height of a block.
 pub type Height = u64;
 
-/// Block timestamp.
-pub type Time = u32;
+/// Block time (seconds since Epoch).
+pub type BlockTime = u32;
 
 #[derive(Debug, Clone, Copy)]
 pub struct CachedBlock {

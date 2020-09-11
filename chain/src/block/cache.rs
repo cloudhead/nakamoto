@@ -18,7 +18,7 @@ use nakamoto_common::block::{
     iter::Iter,
     store::Store,
     time::{self, Clock},
-    CachedBlock, Height, Target, Time,
+    BlockTime, CachedBlock, Height, Target,
 };
 
 /// A chain candidate, forking off the active chain.
@@ -102,10 +102,10 @@ impl<S: Store> BlockCache<S> {
     ///
     /// Panics if height is `0`.
     ///
-    pub fn median_time_past(&self, height: Height) -> Time {
+    pub fn median_time_past(&self, height: Height) -> BlockTime {
         assert!(height != 0, "height must be > 0");
 
-        let mut times = [0 as Time; time::MEDIAN_TIME_SPAN as usize];
+        let mut times = [0 as BlockTime; time::MEDIAN_TIME_SPAN as usize];
 
         let start = height.saturating_sub(time::MEDIAN_TIME_SPAN);
         let end = height;
@@ -295,7 +295,7 @@ impl<S: Store> BlockCache<S> {
         let target = if self.params.allow_min_difficulty_blocks
             && (tip.height + 1) % self.params.difficulty_adjustment_interval() != 0
         {
-            if header.time > tip.time + self.params.pow_target_spacing as Time * 2 {
+            if header.time > tip.time + self.params.pow_target_spacing as BlockTime * 2 {
                 self.params.pow_limit
             } else {
                 self.next_min_difficulty_target(&self.params)
@@ -335,10 +335,10 @@ impl<S: Store> BlockCache<S> {
         // the previous MEDIAN_TIME_SPAN blocks, and less than the network-adjusted
         // time + MAX_FUTURE_BLOCK_TIME.
         if header.time <= self.median_time_past(height) {
-            return Err(Error::InvalidTimestamp(header.time, Ordering::Less));
+            return Err(Error::InvalidBlockTime(header.time, Ordering::Less));
         }
-        if header.time > clock.time() + time::MAX_FUTURE_BLOCK_TIME {
-            return Err(Error::InvalidTimestamp(header.time, Ordering::Greater));
+        if header.time > clock.block_time() + time::MAX_FUTURE_BLOCK_TIME {
+            return Err(Error::InvalidBlockTime(header.time, Ordering::Greater));
         }
 
         Ok(())

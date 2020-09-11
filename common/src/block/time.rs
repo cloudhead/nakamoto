@@ -2,14 +2,14 @@ use std::collections::HashSet;
 use std::hash::Hash;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use super::{Height, Time};
+use super::{BlockTime, Height};
 
 /// Maximum time adjustment between network and local time (70 minutes).
 pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
 
 /// Maximum a block timestamp can exceed the network-adjusted time before
 /// it is considered invalid (2 hours).
-pub const MAX_FUTURE_BLOCK_TIME: Time = 60 * 60 * 2;
+pub const MAX_FUTURE_BLOCK_TIME: BlockTime = 60 * 60 * 2;
 
 /// Number of previous blocks to look at when determining the median
 /// block time.
@@ -27,7 +27,7 @@ pub type TimeOffset = i64;
 /// Clock that tells the time.
 pub trait Clock {
     /// Tell the time in block time.
-    fn time(&self) -> Time;
+    fn block_time(&self) -> BlockTime;
     /// Tell the time in local time.
     fn local_time(&self) -> LocalTime;
 }
@@ -41,7 +41,7 @@ pub struct LocalTime {
 
 impl std::fmt::Display for LocalTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_secs())
+        write!(f, "{}", self.block_time())
     }
 }
 
@@ -65,13 +65,13 @@ impl LocalTime {
     }
 
     /// Convert a block time into a local time.
-    pub fn from_timestamp(t: Time) -> Self {
+    pub fn from_block_time(t: BlockTime) -> Self {
         Self::from_secs(t as u64)
     }
 
     /// Return the local time as seconds since Epoch.
     /// This is the same representation as used in block header timestamps.
-    pub fn as_secs(&self) -> Time {
+    pub fn block_time(&self) -> BlockTime {
         use std::convert::TryInto;
 
         (self.millis / 1000).try_into().unwrap()
@@ -212,7 +212,7 @@ pub struct AdjustedTime<K> {
 }
 
 impl<K: Eq + Hash> Clock for AdjustedTime<K> {
-    fn time(&self) -> Time {
+    fn block_time(&self) -> BlockTime {
         self.get()
     }
 
@@ -305,19 +305,19 @@ impl<K: Hash + Eq> AdjustedTime<K> {
     }
 
     /// Get the network-adjusted time given a local time.
-    pub fn from(&self, time: Time) -> Time {
+    pub fn from(&self, time: BlockTime) -> BlockTime {
         let adjustment = self.offset;
 
         if adjustment > 0 {
-            time + adjustment as Time
+            time + adjustment as BlockTime
         } else {
-            time - adjustment.abs() as Time
+            time - adjustment.abs() as BlockTime
         }
     }
 
     /// Get the current network-adjusted time.
-    pub fn get(&self) -> Time {
-        self.from(self.local_time.as_secs())
+    pub fn get(&self) -> BlockTime {
+        self.from(self.local_time.block_time())
     }
 
     /// Set the local time to the given value.
@@ -385,8 +385,8 @@ mod tests {
         } // samples = [0, 96, 96, 96, 96]
         assert_eq!(adjusted_time.offset(), 96);
         assert_eq!(
-            adjusted_time.from(local_time.as_secs()),
-            local_time.as_secs() + 96
+            adjusted_time.from(local_time.block_time()),
+            local_time.block_time() + 96
         );
 
         for i in 5..11 {
@@ -394,8 +394,8 @@ mod tests {
         } // samples = [-96, -96, -96, -96, -96, -96, 0, 96, 96, 96, 96]
         assert_eq!(adjusted_time.offset(), -96);
         assert_eq!(
-            adjusted_time.from(local_time.as_secs()),
-            local_time.as_secs() - 96
+            adjusted_time.from(local_time.block_time()),
+            local_time.block_time() - 96
         );
     }
 

@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::block::store;
 use crate::block::time::Clock;
-use crate::block::{Height, Target, Time, Work};
+use crate::block::{BlockTime, Height, Target, Work};
 
 /// An error related to the block tree.
 #[derive(Debug, Error)]
@@ -20,7 +20,7 @@ pub enum Error {
     #[error("block height {0} is prior to last checkpoint")]
     InvalidBlockHeight(Height),
     #[error("block timestamp {0} is invalid")]
-    InvalidTimestamp(Time, std::cmp::Ordering),
+    InvalidBlockTime(BlockTime, std::cmp::Ordering),
     #[error("duplicate block {0}")]
     DuplicateBlock(BlockHash),
     #[error("block missing: {0}")]
@@ -136,7 +136,7 @@ pub trait BlockTree {
     fn next_difficulty_target(
         &self,
         last_height: Height,
-        last_time: Time,
+        last_time: BlockTime,
         last_target: Target,
         params: &Params,
     ) -> Target {
@@ -160,10 +160,10 @@ pub trait BlockTree {
         let actual_timespan = last_time - last_adjustment_time;
         let mut adjusted_timespan = actual_timespan;
 
-        if actual_timespan < params.pow_target_timespan as Time / 4 {
-            adjusted_timespan = params.pow_target_timespan as Time / 4;
-        } else if actual_timespan > params.pow_target_timespan as Time * 4 {
-            adjusted_timespan = params.pow_target_timespan as Time * 4;
+        if actual_timespan < params.pow_target_timespan as BlockTime / 4 {
+            adjusted_timespan = params.pow_target_timespan as BlockTime / 4;
+        } else if actual_timespan > params.pow_target_timespan as BlockTime * 4 {
+            adjusted_timespan = params.pow_target_timespan as BlockTime * 4;
         }
 
         let mut target = last_target;

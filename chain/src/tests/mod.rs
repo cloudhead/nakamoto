@@ -1,11 +1,11 @@
-use nakamoto_common::block::{Bits, Height, Time};
+use nakamoto_common::block::{Bits, BlockTime, Height};
 
 /// Difficulty retargeting test vector, from bitcoin main chain.
 /// Each row represents a difficulty change.
 ///
 ///   (height, prev-timestamp, prev-bits, timestamp, bits)
 ///
-pub(crate) const TARGETS: &[(Height, Time, Bits, Time, Bits)] = &[
+pub(crate) const TARGETS: &[(Height, BlockTime, Bits, BlockTime, Bits)] = &[
     (2016, 1233061996, 0x1d00ffff, 1233063531, 0x1d00ffff),
     (4032, 1234465122, 0x1d00ffff, 1234466190, 0x1d00ffff),
     (6048, 1235965467, 0x1d00ffff, 1235966513, 0x1d00ffff),

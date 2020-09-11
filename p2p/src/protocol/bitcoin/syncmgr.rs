@@ -537,7 +537,7 @@ impl<T: BlockTree> SyncManager<T> {
         // are fresh, or restarted our node. In that case we check the last block time
         // instead.
         let (_, tip) = self.tree.tip();
-        let time = LocalTime::from_timestamp(tip.time);
+        let time = LocalTime::from_block_time(tip.time);
 
         time <= now - TIP_STALE_DURATION
     }

@@ -2,7 +2,7 @@ use super::BlockCache;
 
 use nakamoto_common::block::time::{AdjustedTime, Clock, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
-use nakamoto_common::block::{Height, Target, Time};
+use nakamoto_common::block::{BlockTime, Height, Target};
 
 use nakamoto_test::block;
 use nakamoto_test::block::cache::model;
@@ -40,9 +40,9 @@ const TARGET: Uint256 = Uint256([
     0x7fffffffffffffffu64,
 ]);
 /// Target block time (1 minute).
-const TARGET_SPACING: Time = 60;
+const TARGET_SPACING: BlockTime = 60;
 /// Target time span (1 hour).
-const _TARGET_TIMESPAN: Time = 60 * 60;
+const _TARGET_TIMESPAN: BlockTime = 60 * 60;
 
 #[derive(Debug)]
 struct HeightCache {
@@ -242,7 +242,7 @@ mod arbitrary {
 
 fn arbitrary_header<G: Gen>(
     prev_blockhash: BlockHash,
-    prev_time: Time,
+    prev_time: BlockTime,
     target: &Target,
     g: &mut G,
 ) -> BlockHeader {
@@ -575,7 +575,7 @@ struct Tree {
     headers: Arc<RwLock<BTreeMap<BlockHash, BlockHeader>>>,
     genesis: BlockHeader,
     hash: BlockHash,
-    time: Time,
+    time: BlockTime,
 }
 
 impl Tree {

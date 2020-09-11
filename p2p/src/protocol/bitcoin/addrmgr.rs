@@ -9,7 +9,7 @@ use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 
 use nakamoto_common::block::time::LocalTime;
-use nakamoto_common::block::Time;
+use nakamoto_common::block::BlockTime;
 use nakamoto_common::collections::{HashMap, HashSet};
 
 use crate::address_book::AddressBook;
@@ -134,7 +134,7 @@ impl AddressManager {
         source: Source,
     ) -> bool {
         self.insert(
-            addrs.map(|a| (Time::default(), Address::new(&a, ServiceFlags::NONE))),
+            addrs.map(|a| (BlockTime::default(), Address::new(&a, ServiceFlags::NONE))),
             source,
         )
     }
@@ -185,7 +185,7 @@ impl AddressManager {
 
         self.connected.insert(addr.ip());
         self.insert(
-            std::iter::once((Time::default(), Address::new(addr, ServiceFlags::NONE))),
+            std::iter::once((BlockTime::default(), Address::new(addr, ServiceFlags::NONE))),
             Source::Connected,
         );
     }
@@ -198,7 +198,7 @@ impl AddressManager {
     /// use bitcoin::network::constants::ServiceFlags;
     ///
     /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{AddressManager, Source};
-    /// use nakamoto_common::block::Time;
+    /// use nakamoto_common::block::BlockTime;
     ///
     /// let mut addrmgr = AddressManager::new(fastrand::Rng::new());
     ///
@@ -206,12 +206,12 @@ impl AddressManager {
     ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([211, 48, 99, 4], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([241, 44, 12, 5], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (Time::default(), a)), Source::default());
+    /// ].into_iter().map(|a| (BlockTime::default(), a)), Source::default());
     ///
     /// assert_eq!(addrmgr.len(), 3);
     ///
     /// addrmgr.insert(std::iter::once(
-    ///     (Time::default(), Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE))
+    ///     (BlockTime::default(), Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE))
     /// ), Source::default());
     ///
     /// assert_eq!(addrmgr.len(), 3, "already known addresses are ignored");
@@ -219,11 +219,15 @@ impl AddressManager {
     /// addrmgr.clear();
     /// addrmgr.insert(vec![
     ///     Address::new(&([255, 255, 255, 255], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (Time::default(), a)), Source::default());
+    /// ].into_iter().map(|a| (BlockTime::default(), a)), Source::default());
     ///
     /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
     /// ```
-    pub fn insert(&mut self, addrs: impl Iterator<Item = (Time, Address)>, source: Source) -> bool {
+    pub fn insert(
+        &mut self,
+        addrs: impl Iterator<Item = (BlockTime, Address)>,
+        source: Source,
+    ) -> bool {
         // True if at least one address was added into the map.
         let mut okay = false;
 
@@ -305,7 +309,7 @@ impl AddressManager {
     /// use bitcoin::network::constants::ServiceFlags;
     ///
     /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{Source, AddressManager};
-    /// use nakamoto_common::block::Time;
+    /// use nakamoto_common::block::BlockTime;
     ///
     /// let mut addrmgr = AddressManager::new(fastrand::Rng::new());
     ///
@@ -319,7 +323,7 @@ impl AddressManager {
     ///     Address::new(&([111, 8, 161, 73], 8333).into(), ServiceFlags::NONE),
     /// ];
     /// addrmgr.insert(
-    ///     adversary_addrs.iter().cloned().map(|a| (Time::default(), a)), Source::default());
+    ///     adversary_addrs.iter().cloned().map(|a| (BlockTime::default(), a)), Source::default());
     ///
     /// // Safe addresses, controlled by non-adversarial peers.
     /// let safe_addrs = vec![
@@ -329,7 +333,7 @@ impl AddressManager {
     ///     Address::new(&([99, 129, 2, 15], 8333).into(), ServiceFlags::NONE),
     /// ];
     /// addrmgr.insert(
-    ///     safe_addrs.iter().cloned().map(|a| (Time::default(), a)), Source::default());
+    ///     safe_addrs.iter().cloned().map(|a| (BlockTime::default(), a)), Source::default());
     ///
     /// // Keep track of how many times we pick a safe vs. an adversary-controlled address.
     /// let mut adversary = 0;

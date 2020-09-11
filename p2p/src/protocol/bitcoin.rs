@@ -1071,7 +1071,7 @@ impl<T: BlockTree> Bitcoin<T> {
                         .unwrap_or_else(|| panic!("peer {} is not known", addr));
 
                     peer.height = start_height as Height;
-                    peer.time_offset = timestamp - now.as_secs() as i64;
+                    peer.time_offset = timestamp - now.block_time() as i64;
                     peer.services = services;
                     peer.user_agent = user_agent;
                     peer.transition(PeerState::Handshake(Handshake::AwaitingVerack));
@@ -1200,7 +1200,7 @@ impl<T: BlockTree> Bitcoin<T> {
         start_height: Height,
     ) -> NetworkMessage {
         let start_height = start_height as i32;
-        let timestamp = self.clock.local_time().as_secs() as i64;
+        let timestamp = self.clock.local_time().block_time() as i64;
 
         NetworkMessage::Version(VersionMessage {
             // Our max supported protocol version.
