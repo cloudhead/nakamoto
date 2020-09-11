@@ -38,7 +38,7 @@ impl<K> TimeoutManager<K> {
     /// tm.register(0xC, now + LocalDuration::from_millis(64));
     ///
     /// // We need to wait 8 millis to trigger the next timeout (1).
-    /// assert_eq!(tm.next(), Some(LocalDuration::from_millis(8)));
+    /// assert!(tm.next() <= Some(LocalDuration::from_millis(8)));
     ///
     /// // Sleep for a millisecond.
     /// std::thread::sleep(std::time::Duration::from_millis(1));
