@@ -90,7 +90,10 @@ pub enum Command {
 type Output = std::vec::IntoIter<Out<RawNetworkMessage>>;
 
 pub struct OutputBuilder<M: Message> {
+    /// Output queue.
     queue: Vec<Out<M>>,
+    /// Network magic number.
+    builder: message::Builder,
 }
 
 impl<M: Message> OutputBuilder<M> {
@@ -103,8 +106,8 @@ impl<M: Message> OutputBuilder<M> {
         self.push(Out::SetTimeout(source, timeout));
     }
 
-    fn message(&mut self, addr: PeerId, message: M::Payload, magic: u32) {
-        self.push(Out::Message(addr, M::from_parts(message, magic)));
+    fn message(&mut self, addr: PeerId, message: M::Payload) {
+        self.push(self.builder.message(addr, message));
     }
 
     fn extend<T: IntoIterator<Item = Out<M>>>(&mut self, outputs: T) {
@@ -119,9 +122,10 @@ impl<M: Message> OutputBuilder<M> {
         self.into_iter()
     }
 
-    pub fn with_capacity(cap: usize) -> Self {
+    pub fn new(network: Network) -> Self {
         Self {
-            queue: Vec::with_capacity(cap),
+            queue: Vec::new(),
+            builder: message::Builder::new(network.magic()),
         }
     }
 
@@ -153,6 +157,20 @@ impl Message for RawNetworkMessage {
 mod message {
     use super::*;
 
+    pub struct Builder {
+        magic: u32,
+    }
+
+    impl Builder {
+        pub fn new(magic: u32) -> Self {
+            Builder { magic }
+        }
+
+        pub fn message<M: Message>(&self, addr: net::SocketAddr, payload: M::Payload) -> Out<M> {
+            Out::Message(addr, M::from_parts(payload, self.magic))
+        }
+    }
+
     pub fn get_headers((locator_hashes, stop_hash): Locators, version: u32) -> NetworkMessage {
         NetworkMessage::GetHeaders(GetHeadersMessage {
             version,
@@ -165,31 +183,6 @@ mod message {
 
     pub fn raw(payload: NetworkMessage, magic: u32) -> RawNetworkMessage {
         RawNetworkMessage { magic, payload }
-    }
-
-    pub struct Builder {
-        #[allow(dead_code)]
-        version: u32,
-        magic: u32,
-    }
-
-    impl Builder {
-        pub fn new(version: u32, magic: u32) -> Self {
-            Builder { version, magic }
-        }
-
-        pub fn build(
-            &self,
-            addr: net::SocketAddr,
-            payload: NetworkMessage,
-        ) -> Out<RawNetworkMessage> {
-            Out::Message(addr, message::raw(payload, self.magic))
-        }
-
-        #[allow(dead_code)]
-        pub fn get_headers(&self, locators: Locators) -> NetworkMessage {
-            message::get_headers(locators, self.version)
-        }
     }
 }
 
@@ -560,7 +553,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     type Output = self::Output;
 
     fn initialize(&mut self, time: LocalTime) -> Self::Output {
-        let mut out = OutputBuilder::with_capacity(self.target_outbound_peers);
+        let mut out = OutputBuilder::new(self.network);
 
         self.clock.set_local_time(time);
         self.syncmgr.initialize(time);
@@ -585,7 +578,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     }
 
     fn step(&mut self, input: Input, local_time: LocalTime) -> Self::Output {
-        let mut out = OutputBuilder::with_capacity(16);
+        let mut out = OutputBuilder::new(self.network);
 
         // The local time is set from outside the protocol.
         self.clock.set_local_time(local_time);
@@ -621,9 +614,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let nonce = self.rng.u64(..);
 
                         out.push(self.connected(addr, local_addr, nonce, link));
-                        out.push(
-                            self.message(addr, self.version(addr, local_addr, nonce, self.height)),
-                        );
+                        out.message(addr, self.version(addr, local_addr, nonce, self.height));
                     }
                 };
             }
@@ -653,9 +644,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
             Input::Received(addr, msg) => {
-                for o in self.receive(addr, msg) {
-                    out.push(o);
-                }
+                out.extend(self.receive(addr, msg));
             }
             Input::Sent(_addr, _msg) => {}
             Input::Command(cmd) => {
@@ -688,7 +677,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 let r = self.rng.usize(..n);
                                 let p = peers.nth(r).unwrap();
 
-                                out.push(self.message(p.address, msg));
+                                out.message(p.address, msg);
                                 reply.send(Some(p.address)).ok();
                             }
                             _ => {
@@ -700,8 +689,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         debug!(target: self.target, "Received command: Broadcast({:?})", msg);
 
                         for peer in self.outbound() {
-                            // FIXME: Use `out.message`.
-                            out.push(self.message(peer.address, msg.clone()));
+                            out.message(peer.address, msg.clone());
                         }
                     }
                     Command::ImportHeaders(headers, reply) => {
@@ -731,7 +719,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let ix = self.rng.usize(..self.ready.len());
                         let peer = *self.ready.iter().nth(ix).unwrap();
 
-                        out.push(self.message(peer, NetworkMessage::Tx(tx)));
+                        out.message(peer, NetworkMessage::Tx(tx));
                     }
                     Command::Shutdown => {
                         out.push(Out::Shutdown);
@@ -832,16 +820,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 }
 
 impl<T: BlockTree> Bitcoin<T> {
-    pub fn message(&self, addr: PeerId, payload: NetworkMessage) -> Out<RawNetworkMessage> {
-        Out::Message(
-            addr,
-            RawNetworkMessage {
-                magic: self.network.magic(),
-                payload,
-            },
-        )
-    }
-
     pub fn request(
         &self,
         addr: PeerId,
@@ -850,7 +828,7 @@ impl<T: BlockTree> Bitcoin<T> {
         timeout: LocalDuration,
         out: &mut OutputBuilder<RawNetworkMessage>,
     ) {
-        out.push(self.message(addr, message));
+        out.message(addr, message);
         out.push(Out::SetTimeout(source, timeout));
     }
 
@@ -874,8 +852,6 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     fn drain_sync_responses(&mut self, out: &mut OutputBuilder<RawNetworkMessage>) {
-        let magic = self.network.magic();
-
         for resp in self.syncmgr.responses() {
             let syncmgr::SendHeaders { addrs, headers } = resp;
 
@@ -889,17 +865,17 @@ impl<T: BlockTree> Bitcoin<T> {
             }
 
             for addr in addrs {
-                out.message(addr, NetworkMessage::Headers(headers.clone()), magic);
+                out.message(addr, NetworkMessage::Headers(headers.clone()));
             }
         }
     }
 
     /// Send a `getaddr` message to all our outbound peers.
     fn get_addresses(&self) -> Output {
-        let mut out = OutputBuilder::with_capacity(self.ready.len());
+        let mut out = OutputBuilder::new(self.network);
 
         for p in self.outbound() {
-            out.push(self.message(p.address, NetworkMessage::GetAddr));
+            out.message(p.address, NetworkMessage::GetAddr);
         }
         out.finish()
     }
@@ -942,6 +918,7 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     pub fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) -> Vec<Out<RawNetworkMessage>> {
+        let builder = message::Builder::new(self.network.magic());
         let now = self.clock.local_time();
         let cmd = msg.cmd();
 
@@ -977,7 +954,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
         if peer.is_ready() {
             if let NetworkMessage::Ping(nonce) = msg.payload {
-                return vec![self.message(addr, NetworkMessage::Pong(nonce))];
+                return vec![builder.message(addr, NetworkMessage::Pong(nonce))];
             } else if let NetworkMessage::Pong(nonce) = msg.payload {
                 match peer.last_ping {
                     Some((last_nonce, last_time)) if nonce == last_nonce => {
@@ -993,7 +970,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     // Peer misbehaving, got empty message.
                     return vec![];
                 }
-                let mut out = OutputBuilder::with_capacity(TARGET_OUTBOUND_PEERS);
+                let mut out = OutputBuilder::new(self.network);
 
                 if self
                     .addrmgr
@@ -1110,11 +1087,11 @@ impl<T: BlockTree> Bitcoin<T> {
                             let nonce = peer.nonce;
 
                             return vec![
-                                self.message(
+                                builder.message(
                                     addr,
                                     self.version(addr, local_addr, nonce, self.height),
                                 ),
-                                self.message(addr, NetworkMessage::Verack),
+                                builder.message(addr, NetworkMessage::Verack),
                                 Out::SetTimeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT),
                             ];
                         }
@@ -1138,18 +1115,16 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     let mut out = Vec::new();
 
-                    let msg = message::Builder::new(self.protocol_version, self.network.magic());
-
                     out.extend(match link {
                         Link::Outbound => vec![
-                            msg.build(addr, NetworkMessage::Verack),
-                            msg.build(addr, NetworkMessage::SendHeaders),
-                            msg.build(addr, NetworkMessage::GetAddr),
-                            msg.build(addr, ping),
+                            builder.message(addr, NetworkMessage::Verack),
+                            builder.message(addr, NetworkMessage::SendHeaders),
+                            builder.message(addr, NetworkMessage::GetAddr),
+                            builder.message(addr, ping),
                         ],
                         Link::Inbound => vec![
-                            msg.build(addr, NetworkMessage::SendHeaders),
-                            msg.build(addr, ping),
+                            builder.message(addr, NetworkMessage::SendHeaders),
+                            builder.message(addr, ping),
                         ],
                     });
 
@@ -1185,7 +1160,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     {
                         return addrs
                             .into_iter()
-                            .map(|a| self.message(a, NetworkMessage::Headers(headers.clone())))
+                            .map(|a| builder.message(a, NetworkMessage::Headers(headers.clone())))
                             .collect::<Vec<_>>();
                     }
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
@@ -1201,7 +1176,7 @@ impl<T: BlockTree> Bitcoin<T> {
                         // TODO: Return a non-zero time value.
                         .map(|a| (0, a.clone()))
                         .collect();
-                    return vec![self.message(addr, NetworkMessage::Addr(addrs))];
+                    return vec![builder.message(addr, NetworkMessage::Addr(addrs))];
                 }
             }
             PeerState::Disconnecting => {
