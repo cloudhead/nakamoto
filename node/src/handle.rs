@@ -40,8 +40,15 @@ pub trait Handle {
     fn get_tip(&self) -> Result<BlockHeader, Error>;
     /// Get a full block from the network.
     fn get_block(&self, hash: &BlockHash) -> Result<Block, Error>;
+    /// Broadcast a message to all *outbound* peers.
+    fn broadcast(&self, msg: Self::Message) -> Result<(), Error>;
+    /// Send a message to a random *outbound* peer. Return the chosen
+    /// peer or nothing if no peer was available.
+    fn query(&self, msg: Self::Message) -> Result<Option<net::SocketAddr>, Error>;
     /// Connect to the designated peer address.
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, Error>;
+    /// Disconnect from the designated peer address.
+    fn disconnect(&self, addr: net::SocketAddr) -> Result<(), Error>;
     /// Submit a transaction to the network.
     fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
     /// Import block headers into the node.
@@ -50,9 +57,6 @@ pub trait Handle {
         &self,
         headers: Vec<BlockHeader>,
     ) -> Result<Result<ImportResult, block::tree::Error>, Error>;
-    /// Have the node receive a message as if it was coming from the given peer in the network.
-    /// If the peer is not connected, the message is ignored.
-    fn receive(&self, from: net::SocketAddr, msg: Self::Message) -> Result<(), Error>;
     /// Wait for the given predicate to be fulfilled.
     fn wait<F: Fn(Self::Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected.

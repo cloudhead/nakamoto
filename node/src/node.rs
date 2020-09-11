@@ -246,6 +246,17 @@ impl Handle for NodeHandle {
         })
     }
 
+    fn broadcast(&self, msg: Self::Message) -> Result<(), handle::Error> {
+        self.command(Command::Broadcast(msg))
+    }
+
+    fn query(&self, msg: Self::Message) -> Result<Option<net::SocketAddr>, handle::Error> {
+        let (transmit, receive) = chan::bounded::<Option<net::SocketAddr>>(1);
+        self.command(Command::Query(msg, transmit))?;
+
+        Ok(receive.recv()?)
+    }
+
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, handle::Error> {
         self.command(Command::Connect(addr))?;
         self.wait(|e| match e {
@@ -253,6 +264,18 @@ impl Handle for NodeHandle {
                 if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
             {
                 Some(link)
+            }
+            _ => None,
+        })
+    }
+
+    fn disconnect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
+        self.command(Command::Disconnect(addr))?;
+        self.wait(|e| match e {
+            Event::Disconnected(a)
+                if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
+            {
+                Some(())
             }
             _ => None,
         })
@@ -266,12 +289,6 @@ impl Handle for NodeHandle {
         self.command(Command::ImportHeaders(headers, transmit))?;
 
         Ok(receive.recv()?)
-    }
-
-    fn receive(&self, from: net::SocketAddr, msg: NetworkMessage) -> Result<(), handle::Error> {
-        self.command(Command::Receive(from, msg))?;
-
-        Ok(())
     }
 
     fn submit_transaction(&self, tx: Transaction) -> Result<(), handle::Error> {

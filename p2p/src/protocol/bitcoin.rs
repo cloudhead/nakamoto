@@ -75,9 +75,10 @@ pub type Input = protocol::Input<RawNetworkMessage, Command>;
 pub enum Command {
     GetTip(chan::Sender<BlockHeader>),
     GetBlock(BlockHash),
+    Broadcast(NetworkMessage),
+    Query(NetworkMessage, chan::Sender<Option<net::SocketAddr>>),
     Connect(net::SocketAddr),
     Disconnect(net::SocketAddr),
-    Receive(net::SocketAddr, NetworkMessage),
     ImportHeaders(
         Vec<BlockHeader>,
         chan::Sender<Result<ImportResult, tree::Error>>,
@@ -514,7 +515,6 @@ impl Peer {
         self.link == Link::Inbound
     }
 
-    #[allow(dead_code)]
     fn is_outbound(&self) -> bool {
         self.link == Link::Outbound
     }
@@ -676,22 +676,32 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             out.push(Out::Disconnect(addr));
                         }
                     }
-                    Command::Receive(addr, msg) => {
-                        debug!(
-                            target: self.target, "Received command: Receive({}, {:?})",
-                            addr, msg
-                        );
+                    Command::Query(msg, reply) => {
+                        debug!(target: self.target, "Received command: Query({:?})", msg);
 
-                        if self.connected.contains(&addr) {
-                            for o in self.receive(
-                                addr,
-                                RawNetworkMessage {
-                                    magic: self.network.magic(),
-                                    payload: msg,
-                                },
-                            ) {
-                                out.push(o);
+                        let mut peers = self.outbound();
+
+                        match peers.clone().count() {
+                            n if n > 0 => {
+                                // TODO: We should have a `sample` function that takes an iterator
+                                // and picks a random item or returns `None` if it's empty.
+                                let r = self.rng.usize(..n);
+                                let p = peers.nth(r).unwrap();
+
+                                out.push(self.message(p.address, msg));
+                                reply.send(Some(p.address)).ok();
                             }
+                            _ => {
+                                reply.send(None).ok();
+                            }
+                        }
+                    }
+                    Command::Broadcast(msg) => {
+                        debug!(target: self.target, "Received command: Broadcast({:?})", msg);
+
+                        for peer in self.outbound() {
+                            // FIXME: Use `out.message`.
+                            out.push(self.message(peer.address, msg.clone()));
                         }
                     }
                     Command::ImportHeaders(headers, reply) => {
@@ -717,7 +727,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     Command::SubmitTransaction(tx) => {
                         debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
-                        // TODO: Factor this out when we have a `peermgr`.
+                        // FIXME: Consolidate with `Query`.
                         let ix = self.rng.usize(..self.ready.len());
                         let peer = *self.ready.iter().nth(ix).unwrap();
 
@@ -888,23 +898,22 @@ impl<T: BlockTree> Bitcoin<T> {
     fn get_addresses(&self) -> Output {
         let mut out = OutputBuilder::with_capacity(self.ready.len());
 
-        for (addr, _) in self
-            .peers
-            .iter()
-            .filter(|(_, p)| p.is_ready() && p.is_outbound())
-        {
-            out.push(self.message(*addr, NetworkMessage::GetAddr));
+        for p in self.outbound() {
+            out.push(self.message(p.address, NetworkMessage::GetAddr));
         }
         out.finish()
     }
 
-    /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_outbound_peers(&mut self, out: &mut OutputBuilder<RawNetworkMessage>) {
-        let current = self
-            .peers
+    /// Get outbound & ready peers.
+    fn outbound(&self) -> impl Iterator<Item = &Peer> + Clone {
+        self.peers
             .values()
             .filter(|p| p.is_ready() && p.is_outbound())
-            .count();
+    }
+
+    /// Attempt to maintain a certain number of outbound peers.
+    fn maintain_outbound_peers(&mut self, out: &mut OutputBuilder<RawNetworkMessage>) {
+        let current = self.outbound().count();
 
         if current < self.target_outbound_peers {
             debug!(
