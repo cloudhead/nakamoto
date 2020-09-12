@@ -4,7 +4,6 @@ use std::thread;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_common::block::Height;
-use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
 use nakamoto_test::{logger, TREE};
 
 use crate::error;
@@ -69,7 +68,7 @@ fn test_full_sync() {
     let (handle, _, _) = nodes.last().unwrap();
     let headers = TREE.chain.tail.clone();
     let height = headers.len() as Height;
-    let hash = headers.last().unwrap().bitcoin_hash();
+    let hash = headers.last().unwrap().block_hash();
 
     handle
         .import_headers(headers)

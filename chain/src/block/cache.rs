@@ -8,7 +8,6 @@ use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::network::constants::Network;
-use bitcoin::util::hash::BitcoinHash;
 
 use nonempty::NonEmpty;
 
@@ -56,7 +55,7 @@ impl<S: Store> BlockCache<S> {
         let chain = NonEmpty::from((
             CachedBlock {
                 height: 0,
-                hash: genesis.bitcoin_hash(),
+                hash: genesis.block_hash(),
                 header: genesis,
             },
             Vec::with_capacity(length - 1),
@@ -76,7 +75,7 @@ impl<S: Store> BlockCache<S> {
 
         for result in cache.store.iter().skip(1) {
             let (height, header) = result?;
-            let hash = header.bitcoin_hash();
+            let hash = header.block_hash();
 
             cache.extend_chain(height, hash, header);
         }
@@ -127,7 +126,7 @@ impl<S: Store> BlockCache<S> {
         header: BlockHeader,
         clock: &impl Clock,
     ) -> Result<ImportResult, Error> {
-        let hash = header.bitcoin_hash();
+        let hash = header.block_hash();
         let tip = self.chain.last();
         let best = tip.hash;
 
@@ -228,7 +227,7 @@ impl<S: Store> BlockCache<S> {
             Ok(ImportResult::TipChanged(
                 hash,
                 self.height(),
-                stale.into_iter().map(|h| h.bitcoin_hash()).collect(),
+                stale.into_iter().map(|h| h.block_hash()).collect(),
             ))
         } else {
             Ok(ImportResult::TipUnchanged)
@@ -285,7 +284,7 @@ impl<S: Store> BlockCache<S> {
 
             tip = CachedBlock {
                 height: tip.height + 1,
-                hash: header.bitcoin_hash(),
+                hash: header.block_hash(),
                 header: *header,
             };
         }
@@ -332,7 +331,7 @@ impl<S: Store> BlockCache<S> {
         let height = tip.height + 1;
 
         if let Some(checkpoint) = self.checkpoints.get(&height) {
-            let hash = header.bitcoin_hash();
+            let hash = header.block_hash();
 
             if &hash != checkpoint {
                 return Err(Error::InvalidBlockHash(hash, height));
@@ -398,7 +397,7 @@ impl<S: Store> BlockCache<S> {
         for (i, header) in branch.headers.iter().enumerate() {
             self.extend_chain(
                 branch.fork_height + i as Height + 1,
-                header.bitcoin_hash(),
+                header.block_hash(),
                 *header,
             );
         }
@@ -451,7 +450,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
         clock: &C,
     ) -> Result<ImportResult, Error> {
         let tip = self.chain.last();
-        let hash = header.bitcoin_hash();
+        let hash = header.block_hash();
 
         if header.prev_blockhash == tip.hash {
             let height = tip.height + 1;

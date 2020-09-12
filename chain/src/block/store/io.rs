@@ -180,7 +180,6 @@ impl Store for File {
 #[cfg(test)]
 mod test {
     use super::{BlockHeader, Error, File, Height, Store};
-    use bitcoin::util::hash::BitcoinHash;
     use std::{io, iter};
 
     fn store(path: &str) -> File {
@@ -203,7 +202,7 @@ mod test {
 
         let header = BlockHeader {
             version: 1,
-            prev_blockhash: store.genesis.bitcoin_hash(),
+            prev_blockhash: store.genesis.block_hash(),
             merkle_root: Default::default(),
             bits: 0x2ffffff,
             time: 1842918273,
@@ -236,7 +235,7 @@ mod test {
         let count = 32;
         let header = BlockHeader {
             version: 1,
-            prev_blockhash: store.genesis().bitcoin_hash(),
+            prev_blockhash: store.genesis().block_hash(),
             merkle_root: Default::default(),
             bits: 0x2ffffff,
             time: 1842918273,
@@ -300,7 +299,7 @@ mod test {
         let count = 32;
         let header = BlockHeader {
             version: 1,
-            prev_blockhash: store.genesis().bitcoin_hash(),
+            prev_blockhash: store.genesis().block_hash(),
             merkle_root: Default::default(),
             bits: 0x2ffffff,
             time: 1842918273,
@@ -332,7 +331,7 @@ mod test {
         let headers = &[
             BlockHeader {
                 version: 1,
-                prev_blockhash: store.genesis().bitcoin_hash(),
+                prev_blockhash: store.genesis().block_hash(),
                 merkle_root: Default::default(),
                 bits: 0x2ffffff,
                 time: 1842918273,

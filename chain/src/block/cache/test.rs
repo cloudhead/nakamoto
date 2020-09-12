@@ -26,7 +26,6 @@ use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::{BlockHash, TxMerkleNode};
 use bitcoin_hashes::hex::FromHex;
 
-use bitcoin::util::hash::BitcoinHash;
 use bitcoin::util::uint::Uint256;
 
 /// Sun, 12 Jul 2020 15:03:05 +0000.
@@ -92,7 +91,7 @@ impl BlockTree for HeightCache {
 
     fn tip(&self) -> (BlockHash, BlockHeader) {
         let header = self.headers.get(&self.height).unwrap();
-        (header.bitcoin_hash(), *header)
+        (header.block_hash(), *header)
     }
 
     fn height(&self) -> Height {
@@ -154,7 +153,7 @@ mod arbitrary {
                     fmt,
                     "#{:03} {} time={:05} bits={:x} nonce={}",
                     height,
-                    header.bitcoin_hash(),
+                    header.block_hash(),
                     header.time,
                     header.bits,
                     header.nonce
@@ -174,7 +173,7 @@ mod arbitrary {
     impl UnorderedHeaders {
         fn new(ordered: NonEmpty<BlockHeader>) -> Self {
             let genesis = *ordered.first();
-            let tip = ordered.last().bitcoin_hash();
+            let tip = ordered.last().block_hash();
             let headers = ordered.tail;
 
             UnorderedHeaders {
@@ -202,12 +201,12 @@ mod arbitrary {
         fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
             let mut shrunk = Vec::new();
 
-            if self.tip != self.genesis.bitcoin_hash() {
+            if self.tip != self.genesis.block_hash() {
                 let mut unordered = self.clone();
                 let ix = unordered
                     .headers
                     .iter()
-                    .position(|h| h.bitcoin_hash() == self.tip)
+                    .position(|h| h.block_hash() == self.tip)
                     .unwrap();
                 let tip = unordered.headers[ix];
 
@@ -229,7 +228,7 @@ mod arbitrary {
                 writeln!(
                     fmt,
                     "{} {} time={:05} bits={:x}",
-                    header.bitcoin_hash(),
+                    header.block_hash(),
                     header.prev_blockhash,
                     header.time,
                     header.bits,
@@ -271,13 +270,13 @@ fn arbitrary_chain<G: Gen>(height: Height, g: &mut G) -> NonEmpty<BlockHeader> {
     let genesis = arbitrary_header(prev_hash, prev_time, &TARGET, g);
     let mut chain = NonEmpty::new(genesis);
 
-    prev_hash = genesis.bitcoin_hash();
+    prev_hash = genesis.block_hash();
     prev_time = genesis.time;
 
     for _ in 0..height {
         let header = arbitrary_header(prev_hash, prev_time, &TARGET, g);
         prev_time = header.time;
-        prev_hash = header.bitcoin_hash();
+        prev_hash = header.block_hash();
 
         chain.push(header);
     }
@@ -302,7 +301,7 @@ impl Arbitrary for BlockImport {
         let store = store::Memory::new(NonEmpty::new(genesis));
         let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
         let cache = BlockCache::from(store, params, &[]).unwrap();
-        let header = arbitrary_header(genesis.bitcoin_hash(), genesis.time, &genesis.target(), g);
+        let header = arbitrary_header(genesis.block_hash(), genesis.time, &genesis.target(), g);
 
         cache
             .clone()
@@ -319,7 +318,7 @@ fn prop_block_missing(import: BlockImport) -> bool {
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let prev_blockhash = constants::genesis_block(bitcoin::Network::Testnet)
         .header
-        .bitcoin_hash();
+        .block_hash();
 
     let mut header = BlockHeader {
         prev_blockhash,
@@ -525,7 +524,7 @@ fn test_from_store() {
 
     // Make sure all cached headers are also in the `headers` map.
     for (height, header) in store_headers.iter() {
-        let result = cache.headers.get(&header.bitcoin_hash());
+        let result = cache.headers.get(&header.block_hash());
         assert_eq!(result, Some(height));
     }
 }
@@ -561,7 +560,7 @@ fn prop_cache_import_ordered() {
             .unwrap();
 
         cache.genesis() == &headers.head
-            && cache.tip() == (tip.bitcoin_hash(), tip)
+            && cache.tip() == (tip.block_hash(), tip)
             && cache
                 .iter()
                 .all(|(i, h)| headers.get(i as usize) == Some(&h))
@@ -581,7 +580,7 @@ struct Tree {
 impl Tree {
     fn new(genesis: BlockHeader) -> Self {
         let headers = BTreeMap::new();
-        let hash = genesis.bitcoin_hash();
+        let hash = genesis.block_hash();
 
         Self {
             headers: Arc::new(RwLock::new(headers)),
@@ -603,7 +602,7 @@ impl Tree {
         };
         block::solve(&mut header);
 
-        let hash = header.bitcoin_hash();
+        let hash = header.block_hash();
         self.headers.write().unwrap().insert(hash, header);
 
         Tree {
@@ -629,7 +628,7 @@ impl Tree {
             header.nonce += 1;
         }
 
-        let hash = header.bitcoin_hash();
+        let hash = header.block_hash();
         self.headers.write().unwrap().insert(hash, header);
 
         Tree {
@@ -646,7 +645,7 @@ impl Tree {
         let header = headers.values().nth(ix).unwrap();
 
         Tree {
-            hash: header.bitcoin_hash(),
+            hash: header.block_hash(),
             headers: self.headers.clone(),
             time: header.time,
             genesis: self.genesis,
@@ -663,7 +662,7 @@ impl Tree {
     }
 
     fn block(&self) -> BlockHeader {
-        if self.hash == self.genesis.bitcoin_hash() {
+        if self.hash == self.genesis.block_hash() {
             return self.genesis;
         }
         self.headers
@@ -1031,7 +1030,7 @@ fn test_cache_import_fork_with_checkpoints() {
     let a3 = a2.next(g);
 
     // Prevent block `a2` from being reverted.
-    let checkpoints = &[(0, genesis.bitcoin_hash()), (2, a2.hash)];
+    let checkpoints = &[(0, genesis.block_hash()), (2, a2.hash)];
     let mut cache = BlockCache::from(store, params, checkpoints).unwrap();
 
     cache.import_blocks(a0.branch([&a1, &a3]), &ctx).unwrap();
@@ -1104,7 +1103,7 @@ fn test_cache_import_fork_with_future_checkpoint() {
     let a2 = a1.next(g);
 
     // Create a checkpoint block [c4] in the future, at height 4.
-    let checkpoints = &[(0, genesis.bitcoin_hash()), (4, BlockHash::default())];
+    let checkpoints = &[(0, genesis.block_hash()), (4, BlockHash::default())];
     let mut cache = BlockCache::from(store, params, checkpoints).unwrap();
 
     cache.import_blocks(a0.branch([&a1, &a2]), &ctx).unwrap();
@@ -1249,10 +1248,10 @@ fn test_cache_import_unordered() {
         model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
         assert_eq!(model.tip().0, d6.hash);
 
-        let actual = cache.chain().map(|h| h.bitcoin_hash()).collect::<Vec<_>>();
+        let actual = cache.chain().map(|h| h.block_hash()).collect::<Vec<_>>();
         assert_eq!(actual, expected);
 
-        let actual = model.chain().map(|h| h.bitcoin_hash()).collect::<Vec<_>>();
+        let actual = model.chain().map(|h| h.block_hash()).collect::<Vec<_>>();
         assert_eq!(actual, expected);
     }
 }

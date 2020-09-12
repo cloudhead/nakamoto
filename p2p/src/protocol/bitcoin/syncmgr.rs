@@ -6,7 +6,6 @@ use nonempty::NonEmpty;
 use bitcoin::consensus::params::Params;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_blockdata::Inventory;
-use bitcoin::util::hash::BitcoinHash;
 
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
@@ -317,7 +316,7 @@ impl<T: BlockTree> SyncManager<T> {
         clock: &impl Clock,
     ) {
         let length = headers.len();
-        let best = headers.last().bitcoin_hash();
+        let best = headers.last().block_hash();
         let peer = self.peers.get_mut(from).unwrap();
 
         if self.tree.contains(&best) {
@@ -387,7 +386,7 @@ impl<T: BlockTree> SyncManager<T> {
             }
             // Header announcement.
             _ if length <= MAX_HEADERS_ANNOUNCED => {
-                let root = headers.first().bitcoin_hash();
+                let root = headers.first().block_hash();
 
                 match self.tree.import_blocks(headers.into_iter(), clock) {
                     Ok(import_result @ ImportResult::TipUnchanged) => {

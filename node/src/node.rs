@@ -19,7 +19,6 @@ use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction}
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use nakamoto_p2p::bitcoin::util::hash::BitcoinHash;
 use nakamoto_p2p::protocol::bitcoin::Command;
 use nakamoto_p2p::protocol::bitcoin::{self, syncmgr, Network};
 use nakamoto_p2p::protocol::Link;
@@ -239,7 +238,7 @@ impl Handle for NodeHandle {
     fn get_block(&self, hash: &BlockHash) -> Result<Block, handle::Error> {
         self.command(Command::GetBlock(*hash))?;
         self.wait(|e| match e {
-            Event::Received(_, NetworkMessage::Block(blk)) if &blk.bitcoin_hash() == hash => {
+            Event::Received(_, NetworkMessage::Block(blk)) if &blk.block_hash() == hash => {
                 Some(blk)
             }
             _ => None,

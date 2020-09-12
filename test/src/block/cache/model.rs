@@ -11,8 +11,6 @@ use nonempty::NonEmpty;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::hash_types::BlockHash;
 
-use bitcoin::util::hash::BitcoinHash;
-
 #[derive(Debug, Clone)]
 pub struct Cache {
     pub headers: HashMap<BlockHash, BlockHeader>,
@@ -24,7 +22,7 @@ pub struct Cache {
 impl Cache {
     pub fn new(genesis: BlockHeader) -> Self {
         let mut headers = HashMap::new();
-        let hash = genesis.bitcoin_hash();
+        let hash = genesis.block_hash();
         let chain = NonEmpty::new(genesis);
 
         headers.insert(hash, genesis);
@@ -39,12 +37,12 @@ impl Cache {
 
     pub fn from(chain: Vec<BlockHeader>) -> Self {
         let chain = NonEmpty::from_vec(chain).unwrap();
-        let genesis = chain.head.bitcoin_hash();
-        let tip = chain.last().bitcoin_hash();
+        let genesis = chain.head.block_hash();
+        let tip = chain.last().block_hash();
 
         let mut headers = HashMap::new();
         for h in chain.iter() {
-            headers.insert(h.bitcoin_hash(), *h);
+            headers.insert(h.block_hash(), *h);
         }
 
         Self {
@@ -57,7 +55,7 @@ impl Cache {
 
     pub fn rollback(&mut self, height: Height) -> Result<(), Error> {
         for block in self.chain.tail.drain(height as usize..) {
-            self.headers.remove(&block.bitcoin_hash());
+            self.headers.remove(&block.block_hash());
         }
         Ok(())
     }
@@ -72,7 +70,7 @@ impl Cache {
         }
 
         match headers.pop_front() {
-            Some(root) if root.bitcoin_hash() == self.genesis => {
+            Some(root) if root.block_hash() == self.genesis => {
                 Some(NonEmpty::from((root, headers.into())))
             }
             _ => None,
@@ -95,8 +93,8 @@ impl Cache {
                 let b_work = Branch(&b.tail).work();
 
                 if a_work == b_work {
-                    let a_hash = a.last().bitcoin_hash();
-                    let b_hash = b.last().bitcoin_hash();
+                    let a_hash = a.last().block_hash();
+                    let b_hash = b.last().block_hash();
 
                     b_hash.cmp(&a_hash)
                 } else {
@@ -114,12 +112,12 @@ impl BlockTree for Cache {
         _context: &C,
     ) -> Result<ImportResult, Error> {
         for header in chain {
-            self.headers.insert(header.bitcoin_hash(), header);
+            self.headers.insert(header.block_hash(), header);
         }
         let tip = self.tip;
 
         self.chain = self.longest_chain();
-        self.tip = self.chain.last().bitcoin_hash();
+        self.tip = self.chain.last().block_hash();
 
         if tip != self.tip {
             Ok(ImportResult::TipChanged(self.tip, self.height(), vec![]))
@@ -130,7 +128,7 @@ impl BlockTree for Cache {
 
     fn extend_tip<C>(&mut self, header: BlockHeader, _context: &C) -> Result<ImportResult, Error> {
         if header.prev_blockhash == self.tip {
-            let hash = header.bitcoin_hash();
+            let hash = header.block_hash();
 
             self.headers.insert(hash, header);
             self.chain.push(header);
@@ -144,7 +142,7 @@ impl BlockTree for Cache {
 
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         for (height, header) in self.chain.iter().enumerate() {
-            if hash == &header.bitcoin_hash() {
+            if hash == &header.block_hash() {
                 return Some((height as Height, header));
             }
         }
@@ -152,7 +150,7 @@ impl BlockTree for Cache {
     }
 
     fn locator_hashes(&self, _from: Height) -> Vec<BlockHash> {
-        vec![self.chain.last().bitcoin_hash()]
+        vec![self.chain.last().block_hash()]
     }
 
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {
@@ -161,7 +159,7 @@ impl BlockTree for Cache {
 
     fn tip(&self) -> (BlockHash, BlockHeader) {
         let tip = self.chain.last();
-        (tip.bitcoin_hash(), *tip)
+        (tip.block_hash(), *tip)
     }
 
     fn height(&self) -> Height {
@@ -173,7 +171,7 @@ impl BlockTree for Cache {
     }
 
     fn contains(&self, hash: &BlockHash) -> bool {
-        self.headers.contains_key(hash) && self.chain.iter().any(|b| b.bitcoin_hash() == *hash)
+        self.headers.contains_key(hash) && self.chain.iter().any(|b| b.block_hash() == *hash)
     }
 
     fn is_known(&self, hash: &BlockHash) -> bool {

@@ -101,12 +101,11 @@ impl Network {
 impl Network {
     /// ```
     /// use nakamoto_p2p::protocol::bitcoin::Network;
-    /// use bitcoin::util::hash::BitcoinHash;
     ///
     /// let network = Network::Mainnet;
     /// let genesis = network.genesis();
     ///
-    /// assert_eq!(network.genesis_hash(), genesis.bitcoin_hash());
+    /// assert_eq!(network.genesis_hash(), genesis.block_hash());
     /// ```
     pub fn genesis(&self) -> BlockHeader {
         use bitcoin::blockdata::constants;

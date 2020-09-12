@@ -8,7 +8,7 @@ license = "MIT"
 
 [dependencies]
 nakamoto-common = { version = "0.1.0", path = "../common" }
-bitcoin = "0.23"
+bitcoin = "0.25.0"
 lazy_static = "1.4"
 log = { version = "0.4", features = ["std"] }
 chrono = "0.4"
