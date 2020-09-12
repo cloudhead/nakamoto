@@ -1,7 +1,5 @@
 use std::net;
 
-use nakamoto_common::block::tree::ImportResult;
-
 use crate::protocol::bitcoin::{addrmgr, syncmgr};
 use crate::protocol::{Link, PeerId};
 
@@ -19,8 +17,6 @@ pub enum Event<M> {
     Disconnected(PeerId),
     /// Received a message from a peer.
     Received(PeerId, M),
-    /// Headers have been imported into the block store.
-    HeadersImported(ImportResult),
     /// An address manager event.
     AddrManager(addrmgr::Event),
     /// A sync manager event.

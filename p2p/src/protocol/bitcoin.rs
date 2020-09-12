@@ -1274,7 +1274,6 @@ impl<T: BlockTree> Bitcoin<T> {
                     if let ImportResult::TipChanged(tip, height, _) = import_result {
                         info!(target: self.target, "Chain height = {}, tip = {}", height, tip);
                     }
-                    outbound.push(Out::Event(Event::HeadersImported(import_result.clone())));
                 }
                 _ => {}
             }

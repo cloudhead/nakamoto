@@ -357,9 +357,11 @@ impl Handle for NodeHandle {
 
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, handle::Error> {
         self.wait(|e| match e {
-            Event::HeadersImported(ImportResult::TipChanged(hash, height, _)) if height == h => {
-                Some(hash)
-            }
+            Event::SyncManager(syncmgr::Event::HeadersImported(ImportResult::TipChanged(
+                hash,
+                height,
+                _,
+            ))) if height == h => Some(hash),
             _ => None,
         })
     }
