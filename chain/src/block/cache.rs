@@ -17,7 +17,7 @@ use nakamoto_common::block::{
     iter::Iter,
     store::Store,
     time::{self, Clock},
-    BlockTime, CachedBlock, Height, Target,
+    Bits, BlockTime, CachedBlock, Height,
 };
 
 /// A chain candidate, forking off the active chain.
@@ -299,11 +299,11 @@ impl<S: Store> BlockCache<S> {
     ) -> Result<(), Error> {
         assert_eq!(tip.hash, header.prev_blockhash);
 
-        let target = if self.params.allow_min_difficulty_blocks
+        let compact_target = if self.params.allow_min_difficulty_blocks
             && (tip.height + 1) % self.params.difficulty_adjustment_interval() != 0
         {
             if header.time > tip.time + self.params.pow_target_spacing as BlockTime * 2 {
-                self.params.pow_limit
+                block::pow_limit_bits(&self.params.network)
             } else {
                 self.next_min_difficulty_target(&self.params)
             }
@@ -311,17 +311,14 @@ impl<S: Store> BlockCache<S> {
             self.next_difficulty_target(tip.height, tip.time, tip.target(), &self.params)
         };
 
-        // Convert the target back and forth to make sure it has 32 bits of precision instead of
-        // 256 bits, since the block header target only has 32 bits.
-        let compact_target =
-            block::target_from_bits(BlockHeader::compact_target_from_u256(&target));
+        let target = BlockHeader::u256_from_compact_target(compact_target);
 
-        match header.validate_pow(&compact_target) {
+        match header.validate_pow(&target) {
             Err(bitcoin::util::Error::BlockBadProofOfWork) => {
                 return Err(Error::InvalidBlockPoW);
             }
             Err(bitcoin::util::Error::BlockBadTarget) => {
-                return Err(Error::InvalidBlockTarget(header.target(), compact_target));
+                return Err(Error::InvalidBlockTarget(header.target(), target));
             }
             Err(_) => unreachable!(),
             Ok(_) => {}
@@ -362,17 +359,17 @@ impl<S: Store> BlockCache<S> {
             .unwrap_or(0)
     }
 
-    fn next_min_difficulty_target(&self, params: &Params) -> Target {
+    fn next_min_difficulty_target(&self, params: &Params) -> Bits {
         let pow_limit_bits = block::pow_limit_bits(&params.network);
 
         for (height, header) in self.iter().rev() {
             if header.bits != pow_limit_bits
                 || height % self.params.difficulty_adjustment_interval() == 0
             {
-                return header.target();
+                return header.bits;
             }
         }
-        block::target_from_bits(pow_limit_bits)
+        pow_limit_bits
     }
 
     /// Rollback active chain to the given height. Returns the list of rolled-back headers.

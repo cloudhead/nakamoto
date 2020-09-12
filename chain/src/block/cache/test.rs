@@ -348,7 +348,7 @@ fn prop_invalid_block_target(import: BlockImport) -> bool {
     matches! {
         cache.import_block(header, &ctx).err(),
         Some(Error::InvalidBlockTarget(actual, expected))
-            if actual == block::target_from_bits(genesis.bits - 1)
+            if actual == BlockHeader::u256_from_compact_target(genesis.bits - 1)
                 && expected == genesis.target()
     }
 }
@@ -481,12 +481,12 @@ fn test_bitcoin_difficulty() {
         let target = cache.next_difficulty_target(
             height - 1,
             prev_time,
-            block::target_from_bits(prev_bits),
+            BlockHeader::u256_from_compact_target(prev_bits),
             &params,
         );
 
         assert_eq!(height % params.difficulty_adjustment_interval(), 0);
-        assert_eq!(BlockHeader::compact_target_from_u256(&target), bits);
+        assert_eq!(target, bits);
 
         // We store the retargeting blocks, since they are used in the difficulty calculation.
         cache.import(

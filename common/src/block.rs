@@ -75,26 +75,6 @@ pub fn locators_indexes(mut from: Height) -> Vec<Height> {
     indexes
 }
 
-/// Convert a compact difficulty representation to 256-bits.
-/// Taken from `BlockHeader::target` from the `bitcoin` library.
-pub fn target_from_bits(bits: u32) -> Target {
-    let (mant, expt) = {
-        let unshifted_expt = bits >> 24;
-        if unshifted_expt <= 3 {
-            ((bits & 0xFFFFFF) >> (8 * (3 - unshifted_expt as usize)), 0)
-        } else {
-            (bits & 0xFFFFFF, 8 * ((bits >> 24) - 3))
-        }
-    };
-
-    // The mantissa is signed but may not be negative
-    if mant > 0x7FFFFF {
-        Default::default()
-    } else {
-        Target::from_u64(mant as u64).unwrap() << (expt as usize)
-    }
-}
-
 /// Get the proof-of-work limit for the network, in bits.
 pub fn pow_limit_bits(network: &bitcoin::Network) -> Bits {
     match network {
