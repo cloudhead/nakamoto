@@ -37,6 +37,7 @@ impl From<Network> for bitcoin::Network {
 }
 
 impl Network {
+    /// Return the default listen port for the network.
     pub fn port(&self) -> u16 {
         match self {
             Network::Mainnet => 8333,
@@ -113,6 +114,7 @@ impl Network {
         constants::genesis_block((*self).into()).header
     }
 
+    /// Get the hash of the genesis block of this network.
     pub fn genesis_hash(&self) -> BlockHash {
         use bitcoin_hashes::Hash;
         use nakamoto_common::block::genesis;
@@ -128,10 +130,12 @@ impl Network {
         )
     }
 
+    /// Get the consensus parameters for this network.
     pub fn params(&self) -> Params {
         Params::new((*self).into())
     }
 
+    /// Get the network magic number for this network.
     pub fn magic(&self) -> u32 {
         bitcoin::Network::from(*self).magic()
     }

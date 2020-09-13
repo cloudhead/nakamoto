@@ -1,3 +1,5 @@
+//! Bitcoin protocol state machine.
+#![warn(missing_docs)]
 use crossbeam_channel as chan;
 use log::*;
 use nonempty::NonEmpty;
@@ -73,22 +75,33 @@ pub type Input = protocol::Input<RawNetworkMessage, Command>;
 /// A command or request that can be sent to the protocol.
 #[derive(Debug, Clone)]
 pub enum Command {
+    /// Get the tip of the active chain.
     GetTip(chan::Sender<BlockHeader>),
+    /// Get a block from the active chain.
     GetBlock(BlockHash),
+    /// Broadcast to outbound peers.
     Broadcast(NetworkMessage),
+    /// Send to message to a random peer.
     Query(NetworkMessage, chan::Sender<Option<net::SocketAddr>>),
+    /// Connect to a peer.
     Connect(net::SocketAddr),
+    /// Disconnect from a peer.
     Disconnect(net::SocketAddr),
+    /// Import headers directly into the block store.
     ImportHeaders(
         Vec<BlockHeader>,
         chan::Sender<Result<ImportResult, tree::Error>>,
     ),
+    /// Submit a transaction to the network.
     SubmitTransaction(Transaction),
+    /// Shutdown the protocol.
     Shutdown,
 }
 
+/// Output of the protocol state machine.
 type Output = std::vec::IntoIter<Out<RawNetworkMessage>>;
 
+/// Used to construct a protocol output.
 pub struct OutputBuilder<M: Message> {
     /// Output queue.
     queue: Vec<Out<M>>,
@@ -97,35 +110,7 @@ pub struct OutputBuilder<M: Message> {
 }
 
 impl<M: Message> OutputBuilder<M> {
-    fn push(&mut self, output: Out<M>) {
-        self.queue.push(output);
-    }
-
-    fn request(&mut self, addr: PeerId, message: M, source: TimeoutSource, timeout: LocalDuration) {
-        self.push(Out::Message(addr, message));
-        self.push(Out::SetTimeout(source, timeout));
-    }
-
-    fn message(&mut self, addr: PeerId, message: M::Payload) {
-        self.push(self.builder.message(addr, message));
-    }
-
-    fn event(&mut self, event: Event<M::Payload>) {
-        self.push(Out::Event(event));
-    }
-
-    fn extend<T: IntoIterator<Item = Out<M>>>(&mut self, outputs: T) {
-        self.queue.extend(outputs);
-    }
-
-    fn into_iter(self) -> std::vec::IntoIter<Out<M>> {
-        self.queue.into_iter()
-    }
-
-    fn finish(self) -> std::vec::IntoIter<Out<M>> {
-        self.into_iter()
-    }
-
+    /// Create a new output builder.
     pub fn new(network: Network) -> Self {
         Self {
             queue: Vec::new(),
@@ -133,8 +118,35 @@ impl<M: Message> OutputBuilder<M> {
         }
     }
 
-    pub fn drain<'a>(&'a mut self) -> impl Iterator<Item = Out<M>> + 'a {
-        self.queue.drain(..)
+    /// Push an output to the queue.
+    fn push(&mut self, output: Out<M>) {
+        self.queue.push(output);
+    }
+
+    /// Push a request to the queue.
+    fn request(&mut self, addr: PeerId, message: M, source: TimeoutSource, timeout: LocalDuration) {
+        self.push(Out::Message(addr, message));
+        self.push(Out::SetTimeout(source, timeout));
+    }
+
+    /// Push a message to the queue.
+    fn message(&mut self, addr: PeerId, message: M::Payload) {
+        self.push(self.builder.message(addr, message));
+    }
+
+    /// Push an event to the queue.
+    fn event(&mut self, event: Event<M::Payload>) {
+        self.push(Out::Event(event));
+    }
+
+    /// Extend the queue with a list of outputs.
+    fn extend<T: IntoIterator<Item = Out<M>>>(&mut self, outputs: T) {
+        self.queue.extend(outputs);
+    }
+
+    /// Consume the builder and return an iterator over the outputs.
+    fn finish(self) -> std::vec::IntoIter<Out<M>> {
+        self.queue.into_iter()
     }
 }
 
@@ -197,26 +209,25 @@ mod message {
 #[derive(Debug)]
 pub struct Bitcoin<T> {
     /// Peer states.
-    pub peers: HashMap<PeerId, Peer>,
+    peers: HashMap<PeerId, Peer>,
     /// Bitcoin network we're connecting to.
-    pub network: network::Network,
+    network: network::Network,
     /// Services offered by us.
-    pub services: ServiceFlags,
+    services: ServiceFlags,
     /// Our protocol version.
-    pub protocol_version: u32,
+    protocol_version: u32,
     /// Our user agent.
-    pub user_agent: &'static str,
+    user_agent: &'static str,
     /// Block height of active chain.
-    pub height: Height,
-    /// Target number of outbound peer connections.
-    pub target_outbound_peers: usize,
-    /// Maximum number of inbound peer connections.
-    pub max_inbound_peers: usize,
+    height: Height,
     /// Consensus parameters.
-    pub params: Params,
+    params: Params,
     /// Peer whitelist.
-    pub whitelist: Whitelist,
-
+    whitelist: Whitelist,
+    /// Target number of outbound peer connections.
+    target_outbound_peers: usize,
+    /// Maximum number of inbound peer connections.
+    max_inbound_peers: usize,
     /// Peer address manager.
     addrmgr: AddressManager,
     /// Blockchain synchronization manager.
@@ -235,18 +246,28 @@ pub struct Bitcoin<T> {
     rng: fastrand::Rng,
 }
 
-/// Peer config.
+/// Protocol configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Bitcoin network we are connected to.
     pub network: network::Network,
+    /// Addresses of peers to connect to.
     pub address_book: AddressBook,
+    /// Services offered by our peer.
     pub services: ServiceFlags,
+    /// Peer whitelist. Peers in this list are trusted by default.
     pub whitelist: Whitelist,
+    /// Consensus parameters.
     pub params: Params,
+    /// Our protocol version.
     pub protocol_version: u32,
+    /// Our user agent.
     pub user_agent: &'static str,
+    /// Target outbound peer connections.
     pub target_outbound_peers: usize,
+    /// Maximum inbound peer connections.
     pub max_inbound_peers: usize,
+    /// Log target.
     pub target: &'static str,
 }
 
@@ -268,6 +289,7 @@ impl Default for Config {
 }
 
 impl Config {
+    /// Construct a new configuration.
     pub fn from(
         target: &'static str,
         network: network::Network,
@@ -284,6 +306,7 @@ impl Config {
         }
     }
 
+    /// Get the listen port.
     pub fn port(&self) -> u16 {
         self.network.port()
     }
@@ -292,7 +315,9 @@ impl Config {
 /// Peer whitelist.
 #[derive(Debug, Clone)]
 pub struct Whitelist {
+    /// Trusted addresses.
     addr: HashSet<net::IpAddr>,
+    /// Trusted user-agents.
     user_agent: HashSet<String>,
 }
 
@@ -312,6 +337,7 @@ impl Whitelist {
 }
 
 impl<T: BlockTree> Bitcoin<T> {
+    /// Construct a new Bitcoin state machine.
     pub fn new(tree: T, clock: AdjustedTime<PeerId>, rng: fastrand::Rng, config: Config) -> Self {
         let Config {
             network,
@@ -411,7 +437,7 @@ impl<T: BlockTree> Bitcoin<T> {
 ///   4. Expect "verack" message from remote.
 ///
 #[derive(Copy, Clone, Debug, PartialOrd, PartialEq, Ord, Eq)]
-pub enum Handshake {
+enum Handshake {
     /// Waiting for "version" message from remote.
     AwaitingVersion,
     /// Waiting for "verack" message from remote.
@@ -426,7 +452,7 @@ impl Default for Handshake {
 
 /// State of a remote peer.
 #[derive(Debug, PartialEq, Eq)]
-pub enum PeerState {
+enum PeerState {
     /// Handshake is in progress.
     Handshake(Handshake),
     /// Handshake was completed successfully. This peer is ready to receive messages.
@@ -443,40 +469,41 @@ pub enum PeerState {
 /// TODO: It should be possible to statically enforce the state-machine rules.
 /// Eg. `Peer<State>`.
 #[derive(Debug)]
-pub struct Peer {
+struct Peer {
     /// Remote peer address.
-    pub address: net::SocketAddr,
+    address: net::SocketAddr,
     /// Local peer address.
-    pub local_address: net::SocketAddr,
+    local_address: net::SocketAddr,
     /// The peer's best height.
-    pub height: Height,
+    height: Height,
     /// The peer's services.
-    pub services: ServiceFlags,
+    services: ServiceFlags,
     /// The peer's best block.
-    pub tip: BlockHash,
+    tip: BlockHash,
     /// An offset in seconds, between this peer's clock and ours.
     /// A positive offset means the peer's clock is ahead of ours.
-    pub time_offset: TimeOffset,
+    time_offset: TimeOffset,
     /// Whether this is an inbound or outbound peer connection.
-    pub link: Link,
+    link: Link,
     /// Peer state.
-    pub state: PeerState,
+    state: PeerState,
     /// Nonce and time the last ping was sent to this peer.
-    pub last_ping: Option<(u64, LocalTime)>,
+    last_ping: Option<(u64, LocalTime)>,
     /// Observed round-trip latencies for this peer.
-    pub latencies: VecDeque<LocalDuration>,
+    latencies: VecDeque<LocalDuration>,
     /// Peer nonce. Used to detect self-connections.
-    pub nonce: u64,
+    nonce: u64,
     /// Peer user agent string.
-    pub user_agent: String,
+    user_agent: String,
     /// Random number generator.
-    pub rng: fastrand::Rng,
+    rng: fastrand::Rng,
     /// Informational context for this peer. Used for logging purposes only.
-    pub ctx: &'static str,
+    ctx: &'static str,
 }
 
 impl Peer {
-    pub fn new(
+    /// Construct a new peer instance.
+    fn new(
         address: net::SocketAddr,
         local_address: net::SocketAddr,
         state: PeerState,
@@ -578,7 +605,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         }
 
         out.push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
-        out.into_iter()
+        out.finish()
     }
 
     fn step(&mut self, input: Input, local_time: LocalTime) -> Self::Output {
@@ -819,23 +846,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
         self.drain_addr_events(&mut out);
 
-        out.into_iter()
+        out.finish()
     }
 }
 
 impl<T: BlockTree> Bitcoin<T> {
-    pub fn request(
-        &self,
-        addr: PeerId,
-        message: NetworkMessage,
-        source: TimeoutSource,
-        timeout: LocalDuration,
-        out: &mut OutputBuilder<RawNetworkMessage>,
-    ) {
-        out.message(addr, message);
-        out.push(Out::SetTimeout(source, timeout));
-    }
-
     fn drain_sync_requests(&mut self, out: &mut OutputBuilder<RawNetworkMessage>) {
         let magic = self.network.magic();
 
@@ -924,7 +939,7 @@ impl<T: BlockTree> Bitcoin<T> {
         }
     }
 
-    pub fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) -> Vec<Out<RawNetworkMessage>> {
+    fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) -> Vec<Out<RawNetworkMessage>> {
         let builder = message::Builder::new(self.network.magic());
         let now = self.clock.local_time();
         let cmd = msg.cmd();
