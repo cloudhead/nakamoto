@@ -1,6 +1,7 @@
 //!
 //! Manages header synchronization with peers.
 //!
+#![warn(missing_docs)]
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
@@ -32,7 +33,9 @@ pub const RECENT_REQUEST_LINGER: LocalDuration = LocalDuration::from_mins(10);
 /// What to do if a timeout for a peer is received.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum OnTimeout {
+    /// Disconnect peer on timeout.
     Disconnect,
+    /// Do nothing on timeout.
     Ignore,
 }
 
@@ -57,11 +60,15 @@ impl PeerState {
 /// Sync manager configuration.
 #[derive(Debug)]
 pub struct Config {
+    /// Maximum number of messages in a `headers` message.
     pub max_message_headers: usize,
+    /// How long to wait for a response from a peer.
     pub request_timeout: LocalDuration,
+    /// Consensus parameters.
     pub params: Params,
 }
 
+/// The sync manager state.
 #[derive(Debug)]
 pub struct SyncManager<T> {
     /// Block tree.
@@ -89,18 +96,24 @@ pub struct SyncManager<T> {
     recent: VecDeque<GetHeaders>,
 }
 
+/// An event emitted by the sync manager.
 #[derive(Debug)]
 pub enum Event {
+    /// Invalid headers received from a peer.
     ReceivedInvalidHeaders(PeerId, Error),
+    /// Unsolicited headers received.
     ReceivedUnsolicitedHeaders(PeerId, usize),
+    /// Headers were imported successfully.
     HeadersImported(ImportResult),
+    /// A new block was discovered via a peer.
     BlockDiscovered(PeerId, BlockHash),
-    /// The node started syncing with the network.
+    /// Started syncing with a peer.
     Syncing(PeerId),
-    /// The node has finished syncing and is ready to accept
-    /// connections and process commands.
+    /// Finished syncing up to the specified hash and height.
     Synced(BlockHash, Height),
+    /// A peer has timed out responding to a header request.
     TimedOut(PeerId),
+    /// Potential stale tip detected on the active chain.
     StaleTipDetected(LocalTime),
 }
 
@@ -144,7 +157,7 @@ pub struct GetHeaders {
     pub addr: PeerId,
     /// Locators hashes.
     pub locators: Locators,
-    // Request timeout.
+    /// Request timeout.
     pub timeout: LocalDuration,
 
     /// Time at which the request was sent.
@@ -153,9 +166,12 @@ pub struct GetHeaders {
     on_timeout: OnTimeout,
 }
 
+/// `headers` broadcast.
 #[derive(Debug)]
 pub struct SendHeaders {
+    /// Peers to send headers to.
     pub addrs: Vec<PeerId>,
+    /// Headers to send.
     pub headers: Vec<BlockHeader>,
 }
 
@@ -557,10 +573,12 @@ impl<T: BlockTree> SyncManager<T> {
         !self.inflight.is_empty()
     }
 
+    /// Emit an event.
     fn emit(&mut self, event: Event) {
         self.events.push(event);
     }
 
+    /// Register a new peer.
     fn register(
         &mut self,
         id: PeerId,
@@ -584,10 +602,12 @@ impl<T: BlockTree> SyncManager<T> {
         );
     }
 
+    /// Unregister a peer.
     fn unregister(&mut self, id: &PeerId) {
         self.peers.remove(id);
     }
 
+    /// Pick a random peer we could sync with using the given locators.
     fn random_sync_candidate(&self, locators: &[BlockHash]) -> Option<&PeerState> {
         let candidates = self
             .peers
@@ -603,6 +623,7 @@ impl<T: BlockTree> SyncManager<T> {
         None
     }
 
+    /// Check whether a peer can be synced with using the given locators.
     fn is_sync_candidate(&self, peer: &PeerState, locators: &[BlockHash]) -> bool {
         peer.is_outbound()
             && peer.height > self.tree.height()
@@ -700,6 +721,7 @@ impl<T: BlockTree> SyncManager<T> {
         }
     }
 
+    /// Get headers from the given locators.
     fn get_headers(
         &self,
         locator_hashes: Vec<BlockHash>,
