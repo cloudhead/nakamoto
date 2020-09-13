@@ -432,7 +432,7 @@ impl<T: BlockTree> SyncManager<T> {
         debug_assert!(!self
             .recent
             .iter()
-            .any(|r| r.addr == req.addr && &r.locators == &req.locators));
+            .any(|r| r.addr == req.addr && r.locators == req.locators));
 
         self.recent.push_front(req.clone());
         self.recent.truncate(32);
@@ -631,7 +631,7 @@ impl<T: BlockTree> SyncManager<T> {
             && !self
                 .recent
                 .iter()
-                .any(|r| r.addr == peer.id && &r.locators.0 == &locators)
+                .any(|r| r.addr == peer.id && r.locators.0 == locators)
     }
 
     /// Check whether or not we are in sync with the network.
