@@ -27,14 +27,14 @@ use std::time;
 use std::time::SystemTime;
 
 /// Maximum peer-to-peer message size.
-pub const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
+const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 /// Maximum time to wait when reading from a socket.
-pub const READ_TIMEOUT: time::Duration = time::Duration::from_secs(6);
+const READ_TIMEOUT: time::Duration = time::Duration::from_secs(6);
 /// Maximum time to wait when writing to a socket.
-pub const WRITE_TIMEOUT: time::Duration = time::Duration::from_secs(3);
+const WRITE_TIMEOUT: time::Duration = time::Duration::from_secs(3);
 
 #[derive(Debug)]
-pub struct Socket<R: Read + Write, M> {
+struct Socket<R: Read + Write, M> {
     raw: StreamReader<R>,
     address: net::SocketAddr,
     local_address: net::SocketAddr,
@@ -56,7 +56,7 @@ enum Source {
 }
 
 impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
-    pub fn disconnect(&self) -> io::Result<()> {
+    fn disconnect(&self) -> io::Result<()> {
         self.raw.stream.shutdown(net::Shutdown::Both)
     }
 }
@@ -453,7 +453,7 @@ where
 }
 
 /// Connect to a peer given a remote address.
-pub fn dial(addr: &net::SocketAddr, timeout: time::Duration) -> Result<net::TcpStream, Error> {
+fn dial(addr: &net::SocketAddr, timeout: time::Duration) -> Result<net::TcpStream, Error> {
     fallible! { Error::Io(io::ErrorKind::Other.into()) };
 
     let sock = net::TcpStream::connect_timeout(addr, timeout)?;
@@ -468,7 +468,7 @@ pub fn dial(addr: &net::SocketAddr, timeout: time::Duration) -> Result<net::TcpS
 }
 
 // Listen for connections on the given address.
-pub fn listen<A: net::ToSocketAddrs>(addr: A) -> Result<net::TcpListener, Error> {
+fn listen<A: net::ToSocketAddrs>(addr: A) -> Result<net::TcpListener, Error> {
     let sock = net::TcpListener::bind(addr)?;
 
     sock.set_nonblocking(true)?;
