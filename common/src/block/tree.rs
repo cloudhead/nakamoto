@@ -1,3 +1,5 @@
+//! Types and functions relating to block trees.
+#![warn(missing_docs)]
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
@@ -11,28 +13,46 @@ use crate::block::{Bits, BlockTime, Height, Target, Work};
 /// An error related to the block tree.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// The block's proof-of-work is invalid.
     #[error("invalid block proof-of-work")]
     InvalidBlockPoW,
+
+    /// The block's difficulty target is invalid.
     #[error("invalid block difficulty target: {0}, expected {1}")]
     InvalidBlockTarget(Target, Target),
+
+    /// The block's hash doesn't match the checkpoint.
     #[error("invalid checkpoint block hash {0} at height {1}")]
     InvalidBlockHash(BlockHash, Height),
+
+    /// The block forks off the main chain prior to the last checkpoint.
     #[error("block height {0} is prior to last checkpoint")]
     InvalidBlockHeight(Height),
+
+    /// The block timestamp is invalid.
     #[error("block timestamp {0} is invalid")]
     InvalidBlockTime(BlockTime, std::cmp::Ordering),
+
+    /// The block is already known.
     #[error("duplicate block {0}")]
     DuplicateBlock(BlockHash),
+
+    /// The block is orphan.
     #[error("block missing: {0}")]
     BlockMissing(BlockHash),
+
+    /// A block import was aborted. FIXME: Move this error out of here.
     #[error("block import aborted at height {2}: {0} ({1} block(s) imported)")]
     BlockImportAborted(Box<Self>, usize, Height),
+
+    /// A storage error occured.
     #[error("storage error: {0}")]
     Store(#[from] store::Error),
 }
 
 /// A generic block header.
 pub trait Header {
+    /// Return the proof-of-work of this header.
     fn work(&self) -> Work;
 }
 
@@ -57,10 +77,12 @@ pub enum ImportResult {
     TipUnchanged, // TODO: We could add a parameter eg. BlockMissing or DuplicateBlock.
 }
 
+/// A chain of block headers that may or may not lead back to genesis.
 #[derive(Debug, Clone)]
 pub struct Branch<'a, H: Header>(pub &'a [H]);
 
 impl<'a, H: Header> Branch<'a, H> {
+    /// Compute the total proof-of-work carried by this branch.
     pub fn work(&self) -> Work {
         let mut work = Work::default();
         for header in self.0.iter() {
