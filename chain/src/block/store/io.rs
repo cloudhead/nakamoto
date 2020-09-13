@@ -1,3 +1,4 @@
+//! Persistent storage backend for blocks.
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::iter;

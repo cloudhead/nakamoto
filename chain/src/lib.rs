@@ -1,3 +1,4 @@
+//! Functionality around proof-of-work chains.
 #[allow(clippy::len_without_is_empty)]
 #[allow(clippy::collapsible_if)]
 #[deny(
@@ -6,6 +7,7 @@
     missing_copy_implementations
 )]
 pub mod block;
+pub use block::*;
 
 #[cfg(test)]
 mod tests;

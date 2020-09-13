@@ -1,3 +1,9 @@
+//! Block tree implementation with generic storage backend.
+//!
+//! *Handles block import, chain selection, difficulty calculation and block storage.*
+//!
+#![warn(missing_docs)]
+
 #[cfg(test)]
 pub mod test;
 
@@ -29,7 +35,11 @@ struct Candidate {
     fork_hash: BlockHash,
 }
 
-/// An implementation of `BlockTree`.
+/// An implementation of [`BlockTree`] using a generic storage backend.
+/// Most of the functionality is accessible via the trait.
+///
+/// [`BlockTree`]: ../../../nakamoto_common/block/tree/trait.BlockTree.html
+///
 #[derive(Debug, Clone)]
 pub struct BlockCache<S: Store> {
     chain: NonEmpty<CachedBlock>,
@@ -120,7 +130,8 @@ impl<S: Store> BlockCache<S> {
         available[available.len() / 2]
     }
 
-    /// Import a block into the tree. Performs header validation.
+    /// Import a block into the tree. Performs header validation. This function may trigger
+    /// a chain re-org.
     fn import_block(
         &mut self,
         header: BlockHeader,
@@ -138,6 +149,7 @@ impl<S: Store> BlockCache<S> {
             self.extend_chain(height, hash, header);
             self.store.put(std::iter::once(header))?;
         } else if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
+            // FIXME: This shouldn't be an error.
             return Err(Error::DuplicateBlock(hash));
         } else {
             if let Some(height) = self.headers.get(&header.prev_blockhash) {
@@ -193,6 +205,7 @@ impl<S: Store> BlockCache<S> {
             && !self.headers.contains_key(&header.prev_blockhash)
             && !self.orphans.contains_key(&header.prev_blockhash)
         {
+            // FIXME: This shouldn't be an error.
             return Err(Error::BlockMissing(header.prev_blockhash));
         }
 
@@ -234,11 +247,12 @@ impl<S: Store> BlockCache<S> {
         }
     }
 
+    /// Find all the potential forks off the main chain.
     fn chain_candidates(&self, clock: &impl Clock) -> Vec<Candidate> {
         let mut branches = Vec::new();
 
         for tip in self.orphans.keys() {
-            if let Some(branch) = self.branch(tip) {
+            if let Some(branch) = self.fork(tip) {
                 if self.validate_branch(&branch, clock).is_ok() {
                     branches.push(branch);
                 }
@@ -247,11 +261,23 @@ impl<S: Store> BlockCache<S> {
         branches
     }
 
-    fn branch(&self, tip: &BlockHash) -> Option<Candidate> {
+    /// Find a potential branch starting from the active chain and ending at the given tip.
+    /// The tip must be not be an active block. Returns `None` if no branch was found.
+    ///
+    /// # Errors
+    ///
+    /// Panics if the provided tip is on the active chain.
+    ///
+    fn fork(&self, tip: &BlockHash) -> Option<Candidate> {
         let tip = *tip;
 
         let mut headers = VecDeque::new();
         let mut cursor = tip;
+
+        assert!(
+            !self.headers.contains_key(&tip),
+            "BlockCache::fork: the provided tip must not be on the active chain"
+        );
 
         while let Some(header) = self.orphans.get(&cursor) {
             cursor = header.prev_blockhash;
@@ -269,6 +295,7 @@ impl<S: Store> BlockCache<S> {
         None
     }
 
+    /// Validate a candidate branch. This function is useful for chain selection.
     fn validate_branch(&self, candidate: &Candidate, clock: &impl Clock) -> Result<(), Error> {
         let fork_header = self
             .get_block_by_height(candidate.fork_height)
@@ -291,6 +318,7 @@ impl<S: Store> BlockCache<S> {
         Ok(())
     }
 
+    /// Validate a block header as a potential new tip. This performs full header validation.
     fn validate(
         &self,
         tip: &CachedBlock,
@@ -348,6 +376,7 @@ impl<S: Store> BlockCache<S> {
         Ok(())
     }
 
+    /// Get the height of the last checkpoint block.
     fn last_checkpoint(&self) -> Height {
         let height = self.height();
 
@@ -359,7 +388,10 @@ impl<S: Store> BlockCache<S> {
             .unwrap_or(0)
     }
 
+    /// Get the next minimum-difficulty target. Only valid in testnet and regtest networks.
     fn next_min_difficulty_target(&self, params: &Params) -> Bits {
+        assert!(params.allow_min_difficulty_blocks);
+
         let pow_limit_bits = block::pow_limit_bits(&params.network);
 
         for (height, header) in self.iter().rev() {
@@ -416,13 +448,14 @@ impl<S: Store> BlockCache<S> {
         });
     }
 
-    // TODO: Doctest.
+    /// Get the blocks starting from the given height.
     fn chain_suffix(&self, height: Height) -> &[CachedBlock] {
         &self.chain.tail[height as usize..]
     }
 }
 
 impl<S: Store> BlockTree for BlockCache<S> {
+    /// Import blocks into the block tree. Blocks imported this way don't have to form a chain.
     fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
         &mut self,
         chain: I,
@@ -441,6 +474,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
         Ok(result.unwrap_or(ImportResult::TipUnchanged))
     }
 
+    /// Extend the active chain.
     fn extend_tip<C: Clock>(
         &mut self,
         header: BlockHeader,
@@ -462,6 +496,7 @@ impl<S: Store> BlockTree for BlockCache<S> {
         }
     }
 
+    /// Get a block by hash. *Only searches the active chain.
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         self.headers
             .get(hash)
@@ -469,14 +504,17 @@ impl<S: Store> BlockTree for BlockCache<S> {
             .map(|blk| (blk.height, &blk.header))
     }
 
+    /// Get a block by height.
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader> {
         self.chain.get(height as usize).map(|b| &b.header)
     }
 
+    /// Get the best block hash and header.
     fn tip(&self) -> (BlockHash, BlockHeader) {
         (self.chain.last().hash, self.chain.last().header)
     }
 
+    /// Get the genesis block header.
     fn genesis(&self) -> &BlockHeader {
         &self.chain.first().header
     }

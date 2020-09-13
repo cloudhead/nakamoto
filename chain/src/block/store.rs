@@ -1,4 +1,4 @@
-//! Block storage.
+//! Block storage backends.
 
 pub use nakamoto_common::block::store::*;
 

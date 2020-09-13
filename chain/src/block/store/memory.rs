@@ -1,3 +1,4 @@
+//! Ephemeral storage backend for blocks.
 use bitcoin::blockdata::block::BlockHeader;
 use nonempty::NonEmpty;
 

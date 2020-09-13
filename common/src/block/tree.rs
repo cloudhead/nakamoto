@@ -54,7 +54,7 @@ pub enum ImportResult {
     TipChanged(BlockHash, Height, Vec<BlockHash>),
     /// The block headers were imported successfully, but our best block hasn't changed.
     /// This will happen if we imported a duplicate, orphan or stale block.
-    TipUnchanged,
+    TipUnchanged, // TODO: We could add a parameter eg. BlockMissing or DuplicateBlock.
 }
 
 #[derive(Debug, Clone)]
