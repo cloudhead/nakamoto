@@ -1,24 +1,30 @@
+//! Time-related functionality useful for reactors.
 use std::time::SystemTime;
 
 pub use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
+/// Manages timers and triggers timeouts.
 pub struct TimeoutManager<K> {
     timeouts: Vec<(K, LocalTime)>,
 }
 
 impl<K> TimeoutManager<K> {
+    /// Create a new timeout manager.
     pub fn new() -> Self {
         Self { timeouts: vec![] }
     }
 
+    /// Return the number of timeouts being tracked.
     pub fn len(&self) -> usize {
         self.timeouts.len()
     }
 
+    /// Check whether there are timeouts being tracked.
     pub fn is_empty(&self) -> bool {
         self.timeouts.is_empty()
     }
 
+    /// Register a new timeout with an associated key and wake-up time.
     pub fn register(&mut self, key: K, time: LocalTime) {
         self.timeouts.push((key, time));
         self.timeouts.sort_unstable_by(|(_, a), (_, b)| b.cmp(a));
@@ -56,14 +62,6 @@ impl<K> TimeoutManager<K> {
                 LocalDuration::from_secs(0)
             }
         })
-    }
-
-    pub fn pop(&mut self) -> Option<(K, LocalTime)> {
-        self.timeouts.pop()
-    }
-
-    pub fn push(&mut self, val: (K, LocalTime)) {
-        self.timeouts.push(val)
     }
 
     /// Given the current time, populate the input vector with the keys that

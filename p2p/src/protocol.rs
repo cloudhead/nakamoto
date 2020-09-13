@@ -41,10 +41,15 @@ pub trait Message: Send + Sync + 'static {
 /// Timeout source descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeoutSource {
+    /// Header sync.
     Synch(PeerId),
+    /// Peer connect.
     Connect(PeerId),
+    /// Peer handshake.
     Handshake(PeerId),
+    /// Peer ping.
     Ping(PeerId),
+    /// A general timeout.
     Global,
 }
 
@@ -93,19 +98,6 @@ pub enum Out<M: Message> {
 impl<M: Message> From<Event<M::Payload>> for Out<M> {
     fn from(event: Event<M::Payload>) -> Self {
         Out::Event(event)
-    }
-}
-
-impl<M: Message> Out<M> {
-    pub fn address(&self) -> Option<PeerId> {
-        match self {
-            Self::Message(addr, _) => Some(*addr),
-            Self::Connect(addr, _) => Some(*addr),
-            Self::Disconnect(addr) => Some(*addr),
-            Self::SetTimeout(_, _) => None,
-            Self::Event(_) => None,
-            Self::Shutdown => None,
-        }
     }
 }
 

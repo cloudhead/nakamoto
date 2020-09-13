@@ -1,3 +1,5 @@
+//! Checkpoints used to validate blocks at certain heights.
+
 #[rustfmt::skip]
 /// Mainnet checkpoints.
 pub const MAINNET: &[(u64, &str)] = &[

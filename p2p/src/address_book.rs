@@ -6,16 +6,19 @@ use std::net;
 use std::ops::Deref;
 use std::path::Path;
 
+/// An address book to store peer addresses.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct AddressBook {
     addrs: Vec<net::SocketAddr>,
 }
 
 impl AddressBook {
+    /// Construct a new address book.
     pub const fn new() -> Self {
         Self { addrs: Vec::new() }
     }
 
+    /// Construct a new address book from a list of seeds.
     pub fn from<T: net::ToSocketAddrs + fmt::Debug>(seeds: &[T]) -> io::Result<Self> {
         let addrs = seeds
             .iter()
@@ -28,20 +31,24 @@ impl AddressBook {
         Ok(Self { addrs })
     }
 
+    /// Construct a new address book from a list of (eg. DNS) seeds and listen port.
     pub fn bootstrap(seeds: &[&str], port: u16) -> io::Result<Self> {
         let seeds = seeds.iter().map(|s| (*s, port)).collect::<Vec<_>>();
 
         AddressBook::from(&seeds)
     }
 
+    /// Add an address to the book.
     pub fn push(&mut self, addr: net::SocketAddr) {
         self.addrs.push(addr);
     }
 
+    /// Remove the last address from the book.
     pub fn pop(&mut self) -> Option<net::SocketAddr> {
         self.addrs.pop()
     }
 
+    /// Seed the address book with more addresses.
     pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> io::Result<()> {
         for seed in seeds.into_iter() {
             let addrs = seed.to_socket_addrs()?;
@@ -50,6 +57,7 @@ impl AddressBook {
         Ok(())
     }
 
+    /// Load the address book from a file.
     pub fn load<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         use std::io::BufReader;
 
@@ -77,6 +85,7 @@ impl AddressBook {
         Ok(Self { addrs })
     }
 
+    /// Save the address book to a file.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> io::Result<()> {
         let mut f = File::create(path)?;
 

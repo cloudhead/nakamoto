@@ -142,6 +142,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     }
 }
 
+/// A single-threaded non-blocking reactor.
 pub struct Reactor<R: Write + Read, M: Message, C, T> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
     events: VecDeque<Input<M, C>>,
@@ -154,6 +155,7 @@ pub struct Reactor<R: Write + Read, M: Message, C, T> {
 impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C, T>
     Reactor<R, M, C, T>
 {
+    /// Construct a new reactor, given a channel to send events on.
     pub fn new(subscriber: chan::Sender<Event<M::Payload>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
         let events: VecDeque<Input<M, C>> = VecDeque::new();
@@ -172,10 +174,14 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C, T
         })
     }
 
+    /// Return a new waker.
+    ///
+    /// Used to wake up the main event loop.
     pub fn waker(&mut self) -> Arc<popol::Waker> {
         self.waker.clone()
     }
 
+    /// Register a peer with the reactor.
     fn register_peer(
         &mut self,
         addr: net::SocketAddr,
@@ -194,6 +200,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C, T
             .insert(addr, Socket::from(stream, local_addr, addr));
     }
 
+    /// Unregister a peer from the reactor.
     fn unregister_peer(&mut self, addr: net::SocketAddr) {
         self.events.push_back(Input::Disconnected(addr));
         self.sources.unregister(&Source::Peer(addr));

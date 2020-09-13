@@ -1,3 +1,4 @@
+//! Nakamoto's peer-to-peer library.
 #![allow(clippy::type_complexity)]
 #![allow(clippy::new_without_default)]
 #![allow(clippy::single_match)]
