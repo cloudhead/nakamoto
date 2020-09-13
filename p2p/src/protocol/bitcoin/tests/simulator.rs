@@ -3,27 +3,38 @@ use super::*;
 
 use nakamoto_common::collections::HashMap;
 
-pub struct Net<'a> {
+pub struct PeerConfig {
+    pub name: &'static str,
+    pub chain: NonEmpty<BlockHeader>,
+}
+
+impl PeerConfig {
+    pub fn new(name: &'static str, chain: NonEmpty<BlockHeader>) -> Self {
+        Self { name, chain }
+    }
+}
+
+pub struct Net {
     pub network: Network,
     pub rng: fastrand::Rng,
-    pub peers: &'a [&'static str],
+    pub peers: Vec<PeerConfig>,
     pub configure: fn(&mut Config),
     pub initialize: bool,
 }
 
-impl<'a> Default for Net<'a> {
+impl Default for Net {
     fn default() -> Self {
         Self {
             network: Network::default(),
             rng: fastrand::Rng::new(),
-            peers: &[],
+            peers: vec![],
             configure: |_| {},
             initialize: true,
         }
     }
 }
 
-impl<'a> Net<'a> {
+impl Net {
     pub fn into(self) -> Sim {
         let (peers, time) =
             setup::network(self.network, self.rng.clone(), self.peers, self.configure);
@@ -144,6 +155,8 @@ pub struct Sim {
     index: HashMap<&'static str, PeerId>,
     inbox: VecDeque<(PeerId, Input)>,
 
+    filter: Box<dyn Fn(&PeerId, &PeerId, &NetworkMessage) -> bool>,
+
     #[allow(dead_code)]
     rng: fastrand::Rng,
 }
@@ -175,12 +188,14 @@ impl Sim {
             index.insert(peer.protocol.target, *addr);
         }
         let inbox = VecDeque::new();
+        let filter = Box::new(|_: &PeerId, _: &PeerId, _: &NetworkMessage| false);
 
         Self {
             peers,
             index,
             inbox,
             time,
+            filter,
             rng,
         }
     }
@@ -209,6 +224,20 @@ impl Sim {
         InputResult {
             peer: *addr,
             outputs: peer.protocol.step(input, self.time).collect(),
+        }
+    }
+
+    /// Create a connection between peers.
+    pub fn connect(&mut self, addr: &PeerId, remotes: &[PeerId]) {
+        let peer = self.peers.get_mut(addr).unwrap();
+
+        for remote in remotes {
+            for o in peer
+                .protocol
+                .step(Input::Command(Command::Connect(*remote)), self.time)
+            {
+                peer.schedule(&mut self.inbox, o);
+            }
         }
     }
 
@@ -311,11 +340,33 @@ impl Sim {
             for (addr, event) in events.drain(..) {
                 if let Some(ref mut peer) = self.peers.get_mut(&addr) {
                     for o in peer.protocol.step(event, self.time) {
-                        peer.schedule(&mut self.inbox, o);
+                        match &o {
+                            Out::Message(addr, msg) => {
+                                if !(self.filter)(&peer.id, &addr, &msg.payload) {
+                                    peer.schedule(&mut self.inbox, o);
+                                } else {
+                                    log::info!("(sim) Filtered {:?}", msg);
+                                }
+                            }
+                            _ => {
+                                peer.schedule(&mut self.inbox, o);
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+
+    pub fn set_filter<F>(&mut self, f: F)
+    where
+        F: 'static + Fn(&PeerId, &PeerId, &NetworkMessage) -> bool,
+    {
+        self.filter = Box::new(f);
+    }
+
+    pub fn clear_filter(&mut self) {
+        self.filter = Box::new(|_, _, _| false);
     }
 }
 

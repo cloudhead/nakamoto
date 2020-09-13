@@ -3,6 +3,8 @@ pub mod simulator;
 
 use super::*;
 
+use simulator::PeerConfig;
+
 use bitcoin::consensus::params::Params;
 use bitcoin_hashes::hex::FromHex;
 
@@ -92,23 +94,20 @@ mod setup {
         ((alice, alice_addr), (bob, bob_addr), time)
     }
 
-    pub fn network(
+    pub fn network<'a>(
         network: Network,
         rng: fastrand::Rng,
-        peers: &[&'static str],
+        mut cfgs: Vec<PeerConfig>,
         configure: fn(&mut Config),
     ) -> (Vec<(PeerId, Bitcoin<model::Cache>)>, LocalTime) {
         use bitcoin::blockdata::constants;
 
         let genesis = constants::genesis_block(network.into()).header;
-        let tree = model::Cache::new(genesis);
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
-        let size = peers.len();
-        let names = &peers;
+        let size = cfgs.len();
 
         assert!(size > 0);
-        assert!(size <= names.len());
 
         let mut addrs = Vec::with_capacity(size);
         while addrs.len() < size {
@@ -128,7 +127,7 @@ mod setup {
         }
 
         let mut peers = Vec::with_capacity(size);
-        for (i, addr) in addrs.iter().enumerate() {
+        for ((i, addr), peer_cfg) in addrs.iter().enumerate().zip(cfgs.drain(..)) {
             let mut address_book = AddressBook::new();
 
             for other in addrs.iter().skip(i + 1) {
@@ -141,13 +140,15 @@ mod setup {
                 // Pretend that we're a full-node, to fool connections
                 // between instances of this protocol in tests.
                 services: ServiceFlags::NETWORK,
-                target: names[i],
+                target: peer_cfg.name,
                 ..Config::default()
             };
             configure(&mut cfg);
 
+            let chain = peer_cfg.chain;
+            let tree = model::Cache::from(chain.into());
             let peer = Bitcoin::new(tree.clone(), clock.clone(), rng.clone(), cfg);
-            info!("(sim) {} = {}", names[i], addr);
+            info!("(sim) {} = {}", peer_cfg.name, addr);
 
             peers.push((*addr, peer));
         }
@@ -254,10 +255,21 @@ fn test_initial_sync() {
 /// Test what happens when a peer is idle for too long.
 #[test]
 fn test_idle() {
+    let network = Network::Mainnet;
+    let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
-        network: Network::Mainnet,
+        network,
         rng: fastrand::Rng::new(),
-        peers: &["alice", "bob"],
+        peers: vec![
+            PeerConfig {
+                name: "alice",
+                chain: chain.clone(),
+            },
+            PeerConfig {
+                name: "bob",
+                chain: chain.clone(),
+            },
+        ],
         ..simulator::Net::default()
     }
     .into();
@@ -331,9 +343,16 @@ fn test_maintain_connections(seed: u64) {
 
     let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
+    let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
-        peers: &["alice", "bob", "olive", "john", "misha"],
+        peers: vec![
+            PeerConfig::new("alice", chain.clone()),
+            PeerConfig::new("bob", chain.clone()),
+            PeerConfig::new("olive", chain.clone()),
+            PeerConfig::new("john", chain.clone()),
+            PeerConfig::new("misha", chain.clone()),
+        ],
         configure: |cfg| {
             cfg.target_outbound_peers = TARGET_PEERS;
         },
@@ -373,26 +392,45 @@ fn test_maintain_connections(seed: u64) {
     assert!(!connected.contains(&addr));
 }
 
-#[test]
-fn test_getheaders_retry() {
+#[quickcheck]
+fn test_getheaders_retry(seed: u64) {
+    logger::init(log::Level::Info);
+
+    let rng = fastrand::Rng::with_seed(seed);
     // Some hash for a nonexistent block.
     let hash =
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
     let network = Network::Mainnet;
+
+    let shortest = NonEmpty::new(network.genesis());
+    let longest = NonEmpty::from_vec(TREE.range(0..8).collect()).unwrap();
+
     let mut sim = simulator::Net {
         network,
-        peers: &["alice", "bob", "olive"],
+        peers: vec![
+            PeerConfig::new("alice", shortest.clone()),
+            PeerConfig::new("bob", longest.clone()),
+            PeerConfig::new("olive", longest.clone()),
+            PeerConfig::new("fred", longest),
+        ],
+        rng,
+        initialize: false,
         ..Default::default()
     }
     .into();
 
-    // Run the simulation until no messages are exchanged.
-    sim.step();
+    let bob = sim.get("bob");
+    let alice = sim.get("alice");
+    let olive = sim.get("olive");
+    let fred = sim.get("fred");
+
+    sim.connect(&alice, &[bob, olive, fred]);
+    sim.set_filter(|_, _, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+    sim.step(); // Run the simulation until no messages are exchanged.
+    sim.clear_filter();
 
     let ask = sim.peers.len() - 1;
-    let sender = sim.get("bob");
-    let alice = sim.get("alice");
 
     // Peers that have been asked.
     let mut asked = HashSet::new();
@@ -401,7 +439,7 @@ fn test_getheaders_retry() {
     let result = sim.input(
         &alice,
         Input::Received(
-            sender,
+            bob,
             message::raw(
                 NetworkMessage::Inv(vec![Inventory::Block(hash)]),
                 network.magic(),
@@ -411,7 +449,7 @@ fn test_getheaders_retry() {
 
     // The first time we ask for headers, we ask the peer who sent us the `inv` message.
     let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
-    assert_eq!(addr, sender);
+    assert_eq!(addr, bob);
 
     asked.insert(addr);
     result.schedule(&mut sim);
@@ -503,9 +541,15 @@ fn test_handshake_verack_timeout() {
 #[test]
 fn test_getaddr() {
     let network = Network::Mainnet;
+    let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
-        peers: &["alice", "bob", "olive", "fred"],
+        peers: vec![
+            PeerConfig::new("alice", chain.clone()),
+            PeerConfig::new("bob", chain.clone()),
+            PeerConfig::new("olive", chain.clone()),
+            PeerConfig::new("john", chain.clone()),
+        ],
         configure: |cfg| {
             // Each peer only needs to connect to three other peers.
             cfg.target_outbound_peers = 3;
@@ -545,10 +589,16 @@ fn test_getaddr() {
 
 #[test]
 fn test_stale_tip() {
+    logger::init(Level::Debug);
+
     let network = Network::Mainnet;
+    let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
-        peers: &["alice", "bob"],
+        peers: vec![
+            PeerConfig::new("alice", chain.clone()),
+            PeerConfig::new("bob", chain.clone()),
+        ],
         configure: |cfg| {
             // Each peer only needs to connect to three other peers.
             cfg.target_outbound_peers = 1;
@@ -628,9 +678,13 @@ fn test_stale_tip() {
 #[test]
 fn test_addrs() {
     let network = Network::Mainnet;
+    let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
-        peers: &["alice", "bob"],
+        peers: vec![
+            PeerConfig::new("alice", chain.clone()),
+            PeerConfig::new("bob", chain.clone()),
+        ],
         configure: |cfg| {
             // Each peer only needs to connect to three other peers.
             cfg.target_outbound_peers = 3;
@@ -691,13 +745,12 @@ fn test_addrs() {
 
 #[quickcheck]
 fn prop_connect_timeout(seed: u64) {
-    logger::init(Level::Debug);
-
     let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
+    let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
-        peers: &["alice"],
+        peers: vec![PeerConfig::new("alice", chain)],
         configure: |cfg| {
             cfg.target_outbound_peers = 2;
 

@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+//!
+//! Manages header synchronization with peers.
+//!
+use std::collections::VecDeque;
 use std::time::SystemTime;
 
 use nonempty::NonEmpty;
@@ -10,6 +13,7 @@ use bitcoin::network::message_blockdata::Inventory;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
+use nakamoto_common::collections::HashMap;
 
 use super::{Link, Locators, PeerId, Timeout};
 
@@ -22,6 +26,8 @@ pub const MAX_HEADERS_ANNOUNCED: usize = 8;
 pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
 /// How long to wait between checks for longer chains from peers.
 pub const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
+/// How long to wait before evicting requests from the `recent` queue.
+pub const RECENT_REQUEST_LINGER: LocalDuration = LocalDuration::from_mins(10);
 
 /// What to do if a timeout for a peer is received.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -30,23 +36,7 @@ pub enum OnTimeout {
     Ignore,
 }
 
-/// Synchronization states.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum Syncing {
-    /// Not currently syncing. This is usually the starting and end state.
-    Idle,
-    /// Syncing. A `getheaders` message was sent and we are expecting a response.
-    AwaitingHeaders(Locators, LocalTime, OnTimeout),
-    /// The peer didn't respond to the last request.
-    NotResponding,
-}
-
-impl Default for Syncing {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
-
+/// State of a sync peer.
 #[derive(Debug)]
 struct PeerState {
     id: PeerId,
@@ -54,26 +44,17 @@ struct PeerState {
     tip: BlockHash,
     services: ServiceFlags,
     link: Link,
-    state: Syncing,
+    last_active: Option<LocalTime>,
 }
 
 impl PeerState {
-    fn is_idle(&self) -> bool {
-        matches!(self.state, Syncing::Idle)
-    }
-
+    /// Whether this is an outbound peer.
     fn is_outbound(&self) -> bool {
         self.link == Link::Outbound
     }
-
-    fn transition(&mut self, state: Syncing) {
-        if self.state == state {
-            return;
-        }
-        self.state = state;
-    }
 }
 
+/// Sync manager configuration.
 #[derive(Debug)]
 pub struct Config {
     pub max_message_headers: usize,
@@ -102,6 +83,10 @@ pub struct SyncManager<T> {
     requests: Vec<GetHeaders>,
     /// Output response queue.
     responses: Vec<SendHeaders>,
+    /// In-flight requests to peers.
+    inflight: HashMap<PeerId, GetHeaders>,
+    /// Recently sent requests.
+    recent: VecDeque<GetHeaders>,
 }
 
 #[derive(Debug)]
@@ -152,33 +137,20 @@ impl std::fmt::Display for Event {
     }
 }
 
-#[derive(Debug)]
+/// A `getheaders` request sent to a peer.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GetHeaders {
+    /// The remote peer.
     pub addr: PeerId,
+    /// Locators hashes.
     pub locators: Locators,
+    // Request timeout.
     pub timeout: LocalDuration,
-}
 
-impl GetHeaders {
-    fn new(
-        peer: &mut PeerState,
-        locators: Locators,
-        local_time: LocalTime,
-        timeout: Timeout,
-        on_timeout: OnTimeout,
-    ) -> Self {
-        peer.transition(Syncing::AwaitingHeaders(
-            locators.clone(),
-            local_time,
-            on_timeout,
-        ));
-
-        GetHeaders {
-            addr: peer.id,
-            locators,
-            timeout,
-        }
-    }
+    /// Time at which the request was sent.
+    sent_at: LocalTime,
+    /// What to do if this request times out.
+    on_timeout: OnTimeout,
 }
 
 #[derive(Debug)]
@@ -190,12 +162,14 @@ pub struct SendHeaders {
 impl<T: BlockTree> SyncManager<T> {
     /// Create a new sync manager.
     pub fn new(tree: T, config: Config, rng: fastrand::Rng) -> Self {
-        let peers = HashMap::new();
+        let peers = HashMap::with_hasher(rng.clone().into());
         let events = Vec::new();
         let last_tip_update = None;
         let last_peer_sample = None;
         let requests = Vec::with_capacity(8);
         let responses = Vec::with_capacity(8);
+        let inflight = HashMap::with_hasher(rng.clone().into());
+        let recent = VecDeque::with_capacity(32);
 
         Self {
             tree,
@@ -207,6 +181,8 @@ impl<T: BlockTree> SyncManager<T> {
             events,
             requests,
             responses,
+            inflight,
+            recent,
         }
     }
 
@@ -221,7 +197,7 @@ impl<T: BlockTree> SyncManager<T> {
     }
 
     /// Drain requests queue.
-    pub fn requests<'b>(&'b mut self) -> impl Iterator<Item = GetHeaders> + 'b {
+    pub fn requests<'a>(&'a mut self) -> impl Iterator<Item = GetHeaders> + 'a {
         self.requests.drain(..)
     }
 
@@ -232,13 +208,10 @@ impl<T: BlockTree> SyncManager<T> {
 
     /// Called periodically.
     pub fn tick(&mut self, now: LocalTime) {
-        for peer in self
-            .peers
-            .values_mut()
-            .filter(|p| matches!(p.state, Syncing::NotResponding))
-        {
-            peer.transition(Syncing::Idle);
-        }
+        // Evict recent requests that are no longer recent.
+        self.recent
+            .retain(|r| now - r.sent_at <= RECENT_REQUEST_LINGER);
+
         self.sync(now);
     }
 
@@ -319,18 +292,22 @@ impl<T: BlockTree> SyncManager<T> {
         let best = headers.last().block_hash();
         let peer = self.peers.get_mut(from).unwrap();
 
+        peer.last_active = Some(clock.local_time());
+
         if self.tree.contains(&best) {
-            peer.transition(Syncing::Idle);
             return;
         }
 
-        match &peer.state {
-            // Requested headers. These should extend our main chain.
-            // Check whether the start of the header chain matches one of the locators we
-            // supplied to the peer. Otherwise, we consider them unsolicited.
-            Syncing::AwaitingHeaders((locators, _), _, _)
-                if headers.iter().any(|h| locators.contains(&h.prev_blockhash)) =>
+        match self.inflight.remove(from) {
+            Some(GetHeaders { locators, .. })
+                if headers
+                    .iter()
+                    .any(|h| locators.0.contains(&h.prev_blockhash)) =>
             {
+                // Requested headers. These should extend our main chain.
+                // Check whether the start of the header chain matches one of the locators we
+                // supplied to the peer. Otherwise, we consider them unsolicited.
+
                 let result = self.extend_chain(headers, clock);
 
                 if let Ok(ref imported) = result {
@@ -338,9 +315,7 @@ impl<T: BlockTree> SyncManager<T> {
                 }
 
                 match result {
-                    Ok(ImportResult::TipUnchanged) => {
-                        self.peers.get_mut(from).unwrap().transition(Syncing::Idle);
-                    }
+                    Ok(ImportResult::TipUnchanged) => {}
                     Ok(ImportResult::TipChanged(tip, height, _)) => {
                         let peer = self.peers.get_mut(from).unwrap();
 
@@ -358,7 +333,6 @@ impl<T: BlockTree> SyncManager<T> {
                         if length < self.config.max_message_headers {
                             // If these headers were unsolicited, we may already be ready/synced.
                             // Otherwise, we're finally in sync.
-                            peer.transition(Syncing::Idle);
 
                             self.broadcast_tip(&tip);
                             self.sync(clock.local_time());
@@ -369,13 +343,13 @@ impl<T: BlockTree> SyncManager<T> {
                             let locators = (vec![tip], BlockHash::default());
                             let timeout = self.config.request_timeout;
 
-                            self.requests.push(GetHeaders::new(
-                                peer,
+                            self.request(
+                                *from,
                                 locators,
                                 clock.local_time(),
                                 timeout,
                                 OnTimeout::Disconnect,
-                            ));
+                            );
                         }
                     }
                     Err(err) => {
@@ -395,17 +369,15 @@ impl<T: BlockTree> SyncManager<T> {
                         // Try to find a common ancestor that leads up to the first header in
                         // the list we received.
                         let locators = (self.tree.locator_hashes(self.tree.height()), root);
-
-                        let peer = self.peers.get_mut(from).unwrap();
                         let timeout = self.config.request_timeout;
 
-                        self.requests.push(GetHeaders::new(
-                            peer,
+                        self.request(
+                            *from,
                             locators,
                             clock.local_time(),
                             timeout,
                             OnTimeout::Ignore,
-                        ));
+                        );
                     }
                     Ok(import_result) => {
                         self.emit(Event::HeadersImported(import_result));
@@ -416,13 +388,41 @@ impl<T: BlockTree> SyncManager<T> {
                     }
                 }
             }
+            // We've received a large number of unsolicited headers. This is more than the
+            // typical headers sent during a header announcement, and we haven't asked
+            // this peer for any headers. We choose to ignore it.
             _ => {
-                // We've received a large number of unsolicited headers. This is more than the
-                // typical headers sent during a header announcement, and we haven't asked
-                // this peer for any headers. We choose to ignore it.
                 self.emit(Event::ReceivedUnsolicitedHeaders(*from, length));
             }
         }
+    }
+
+    fn request(
+        &mut self,
+        addr: PeerId,
+        locators: Locators,
+        sent_at: LocalTime,
+        timeout: Timeout,
+        on_timeout: OnTimeout,
+    ) {
+        let req = GetHeaders {
+            addr,
+            locators,
+            timeout,
+            sent_at,
+            on_timeout,
+        };
+
+        debug_assert!(!self
+            .recent
+            .iter()
+            .any(|r| r.addr == req.addr && &r.locators == &req.locators));
+
+        self.recent.push_front(req.clone());
+        self.recent.truncate(32);
+
+        self.requests.push(req.clone());
+        self.inflight.insert(addr, req);
     }
 
     fn extend_chain(
@@ -477,48 +477,44 @@ impl<T: BlockTree> SyncManager<T> {
         if let Some(stop_hash) = best_block {
             let locators = (self.tree.locator_hashes(self.tree.height()), *stop_hash);
             let timeout = self.config.request_timeout;
-            let peer = self.peers.get_mut(&addr).unwrap();
 
             // Try to find headers leading up to the `inv` entry.
 
-            self.requests.push(GetHeaders::new(
-                peer,
+            self.request(
+                addr,
                 locators,
                 clock.local_time(),
                 timeout,
                 OnTimeout::Ignore,
-            ));
+            );
         }
     }
 
     /// Called when we received a timeout previously set on a peer.
     pub fn received_timeout(&mut self, id: PeerId, local_time: LocalTime) -> OnTimeout {
-        let peer = if let Some(peer) = self.peers.get_mut(&id) {
-            peer
-        } else {
-            return OnTimeout::Ignore;
-        };
         let timeout = self.config.request_timeout;
 
-        match peer.state.clone() {
-            Syncing::AwaitingHeaders(locators, time, on_timeout)
-                if local_time - time >= timeout =>
-            {
+        match self.inflight.remove(&id) {
+            Some(GetHeaders {
+                locators,
+                sent_at,
+                on_timeout,
+                ..
+            }) if local_time - sent_at >= timeout => {
                 match on_timeout {
                     OnTimeout::Disconnect => self.unregister(&id),
-                    OnTimeout::Ignore => peer.transition(Syncing::NotResponding),
+                    OnTimeout::Ignore => {
+                        // It's likely that the peer just didn't have the requested header.
+                    }
                 }
                 self.emit(Event::TimedOut(id));
 
-                // TODO: Get random peer. Random peer iterator?
-                if let Some(peer) = self.peers.values_mut().find(|p| p.state == Syncing::Idle) {
-                    self.requests.push(GetHeaders::new(
-                        peer,
-                        locators,
-                        local_time,
-                        timeout,
-                        OnTimeout::Ignore,
-                    ));
+                // TODO: We should check that we're still interested in these headers, or just
+                // call `sync` here, or simply not do anything.
+                if let Some(peer) = self.random_sync_candidate(&locators.0) {
+                    let addr = peer.id;
+
+                    self.request(addr, locators, local_time, timeout, OnTimeout::Ignore);
                 }
                 on_timeout
             }
@@ -558,9 +554,7 @@ impl<T: BlockTree> SyncManager<T> {
 
     /// Are we currently syncing?
     fn is_syncing(&self) -> bool {
-        self.peers
-            .values()
-            .any(|p| matches!(p.state, Syncing::AwaitingHeaders(_, _, _)))
+        !self.inflight.is_empty()
     }
 
     fn emit(&mut self, event: Event) {
@@ -575,6 +569,8 @@ impl<T: BlockTree> SyncManager<T> {
         services: ServiceFlags,
         link: Link,
     ) {
+        let last_active = None;
+
         self.peers.insert(
             id,
             PeerState {
@@ -583,7 +579,7 @@ impl<T: BlockTree> SyncManager<T> {
                 tip,
                 services,
                 link,
-                state: Syncing::default(),
+                last_active,
             },
         );
     }
@@ -592,8 +588,11 @@ impl<T: BlockTree> SyncManager<T> {
         self.peers.remove(id);
     }
 
-    fn random_sync_candidate(&self) -> Option<&PeerState> {
-        let candidates = self.peers.values().filter(|p| self.is_sync_candidate(p));
+    fn random_sync_candidate(&self, locators: &[BlockHash]) -> Option<&PeerState> {
+        let candidates = self
+            .peers
+            .values()
+            .filter(|p| self.is_sync_candidate(p, locators));
 
         if let Some(peers) = NonEmpty::from_vec(candidates.collect()) {
             let ix = self.rng.usize(..peers.len());
@@ -604,8 +603,14 @@ impl<T: BlockTree> SyncManager<T> {
         None
     }
 
-    fn is_sync_candidate(&self, peer: &PeerState) -> bool {
-        self::is_sync_candidate(peer, self.tree.height())
+    fn is_sync_candidate(&self, peer: &PeerState, locators: &[BlockHash]) -> bool {
+        peer.is_outbound()
+            && peer.height > self.tree.height()
+            && !self.inflight.contains_key(&peer.id)
+            && !self
+                .recent
+                .iter()
+                .any(|r| r.addr == peer.id && &r.locators.0 == &locators)
     }
 
     /// Check whether or not we are in sync with the network.
@@ -628,15 +633,7 @@ impl<T: BlockTree> SyncManager<T> {
 
     /// Check if we're currently syncing with these locators.
     fn syncing(&self, locators: &Locators) -> bool {
-        for peer in self.peers.values() {
-            match &peer.state {
-                Syncing::AwaitingHeaders(l, _, _) if l == locators => {
-                    return true;
-                }
-                _ => {}
-            }
-        }
-        false
+        self.inflight.values().any(|r| &r.locators == locators)
     }
 
     /// Start syncing if we're out of sync.
@@ -675,18 +672,11 @@ impl<T: BlockTree> SyncManager<T> {
             return;
         }
 
-        if let Some(peer) = self.random_sync_candidate() {
+        if let Some(peer) = self.random_sync_candidate(&locators.0) {
             let timeout = self.config.request_timeout;
             let addr = peer.id;
-            let peer = self.peers.get_mut(&addr).expect("the peer exists");
 
-            self.requests.push(GetHeaders::new(
-                peer,
-                locators,
-                now,
-                timeout,
-                OnTimeout::Ignore,
-            ));
+            self.request(addr, locators, now, timeout, OnTimeout::Ignore);
             self.emit(Event::Syncing(addr));
         }
     }
@@ -749,29 +739,22 @@ impl<T: BlockTree> SyncManager<T> {
 
     /// Ask all our outbound peers whether they have better block headers.
     fn sample_peers(&mut self, now: LocalTime) {
-        let height = self.tree.height();
-        let locators = self.tree.locator_hashes(height);
-        let timeout = self.config.request_timeout;
+        let locators = self.tree.locator_hashes(self.tree.height());
+        let addrs = self
+            .peers
+            .values()
+            .filter(|p| self.is_sync_candidate(p, &locators))
+            .map(|p| p.id)
+            .collect::<Vec<_>>();
 
-        let mut reqs = Vec::new();
-
-        self.peers
-            .values_mut()
-            .filter(|p| self::is_sync_candidate(p, height))
-            .for_each(|peer| {
-                reqs.push(GetHeaders::new(
-                    peer,
-                    (locators.clone(), BlockHash::default()),
-                    now,
-                    timeout,
-                    OnTimeout::Ignore,
-                ));
-            });
-
-        self.requests.extend(reqs);
+        for addr in addrs {
+            self.request(
+                addr,
+                (locators.clone(), BlockHash::default()),
+                now,
+                self.config.request_timeout,
+                OnTimeout::Ignore,
+            );
+        }
     }
-}
-
-fn is_sync_candidate(peer: &PeerState, height: Height) -> bool {
-    peer.is_outbound() && peer.is_idle() && peer.height > height
 }

@@ -844,6 +844,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 addr,
                 locators,
                 timeout,
+                ..
             } = req;
 
             out.request(
