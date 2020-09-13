@@ -20,15 +20,16 @@ use super::{Link, Locators, PeerId, Timeout};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
-/// Maximum headers announced in a `headers` message, when unsolicited.
-pub const MAX_HEADERS_ANNOUNCED: usize = 8;
 /// How long before the tip of the chain is considered stale. This takes into account
 /// that the block timestamp may have been set sometime in the future.
 pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
+
+/// Maximum headers announced in a `headers` message, when unsolicited.
+const MAX_HEADERS_ANNOUNCED: usize = 8;
 /// How long to wait between checks for longer chains from peers.
-pub const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
+const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
 /// How long to wait before evicting requests from the `recent` queue.
-pub const RECENT_REQUEST_LINGER: LocalDuration = LocalDuration::from_mins(10);
+const RECENT_REQUEST_LINGER: LocalDuration = LocalDuration::from_mins(10);
 
 /// What to do if a timeout for a peer is received.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

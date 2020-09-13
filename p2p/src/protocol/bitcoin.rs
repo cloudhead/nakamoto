@@ -40,37 +40,36 @@ use nakamoto_common::collections::HashMap;
 pub const PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
-/// Maximum time adjustment between network and local time (70 minutes).
-pub const MAX_TIME_ADJUSTMENT: TimeOffset = 70 * 60;
-/// Maximum number of headers sent in a `headers` message.
-pub const MAX_MESSAGE_HEADERS: usize = 2000;
-/// Maximum number of addresses to return when receiving a `getaddr` message.
-pub const MAX_GETADDR_ADDRESSES: usize = 8;
-/// Maximum number of latencies recorded per peer.
-pub const MAX_RECORDED_LATENCIES: usize = 64;
-/// Maximum height difference for a stale peer, to maintain the connection (2 weeks).
-pub const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
-/// Time to wait for response during peer handshake before disconnecting the peer.
-pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
-/// Time interval to wait between sent pings.
-pub const PING_INTERVAL: LocalDuration = LocalDuration::from_mins(2);
-/// Time to wait to receive a pong when sending a ping.
-pub const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
-/// Time to wait for a new connection.
-pub const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
 /// Target number of concurrent outbound peer connections.
 pub const TARGET_OUTBOUND_PEERS: usize = 8;
 /// Maximum number of inbound peer connections.
 pub const MAX_INBOUND_PEERS: usize = 16;
 
+/// Maximum number of headers sent in a `headers` message.
+const MAX_MESSAGE_HEADERS: usize = 2000;
+/// Maximum number of addresses to return when receiving a `getaddr` message.
+const MAX_GETADDR_ADDRESSES: usize = 8;
+/// Maximum number of latencies recorded per peer.
+const MAX_RECORDED_LATENCIES: usize = 64;
+/// Maximum height difference for a stale peer, to maintain the connection (2 weeks).
+const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
+/// Time to wait for response during peer handshake before disconnecting the peer.
+const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
+/// Time interval to wait between sent pings.
+const PING_INTERVAL: LocalDuration = LocalDuration::from_mins(2);
+/// Time to wait to receive a pong when sending a ping.
+const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
+/// Time to wait for a new connection.
+const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
+
 /// A time offset, in seconds.
-pub type TimeOffset = i64;
+type TimeOffset = i64;
 
 /// Block locators. Consists of starting hashes and a stop hash.
-pub type Locators = (Vec<BlockHash>, BlockHash);
+type Locators = (Vec<BlockHash>, BlockHash);
 
 /// Input into the state machine.
-pub type Input = protocol::Input<RawNetworkMessage, Command>;
+type Input = protocol::Input<RawNetworkMessage, Command>;
 
 /// A command or request that can be sent to the protocol.
 #[derive(Debug, Clone)]
@@ -102,7 +101,7 @@ pub enum Command {
 type Output = std::vec::IntoIter<Out<RawNetworkMessage>>;
 
 /// Used to construct a protocol output.
-pub struct OutputBuilder<M: Message> {
+struct OutputBuilder<M: Message> {
     /// Output queue.
     queue: Vec<Out<M>>,
     /// Network magic number.
@@ -111,7 +110,7 @@ pub struct OutputBuilder<M: Message> {
 
 impl<M: Message> OutputBuilder<M> {
     /// Create a new output builder.
-    pub fn new(network: Network) -> Self {
+    fn new(network: Network) -> Self {
         Self {
             queue: Vec::new(),
             builder: message::Builder::new(network.magic()),
