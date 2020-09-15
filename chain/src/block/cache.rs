@@ -97,10 +97,20 @@ impl<S: Store> BlockCache<S> {
     }
 
     /// Iterate over a range of blocks.
+    ///
+    /// # Errors
+    ///
+    /// Panics if the range is negative.
+    ///
     pub fn range<'a>(
         &'a self,
         range: std::ops::Range<Height>,
     ) -> impl Iterator<Item = &CachedBlock> + 'a {
+        assert!(
+            range.start <= range.end,
+            "BlockCache::range: range start must not be greater than range end"
+        );
+
         self.chain
             .iter()
             .skip(range.start as usize)
@@ -108,6 +118,8 @@ impl<S: Store> BlockCache<S> {
     }
 
     /// Get the median time past for the blocks leading up to the given height.
+    ///
+    /// # Errors
     ///
     /// Panics if height is `0`.
     ///
@@ -539,39 +551,50 @@ impl<S: Store> BlockTree for BlockCache<S> {
         self.headers.contains_key(hash)
     }
 
-    /// Return headers based on locators.
+    /// Return headers after the first known hash in the locators list, and until the stop hash
+    /// is reached.
+    ///
+    /// This function will never return more than `max_headers`.
+    ///
+    /// * When no locators are provided, the stop hash is treated as a request for that header
+    ///   alone.
+    /// * When locators *are* provided, but none of them are known, it is equivalent to having
+    ///   the genesis hash as locator.
+    ///
     fn locate_headers(
         &self,
         locators: &[BlockHash],
         stop_hash: BlockHash,
-        max: usize,
+        max_headers: usize,
     ) -> Vec<BlockHeader> {
+        if locators.is_empty() {
+            if let Some((_, header)) = self.get_block(&stop_hash) {
+                return vec![*header];
+            }
+            return vec![];
+        }
+
         // Start from the highest locator hash that is on our active chain.
-        // We don't respond with anything if none of the locators were found. Sorry!
-        if let Some(hash) = locators.iter().find(|h| self.contains(h)) {
-            let (start_height, _) = self.get_block(hash).unwrap();
+        // We don't respond with anything if none of the locators were found.
+        let start = if let Some(hash) = locators.iter().find(|h| self.contains(h)) {
+            let (height, _) = self.get_block(hash).unwrap();
+            height
+        } else {
+            0 as Height
+        };
 
-            // TODO: Set this to highest locator hash. We can assume that the peer
-            // is at this height if they know this hash.
-            // TODO: If the height is higher than the previous peer height, also
-            // set the peer tip.
-            // peer.height = start_height;
+        let start = start + 1;
+        let stop = self
+            .get_block(&stop_hash)
+            .map(|(h, _)| h)
+            .unwrap_or_else(|| self.height());
+        let stop = Height::min(start + max_headers as Height, stop + 1);
 
-            let start = start_height + 1;
-            let stop = self
-                .get_block(&stop_hash)
-                .map(|(h, _)| h)
-                .unwrap_or_else(|| self.height());
-            let stop = Height::min(start + max as Height, stop + 1);
-
-            return self.range(start..stop).map(|h| h.header).collect();
+        if start > stop {
+            return vec![];
         }
 
-        if let Some((_, header)) = self.get_block(&stop_hash) {
-            return vec![*header];
-        }
-
-        vec![]
+        self.range(start..stop).map(|h| h.header).collect()
     }
 
     /// Get the locator hashes for the active chain, starting at the given height.

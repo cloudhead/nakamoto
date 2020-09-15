@@ -1264,3 +1264,131 @@ fn test_cache_import_unordered() {
         assert_eq!(actual, expected);
     }
 }
+
+#[test]
+fn test_cache_locate_headers() {
+    let network = bitcoin::Network::Bitcoin;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
+    let mut cache = BlockCache::from(store, params, &[]).unwrap();
+    let chain = &nakamoto_test::BITCOIN_HEADERS;
+    let height = chain.len() - 1;
+
+    assert!(chain.len() > 99);
+
+    cache.import_blocks(chain.iter().cloned(), &ctx).unwrap();
+
+    assert!(cache
+        .locate_headers(&[], BlockHash::default(), 1)
+        .is_empty());
+
+    assert_eq!(
+        cache.locate_headers(&[], chain.last().block_hash(), 1),
+        vec![*chain.last()],
+        "Passing just a stop hash requests the block"
+    );
+
+    let unknown =
+        BlockHash::from_hex("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+            .unwrap();
+
+    assert_eq!(
+        cache.locate_headers(&[unknown, unknown], BlockHash::default(), 4),
+        chain.iter().skip(1).take(4).cloned().collect::<Vec<_>>(),
+        "When the locators are unknown, starts from genesis"
+    );
+
+    let known1 = chain.get(12).unwrap();
+    let known2 = chain.get(45).unwrap();
+
+    assert_eq!(
+        cache.locate_headers(
+            &[unknown, known1.block_hash(), known2.block_hash()],
+            BlockHash::default(),
+            9
+        ),
+        chain
+            .iter()
+            .skip(12 + 1)
+            .take(9)
+            .cloned()
+            .collect::<Vec<_>>(),
+        "The headers start after the first known hash"
+    );
+
+    assert_eq!(
+        cache.locate_headers(&[chain.last().block_hash()], BlockHash::default(), 9),
+        vec![],
+        "Nothing is returned if we're starting from the tip"
+    );
+
+    assert_eq!(
+        cache.locate_headers(
+            &[chain.get(height - 3).unwrap().block_hash()],
+            BlockHash::default(),
+            9
+        ),
+        vec![
+            *chain.get(height - 2).unwrap(),
+            *chain.get(height - 1).unwrap(),
+            *chain.get(height - 0).unwrap()
+        ],
+        "If the max amount is more than we have, return up to the tip"
+    );
+
+    assert_eq!(
+        cache.locate_headers(
+            &[chain.get(5).unwrap().block_hash()],
+            chain.get(8).unwrap().block_hash(),
+            9
+        ),
+        vec![
+            *chain.get(6).unwrap(),
+            *chain.get(7).unwrap(),
+            *chain.get(8).unwrap()
+        ],
+        "Stops at the stop hash"
+    );
+
+    assert_eq!(
+        cache.locate_headers(
+            &[chain.get(5).unwrap().block_hash()],
+            chain.get(8).unwrap().block_hash(),
+            2
+        ),
+        vec![*chain.get(6).unwrap(), *chain.get(7).unwrap(),],
+        "Stops at the max"
+    );
+
+    assert_eq!(
+        cache.locate_headers(&[unknown], chain.get(3).unwrap().block_hash(), 9),
+        vec![
+            *chain.get(1).unwrap(),
+            *chain.get(2).unwrap(),
+            *chain.get(3).unwrap()
+        ],
+        "If the stop hash is known, but the locators unknown, start from genesis"
+    );
+
+    assert_eq!(
+        cache.locate_headers(
+            &[chain.get(43).unwrap().block_hash()],
+            chain.get(3).unwrap().block_hash(),
+            9
+        ),
+        vec![],
+        "If the stop height is earlier than the start height, we don't expect anything"
+    );
+
+    assert_eq!(
+        cache.locate_headers(
+            &[chain.get(4).unwrap().block_hash()],
+            chain.get(4).unwrap().block_hash(),
+            9
+        ),
+        vec![],
+        "If the stop height is equal to the start height, we don't expect anything"
+    );
+}

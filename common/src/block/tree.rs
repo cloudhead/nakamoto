@@ -157,7 +157,7 @@ pub trait BlockTree {
         &self,
         locators: &[BlockHash],
         stop_hash: BlockHash,
-        max: usize,
+        max_headers: usize,
     ) -> Vec<BlockHeader>;
     /// Get the locator hashes starting from the given height and going backwards.
     fn locator_hashes(&self, from: Height) -> Vec<BlockHash>;
