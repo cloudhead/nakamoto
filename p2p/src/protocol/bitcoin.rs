@@ -45,8 +45,6 @@ pub const TARGET_OUTBOUND_PEERS: usize = 8;
 /// Maximum number of inbound peer connections.
 pub const MAX_INBOUND_PEERS: usize = 16;
 
-/// Maximum number of headers sent in a `headers` message.
-const MAX_MESSAGE_HEADERS: usize = 2000;
 /// Maximum number of addresses to return when receiving a `getaddr` message.
 const MAX_GETADDR_ADDRESSES: usize = 8;
 /// Maximum number of latencies recorded per peer.
@@ -357,7 +355,7 @@ impl<T: BlockTree> Bitcoin<T> {
         let syncmgr = SyncManager::new(
             tree,
             syncmgr::Config {
-                max_message_headers: MAX_MESSAGE_HEADERS,
+                max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
                 request_timeout: syncmgr::REQUEST_TIMEOUT,
                 params: params.clone(),
             },
@@ -1172,12 +1170,9 @@ impl<T: BlockTree> Bitcoin<T> {
                     ..
                 }) = msg.payload
                 {
-                    if let Some(syncmgr::SendHeaders { addrs, headers }) =
-                        self.syncmgr.received_getheaders(
-                            &addr,
-                            (locator_hashes, stop_hash),
-                            MAX_MESSAGE_HEADERS,
-                        )
+                    if let Some(syncmgr::SendHeaders { addrs, headers }) = self
+                        .syncmgr
+                        .received_getheaders(&addr, (locator_hashes, stop_hash))
                     {
                         return addrs
                             .into_iter()

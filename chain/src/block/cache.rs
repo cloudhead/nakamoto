@@ -539,6 +539,41 @@ impl<S: Store> BlockTree for BlockCache<S> {
         self.headers.contains_key(hash)
     }
 
+    /// Return headers based on locators.
+    fn locate_headers(
+        &self,
+        locators: &[BlockHash],
+        stop_hash: BlockHash,
+        max: usize,
+    ) -> Vec<BlockHeader> {
+        // Start from the highest locator hash that is on our active chain.
+        // We don't respond with anything if none of the locators were found. Sorry!
+        if let Some(hash) = locators.iter().find(|h| self.contains(h)) {
+            let (start_height, _) = self.get_block(hash).unwrap();
+
+            // TODO: Set this to highest locator hash. We can assume that the peer
+            // is at this height if they know this hash.
+            // TODO: If the height is higher than the previous peer height, also
+            // set the peer tip.
+            // peer.height = start_height;
+
+            let start = start_height + 1;
+            let stop = self
+                .get_block(&stop_hash)
+                .map(|(h, _)| h)
+                .unwrap_or_else(|| self.height());
+            let stop = Height::min(start + max as Height, stop + 1);
+
+            return self.range(start..stop).map(|h| h.header).collect();
+        }
+
+        if let Some((_, header)) = self.get_block(&stop_hash) {
+            return vec![*header];
+        }
+
+        vec![]
+    }
+
     /// Get the locator hashes for the active chain, starting at the given height.
     ///
     /// *Panics* if the given starting height is out of bounds.

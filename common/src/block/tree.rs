@@ -152,6 +152,13 @@ pub trait BlockTree {
     fn is_known(&self, hash: &BlockHash) -> bool;
     /// Check whether a block hash is part of the active chain.
     fn contains(&self, hash: &BlockHash) -> bool;
+    /// Return the headers corresponding to the given locators, up to a maximum.
+    fn locate_headers(
+        &self,
+        locators: &[BlockHash],
+        stop_hash: BlockHash,
+        max: usize,
+    ) -> Vec<BlockHeader>;
     /// Get the locator hashes starting from the given height and going backwards.
     fn locator_hashes(&self, from: Height) -> Vec<BlockHash>;
     /// Get the next difficulty given a block height, time and bits.

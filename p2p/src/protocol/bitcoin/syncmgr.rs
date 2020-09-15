@@ -23,6 +23,8 @@ pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 /// How long before the tip of the chain is considered stale. This takes into account
 /// that the block timestamp may have been set sometime in the future.
 pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
+/// Maximum number of headers sent in a `headers` message.
+pub const MAX_MESSAGE_HEADERS: usize = 2000;
 
 /// Maximum headers announced in a `headers` message, when unsolicited.
 const MAX_HEADERS_ANNOUNCED: usize = 8;
@@ -256,12 +258,13 @@ impl<T: BlockTree> SyncManager<T> {
         &self,
         addr: &PeerId,
         (locator_hashes, stop_hash): Locators,
-        max: usize,
     ) -> Option<SendHeaders> {
+        let max = self.config.max_message_headers;
+
         if self.is_syncing() || max == 0 {
             return None;
         }
-        let headers = self.get_headers(locator_hashes, stop_hash, max);
+        let headers = self.tree.locate_headers(&locator_hashes, stop_hash, max);
 
         if headers.is_empty() {
             return None;
@@ -720,44 +723,6 @@ impl<T: BlockTree> SyncManager<T> {
                 headers: vec![*best],
             });
         }
-    }
-
-    /// Get headers from the given locators.
-    fn get_headers(
-        &self,
-        locator_hashes: Vec<BlockHash>,
-        stop_hash: BlockHash,
-        max: usize,
-    ) -> Vec<BlockHeader> {
-        let tree = &self.tree;
-
-        // Start from the highest locator hash that is on our active chain.
-        // We don't respond with anything if none of the locators were found. Sorry!
-        if let Some(hash) = locator_hashes.iter().find(|h| tree.contains(h)) {
-            let (start_height, _) = self.tree.get_block(hash).unwrap();
-
-            // TODO: Set this to highest locator hash. We can assume that the peer
-            // is at this height if they know this hash.
-            // TODO: If the height is higher than the previous peer height, also
-            // set the peer tip.
-            // peer.height = start_height;
-
-            let start = start_height + 1;
-            let stop = self
-                .tree
-                .get_block(&stop_hash)
-                .map(|(h, _)| h)
-                .unwrap_or_else(|| tree.height());
-            let stop = Height::min(start + max as Height, stop + 1);
-
-            return tree.range(start..stop).collect();
-        }
-
-        if let Some((_, header)) = self.tree.get_block(&stop_hash) {
-            return vec![*header];
-        }
-
-        vec![]
     }
 
     /// Ask all our outbound peers whether they have better block headers.

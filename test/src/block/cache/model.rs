@@ -148,6 +148,15 @@ impl BlockTree for Cache {
         None
     }
 
+    fn locate_headers(
+        &self,
+        _locators: &[BlockHash],
+        _stop_hash: BlockHash,
+        _max: usize,
+    ) -> Vec<BlockHeader> {
+        unimplemented!()
+    }
+
     fn locator_hashes(&self, _from: Height) -> Vec<BlockHash> {
         vec![self.chain.last().block_hash()]
     }

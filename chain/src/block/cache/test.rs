@@ -110,6 +110,15 @@ impl BlockTree for HeightCache {
         unimplemented!()
     }
 
+    fn locate_headers(
+        &self,
+        _locators: &[BlockHash],
+        _stop_hash: BlockHash,
+        _max: usize,
+    ) -> Vec<BlockHeader> {
+        unimplemented!()
+    }
+
     fn locator_hashes(&self, _from: Height) -> Vec<BlockHash> {
         unimplemented!()
     }
