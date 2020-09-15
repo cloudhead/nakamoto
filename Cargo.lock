@@ -272,6 +272,7 @@ dependencies = [
  "fastrand",
  "lazy_static",
  "log",
+ "nakamoto-chain",
  "nakamoto-common",
  "nakamoto-test",
  "nonempty",

@@ -13,11 +13,14 @@ use std::time::SystemTime;
 
 use quickcheck_macros::quickcheck;
 
+use nakamoto_chain::block::cache::BlockCache;
+use nakamoto_chain::block::store;
+use nakamoto_common::block::store::Store;
 use nakamoto_common::block::BlockHeader;
 
 use nakamoto_test::block::cache::model;
 use nakamoto_test::logger;
-use nakamoto_test::TREE;
+use nakamoto_test::BITCOIN_HEADERS;
 
 fn payload<M: Message>(o: &Out<M>) -> Option<(net::SocketAddr, &M::Payload)> {
     match o {
@@ -218,6 +221,9 @@ fn test_initial_sync() {
     let clock = AdjustedTime::default();
     let local_time = LocalTime::from(SystemTime::now());
     let config = setup::CONFIG.clone();
+    let store = store::Memory::new(BITCOIN_HEADERS.clone());
+    let network = bitcoin::Network::Bitcoin;
+    let params = Params::new(network);
 
     let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
     let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
@@ -226,12 +232,18 @@ fn test_initial_sync() {
     // than the threshold ensures a sync happens.
     let height = 144;
 
-    // Let's test Bob trying to sync with Alice from genesis.
-    let mut alice_tree = TREE.clone();
-    let bob_tree = model::Cache::new(*alice_tree.genesis());
+    // Truncate Alice's chain to test height.
+    let mut alice_store = store.clone();
+    alice_store.rollback(height).unwrap();
 
-    // Truncate chain to test height.
-    alice_tree.rollback(height).unwrap();
+    // Let's test Bob trying to sync with Alice from genesis.
+    let alice_tree = BlockCache::from(alice_store, params.clone(), &[]).unwrap();
+    let bob_tree = BlockCache::from(
+        store::Memory::new(NonEmpty::new(*alice_tree.genesis())),
+        params,
+        &[],
+    )
+    .unwrap();
 
     let mut alice = Bitcoin::new(alice_tree, clock.clone(), Rng::new(), config.clone());
 
@@ -404,7 +416,7 @@ fn test_getheaders_retry(seed: u64) {
     let network = Network::Mainnet;
 
     let shortest = NonEmpty::new(network.genesis());
-    let longest = NonEmpty::from_vec(TREE.range(0..8).collect()).unwrap();
+    let longest = NonEmpty::from_vec(BITCOIN_HEADERS.iter().take(8).cloned().collect()).unwrap();
 
     let mut sim = simulator::Net {
         network,
@@ -636,7 +648,7 @@ fn test_stale_tip() {
         Input::Received(
             bob,
             message::raw(
-                NetworkMessage::Headers(vec![*TREE.get_block_by_height(1).unwrap()]),
+                NetworkMessage::Headers(vec![*BITCOIN_HEADERS.get(1).unwrap()]),
                 network.magic(),
             ),
         ),
@@ -662,7 +674,7 @@ fn test_stale_tip() {
         Input::Received(
             bob,
             message::raw(
-                NetworkMessage::Headers(vec![*TREE.get_block_by_height(2).unwrap()]),
+                NetworkMessage::Headers(vec![*BITCOIN_HEADERS.get(2).unwrap()]),
                 network.magic(),
             ),
         ),

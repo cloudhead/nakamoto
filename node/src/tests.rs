@@ -4,7 +4,7 @@ use std::thread;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_common::block::Height;
-use nakamoto_test::{logger, TREE};
+use nakamoto_test::{logger, BITCOIN_HEADERS};
 
 use crate::error;
 use crate::handle::Handle;
@@ -66,7 +66,7 @@ fn test_full_sync() {
     .unwrap();
 
     let (handle, _, _) = nodes.last().unwrap();
-    let headers = TREE.chain.tail.clone();
+    let headers = BITCOIN_HEADERS.tail.clone();
     let height = headers.len() as Height;
     let hash = headers.last().unwrap().block_hash();
 

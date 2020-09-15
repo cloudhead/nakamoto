@@ -41,7 +41,7 @@ impl Store for Memory {
     fn rollback(&mut self, height: Height) -> Result<(), Error> {
         match height {
             0 => self.0.tail.clear(),
-            h => self.0.tail.truncate(h as usize + 1),
+            h => self.0.tail.truncate(h as usize),
         }
         Ok(())
     }

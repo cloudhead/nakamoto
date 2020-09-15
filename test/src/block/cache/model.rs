@@ -35,8 +35,7 @@ impl Cache {
         }
     }
 
-    pub fn from(chain: Vec<BlockHeader>) -> Self {
-        let chain = NonEmpty::from_vec(chain).unwrap();
+    pub fn from(chain: NonEmpty<BlockHeader>) -> Self {
         let genesis = chain.head.block_hash();
         let tip = chain.last().block_hash();
 
