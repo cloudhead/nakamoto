@@ -781,6 +781,7 @@ impl std::fmt::Debug for Tree {
     }
 }
 
+#[ignore]
 #[quickcheck]
 fn prop_cache_import_tree(tree: Tree) -> bool {
     let headers = tree.headers();
