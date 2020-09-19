@@ -127,20 +127,14 @@ impl<M: Message> Channel<M> {
     }
 
     /// Push a message to the queue.
-    fn message(&self, addr: PeerId, message: M::Payload) {
+    fn message(&self, addr: PeerId, message: M::Payload) -> &Self {
         self.push(self.builder.message(addr, message));
+        self
     }
 
     /// Push an event to the queue.
     fn event(&self, event: Event<M::Payload>) {
         self.push(Out::Event(event));
-    }
-
-    /// Extend the queue with a list of outputs.
-    fn extend<T: IntoIterator<Item = Out<M>>>(&self, outputs: T) {
-        for out in outputs {
-            self.push(out);
-        }
     }
 }
 
@@ -1143,14 +1137,14 @@ impl<T: BlockTree> Bitcoin<T> {
                         Link::Inbound => {
                             let nonce = peer.nonce;
 
-                            return self.outbound.extend(vec![
-                                builder.message(
-                                    addr,
-                                    self.version(addr, local_addr, nonce, self.height),
-                                ),
-                                builder.message(addr, NetworkMessage::Verack),
-                                Out::SetTimeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT),
-                            ]);
+                            return self
+                                .outbound
+                                .message(addr, self.version(addr, local_addr, nonce, self.height))
+                                .message(addr, NetworkMessage::Verack)
+                                .push(Out::SetTimeout(
+                                    TimeoutSource::Handshake(addr),
+                                    HANDSHAKE_TIMEOUT,
+                                ));
                         }
                     }
                 } else {
@@ -1170,18 +1164,20 @@ impl<T: BlockTree> Bitcoin<T> {
                     let ping = peer.ping(now);
                     let link = peer.link;
 
-                    self.outbound.extend(match link {
-                        Link::Outbound => vec![
-                            builder.message(addr, NetworkMessage::Verack),
-                            builder.message(addr, NetworkMessage::SendHeaders),
-                            builder.message(addr, NetworkMessage::GetAddr),
-                            builder.message(addr, ping),
-                        ],
-                        Link::Inbound => vec![
-                            builder.message(addr, NetworkMessage::SendHeaders),
-                            builder.message(addr, ping),
-                        ],
-                    });
+                    match link {
+                        Link::Outbound => {
+                            self.outbound
+                                .message(addr, NetworkMessage::Verack)
+                                .message(addr, NetworkMessage::SendHeaders)
+                                .message(addr, NetworkMessage::GetAddr)
+                                .message(addr, ping);
+                        }
+                        Link::Inbound => {
+                            self.outbound
+                                .message(addr, NetworkMessage::SendHeaders)
+                                .message(addr, ping);
+                        }
+                    }
 
                     self.syncmgr.peer_negotiated(
                         peer.address,
@@ -1211,9 +1207,8 @@ impl<T: BlockTree> Bitcoin<T> {
                         .received_getheaders(&addr, (locator_hashes, stop_hash))
                     {
                         for addr in addrs.into_iter() {
-                            self.outbound.push(
-                                builder.message(addr, NetworkMessage::Headers(headers.clone())),
-                            );
+                            self.outbound
+                                .message(addr, NetworkMessage::Headers(headers.clone()));
                         }
                         return;
                     }
@@ -1231,9 +1226,8 @@ impl<T: BlockTree> Bitcoin<T> {
                         .map(|a| (0, a.clone()))
                         .collect();
 
-                    return self
-                        .outbound
-                        .push(builder.message(addr, NetworkMessage::Addr(addrs)));
+                    self.outbound.message(addr, NetworkMessage::Addr(addrs));
+                    return;
                 }
             }
             PeerState::Disconnecting => {
