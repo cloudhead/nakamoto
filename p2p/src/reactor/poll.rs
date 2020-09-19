@@ -11,7 +11,7 @@ use nakamoto_common::block::time::LocalTime;
 use crate::error::Error;
 use crate::event::Event;
 use crate::fallible;
-use crate::protocol::{Input, Link, Message, Out, Protocol, TimeoutSource};
+use crate::protocol::{Input, Link, Message, Out, Protocol, ProtocolBuilder, TimeoutSource};
 use crate::reactor::time::TimeoutManager;
 
 use log::*;
@@ -214,9 +214,9 @@ where
     M::Payload: Debug + Send + Sync,
 {
     /// Run the given protocol with the reactor.
-    pub fn run<P: Protocol<M, Command = C>>(
+    pub fn run<B: ProtocolBuilder<Message = M, Protocol = P>, P: Protocol<M, Command = C>>(
         &mut self,
-        mut protocol: P,
+        builder: B,
         commands: chan::Receiver<C>,
         listen_addrs: &[net::SocketAddr],
     ) -> Result<(), Error> {
@@ -235,23 +235,24 @@ where
             Some(listener)
         };
 
-        {
-            info!("Initializing protocol..");
+        info!("Initializing protocol..");
 
-            let local_time = SystemTime::now().into();
-            let outs = protocol.initialize(local_time);
+        let (tx, rx) = chan::unbounded();
+        let mut protocol = builder.build(tx);
+        let local_time = SystemTime::now().into();
 
-            if let Control::Shutdown = self.process::<P, _>(outs, local_time)? {
+        protocol.initialize(local_time);
+
+        if let Control::Shutdown = self.process::<P>(&rx, local_time)? {
+            return Ok(());
+        }
+
+        // Drain input events in case some were added during the processing of outputs.
+        while let Some(event) = self.events.pop_front() {
+            protocol.step(event, local_time);
+
+            if let Control::Shutdown = self.process::<P>(&rx, local_time)? {
                 return Ok(());
-            }
-
-            // Drain input events in case some were added during the processing of outputs.
-            while let Some(event) = self.events.pop_front() {
-                let outs = protocol.step(event, local_time);
-
-                if let Control::Shutdown = self.process::<P, _>(outs, local_time)? {
-                    return Ok(());
-                }
             }
         }
 
@@ -323,9 +324,9 @@ where
             }
 
             while let Some(event) = self.events.pop_front() {
-                let outs = protocol.step(event, local_time);
-                let control = self.process::<P, _>(outs, local_time)?;
+                protocol.step(event, local_time);
 
+                let control = self.process::<P>(&rx, local_time)?;
                 if control == Control::Shutdown {
                     return Ok(());
                 }
@@ -334,14 +335,14 @@ where
     }
 
     /// Process protocol state machine outputs.
-    fn process<P: Protocol<M>, I: Iterator<Item = Out<M>>>(
+    fn process<P: Protocol<M>>(
         &mut self,
-        outputs: I,
+        outputs: &chan::Receiver<Out<M>>,
         local_time: LocalTime,
     ) -> Result<Control, Error> {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
-        for out in outputs {
+        for out in outputs.try_iter() {
             match out {
                 Out::Message(addr, msg) => {
                     if let Some(peer) = self.peers.get_mut(&addr) {

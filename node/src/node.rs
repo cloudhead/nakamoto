@@ -121,12 +121,14 @@ impl Node {
 
         fs::create_dir_all(&dir)?;
 
-        let cfg: bitcoin::Config = self.config.into();
-        let genesis = cfg.network.genesis();
-        let params = cfg.network.params();
+        let genesis = self.config.network.genesis();
+        let params = self.config.network.params();
 
-        log::info!("Initializing node ({:?})..", cfg.network);
-        log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
+        log::info!("Initializing node ({:?})..", self.config.network);
+        log::info!(
+            "Genesis block hash is {}",
+            self.config.network.genesis_hash()
+        );
 
         let path = dir.join("headers.db");
         let mut store = match store::File::create(&path, genesis) {
@@ -148,16 +150,31 @@ impl Node {
         log::info!("Loading blocks from store..");
 
         let local_time = SystemTime::now().into();
-        let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
+        let checkpoints = self.config.network.checkpoints().collect::<Vec<_>>();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let cache = BlockCache::from(store, params, &checkpoints)?;
         let rng = fastrand::Rng::new();
 
-        log::info!("{} peer(s) found..", cfg.address_book.len());
-        log::debug!("{:?}", cfg.address_book);
-        let protocol = p2p::protocol::Bitcoin::new(cache, clock, rng, cfg);
+        log::info!("{} peer(s) found..", self.config.address_book.len());
+        log::debug!("{:?}", self.config.address_book);
 
-        self.reactor.run(protocol, self.commands, &listen)?;
+        let cfg = bitcoin::Config {
+            network: self.config.network,
+            params: self.config.network.params(),
+            target: self.config.name,
+            address_book: self.config.address_book,
+            target_outbound_peers: self.config.target_outbound_peers,
+            max_inbound_peers: self.config.max_inbound_peers,
+            ..bitcoin::Config::default()
+        };
+        let builder = bitcoin::Builder {
+            cache,
+            clock,
+            rng,
+            cfg,
+        };
+
+        self.reactor.run(builder, self.commands, &listen)?;
 
         Ok(())
     }
@@ -182,10 +199,15 @@ impl Node {
         log::info!("{} peer(s) found..", cfg.address_book.len());
         log::debug!("{:?}", cfg.address_book);
 
-        let protocol = p2p::protocol::Bitcoin::new(cache, clock, rng, cfg);
+        let builder = bitcoin::Builder {
+            cache,
+            clock,
+            rng,
+            cfg,
+        };
 
         self.reactor
-            .run(protocol, self.commands, &self.config.listen)?;
+            .run(builder, self.commands, &self.config.listen)?;
 
         Ok(())
     }

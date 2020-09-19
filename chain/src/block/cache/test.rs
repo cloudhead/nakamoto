@@ -432,7 +432,7 @@ fn test_invalid_orphan_block_pow() {
     let clock = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let params = Params::new(network);
 
-    let mut cache = BlockCache::from(store, params.clone(), &[]).unwrap();
+    let mut cache = BlockCache::from(store, params, &[]).unwrap();
 
     // Some arbitrary previous block we don't have.
     let prev_blockhash =
@@ -1266,6 +1266,7 @@ fn test_cache_import_unordered() {
 }
 
 #[test]
+#[allow(clippy::identity_op)]
 fn test_cache_locate_headers() {
     let network = bitcoin::Network::Bitcoin;
     let genesis = constants::genesis_block(network).header;
