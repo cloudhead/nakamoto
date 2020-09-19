@@ -96,7 +96,7 @@ pub enum Command {
 }
 
 trait HeaderSync {
-    fn get_headers(&self, addr: PeerId, locators: Locators);
+    fn get_headers(&self, addr: PeerId, locators: Locators, timeout: LocalDuration);
     fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>);
 }
 
@@ -117,19 +117,13 @@ impl<M: Message> Channel<M> {
         Self {
             version,
             outbound,
-            builder: message::Builder::new(network.magic()),
+            builder: message::Builder::new(network),
         }
     }
 
     /// Push an output to the queue.
     fn push(&self, output: Out<M>) {
         self.outbound.send(output).unwrap();
-    }
-
-    /// Push a request to the queue.
-    fn request(&self, addr: PeerId, message: M, source: TimeoutSource, timeout: LocalDuration) {
-        self.push(Out::Message(addr, message));
-        self.push(Out::SetTimeout(source, timeout));
     }
 
     /// Push a message to the queue.
@@ -151,12 +145,22 @@ impl<M: Message> Channel<M> {
 }
 
 impl HeaderSync for Channel<RawNetworkMessage> {
-    fn get_headers(&self, addr: PeerId, locators: Locators) {
-        let msg = self
-            .builder
-            .message(addr, message::get_headers(locators, self.version));
+    fn get_headers(
+        &self,
+        addr: PeerId,
+        (locator_hashes, stop_hash): Locators,
+        timeout: LocalDuration,
+    ) {
+        let msg = NetworkMessage::GetHeaders(GetHeadersMessage {
+            version: self.version,
+            // Starting hashes, highest heights first.
+            locator_hashes,
+            // Using the zero hash means *fetch as many blocks as possible*.
+            stop_hash,
+        });
 
-        self.push(msg);
+        self.message(addr, msg);
+        self.push(Out::SetTimeout(TimeoutSource::Synch(addr), timeout));
     }
 
     fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>) {
@@ -195,27 +199,19 @@ mod message {
     }
 
     impl Builder {
-        pub fn new(magic: u32) -> Self {
-            Builder { magic }
+        pub fn new(network: Network) -> Self {
+            Builder {
+                magic: network.magic(),
+            }
         }
 
         pub fn message<M: Message>(&self, addr: net::SocketAddr, payload: M::Payload) -> Out<M> {
-            Out::Message(addr, M::from_parts(payload, self.magic))
+            Out::Message(addr, self.raw(payload))
         }
-    }
 
-    pub fn get_headers((locator_hashes, stop_hash): Locators, version: u32) -> NetworkMessage {
-        NetworkMessage::GetHeaders(GetHeadersMessage {
-            version,
-            // Starting hashes, highest heights first.
-            locator_hashes,
-            // Using the zero hash means *fetch as many blocks as possible*.
-            stop_hash,
-        })
-    }
-
-    pub fn raw(payload: NetworkMessage, magic: u32) -> RawNetworkMessage {
-        RawNetworkMessage { magic, payload }
+        pub fn raw<M: Message>(&self, payload: M::Payload) -> M {
+            M::from_parts(payload, self.magic)
+        }
     }
 }
 
@@ -896,8 +892,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
 impl<T: BlockTree> Bitcoin<T> {
     fn drain_sync_requests(&mut self) {
-        let magic = self.network.magic();
-
         for req in self.syncmgr.requests() {
             let syncmgr::GetHeaders {
                 addr,
@@ -906,12 +900,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 ..
             } = req;
 
-            self.outbound.request(
-                addr,
-                message::raw(message::get_headers(locators, self.protocol_version), magic),
-                TimeoutSource::Synch(addr),
-                timeout,
-            );
+            self.outbound.get_headers(addr, locators, timeout);
         }
     }
 
@@ -983,7 +972,7 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) {
-        let builder = message::Builder::new(self.network.magic());
+        let builder = message::Builder::new(self.network);
         let now = self.clock.local_time();
         let cmd = msg.cmd();
 

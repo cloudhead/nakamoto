@@ -372,6 +372,7 @@ fn test_idle() {
 #[test]
 fn test_getheaders_timeout() {
     let network = Network::Mainnet;
+    let msg = message::Builder::new(network);
     // TODO: Protocol should try different peers if it can't get the headers from the first
     // peer. It should keep trying until it succeeds.
     let ((mut local, _, rx), (_, remote_addr, _), local_time) = setup::pair(network);
@@ -383,10 +384,7 @@ fn test_getheaders_timeout() {
     local.step(
         Input::Received(
             remote_addr,
-            message::raw(
-                NetworkMessage::Inv(vec![Inventory::Block(hash)]),
-                network.magic(),
-            ),
+            msg.raw(NetworkMessage::Inv(vec![Inventory::Block(hash)])),
         ),
         local_time,
     );
@@ -468,6 +466,7 @@ fn test_getheaders_retry(seed: u64) {
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
     let network = Network::Mainnet;
+    let msg = message::Builder::new(network);
 
     let shortest = NonEmpty::new(network.genesis());
     let longest = NonEmpty::from_vec(BITCOIN_HEADERS.iter().take(8).cloned().collect()).unwrap();
@@ -506,10 +505,7 @@ fn test_getheaders_retry(seed: u64) {
         &alice,
         Input::Received(
             bob,
-            message::raw(
-                NetworkMessage::Inv(vec![Inventory::Block(hash)]),
-                network.magic(),
-            ),
+            msg.raw(NetworkMessage::Inv(vec![Inventory::Block(hash)])),
         ),
     );
 
@@ -616,6 +612,7 @@ fn test_handshake_verack_timeout() {
 #[test]
 fn test_getaddr() {
     let network = Network::Mainnet;
+    let msg = message::Builder::new(network);
     let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
@@ -652,10 +649,10 @@ fn test_getaddr() {
         &alice,
         Input::Received(
             peer,
-            message::raw(
-                NetworkMessage::Addr(vec![(0, Address::new(&toto, ServiceFlags::NETWORK))]),
-                network.magic(),
-            ),
+            msg.raw(NetworkMessage::Addr(vec![(
+                0,
+                Address::new(&toto, ServiceFlags::NETWORK),
+            )])),
         ),
     )
     .any(|o| matches!(o, Out::Connect(addr, CONNECTION_TIMEOUT) if addr == &toto))
@@ -667,6 +664,7 @@ fn test_stale_tip() {
     logger::init(Level::Debug);
 
     let network = Network::Mainnet;
+    let msg = message::Builder::new(network);
     let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
@@ -698,22 +696,18 @@ fn test_stale_tip() {
             link: Link::Outbound,
         },
     );
+    sim.input(&alice, Input::Received(bob, msg.raw(version)));
     sim.input(
         &alice,
-        Input::Received(bob, message::raw(version, network.magic())),
-    );
-    sim.input(
-        &alice,
-        Input::Received(bob, message::raw(NetworkMessage::Verack, network.magic())),
+        Input::Received(bob, msg.raw(NetworkMessage::Verack)),
     );
     sim.input(
         &alice,
         Input::Received(
             bob,
-            message::raw(
-                NetworkMessage::Headers(vec![*BITCOIN_HEADERS.get(1).unwrap()]),
-                network.magic(),
-            ),
+            msg.raw(NetworkMessage::Headers(vec![*BITCOIN_HEADERS
+                .get(1)
+                .unwrap()])),
         ),
     )
     .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
@@ -736,10 +730,9 @@ fn test_stale_tip() {
         &alice,
         Input::Received(
             bob,
-            message::raw(
-                NetworkMessage::Headers(vec![*BITCOIN_HEADERS.get(2).unwrap()]),
-                network.magic(),
-            ),
+            msg.raw(NetworkMessage::Headers(vec![*BITCOIN_HEADERS
+                .get(2)
+                .unwrap()])),
         ),
     );
 
@@ -778,26 +771,25 @@ fn test_addrs() {
     let jim: net::SocketAddr = ([99, 45, 180, 58], 8333).into();
     let jon: net::SocketAddr = ([14, 48, 141, 57], 8333).into();
 
+    let msg = message::Builder::new(network);
+
     // Let alice know about these amazing peers.
     sim.input(
         &alice,
         Input::Received(
             bob,
-            message::raw(
-                NetworkMessage::Addr(vec![
-                    (0, Address::new(&jak, ServiceFlags::NETWORK)),
-                    (0, Address::new(&jim, ServiceFlags::NETWORK)),
-                    (0, Address::new(&jon, ServiceFlags::NETWORK)),
-                ]),
-                network.magic(),
-            ),
+            msg.raw(NetworkMessage::Addr(vec![
+                (0, Address::new(&jak, ServiceFlags::NETWORK)),
+                (0, Address::new(&jim, ServiceFlags::NETWORK)),
+                (0, Address::new(&jon, ServiceFlags::NETWORK)),
+            ])),
         ),
     );
 
     // Let's make sure Alice has these addresses.
     let result = sim.input(
         &alice,
-        Input::Received(bob, message::raw(NetworkMessage::GetAddr, network.magic())),
+        Input::Received(bob, msg.raw(NetworkMessage::GetAddr)),
     );
     let (_, msg) = result.message(|_, msg| matches!(msg, NetworkMessage::Addr(_)));
 
