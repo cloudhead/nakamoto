@@ -126,6 +126,11 @@ impl<M: Message> Channel<M> {
         self.outbound.send(output).unwrap();
     }
 
+    /// Disconnect a peer
+    fn disconnect(&self, addr: PeerId) {
+        self.push(Out::Disconnect(addr));
+    }
+
     /// Push a message to the queue.
     fn message(&self, addr: PeerId, message: M::Payload) -> &Self {
         self.push(self.builder.message(addr, message));
@@ -674,7 +679,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             "{}: Disconnecting: reached target peer connections ({})",
                             addr, self.target_outbound_peers
                         );
-                        self.outbound.push(Out::Disconnect(addr));
+                        self.outbound.disconnect(addr);
                     }
                     Link::Inbound => {
                         self.connected(addr, local_addr, 0, link);
@@ -732,7 +737,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         debug!(target: self.target, "Received command: Disconnect({})", addr);
 
                         if self.connected.contains(&addr) {
-                            self.outbound.push(Out::Disconnect(addr));
+                            self.outbound.disconnect(addr);
                         }
                     }
                     Command::Query(msg, reply) => {
@@ -813,7 +818,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                             match peer.state {
                                 PeerState::Handshake(Handshake::AwaitingVerack)
                                 | PeerState::Handshake(Handshake::AwaitingVersion) => {
-                                    self.outbound.push(Out::Disconnect(addr));
+                                    self.outbound.disconnect(addr);
                                 }
                                 _ => {}
                             }
@@ -825,7 +830,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let timeout = self.syncmgr.received_timeout(addr, local_time);
 
                         if let syncmgr::OnTimeout::Disconnect = timeout {
-                            self.outbound.push(Out::Disconnect(addr));
+                            self.outbound.disconnect(addr);
                         }
                     }
                     TimeoutSource::Ping(addr) => {
@@ -969,7 +974,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 target: self.target, "{}: Received message with invalid magic: {}",
                 addr, msg.magic
             );
-            self.outbound.push(Out::Disconnect(addr));
+            self.outbound.disconnect(addr);
 
             return;
         }
@@ -1065,7 +1070,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             target: self.target, "{}: Disconnecting: peer protocol version is too old: {}",
                             addr, version
                         );
-                        return self.outbound.push(Out::Disconnect(addr));
+                        return self.outbound.disconnect(addr);
                     }
                     // Peers that don't advertise the `NETWORK` service are not full nodes.
                     // It's not so useful for us to connect to them, because they're likely
@@ -1079,7 +1084,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             target: self.target, "{}: Disconnecting: peer doesn't have required services",
                             addr
                         );
-                        return self.outbound.push(Out::Disconnect(addr));
+                        return self.outbound.disconnect(addr);
                     }
                     // If the peer is too far behind, there's no use connecting to it, we'll
                     // have to wait for it to catch up.
@@ -1090,7 +1095,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             target: self.target, "{}: Disconnecting: peer is too far behind",
                             addr
                         );
-                        return self.outbound.push(Out::Disconnect(addr));
+                        return self.outbound.disconnect(addr);
                     }
                     // Check for self-connections. We only need to check one link direction,
                     // since in the case of a self-connection, we will see both link directions.
@@ -1100,7 +1105,7 @@ impl<T: BlockTree> Bitcoin<T> {
                                 target: self.target, "{}: Disconnecting: detected self-connection",
                                 addr
                             );
-                            return self.outbound.push(Out::Disconnect(addr));
+                            return self.outbound.disconnect(addr);
                         }
                     }
 
@@ -1138,7 +1143,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
-                    return self.outbound.push(Out::Disconnect(addr));
+                    return self.outbound.disconnect(addr);
                 }
             }
             PeerState::Handshake(Handshake::AwaitingVerack) => {
@@ -1180,7 +1185,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
-                    return self.outbound.push(Out::Disconnect(addr));
+                    return self.outbound.disconnect(addr);
                 }
             }
             PeerState::Ready { .. } => {
@@ -1317,7 +1322,7 @@ impl<T: BlockTree> Bitcoin<T> {
             .unwrap_or_else(|| panic!("peer {} is not known", addr));
 
         peer.transition(PeerState::Disconnecting);
-        self.outbound.push(Out::Disconnect(*addr));
+        self.outbound.disconnect(*addr);
     }
 
     fn connect(&mut self, addr: &PeerId) {
