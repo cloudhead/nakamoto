@@ -132,6 +132,12 @@ impl<M: Message> Channel<M> {
         self
     }
 
+    /// Set a timeout.
+    fn set_timeout(&self, source: TimeoutSource, timeout: LocalDuration) -> &Self {
+        self.push(Out::SetTimeout(source, timeout));
+        self
+    }
+
     /// Push an event to the queue.
     fn event(&self, event: Event<M::Payload>) {
         self.push(Out::Event(event));
@@ -153,8 +159,8 @@ impl HeaderSync for Channel<RawNetworkMessage> {
             stop_hash,
         });
 
-        self.message(addr, msg);
-        self.push(Out::SetTimeout(TimeoutSource::Synch(addr), timeout));
+        self.message(addr, msg)
+            .set_timeout(TimeoutSource::Synch(addr), timeout);
     }
 
     fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>) {
@@ -450,10 +456,8 @@ impl<T: BlockTree> Bitcoin<T> {
         );
 
         // Set a timeout for receiving the `version` message.
-        self.outbound.push(Out::SetTimeout(
-            TimeoutSource::Handshake(addr),
-            HANDSHAKE_TIMEOUT,
-        ));
+        self.outbound
+            .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
     }
 }
 
@@ -639,7 +643,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         }
 
         self.outbound
-            .push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
+            .set_timeout(TimeoutSource::Global, Self::IDLE_TIMEOUT);
     }
 
     fn step(&mut self, input: Input, local_time: LocalTime) {
@@ -846,21 +850,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 } else if now - last_active >= PING_INTERVAL {
                                     let ping = peer.ping(now);
 
-                                    self.outbound.push(Out::Message(
-                                        peer.address,
-                                        RawNetworkMessage {
-                                            magic: self.network.magic(),
-                                            payload: ping,
-                                        },
-                                    ));
-                                    self.outbound.push(Out::SetTimeout(
-                                        TimeoutSource::Ping(addr),
-                                        PING_TIMEOUT,
-                                    ));
-                                    self.outbound.push(Out::SetTimeout(
-                                        TimeoutSource::Ping(addr),
-                                        PING_INTERVAL,
-                                    ));
+                                    self.outbound
+                                        .message(peer.address, ping)
+                                        .set_timeout(TimeoutSource::Ping(addr), PING_TIMEOUT)
+                                        .set_timeout(TimeoutSource::Ping(addr), PING_INTERVAL);
                                 }
                             }
                         }
@@ -871,7 +864,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         self.syncmgr.tick(local_time);
 
                         self.outbound
-                            .push(Out::SetTimeout(TimeoutSource::Global, Self::IDLE_TIMEOUT));
+                            .set_timeout(TimeoutSource::Global, Self::IDLE_TIMEOUT);
                     }
                 }
             }
@@ -1129,24 +1122,19 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     match peer.link {
                         Link::Outbound => {
-                            return self.outbound.push(Out::SetTimeout(
-                                TimeoutSource::Handshake(addr),
-                                HANDSHAKE_TIMEOUT,
-                            ));
+                            self.outbound
+                                .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
                         }
                         Link::Inbound => {
                             let nonce = peer.nonce;
 
-                            return self
-                                .outbound
+                            self.outbound
                                 .message(addr, self.version(addr, local_addr, nonce, self.height))
                                 .message(addr, NetworkMessage::Verack)
-                                .push(Out::SetTimeout(
-                                    TimeoutSource::Handshake(addr),
-                                    HANDSHAKE_TIMEOUT,
-                                ));
+                                .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
                         }
                     }
+                    return;
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
