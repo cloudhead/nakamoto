@@ -1300,13 +1300,13 @@ impl<T: BlockTree> Bitcoin<T> {
                 }
                 _ => {}
             }
-            self.outbound.push(Out::Event(Event::SyncManager(event)));
+            self.outbound.event(Event::SyncManager(event));
         }
     }
 
     fn drain_addr_events(&mut self) {
         for event in self.addrmgr.events() {
-            self.outbound.push(Out::Event(Event::AddrManager(event)));
+            self.outbound.event(Event::AddrManager(event));
         }
     }
 
@@ -1328,15 +1328,14 @@ impl<T: BlockTree> Bitcoin<T> {
     fn generate_events(&self, input: &Input) {
         match input {
             Input::Connected { addr, link, .. } => {
-                self.outbound
-                    .push(Out::Event(Event::Connected(*addr, *link)));
+                self.outbound.event(Event::Connected(*addr, *link));
             }
             Input::Disconnected(addr) => {
-                self.outbound.push(Out::Event(Event::Disconnected(*addr)));
+                self.outbound.event(Event::Disconnected(*addr));
             }
             Input::Received(addr, msg) => {
                 self.outbound
-                    .push(Out::Event(Event::Received(*addr, msg.payload.clone())));
+                    .event(Event::Received(*addr, msg.payload.clone()));
             }
             _ => {}
         }
