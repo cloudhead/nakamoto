@@ -60,33 +60,6 @@ const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 /// Time to wait for a new connection.
 const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
 
-trait Headers {
-    fn get_headers(&self, addr: PeerId, locators: Locators);
-    fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>);
-}
-
-struct Handler {
-    version: u32,
-    builder: message::Builder,
-    queue: chan::Sender<Out<RawNetworkMessage>>,
-}
-
-impl Headers for Handler {
-    fn get_headers(&self, addr: PeerId, locators: Locators) {
-        let msg = self
-            .builder
-            .message(addr, message::get_headers(locators, self.version));
-
-        self.queue.send(msg).unwrap();
-    }
-
-    fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>) {
-        let msg = self.builder.message(addr, NetworkMessage::Headers(headers));
-
-        self.queue.send(msg).unwrap();
-    }
-}
-
 /// A time offset, in seconds.
 type TimeOffset = i64;
 
@@ -122,9 +95,16 @@ pub enum Command {
     Shutdown,
 }
 
+trait HeaderSync {
+    fn get_headers(&self, addr: PeerId, locators: Locators);
+    fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>);
+}
+
 /// Used to construct a protocol output.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Channel<M: Message> {
+    /// Protocol version.
+    version: u32,
     /// Output channel.
     outbound: chan::Sender<Out<M>>,
     /// Network magic number.
@@ -133,8 +113,9 @@ struct Channel<M: Message> {
 
 impl<M: Message> Channel<M> {
     /// Create a new output builder.
-    fn new(network: Network, outbound: chan::Sender<Out<M>>) -> Self {
+    fn new(network: Network, version: u32, outbound: chan::Sender<Out<M>>) -> Self {
         Self {
+            version,
             outbound,
             builder: message::Builder::new(network.magic()),
         }
@@ -169,6 +150,22 @@ impl<M: Message> Channel<M> {
     }
 }
 
+impl HeaderSync for Channel<RawNetworkMessage> {
+    fn get_headers(&self, addr: PeerId, locators: Locators) {
+        let msg = self
+            .builder
+            .message(addr, message::get_headers(locators, self.version));
+
+        self.push(msg);
+    }
+
+    fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>) {
+        let msg = self.builder.message(addr, NetworkMessage::Headers(headers));
+
+        self.push(msg);
+    }
+}
+
 impl Message for RawNetworkMessage {
     type Payload = NetworkMessage;
 
@@ -192,7 +189,7 @@ impl Message for RawNetworkMessage {
 mod message {
     use super::*;
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub struct Builder {
         magic: u32,
     }
@@ -415,7 +412,7 @@ impl<T: BlockTree> Bitcoin<T> {
             rng.clone(),
         );
 
-        let outbound = Channel::new(network, outbound);
+        let outbound = Channel::new(network, protocol_version, outbound);
 
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),
