@@ -95,11 +95,6 @@ pub enum Command {
     Shutdown,
 }
 
-trait HeaderSync {
-    fn get_headers(&self, addr: PeerId, locators: Locators, timeout: LocalDuration);
-    fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>);
-}
-
 /// Used to construct a protocol output.
 #[derive(Debug, Clone)]
 struct Channel<M: Message> {
@@ -109,15 +104,23 @@ struct Channel<M: Message> {
     outbound: chan::Sender<Out<M>>,
     /// Network magic number.
     builder: message::Builder,
+    /// Log target.
+    target: &'static str,
 }
 
 impl<M: Message> Channel<M> {
     /// Create a new output builder.
-    fn new(network: Network, version: u32, outbound: chan::Sender<Out<M>>) -> Self {
+    fn new(
+        network: Network,
+        version: u32,
+        target: &'static str,
+        outbound: chan::Sender<Out<M>>,
+    ) -> Self {
         Self {
             version,
             outbound,
             builder: message::Builder::new(network),
+            target,
         }
     }
 
@@ -149,7 +152,7 @@ impl<M: Message> Channel<M> {
     }
 }
 
-impl HeaderSync for Channel<RawNetworkMessage> {
+impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
     fn get_headers(
         &self,
         addr: PeerId,
@@ -172,6 +175,22 @@ impl HeaderSync for Channel<RawNetworkMessage> {
         let msg = self.builder.message(addr, NetworkMessage::Headers(headers));
 
         self.push(msg);
+    }
+
+    fn event(&self, event: syncmgr::Event) {
+        debug!(target: self.target, "[sync] {}", &event);
+
+        match &event {
+            syncmgr::Event::HeadersImported(import_result) => {
+                debug!(target: self.target, "Import result: {:?}", &import_result);
+
+                if let ImportResult::TipChanged(tip, height, _) = import_result {
+                    info!(target: self.target, "Chain height = {}, tip = {}", height, tip);
+                }
+            }
+            _ => {}
+        }
+        self.event(Event::SyncManager(event));
     }
 }
 
@@ -249,7 +268,7 @@ pub struct Bitcoin<T> {
     /// Peer address manager.
     addrmgr: AddressManager,
     /// Blockchain synchronization manager.
-    syncmgr: SyncManager<T>,
+    syncmgr: SyncManager<T, Channel<RawNetworkMessage>>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Set of connected peers that have completed the handshake.
@@ -401,6 +420,7 @@ impl<T: BlockTree> Bitcoin<T> {
         } = config;
 
         let height = tree.height();
+        let outbound = Channel::new(network, protocol_version, target, outbound);
 
         let addrmgr = AddressManager::from(address_book, rng.clone());
         let syncmgr = SyncManager::new(
@@ -411,9 +431,8 @@ impl<T: BlockTree> Bitcoin<T> {
                 params: params.clone(),
             },
             rng.clone(),
+            outbound.clone(),
         );
-
-        let outbound = Channel::new(network, protocol_version, outbound);
 
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),
@@ -631,8 +650,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.syncmgr.initialize(time);
-
-        self.drain_sync_requests();
 
         // FIXME: Should be random
         let addrs = self
@@ -874,48 +891,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
         };
-        self.drain_sync_events();
-        self.drain_sync_requests();
-        self.drain_sync_responses();
-
         self.drain_addr_events();
     }
 }
 
 impl<T: BlockTree> Bitcoin<T> {
-    fn drain_sync_requests(&mut self) {
-        for req in self.syncmgr.requests() {
-            let syncmgr::GetHeaders {
-                addr,
-                locators,
-                timeout,
-                ..
-            } = req;
-
-            self.outbound.get_headers(addr, locators, timeout);
-        }
-    }
-
-    fn drain_sync_responses(&mut self) {
-        for resp in self.syncmgr.responses() {
-            let syncmgr::SendHeaders { addrs, headers } = resp;
-
-            if !addrs.is_empty() {
-                debug!(
-                    target: self.target,
-                    "Sending {} header(s) to {} peer(s)..",
-                    headers.len(),
-                    addrs.len()
-                );
-            }
-
-            for addr in addrs {
-                self.outbound
-                    .message(addr, NetworkMessage::Headers(headers.clone()));
-            }
-        }
-    }
-
     /// Send a `getaddr` message to all our outbound peers.
     fn get_addresses(&self) {
         for p in self.outbound() {
@@ -1195,16 +1175,10 @@ impl<T: BlockTree> Bitcoin<T> {
                     ..
                 }) = msg.payload
                 {
-                    if let Some(syncmgr::SendHeaders { addrs, headers }) = self
-                        .syncmgr
-                        .received_getheaders(&addr, (locator_hashes, stop_hash))
-                    {
-                        for addr in addrs.into_iter() {
-                            self.outbound
-                                .message(addr, NetworkMessage::Headers(headers.clone()));
-                        }
-                        return;
-                    }
+                    self.syncmgr
+                        .received_getheaders(&addr, (locator_hashes, stop_hash));
+
+                    return;
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
                     return self.receive_inv(addr, inventory);
                 } else if let NetworkMessage::GetAddr = msg.payload {
@@ -1285,28 +1259,6 @@ impl<T: BlockTree> Bitcoin<T> {
             headers.len()
         );
         self.syncmgr.received_headers(&addr, headers, &self.clock);
-    }
-
-    fn drain_sync_events(&mut self) {
-        for event in self.syncmgr.events() {
-            debug!(target: self.target, "[sync] {}", &event);
-
-            match &event {
-                syncmgr::Event::ReceivedInvalidHeaders(_, _) => {
-                    // TODO: Bad blocks received!
-                    // TODO: Disconnect peer.
-                }
-                syncmgr::Event::HeadersImported(import_result) => {
-                    debug!(target: self.target, "Import result: {:?}", &import_result);
-
-                    if let ImportResult::TipChanged(tip, height, _) = import_result {
-                        info!(target: self.target, "Chain height = {}, tip = {}", height, tip);
-                    }
-                }
-                _ => {}
-            }
-            self.outbound.event(Event::SyncManager(event));
-        }
     }
 
     fn drain_addr_events(&mut self) {
