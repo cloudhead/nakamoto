@@ -83,7 +83,7 @@ pub struct Config {
 
 /// The sync manager state.
 #[derive(Debug)]
-pub struct SyncManager<T, O> {
+pub struct SyncManager<T, U> {
     /// Block tree.
     pub tree: T,
 
@@ -101,8 +101,8 @@ pub struct SyncManager<T, O> {
     inflight: HashMap<PeerId, GetHeaders>,
     /// Recently sent requests.
     recent: VecDeque<GetHeaders>,
-    /// Outbound protocol channel.
-    outbound: O,
+    /// Upstream protocol channel.
+    upstream: U,
 }
 
 /// An event emitted by the sync manager.
@@ -184,9 +184,9 @@ pub struct SendHeaders {
     pub headers: Vec<BlockHeader>,
 }
 
-impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
+impl<T: BlockTree, U: SyncHeaders> SyncManager<T, U> {
     /// Create a new sync manager.
-    pub fn new(tree: T, config: Config, rng: fastrand::Rng, outbound: O) -> Self {
+    pub fn new(tree: T, config: Config, rng: fastrand::Rng, upstream: U) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
         let last_tip_update = None;
         let last_peer_sample = None;
@@ -202,7 +202,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
             rng,
             inflight,
             recent,
-            outbound,
+            upstream,
         }
     }
 
@@ -251,7 +251,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
         if headers.is_empty() {
             return;
         }
-        self.outbound.send_headers(*addr, headers);
+        self.upstream.send_headers(*addr, headers);
     }
 
     /// Import blocks into our block tree.
@@ -264,14 +264,14 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
             Ok(ImportResult::TipChanged(tip, height, reverted)) => {
                 let result = ImportResult::TipChanged(tip, height, reverted);
 
-                self.outbound.event(Event::HeadersImported(result.clone()));
-                self.outbound.event(Event::Synced(tip, height));
+                self.upstream.event(Event::HeadersImported(result.clone()));
+                self.upstream.event(Event::Synced(tip, height));
                 self.broadcast_tip(&tip);
 
                 Ok(result)
             }
             Ok(result @ ImportResult::TipUnchanged) => {
-                self.outbound.event(Event::HeadersImported(result.clone()));
+                self.upstream.event(Event::HeadersImported(result.clone()));
 
                 Ok(result)
             }
@@ -309,7 +309,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
                 let result = self.extend_chain(headers, clock);
 
                 if let Ok(ref imported) = result {
-                    self.outbound
+                    self.upstream
                         .event(Event::HeadersImported(imported.clone()));
                 }
 
@@ -353,7 +353,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
                     }
                     Err(err) => {
                         self.record_misbehavior(from);
-                        self.outbound
+                        self.upstream
                             .event(Event::ReceivedInvalidHeaders(*from, err));
                     }
                 }
@@ -364,7 +364,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
 
                 match self.tree.import_blocks(headers.into_iter(), clock) {
                     Ok(import_result @ ImportResult::TipUnchanged) => {
-                        self.outbound.event(Event::HeadersImported(import_result));
+                        self.upstream.event(Event::HeadersImported(import_result));
 
                         // Try to find a common ancestor that leads up to the first header in
                         // the list we received.
@@ -380,11 +380,11 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
                         );
                     }
                     Ok(import_result) => {
-                        self.outbound.event(Event::HeadersImported(import_result));
+                        self.upstream.event(Event::HeadersImported(import_result));
                     }
                     Err(err) => {
                         self.record_misbehavior(from);
-                        self.outbound
+                        self.upstream
                             .event(Event::ReceivedInvalidHeaders(*from, err));
                     }
                 }
@@ -393,7 +393,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
             // typical headers sent during a header announcement, and we haven't asked
             // this peer for any headers. We choose to ignore it.
             _ => {
-                self.outbound
+                self.upstream
                     .event(Event::ReceivedUnsolicitedHeaders(*from, length));
             }
         }
@@ -424,7 +424,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
         self.recent.truncate(32);
 
         self.inflight.insert(addr, req.clone());
-        self.outbound
+        self.upstream
             .get_headers(req.addr, req.locators, req.timeout);
     }
 
@@ -469,7 +469,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
             if let Inventory::Block(hash) = i {
                 // TODO: Update block availability for this peer.
                 if !self.tree.is_known(hash) {
-                    self.outbound.event(Event::BlockDiscovered(addr, *hash));
+                    self.upstream.event(Event::BlockDiscovered(addr, *hash));
                     // The final block hash in the inventory should be the highest. Use
                     // that one for a `getheaders` call.
                     best_block = Some(hash);
@@ -510,7 +510,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
                         // It's likely that the peer just didn't have the requested header.
                     }
                 }
-                self.outbound.event(Event::TimedOut(id));
+                self.upstream.event(Event::TimedOut(id));
 
                 // TODO: We should check that we're still interested in these headers, or just
                 // call `sync` here, or simply not do anything.
@@ -619,7 +619,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
     /// Check whether or not we are in sync with the network.
     fn is_synced(&mut self, now: LocalTime) -> bool {
         if let Some(last_update) = self.stale_tip(now) {
-            self.outbound.event(Event::StaleTipDetected(last_update));
+            self.upstream.event(Event::StaleTipDetected(last_update));
 
             return false;
         }
@@ -648,7 +648,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
             let (tip, _) = self.tree.tip();
             let height = self.tree.height();
 
-            self.outbound.event(Event::Synced(tip, height));
+            self.upstream.event(Event::Synced(tip, height));
 
             // If we think we're in sync and we haven't asked other peers in a while, then
             // sample their headers just to make sure we're on the right chain.
@@ -680,7 +680,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
             let addr = peer.id;
 
             self.request(addr, locators, now, timeout, OnTimeout::Ignore);
-            self.outbound.event(Event::Syncing(addr));
+            self.upstream.event(Event::Syncing(addr));
         }
     }
 
@@ -691,7 +691,7 @@ impl<T: BlockTree, O: SyncHeaders> SyncManager<T, O> {
                 // TODO: Don't broadcast to peer that is currently syncing?
                 if peer.link == Link::Inbound && height > peer.height {
                     // addrs.push(*addr);
-                    self.outbound.send_headers(*addr, vec![*best]);
+                    self.upstream.send_headers(*addr, vec![*best]);
                 }
             }
         }
