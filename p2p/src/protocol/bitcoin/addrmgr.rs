@@ -2,7 +2,6 @@
 //! The peer-to-peer address manager.
 //!
 #![warn(missing_docs)]
-use std::collections::VecDeque;
 use std::net;
 
 use bitcoin::network::address::Address;
@@ -12,7 +11,28 @@ use nakamoto_common::block::time::LocalTime;
 use nakamoto_common::block::BlockTime;
 use nakamoto_common::collections::{HashMap, HashSet};
 
+use super::{Link, PeerId};
 use crate::address_book::AddressBook;
+
+/// Address manager event emission.
+pub trait Events {
+    /// Emit an event.
+    fn event(&self, event: Event);
+}
+
+/// Capability of getting new addresses.
+pub trait GetAddresses {
+    /// Get new addresses from a peer.
+    fn get_addresses(&self, addr: PeerId);
+}
+
+impl Events for () {
+    fn event(&self, _event: Event) {}
+}
+
+impl GetAddresses for () {
+    fn get_addresses(&self, _addr: PeerId) {}
+}
 
 /// Maximum number of addresses we store for a given address range.
 const MAX_RANGE_SIZE: usize = 256;
@@ -22,6 +42,18 @@ const MAX_RANGE_SIZE: usize = 256;
 pub enum Event {
     /// A new peer address was discovered.
     AddressDiscovered(Address, Source),
+}
+
+impl std::fmt::Display for Event {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Event::AddressDiscovered(addr, source) => write!(
+                fmt,
+                "Address {:?} discovered from source `{:?}`",
+                addr, source
+            ),
+        }
+    }
 }
 
 /// Address source. Specifies where an address originated from.
@@ -67,31 +99,33 @@ impl KnownAddress {
 
 /// Manages peer network addresses.
 #[derive(Debug)]
-pub struct AddressManager {
+pub struct AddressManager<U> {
     addresses: HashMap<net::IpAddr, KnownAddress>,
     address_ranges: HashMap<u8, HashSet<net::IpAddr>>,
     connected: HashSet<net::IpAddr>,
+    sources: HashSet<net::SocketAddr>,
     local_addrs: HashSet<net::SocketAddr>,
-    events: VecDeque<Event>,
+    upstream: U,
     rng: fastrand::Rng,
 }
 
-impl AddressManager {
+impl<U: Events> AddressManager<U> {
     /// Create a new, empty address manager.
-    pub fn new(rng: fastrand::Rng) -> Self {
+    pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         Self {
             addresses: HashMap::with_hasher(rng.clone().into()),
             address_ranges: HashMap::with_hasher(rng.clone().into()),
             connected: HashSet::with_hasher(rng.clone().into()),
+            sources: HashSet::with_hasher(rng.clone().into()),
             local_addrs: HashSet::with_hasher(rng.clone().into()),
-            events: VecDeque::new(),
+            upstream,
             rng,
         }
     }
 
     /// Create a new address manager from an address book.
-    pub fn from(book: AddressBook, rng: fastrand::Rng) -> Self {
-        let mut addrmgr = Self::new(rng);
+    pub fn from(book: AddressBook, rng: fastrand::Rng, upstream: U) -> Self {
+        let mut addrmgr = Self::new(rng, upstream);
 
         for addr in book.iter() {
             addrmgr.insert_sockaddr(std::iter::once(*addr), Source::Other);
@@ -113,11 +147,6 @@ impl AddressManager {
     pub fn clear(&mut self) {
         self.addresses.clear();
         self.address_ranges.clear();
-    }
-
-    /// Drain the event queue.
-    pub fn events<'a>(&'a mut self) -> impl Iterator<Item = Event> + 'a {
-        self.events.drain(..)
     }
 
     /// Record an address of ours as seen by a remote peer.
@@ -155,6 +184,7 @@ impl AddressManager {
 
         // TODO: We shouldn't remove. We should keep for later.
         self.remove_address(&addr.ip());
+        self.sources.remove(&addr);
     }
 
     /// Called when a peer has handshaked.
@@ -162,6 +192,7 @@ impl AddressManager {
         &mut self,
         addr: &net::SocketAddr,
         services: ServiceFlags,
+        link: Link,
         time: LocalTime,
     ) {
         if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
@@ -175,6 +206,10 @@ impl AddressManager {
 
         ka.last_success = Some(time);
         ka.addr.services = services;
+
+        if link == Link::Outbound {
+            self.sources.insert(*addr);
+        }
     }
 
     /// Called when a peer has connected.
@@ -200,7 +235,7 @@ impl AddressManager {
     /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{AddressManager, Source};
     /// use nakamoto_common::block::BlockTime;
     ///
-    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new());
+    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), ());
     ///
     /// addrmgr.insert(vec![
     ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
@@ -268,8 +303,8 @@ impl AddressManager {
             }
             okay = true; // As soon as one address was inserted, consider it a success.
 
-            self.events
-                .push_back(Event::AddressDiscovered(addr, source.clone()));
+            self.upstream
+                .event(Event::AddressDiscovered(addr, source.clone()));
 
             let key = self::addr_key(&net_addr.ip());
             let range = self.address_ranges.entry(key).or_insert_with({
@@ -311,7 +346,7 @@ impl AddressManager {
     /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{Source, AddressManager};
     /// use nakamoto_common::block::BlockTime;
     ///
-    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new());
+    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), ());
     ///
     /// // Addresses controlled by an adversary.
     /// let adversary_addrs = vec![
@@ -505,14 +540,14 @@ mod tests {
 
     #[test]
     fn test_sample_empty() {
-        let addrmgr = AddressManager::new(fastrand::Rng::new());
+        let addrmgr = AddressManager::new(fastrand::Rng::new(), ());
 
         assert!(addrmgr.sample().is_none());
     }
 
     #[test]
     fn test_max_range_size() {
-        let mut addrmgr = AddressManager::new(fastrand::Rng::new());
+        let mut addrmgr = AddressManager::new(fastrand::Rng::new(), ());
 
         for i in 0..MAX_RANGE_SIZE + 1 {
             addrmgr.insert_sockaddr(

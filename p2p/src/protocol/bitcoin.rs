@@ -152,6 +152,19 @@ impl<M: Message> Channel<M> {
     }
 }
 
+impl addrmgr::GetAddresses for Channel<RawNetworkMessage> {
+    fn get_addresses(&self, addr: PeerId) {
+        self.message(addr, NetworkMessage::GetAddr);
+    }
+}
+
+impl addrmgr::Events for Channel<RawNetworkMessage> {
+    fn event(&self, event: addrmgr::Event) {
+        debug!(target: self.target, "[addr] {}", &event);
+        self.event(Event::AddrManager(event));
+    }
+}
+
 impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
     fn get_headers(
         &self,
@@ -266,7 +279,7 @@ pub struct Bitcoin<T> {
     /// Maximum number of inbound peer connections.
     max_inbound_peers: usize,
     /// Peer address manager.
-    addrmgr: AddressManager,
+    addrmgr: AddressManager<Channel<RawNetworkMessage>>,
     /// Blockchain synchronization manager.
     syncmgr: SyncManager<T, Channel<RawNetworkMessage>>,
     /// Network-adjusted clock.
@@ -422,7 +435,7 @@ impl<T: BlockTree> Bitcoin<T> {
         let height = tree.height();
         let outbound = Channel::new(network, protocol_version, target, outbound);
 
-        let addrmgr = AddressManager::from(address_book, rng.clone());
+        let addrmgr = AddressManager::from(address_book, rng.clone(), outbound.clone());
         let syncmgr = SyncManager::new(
             tree,
             syncmgr::Config {
@@ -891,7 +904,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 }
             }
         };
-        self.drain_addr_events();
     }
 }
 
@@ -1132,7 +1144,8 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     self.ready.insert(addr);
                     self.clock.record_offset(addr, peer.time_offset);
-                    self.addrmgr.peer_negotiated(&addr, peer.services, now);
+                    self.addrmgr
+                        .peer_negotiated(&addr, peer.services, peer.link, now);
 
                     let ping = peer.ping(now);
                     let link = peer.link;
@@ -1259,12 +1272,6 @@ impl<T: BlockTree> Bitcoin<T> {
             headers.len()
         );
         self.syncmgr.received_headers(&addr, headers, &self.clock);
-    }
-
-    fn drain_addr_events(&mut self) {
-        for event in self.addrmgr.events() {
-            self.outbound.event(Event::AddrManager(event));
-        }
     }
 
     fn disconnect(&mut self, addr: &PeerId) {
