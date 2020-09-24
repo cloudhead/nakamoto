@@ -207,7 +207,7 @@ impl<U: Events> AddressManager<U> {
         ka.last_success = Some(time);
         ka.addr.services = services;
 
-        if link == Link::Outbound {
+        if link.is_outbound() {
             self.sources.insert(*addr);
         }
     }

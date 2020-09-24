@@ -618,7 +618,7 @@ impl Peer {
     }
 
     fn is_outbound(&self) -> bool {
-        self.link == Link::Outbound
+        self.link.is_outbound()
     }
 
     fn ping(&mut self, local_time: LocalTime) -> NetworkMessage {
@@ -744,7 +744,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                 // If an outbound peer disconnected, we should make sure to maintain
                 // our target outbound connection count.
-                if link == Link::Outbound {
+                if link.is_outbound() {
                     self.maintain_outbound_peers();
                 }
             }
@@ -1067,7 +1067,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     // Peers that don't advertise the `NETWORK` service are not full nodes.
                     // It's not so useful for us to connect to them, because they're likely
                     // to be less secure.
-                    if peer.link == Link::Outbound
+                    if peer.link.is_outbound()
                         && !services.has(ServiceFlags::NETWORK)
                         && !services.has(ServiceFlags::NETWORK_LIMITED)
                         && !whitelisted
@@ -1092,7 +1092,7 @@ impl<T: BlockTree> Bitcoin<T> {
                     // Check for self-connections. We only need to check one link direction,
                     // since in the case of a self-connection, we will see both link directions.
                     for (_, peer) in self.peers.iter() {
-                        if peer.link == Link::Outbound && peer.nonce == nonce {
+                        if peer.link.is_outbound() && peer.nonce == nonce {
                             debug!(
                                 target: self.target, "{}: Disconnecting: detected self-connection",
                                 addr

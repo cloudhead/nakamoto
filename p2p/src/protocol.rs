@@ -25,6 +25,12 @@ pub enum Link {
     Outbound,
 }
 
+impl Link {
+    pub fn is_outbound(&self) -> bool {
+        *self == Link::Outbound
+    }
+}
+
 /// A message that can be sent to a peer.
 pub trait Message: Send + Sync + 'static {
     /// The message payload.
