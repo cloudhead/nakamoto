@@ -5,6 +5,7 @@ use log::*;
 use nonempty::NonEmpty;
 
 pub mod addrmgr;
+pub mod connmgr;
 pub mod network;
 pub mod syncmgr;
 pub use network::Network;
@@ -13,6 +14,7 @@ pub use network::Network;
 mod tests;
 
 use addrmgr::AddressManager;
+use connmgr::ConnectionManager;
 use syncmgr::SyncManager;
 
 use crate::address_book::AddressBook;
@@ -57,8 +59,6 @@ const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
 const PING_INTERVAL: LocalDuration = LocalDuration::from_mins(2);
 /// Time to wait to receive a pong when sending a ping.
 const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
-/// Time to wait for a new connection.
-const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
 
 /// A time offset, in seconds.
 type TimeOffset = i64;
@@ -129,11 +129,6 @@ impl<M: Message> Channel<M> {
         self.outbound.send(output).unwrap();
     }
 
-    /// Disconnect a peer
-    fn disconnect(&self, addr: PeerId) {
-        self.push(Out::Disconnect(addr));
-    }
-
     /// Push a message to the queue.
     fn message(&self, addr: PeerId, message: M::Payload) -> &Self {
         self.push(self.builder.message(addr, message));
@@ -155,6 +150,27 @@ impl<M: Message> Channel<M> {
 impl addrmgr::GetAddresses for Channel<RawNetworkMessage> {
     fn get_addresses(&self, addr: PeerId) {
         self.message(addr, NetworkMessage::GetAddr);
+    }
+}
+
+impl connmgr::Connect for Channel<RawNetworkMessage> {
+    fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
+        debug!(target: self.target, "[conn] Connecting to {}..", addr);
+        self.push(Out::Connect(addr, timeout));
+    }
+}
+
+impl connmgr::Disconnect for Channel<RawNetworkMessage> {
+    fn disconnect(&self, addr: net::SocketAddr) {
+        debug!(target: self.target, "[conn] Disconnecting from {}..", addr);
+        self.push(Out::Disconnect(addr));
+    }
+}
+
+impl connmgr::Events for Channel<RawNetworkMessage> {
+    fn event(&self, event: connmgr::Event) {
+        debug!(target: self.target, "[conn] {}", &event);
+        self.event(Event::ConnManager(event));
     }
 }
 
@@ -274,22 +290,16 @@ pub struct Bitcoin<T> {
     params: Params,
     /// Peer whitelist.
     whitelist: Whitelist,
-    /// Target number of outbound peer connections.
-    target_outbound_peers: usize,
-    /// Maximum number of inbound peer connections.
-    max_inbound_peers: usize,
     /// Peer address manager.
     addrmgr: AddressManager<Channel<RawNetworkMessage>>,
     /// Blockchain synchronization manager.
     syncmgr: SyncManager<T, Channel<RawNetworkMessage>>,
+    /// Peer connection manager.
+    connmgr: ConnectionManager<Channel<RawNetworkMessage>>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Set of connected peers that have completed the handshake.
     ready: HashSet<PeerId>,
-    /// Set of all connected peers.
-    connected: HashSet<PeerId>,
-    /// Set of disconnected peers.
-    disconnected: HashSet<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
     target: &'static str,
     /// Random number generator.
@@ -446,14 +456,19 @@ impl<T: BlockTree> Bitcoin<T> {
             rng.clone(),
             outbound.clone(),
         );
+        let connmgr = ConnectionManager::new(
+            outbound.clone(),
+            connmgr::Config {
+                target_outbound_peers,
+                max_inbound_peers,
+            },
+        );
 
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),
             network,
             services,
             protocol_version,
-            target_outbound_peers,
-            max_inbound_peers,
             user_agent,
             whitelist,
             target,
@@ -462,19 +477,14 @@ impl<T: BlockTree> Bitcoin<T> {
             height,
             addrmgr,
             syncmgr,
+            connmgr,
             rng,
             outbound,
             ready: HashSet::new(),
-            connected: HashSet::new(),
-            disconnected: HashSet::new(),
         }
     }
 
     fn connected(&mut self, addr: PeerId, local_addr: net::SocketAddr, nonce: u64, link: Link) {
-        self.connected.insert(addr);
-        self.disconnected.remove(&addr);
-        self.addrmgr.peer_connected(&addr);
-
         let rng = self.rng.clone();
 
         // TODO: Keep negotiated peers in a different set with a user agent.
@@ -663,19 +673,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.syncmgr.initialize(time);
-
-        // FIXME: Should be random
-        let addrs = self
-            .addrmgr
-            .iter()
-            .take(self.target_outbound_peers)
-            .map(|a| a.socket_addr().ok())
-            .flatten()
-            .collect::<Vec<_>>();
-
-        for addr in addrs {
-            self.connect(&addr);
-        }
+        self.connmgr.initialize(time, &mut self.addrmgr);
 
         self.outbound
             .set_timeout(TimeoutSource::Global, Self::IDLE_TIMEOUT);
@@ -685,32 +683,19 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
         // The local time is set from outside the protocol.
         self.clock.set_local_time(local_time);
 
-        // Generate `Event` outputs from the input.
-        self.generate_events(&input);
-
         match input {
             Input::Connected {
                 addr,
                 local_addr,
                 link,
             } => {
-                info!(target: self.target, "{}: Peer connected ({:?})", &addr, link);
-                debug_assert!(!self.connected.contains(&addr));
-
                 // This is usually not that useful, except when our local address is actually the
                 // address our peers see.
                 self.addrmgr.record_local_addr(local_addr);
+                self.addrmgr.peer_connected(&addr);
+                self.connmgr.peer_connected(addr, local_addr, link);
 
                 match link {
-                    Link::Inbound if self.connected.len() >= self.max_inbound_peers => {
-                        // Don't allow inbound connections beyond the configured limit.
-                        debug!(
-                            target: self.target,
-                            "{}: Disconnecting: reached target peer connections ({})",
-                            addr, self.target_outbound_peers
-                        );
-                        self.outbound.disconnect(addr);
-                    }
                     Link::Inbound => {
                         self.connected(addr, local_addr, 0, link);
                     }
@@ -721,34 +706,18 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         self.outbound
                             .message(addr, self.version(addr, local_addr, nonce, self.height));
                     }
-                };
-            }
-            Input::Disconnected(addr) => {
-                debug!(target: self.target, "Disconnected from {}", &addr);
-                debug_assert!(self.connected.contains(&addr));
-                debug_assert!(!self.disconnected.contains(&addr));
-
-                let peer = self
-                    .peers
-                    .get(&addr)
-                    .expect("disconnected peers should be known");
-
-                let link = peer.link;
-
-                self.peers.remove(&addr);
-                self.ready.remove(&addr);
-                self.connected.remove(&addr);
-                self.disconnected.insert(addr);
-                self.syncmgr.peer_disconnected(&addr);
-                self.addrmgr.peer_disconnected(&addr);
-
-                // If an outbound peer disconnected, we should make sure to maintain
-                // our target outbound connection count.
-                if link.is_outbound() {
-                    self.maintain_outbound_peers();
                 }
             }
+            Input::Disconnected(addr) => {
+                self.peers.remove(&addr);
+                self.ready.remove(&addr);
+                self.syncmgr.peer_disconnected(&addr);
+                self.addrmgr.peer_disconnected(&addr);
+                self.connmgr.peer_disconnected(&addr, &self.addrmgr);
+            }
             Input::Received(addr, msg) => {
+                self.outbound
+                    .event(Event::Received(addr, msg.payload.clone()));
                 self.receive(addr, msg);
             }
             Input::Sent(_addr, _msg) => {}
@@ -758,17 +727,12 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         debug!(target: self.target, "Received command: Connect({})", addr);
 
                         self.whitelist.addr.insert(addr.ip());
-
-                        if !self.connected.contains(&addr) {
-                            self.connect(&addr);
-                        }
+                        self.connmgr.connect(&addr, &mut self.addrmgr, local_time);
                     }
                     Command::Disconnect(addr) => {
                         debug!(target: self.target, "Received command: Disconnect({})", addr);
 
-                        if self.connected.contains(&addr) {
-                            self.outbound.disconnect(addr);
-                        }
+                        self.disconnect(addr);
                     }
                     Command::Query(msg, reply) => {
                         debug!(target: self.target, "Received command: Query({:?})", msg);
@@ -839,16 +803,16 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 match source {
                     TimeoutSource::Connect(addr) => {
                         debug_assert!(!self.peers.contains_key(&addr));
-                        debug_assert!(!self.connected.contains(&addr));
 
-                        self.maintain_outbound_peers();
+                        self.connmgr
+                            .received_timeout(addr, local_time, &self.addrmgr);
                     }
                     TimeoutSource::Handshake(addr) => {
                         if let Some(peer) = self.peers.get_mut(&addr) {
                             match peer.state {
                                 PeerState::Handshake(Handshake::AwaitingVerack)
                                 | PeerState::Handshake(Handshake::AwaitingVersion) => {
-                                    self.outbound.disconnect(addr);
+                                    self.disconnect(addr);
                                 }
                                 _ => {}
                             }
@@ -860,7 +824,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let timeout = self.syncmgr.received_timeout(addr, local_time);
 
                         if let syncmgr::OnTimeout::Disconnect = timeout {
-                            self.outbound.disconnect(addr);
+                            self.disconnect(addr);
                         }
                     }
                     TimeoutSource::Ping(addr) => {
@@ -880,7 +844,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 
                                             address
                                         );
-                                        self.disconnect(&address);
+                                        self.disconnect(address);
                                     }
                                 } else if now - last_active >= PING_INTERVAL {
                                     let ping = peer.ping(now);
@@ -908,51 +872,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
 }
 
 impl<T: BlockTree> Bitcoin<T> {
-    /// Send a `getaddr` message to all our outbound peers.
-    fn get_addresses(&self) {
-        for p in self.outbound() {
-            self.outbound.message(p.address, NetworkMessage::GetAddr);
-        }
-    }
-
     /// Get outbound & ready peers.
     fn outbound(&self) -> impl Iterator<Item = &Peer> + Clone {
         self.peers
             .values()
             .filter(|p| p.is_ready() && p.is_outbound())
-    }
-
-    /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_outbound_peers(&mut self) {
-        let current = self.outbound().count();
-
-        if current < self.target_outbound_peers {
-            // FIXME: This debug statement shouldn't be here. Listen on events instead.
-            debug!(
-                target: self.target, "Peer outbound connections ({}) below target ({})",
-                current, self.target_outbound_peers
-            );
-            self.outbound
-                .event(Event::Connecting(current, self.target_outbound_peers));
-
-            if let Some(addr) = self.addrmgr.sample() {
-                if let Ok(sockaddr) = addr.socket_addr() {
-                    debug_assert!(!self.connected.contains(&sockaddr));
-
-                    self.connect(&sockaddr);
-                } else {
-                    // TODO: Perhaps the address manager should just return addresses
-                    // that can be converted to socket addresses?
-                    // The only ones that cannot are Tor addresses.
-                    todo!();
-                }
-            } else {
-                debug!(target: self.target, "Address book exhausted, asking peers..");
-
-                // We're out of addresses, ask for more!
-                self.get_addresses();
-            }
-        }
     }
 
     fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) {
@@ -966,7 +890,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 target: self.target, "{}: Received message with invalid magic: {}",
                 addr, msg.magic
             );
-            self.outbound.disconnect(addr);
+            self.disconnect(addr);
 
             return;
         }
@@ -1017,7 +941,9 @@ impl<T: BlockTree> Bitcoin<T> {
                     .addrmgr
                     .insert(addrs.into_iter(), addrmgr::Source::Peer(addr))
                 {
-                    self.maintain_outbound_peers();
+                    // FIXME: This should really be periodic. Can't think of
+                    // all the situations where we should retry to maintain.
+                    self.connmgr.tick(&self.addrmgr);
                 }
                 return;
             } else if let NetworkMessage::Headers(headers) = msg.payload {
@@ -1062,7 +988,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             target: self.target, "{}: Disconnecting: peer protocol version is too old: {}",
                             addr, version
                         );
-                        return self.outbound.disconnect(addr);
+                        return self.disconnect(addr);
                     }
                     // Peers that don't advertise the `NETWORK` service are not full nodes.
                     // It's not so useful for us to connect to them, because they're likely
@@ -1076,7 +1002,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             target: self.target, "{}: Disconnecting: peer doesn't have required services",
                             addr
                         );
-                        return self.outbound.disconnect(addr);
+                        return self.disconnect(addr);
                     }
                     // If the peer is too far behind, there's no use connecting to it, we'll
                     // have to wait for it to catch up.
@@ -1087,7 +1013,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             target: self.target, "{}: Disconnecting: peer is too far behind",
                             addr
                         );
-                        return self.outbound.disconnect(addr);
+                        return self.disconnect(addr);
                     }
                     // Check for self-connections. We only need to check one link direction,
                     // since in the case of a self-connection, we will see both link directions.
@@ -1097,7 +1023,7 @@ impl<T: BlockTree> Bitcoin<T> {
                                 target: self.target, "{}: Disconnecting: detected self-connection",
                                 addr
                             );
-                            return self.outbound.disconnect(addr);
+                            return self.disconnect(addr);
                         }
                     }
 
@@ -1135,7 +1061,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
-                    return self.outbound.disconnect(addr);
+                    return self.disconnect(addr);
                 }
             }
             PeerState::Handshake(Handshake::AwaitingVerack) => {
@@ -1178,7 +1104,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
-                    return self.outbound.disconnect(addr);
+                    return self.disconnect(addr);
                 }
             }
             PeerState::Ready { .. } => {
@@ -1274,34 +1200,13 @@ impl<T: BlockTree> Bitcoin<T> {
         self.syncmgr.received_headers(&addr, headers, &self.clock);
     }
 
-    fn disconnect(&mut self, addr: &PeerId) {
+    fn disconnect(&mut self, addr: PeerId) {
         let peer = self
             .peers
             .get_mut(&addr)
             .unwrap_or_else(|| panic!("peer {} is not known", addr));
 
         peer.transition(PeerState::Disconnecting);
-        self.outbound.disconnect(*addr);
-    }
-
-    fn connect(&mut self, addr: &PeerId) {
-        self.outbound.push(Out::Connect(*addr, CONNECTION_TIMEOUT));
-        self.addrmgr.peer_attempted(&addr, self.clock.local_time());
-    }
-
-    fn generate_events(&self, input: &Input) {
-        match input {
-            Input::Connected { addr, link, .. } => {
-                self.outbound.event(Event::Connected(*addr, *link));
-            }
-            Input::Disconnected(addr) => {
-                self.outbound.event(Event::Disconnected(*addr));
-            }
-            Input::Received(addr, msg) => {
-                self.outbound
-                    .event(Event::Received(*addr, msg.payload.clone()));
-            }
-            _ => {}
-        }
+        self.connmgr.disconnect(addr);
     }
 }

@@ -22,7 +22,7 @@ use nakamoto_test::block::cache::model;
 use nakamoto_test::logger;
 use nakamoto_test::BITCOIN_HEADERS;
 
-use crate::protocol::bitcoin::{Bitcoin, Builder};
+use crate::protocol::bitcoin::{connmgr, Bitcoin, Builder};
 use crate::protocol::ProtocolBuilder;
 
 fn payload<M: Message>(o: &Out<M>) -> Option<(net::SocketAddr, &M::Payload)> {
@@ -436,7 +436,9 @@ fn test_maintain_connections(seed: u64) {
 
     for e in sim.events(&alice) {
         match e {
-            Event::Connected(addr, link) if link == Link::Outbound => connected.push(addr),
+            Event::ConnManager(connmgr::Event::Connected(addr, link)) if link == Link::Outbound => {
+                connected.push(addr)
+            }
             _ => {}
         }
     }
@@ -447,7 +449,7 @@ fn test_maintain_connections(seed: u64) {
 
     let addr = result
         .find(|o| match o {
-            Out::Connect(addr, CONNECTION_TIMEOUT) => Some(*addr),
+            Out::Connect(addr, _) => Some(*addr),
             _ => None,
         })
         .expect("Alice connects to a peer");
@@ -655,7 +657,7 @@ fn test_getaddr() {
             )])),
         ),
     )
-    .any(|o| matches!(o, Out::Connect(addr, CONNECTION_TIMEOUT) if addr == &toto))
+    .any(|o| matches!(o, Out::Connect(addr, _) if addr == &toto))
     .expect("Alice tries to connect to Toto");
 }
 
@@ -841,7 +843,10 @@ fn prop_connect_timeout(seed: u64) {
         .filter(|o| matches!(o, Out::Connect(_, _)))
         .collect::<Vec<_>>();
 
-    assert_eq!(result.len(), alice.protocol.target_outbound_peers);
+    assert_eq!(
+        result.len(),
+        alice.protocol.connmgr.config.target_outbound_peers
+    );
 
     let mut attempted: Vec<net::SocketAddr> = result
         .into_iter()
@@ -858,7 +863,7 @@ fn prop_connect_timeout(seed: u64) {
     let alice = alice.id;
     let peer = attempted.pop().unwrap();
 
-    sim.elapse(CONNECTION_TIMEOUT);
+    sim.elapse(connmgr::CONNECTION_TIMEOUT);
     let result = sim.input(&alice, Input::Timeout(TimeoutSource::Connect(peer)));
 
     result

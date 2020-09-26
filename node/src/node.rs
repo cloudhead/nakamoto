@@ -20,7 +20,7 @@ use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_p2p::protocol::bitcoin::Command;
-use nakamoto_p2p::protocol::bitcoin::{self, syncmgr, Network};
+use nakamoto_p2p::protocol::bitcoin::{self, connmgr, syncmgr, Network};
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::TimeoutSource;
 use nakamoto_p2p::reactor::poll::{Reactor, Waker};
@@ -281,7 +281,7 @@ impl Handle for NodeHandle {
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, handle::Error> {
         self.command(Command::Connect(addr))?;
         self.wait(|e| match e {
-            Event::Connected(a, link)
+            Event::ConnManager(connmgr::Event::Connected(a, link))
                 if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
             {
                 Some(link)
@@ -293,7 +293,7 @@ impl Handle for NodeHandle {
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
         self.command(Command::Disconnect(addr))?;
         self.wait(|e| match e {
-            Event::Disconnected(a)
+            Event::ConnManager(connmgr::Event::Disconnected(a))
                 if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
             {
                 Some(())
@@ -356,7 +356,7 @@ impl Handle for NodeHandle {
             let mut connected = HashSet::new();
 
             match e {
-                Event::Connected(addr, _) => {
+                Event::ConnManager(connmgr::Event::Connected(addr, _)) => {
                     connected.insert(addr);
 
                     if connected.len() == count {

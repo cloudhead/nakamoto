@@ -47,11 +47,9 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Event::AddressDiscovered(addr, source) => write!(
-                fmt,
-                "Address {:?} discovered from source `{:?}`",
-                addr, source
-            ),
+            Event::AddressDiscovered(addr, source) => {
+                write!(fmt, "{:?} discovered from source `{:?}`", addr, source)
+            }
         }
     }
 }
@@ -107,6 +105,15 @@ pub struct AddressManager<U> {
     local_addrs: HashSet<net::SocketAddr>,
     upstream: U,
     rng: fastrand::Rng,
+}
+
+impl<U: GetAddresses> AddressManager<U> {
+    /// Get addresses from peers.
+    pub fn get_addresses(&self) {
+        for peer in &self.sources {
+            self.upstream.get_addresses(*peer);
+        }
+    }
 }
 
 impl<U: Events> AddressManager<U> {
