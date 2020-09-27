@@ -159,37 +159,6 @@ impl<U: Connect + Disconnect + Events + Idle + addrmgr::GetAddresses + addrmgr::
         }
     }
 
-    /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_connections(&mut self, addrmgr: &AddressManager<U>) {
-        let current = self.outbound().count();
-
-        if current < self.config.target_outbound_peers {
-            Events::event(
-                &self.upstream,
-                Event::Connecting(current, self.config.target_outbound_peers),
-            );
-
-            if let Some(addr) = addrmgr.sample() {
-                if let Ok(sockaddr) = addr.socket_addr() {
-                    debug_assert!(!self.connected.contains_key(&sockaddr));
-
-                    self.upstream.connect(sockaddr, CONNECTION_TIMEOUT);
-                } else {
-                    // TODO: Perhaps the address manager should just return addresses
-                    // that can be converted to socket addresses?
-                    // The only ones that cannot are Tor addresses.
-                    todo!();
-                }
-            } else {
-                // TODO: Don't ask for addresses many times in a row.
-                Events::event(&self.upstream, Event::AddressBookExhausted);
-
-                // We're out of addresses, ask for more!
-                addrmgr.get_addresses();
-            }
-        }
-    }
-
     /// Call when a peer connected.
     pub fn peer_connected(
         &mut self,
@@ -247,6 +216,37 @@ impl<U: Connect + Disconnect + Events + Idle + addrmgr::GetAddresses + addrmgr::
             self.maintain_connections(addrmgr);
             self.upstream.idle(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
+        }
+    }
+
+    /// Attempt to maintain a certain number of outbound peers.
+    fn maintain_connections(&mut self, addrmgr: &AddressManager<U>) {
+        let current = self.outbound().count();
+
+        if current < self.config.target_outbound_peers {
+            Events::event(
+                &self.upstream,
+                Event::Connecting(current, self.config.target_outbound_peers),
+            );
+
+            if let Some(addr) = addrmgr.sample() {
+                if let Ok(sockaddr) = addr.socket_addr() {
+                    debug_assert!(!self.connected.contains_key(&sockaddr));
+
+                    self.upstream.connect(sockaddr, CONNECTION_TIMEOUT);
+                } else {
+                    // TODO: Perhaps the address manager should just return addresses
+                    // that can be converted to socket addresses?
+                    // The only ones that cannot are Tor addresses.
+                    todo!();
+                }
+            } else {
+                // TODO: Don't ask for addresses many times in a row.
+                Events::event(&self.upstream, Event::AddressBookExhausted);
+
+                // We're out of addresses, ask for more!
+                addrmgr.get_addresses();
+            }
         }
     }
 
