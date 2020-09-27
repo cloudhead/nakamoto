@@ -1,5 +1,5 @@
-// TODO
-#![allow(missing_docs)]
+//! Peer connection manager.
+
 use std::collections::{HashMap, HashSet};
 use std::net;
 
@@ -12,18 +12,25 @@ use crate::protocol::{Link, PeerId, Timeout};
 /// TODO: Should be in config.
 pub const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
 
+/// Ability to connect to peers.
 pub trait Connect {
+    /// Connect to peer.
     fn connect(&self, addr: net::SocketAddr, timeout: Timeout);
 }
 
+/// Ability to disconnect from peers.
 pub trait Disconnect {
+    /// Disconnect from peer.
     fn disconnect(&self, addr: net::SocketAddr);
 }
 
+/// Ability to emit events.
 pub trait Events {
+    /// Emit event.
     fn event(&self, event: Event);
 }
 
+/// A connection-related event.
 #[derive(Debug)]
 pub enum Event {
     /// The node is connecting to peers.
@@ -55,6 +62,7 @@ impl std::fmt::Display for Event {
     }
 }
 
+/// Connection manager configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Target number of outbound peer connections.
@@ -74,22 +82,33 @@ struct Peer {
     link: Link,
 }
 
+/// Manages peer connections.
 #[derive(Debug)]
 pub struct ConnectionManager<U> {
     /// Configuration.
     pub config: Config,
-
     /// Set of all connected peers.
     connected: HashMap<PeerId, Peer>,
     /// Set of disconnected peers.
     disconnected: HashSet<PeerId>,
-
+    /// Channel to the network.
     upstream: U,
 }
 
 impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
     ConnectionManager<U>
 {
+    /// Create a new connection manager.
+    pub fn new(upstream: U, config: Config) -> Self {
+        Self {
+            connected: HashMap::new(),
+            disconnected: HashSet::new(),
+            config,
+            upstream,
+        }
+    }
+
+    /// Initialize the connection manager. Must be called once.
     pub fn initialize(&mut self, time: LocalTime, addrmgr: &mut AddressManager<U>) {
         // FIXME: Should be random
         let addrs = addrmgr
@@ -104,6 +123,7 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
         }
     }
 
+    /// Connect to a peer.
     pub fn connect(
         &mut self,
         addr: &PeerId,
@@ -116,6 +136,7 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
         }
     }
 
+    /// Disconnect from a peer.
     pub fn disconnect(&mut self, addr: PeerId) {
         if self.connected.contains_key(&addr) {
             debug_assert!(!self.disconnected.contains(&addr));
@@ -124,7 +145,7 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
         }
     }
 
-    // TODO: Rename to `idle` when it's called periodically.
+    /// Call periodically.
     pub fn tick(&mut self, addrmgr: &AddressManager<U>) {
         self.maintain_connections(addrmgr);
     }
@@ -160,45 +181,7 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
         }
     }
 
-    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr, addrmgr: &AddressManager<U>) {
-        debug_assert!(self.connected.contains_key(&addr));
-        debug_assert!(!self.disconnected.contains(&addr));
-
-        Events::event(&self.upstream, Event::Disconnected(*addr));
-
-        self.disconnected.insert(*addr);
-
-        if let Some(peer) = self.connected.remove(&addr) {
-            // If an outbound peer disconnected, we should make sure to maintain
-            // our target outbound connection count.
-            if peer.link.is_outbound() {
-                self.maintain_connections(addrmgr);
-            }
-        }
-    }
-
-    pub fn received_timeout(
-        &mut self,
-        addr: PeerId,
-        _local_time: LocalTime,
-        addrmgr: &AddressManager<U>,
-    ) {
-        debug_assert!(!self.connected.contains_key(&addr));
-
-        self.maintain_connections(addrmgr);
-    }
-}
-
-impl<U: Connect + Disconnect + Events> ConnectionManager<U> {
-    pub fn new(upstream: U, config: Config) -> Self {
-        Self {
-            connected: HashMap::new(),
-            disconnected: HashSet::new(),
-            config,
-            upstream,
-        }
-    }
-
+    /// Call when a peer connected.
     pub fn peer_connected(
         &mut self,
         address: net::SocketAddr,
@@ -207,7 +190,7 @@ impl<U: Connect + Disconnect + Events> ConnectionManager<U> {
     ) {
         debug_assert!(!self.connected.contains_key(&address));
 
-        self.upstream.event(Event::Connected(address, link));
+        Events::event(&self.upstream, Event::Connected(address, link));
 
         match link {
             Link::Inbound if self.connected.len() >= self.config.max_inbound_peers => {
@@ -227,6 +210,36 @@ impl<U: Connect + Disconnect + Events> ConnectionManager<U> {
                 );
             }
         }
+    }
+
+    /// Call when a peer disconnected.
+    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr, addrmgr: &AddressManager<U>) {
+        debug_assert!(self.connected.contains_key(&addr));
+        debug_assert!(!self.disconnected.contains(&addr));
+
+        Events::event(&self.upstream, Event::Disconnected(*addr));
+
+        self.disconnected.insert(*addr);
+
+        if let Some(peer) = self.connected.remove(&addr) {
+            // If an outbound peer disconnected, we should make sure to maintain
+            // our target outbound connection count.
+            if peer.link.is_outbound() {
+                self.maintain_connections(addrmgr);
+            }
+        }
+    }
+
+    /// Call when we recevied a timeout.
+    pub fn received_timeout(
+        &mut self,
+        addr: PeerId,
+        _local_time: LocalTime,
+        addrmgr: &AddressManager<U>,
+    ) {
+        debug_assert!(!self.connected.contains_key(&addr));
+
+        self.maintain_connections(addrmgr);
     }
 
     /// Get outbound peers.
