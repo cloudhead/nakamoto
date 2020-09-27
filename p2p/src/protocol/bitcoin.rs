@@ -440,8 +440,6 @@ struct Peer {
     height: Height,
     /// The peer's services.
     services: ServiceFlags,
-    /// The peer's best block.
-    tip: BlockHash,
     /// An offset in seconds, between this peer's clock and ours.
     /// A positive offset means the peer's clock is ahead of ours.
     time_offset: TimeOffset,
@@ -478,7 +476,6 @@ impl Peer {
             address,
             local_address,
             height: 0,
-            tip: BlockHash::default(),
             time_offset: 0,
             state,
             link,
@@ -968,7 +965,6 @@ impl<T: BlockTree> Bitcoin<T> {
                     self.syncmgr.peer_negotiated(
                         peer.address,
                         peer.height,
-                        peer.tip,
                         peer.services,
                         peer.link,
                         &self.clock,

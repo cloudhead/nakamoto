@@ -225,12 +225,11 @@ impl<T: BlockTree, U: SyncHeaders> SyncManager<T, U> {
         &mut self,
         id: PeerId,
         height: Height,
-        tip: BlockHash,
         services: ServiceFlags,
         link: Link,
         clock: &impl Clock,
     ) {
-        self.register(id, height, tip, services, link);
+        self.register(id, height, services, link);
         self.sync(clock.local_time());
     }
 
@@ -561,15 +560,9 @@ impl<T: BlockTree, U: SyncHeaders> SyncManager<T, U> {
     }
 
     /// Register a new peer.
-    fn register(
-        &mut self,
-        id: PeerId,
-        height: Height,
-        tip: BlockHash,
-        services: ServiceFlags,
-        link: Link,
-    ) {
+    fn register(&mut self, id: PeerId, height: Height, services: ServiceFlags, link: Link) {
         let last_active = None;
+        let tip = BlockHash::default();
 
         self.peers.insert(
             id,
