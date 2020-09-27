@@ -170,11 +170,11 @@ impl LocalDuration {
 impl std::fmt::Display for LocalDuration {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         if self.as_millis() < 1000 {
-            write!(f, "{}ms", self.as_millis())
+            write!(f, "{} millisecond(s)", self.as_millis())
         } else if self.as_secs() < 60 {
-            write!(f, "{}s", self.as_secs())
+            write!(f, "{} second(s)", self.as_secs())
         } else {
-            write!(f, "{}m", self.as_mins())
+            write!(f, "{} minute(s)", self.as_mins())
         }
     }
 }
