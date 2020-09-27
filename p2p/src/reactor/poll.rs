@@ -382,7 +382,7 @@ where
                         }
                         Err(err) => {
                             self.events
-                                .push_back(Input::Timeout(TimeoutSource::Connect(addr)));
+                                .push_back(Input::Timeout(TimeoutSource::Connect));
 
                             error!("{}: Connection error: {}", addr, err.to_string());
                         }

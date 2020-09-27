@@ -90,6 +90,12 @@ impl connmgr::Disconnect for Channel<RawNetworkMessage> {
     }
 }
 
+impl connmgr::Idle for Channel<RawNetworkMessage> {
+    fn idle(&self, timeout: LocalDuration) {
+        self.set_timeout(TimeoutSource::Connect, timeout);
+    }
+}
+
 impl connmgr::Events for Channel<RawNetworkMessage> {
     fn event(&self, event: connmgr::Event) {
         debug!(target: self.target, "[conn] {}", &event);

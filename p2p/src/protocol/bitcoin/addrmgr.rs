@@ -220,7 +220,7 @@ impl<U: Events> AddressManager<U> {
     }
 
     /// Called when a peer has connected.
-    pub fn peer_connected(&mut self, addr: &net::SocketAddr) {
+    pub fn peer_connected(&mut self, addr: &net::SocketAddr, _local_time: LocalTime) {
         if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
             return;
         }

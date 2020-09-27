@@ -563,8 +563,9 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // This is usually not that useful, except when our local address is actually the
                 // address our peers see.
                 self.addrmgr.record_local_addr(local_addr);
-                self.addrmgr.peer_connected(&addr);
-                self.connmgr.peer_connected(addr, local_addr, link);
+                self.addrmgr.peer_connected(&addr, local_time);
+                self.connmgr
+                    .peer_connected(addr, local_addr, link, local_time);
 
                 match link {
                     Link::Inbound => {
@@ -672,11 +673,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 // We may not have the peer anymore, if it was disconnected and remove in
                 // the meantime.
                 match source {
-                    TimeoutSource::Connect(addr) => {
-                        debug_assert!(!self.peers.contains_key(&addr));
-
-                        self.connmgr
-                            .received_timeout(addr, local_time, &self.addrmgr);
+                    TimeoutSource::Connect => {
+                        self.connmgr.received_timeout(local_time, &self.addrmgr);
                     }
                     TimeoutSource::Handshake(addr) => {
                         if let Some(peer) = self.peers.get_mut(&addr) {
@@ -807,15 +805,9 @@ impl<T: BlockTree> Bitcoin<T> {
                     // Peer misbehaving, got empty message.
                     return;
                 }
+                self.addrmgr
+                    .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
 
-                if self
-                    .addrmgr
-                    .insert(addrs.into_iter(), addrmgr::Source::Peer(addr))
-                {
-                    // FIXME: This should really be periodic. Can't think of
-                    // all the situations where we should retry to maintain.
-                    self.connmgr.tick(&self.addrmgr);
-                }
                 return;
             } else if let NetworkMessage::Headers(headers) = msg.payload {
                 return self.receive_headers(addr, headers);

@@ -656,9 +656,13 @@ fn test_getaddr() {
                 Address::new(&toto, ServiceFlags::NETWORK),
             )])),
         ),
-    )
-    .any(|o| matches!(o, Out::Connect(addr, _) if addr == &toto))
-    .expect("Alice tries to connect to Toto");
+    );
+
+    // After some time, Alice tries to connect to the new address.
+    sim.elapse(connmgr::IDLE_TIMEOUT);
+    sim.input(&alice, Input::Timeout(TimeoutSource::Connect))
+        .any(|o| matches!(o, Out::Connect(addr, _) if addr == &toto))
+        .expect("Alice tries to connect to Toto");
 }
 
 #[test]
@@ -861,12 +865,15 @@ fn prop_connect_timeout(seed: u64) {
     // ... after a while, the connections time out.
 
     let alice = alice.id;
-    let peer = attempted.pop().unwrap();
+    attempted.pop().unwrap();
 
-    sim.elapse(connmgr::CONNECTION_TIMEOUT);
-    let result = sim.input(&alice, Input::Timeout(TimeoutSource::Connect(peer)));
+    sim.elapse(connmgr::IDLE_TIMEOUT);
+    let result = sim.input(&alice, Input::Timeout(TimeoutSource::Connect));
 
     result
-        .all(|o| matches!(o, Out::Connect(addr, _) if !attempted.contains(&addr)))
+        .all(|o| match o {
+            Out::Connect(addr, _) => !attempted.contains(&addr),
+            _ => true,
+        })
         .expect("Alice tries to connect to another peer");
 }

@@ -52,7 +52,7 @@ pub enum TimeoutSource {
     /// Header sync.
     Synch(PeerId),
     /// Peer connect.
-    Connect(PeerId),
+    Connect,
     /// Peer handshake.
     Handshake(PeerId),
     /// Peer ping.

@@ -11,6 +11,8 @@ use crate::protocol::{Link, PeerId, Timeout};
 /// Time to wait for a new connection.
 /// TODO: Should be in config.
 pub const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
+/// Time to wait until idle.
+pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
 
 /// Ability to connect to peers.
 pub trait Connect {
@@ -28,6 +30,12 @@ pub trait Disconnect {
 pub trait Events {
     /// Emit event.
     fn event(&self, event: Event);
+}
+
+/// Ability to set idle timeout.
+pub trait Idle {
+    /// Set idle timeout.
+    fn idle(&self, timeout: Timeout);
 }
 
 /// A connection-related event.
@@ -80,6 +88,8 @@ struct Peer {
     local_address: net::SocketAddr,
     /// Whether this is an inbound or outbound peer connection.
     link: Link,
+    /// Time connected.
+    time: LocalTime,
 }
 
 /// Manages peer connections.
@@ -91,11 +101,13 @@ pub struct ConnectionManager<U> {
     connected: HashMap<PeerId, Peer>,
     /// Set of disconnected peers.
     disconnected: HashSet<PeerId>,
+    /// Last time we were idle.
+    last_idle: Option<LocalTime>,
     /// Channel to the network.
     upstream: U,
 }
 
-impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
+impl<U: Connect + Disconnect + Events + Idle + addrmgr::GetAddresses + addrmgr::Events>
     ConnectionManager<U>
 {
     /// Create a new connection manager.
@@ -103,6 +115,7 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
         Self {
             connected: HashMap::new(),
             disconnected: HashSet::new(),
+            last_idle: None,
             config,
             upstream,
         }
@@ -121,6 +134,7 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
         for addr in addrs {
             self.connect(&addr, addrmgr, time);
         }
+        self.upstream.idle(IDLE_TIMEOUT);
     }
 
     /// Connect to a peer.
@@ -143,11 +157,6 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
 
             self.upstream.disconnect(addr);
         }
-    }
-
-    /// Call periodically.
-    pub fn tick(&mut self, addrmgr: &AddressManager<U>) {
-        self.maintain_connections(addrmgr);
     }
 
     /// Attempt to maintain a certain number of outbound peers.
@@ -187,6 +196,7 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
         address: net::SocketAddr,
         local_address: net::SocketAddr,
         link: Link,
+        time: LocalTime,
     ) {
         debug_assert!(!self.connected.contains_key(&address));
 
@@ -206,6 +216,7 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
                         address,
                         local_address,
                         link,
+                        time,
                     },
                 );
             }
@@ -231,15 +242,12 @@ impl<U: Connect + Disconnect + Events + addrmgr::GetAddresses + addrmgr::Events>
     }
 
     /// Call when we recevied a timeout.
-    pub fn received_timeout(
-        &mut self,
-        addr: PeerId,
-        _local_time: LocalTime,
-        addrmgr: &AddressManager<U>,
-    ) {
-        debug_assert!(!self.connected.contains_key(&addr));
-
-        self.maintain_connections(addrmgr);
+    pub fn received_timeout(&mut self, local_time: LocalTime, addrmgr: &AddressManager<U>) {
+        if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
+            self.maintain_connections(addrmgr);
+            self.upstream.idle(IDLE_TIMEOUT);
+            self.last_idle = Some(local_time);
+        }
     }
 
     /// Get outbound peers.
