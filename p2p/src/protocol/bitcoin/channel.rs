@@ -18,6 +18,8 @@ use crate::protocol::{Message, TimeoutSource};
 use super::network::Network;
 use super::{addrmgr, connmgr, message, syncmgr, Locators};
 
+pub use connmgr::Disconnect;
+
 /// Used to construct a protocol output.
 #[derive(Debug, Clone)]
 pub struct Channel<M: Message> {
@@ -110,6 +112,12 @@ impl addrmgr::Events for Channel<RawNetworkMessage> {
     }
 }
 
+impl syncmgr::Idle for Channel<RawNetworkMessage> {
+    fn idle(&self, timeout: LocalDuration) {
+        self.set_timeout(TimeoutSource::Synch(None), timeout);
+    }
+}
+
 impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
     fn get_headers(
         &self,
@@ -126,7 +134,7 @@ impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
         });
 
         self.message(addr, msg)
-            .set_timeout(TimeoutSource::Synch(addr), timeout);
+            .set_timeout(TimeoutSource::Synch(Some(addr)), timeout);
     }
 
     fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>) {

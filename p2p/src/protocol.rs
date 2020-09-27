@@ -50,15 +50,13 @@ pub trait Message: Send + Sync + 'static {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimeoutSource {
     /// Header sync.
-    Synch(PeerId),
+    Synch(Option<PeerId>),
     /// Peer connect.
     Connect,
     /// Peer handshake.
     Handshake(PeerId),
     /// Peer ping.
     Ping(PeerId),
-    /// A general timeout.
-    Global,
 }
 
 /// A protocol input event, parametrized over the network message type.
@@ -125,9 +123,6 @@ pub trait ProtocolBuilder {
 /// A finite-state machine that can advance one step at a time, given an input event.
 /// Parametrized over the message type.
 pub trait Protocol<M: Message> {
-    /// Duration of inactivity before timing out a peer.
-    const IDLE_TIMEOUT: LocalDuration;
-
     /// A command to query or control the protocol.
     type Command;
 

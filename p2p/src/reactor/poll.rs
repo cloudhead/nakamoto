@@ -6,7 +6,7 @@ use bitcoin::network::stream_reader::StreamReader;
 
 use crossbeam_channel as chan;
 
-use nakamoto_common::block::time::LocalTime;
+use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
 use crate::error::Error;
 use crate::event::Event;
@@ -262,7 +262,11 @@ where
         let mut timeouts = Vec::with_capacity(32);
 
         loop {
-            let timeout = self.timeouts.next().unwrap_or(P::IDLE_TIMEOUT).into();
+            let timeout = self
+                .timeouts
+                .next()
+                .unwrap_or(LocalDuration::from_mins(60))
+                .into();
             let result = self.sources.wait_timeout(&mut events, timeout); // Blocking.
             let local_time = SystemTime::now().into();
 

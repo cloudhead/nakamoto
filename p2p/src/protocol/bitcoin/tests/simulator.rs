@@ -108,12 +108,10 @@ impl InputResult {
             .iter()
             .filter_map(payload)
             .find(|(addr, msg)| f(addr, msg))
-            .unwrap_or_else(|| {
-                panic!(
-                    "expected message was not found in output: {:?}",
-                    self.outputs
-                )
-            })
+            .expect(&format!(
+                "expected message was not found in output: {:?}",
+                self.outputs
+            ))
     }
 
     pub fn schedule(self, sim: &mut Sim) {
@@ -259,20 +257,6 @@ impl Sim {
         log::info!("(sim) Elapsing {} seconds", duration.as_secs());
 
         self.time = self.time + duration;
-    }
-
-    /// Let some time pass and trigger the global timeout.
-    pub fn timeout(&mut self, duration: LocalDuration) {
-        self.elapse(duration);
-
-        for peer in self.peers.values_mut() {
-            peer.protocol
-                .step(Input::Timeout(TimeoutSource::Global), self.time);
-
-            for output in peer.outbound.clone().try_iter() {
-                peer.schedule(&mut self.inbox, output);
-            }
-        }
     }
 
     /// Process a protocol output event.

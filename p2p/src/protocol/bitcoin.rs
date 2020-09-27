@@ -537,17 +537,12 @@ impl Peer {
 }
 
 impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
-    const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(10);
-
     type Command = self::Command;
 
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.syncmgr.initialize(time);
         self.connmgr.initialize(time, &mut self.addrmgr);
-
-        self.outbound
-            .set_timeout(TimeoutSource::Global, Self::IDLE_TIMEOUT);
     }
 
     fn step(&mut self, input: Input, local_time: LocalTime) {
@@ -690,11 +685,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         }
                     }
                     TimeoutSource::Synch(addr) => {
-                        let timeout = self.syncmgr.received_timeout(addr, local_time);
-
-                        if let syncmgr::OnTimeout::Disconnect = timeout {
-                            self.disconnect(addr);
-                        }
+                        self.syncmgr.received_timeout(addr, local_time);
                     }
                     TimeoutSource::Ping(addr) => {
                         if let Some(peer) = self.peers.get_mut(&addr) {
@@ -725,14 +716,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 }
                             }
                         }
-                    }
-                    TimeoutSource::Global => {
-                        debug!(target: self.target, "Tick: local_time = {}", local_time);
-
-                        self.syncmgr.tick(local_time);
-
-                        self.outbound
-                            .set_timeout(TimeoutSource::Global, Self::IDLE_TIMEOUT);
                     }
                 }
             }

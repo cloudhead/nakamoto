@@ -344,7 +344,7 @@ fn test_idle() {
     sim.step();
 
     // Let a certain amount of time pass.
-    sim.timeout(PING_INTERVAL);
+    sim.elapse(PING_INTERVAL);
 
     let bob = sim.get("bob");
     let alice = sim.get("alice");
@@ -361,7 +361,7 @@ fn test_idle() {
         .expect("Alice pings Bob");
 
     // More time passes, and Bob doesn't `pong` back.
-    sim.timeout(PING_TIMEOUT);
+    sim.elapse(PING_TIMEOUT);
 
     // Alice now decides to disconnect Bob.
     sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob)))
@@ -396,7 +396,7 @@ fn test_getheaders_timeout() {
         .expect("a `getheaders` message should be returned");
     out.iter()
         .find(
-            |o| matches!(o, Out::SetTimeout(TimeoutSource::Synch(addr), _) if addr == &remote_addr),
+            |o| matches!(o, Out::SetTimeout(TimeoutSource::Synch(Some(addr)), _) if addr == &remote_addr),
         )
         .expect("a timer should be returned");
 }
@@ -524,7 +524,10 @@ fn test_getheaders_retry(seed: u64) {
     while asked.len() < ask {
         sim.elapse(syncmgr::REQUEST_TIMEOUT);
 
-        let result = sim.input(&alice, Input::Timeout(TimeoutSource::Synch(last_asked)));
+        let result = sim.input(
+            &alice,
+            Input::Timeout(TimeoutSource::Synch(Some(last_asked))),
+        );
         let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
 
         assert!(
@@ -720,16 +723,16 @@ fn test_stale_tip() {
 
     // Timeout the request.
     sim.elapse(syncmgr::REQUEST_TIMEOUT);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(bob)));
+    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(Some(bob))));
 
     // Some time has passed. The tip timestamp should be considered stale now.
     sim.elapse(syncmgr::TIP_STALE_DURATION);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Global))
+    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(None)))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
 
     // Timeout the request.
     sim.elapse(syncmgr::REQUEST_TIMEOUT);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(bob)));
+    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(Some(bob))));
 
     // Now send another header and wait until the chain update is stale.
     sim.input(
@@ -745,7 +748,7 @@ fn test_stale_tip() {
     // Some more time has passed.
     // Chain update should be stale this time.
     sim.elapse(syncmgr::TIP_STALE_DURATION);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Global))
+    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(None)))
         .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
 }
 
