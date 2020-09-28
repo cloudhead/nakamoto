@@ -22,7 +22,7 @@ use nakamoto_test::block::cache::model;
 use nakamoto_test::logger;
 use nakamoto_test::BITCOIN_HEADERS;
 
-use crate::protocol::bitcoin::{connmgr, Bitcoin, Builder};
+use crate::protocol::bitcoin::{connmgr, pingmgr, Bitcoin, Builder};
 use crate::protocol::ProtocolBuilder;
 
 fn payload<M: Message>(o: &Out<M>) -> Option<(net::SocketAddr, &M::Payload)> {
@@ -344,7 +344,7 @@ fn test_idle() {
     sim.step();
 
     // Let a certain amount of time pass.
-    sim.elapse(PING_INTERVAL);
+    sim.elapse(pingmgr::PING_INTERVAL);
 
     let bob = sim.get("bob");
     let alice = sim.get("alice");
@@ -361,7 +361,7 @@ fn test_idle() {
         .expect("Alice pings Bob");
 
     // More time passes, and Bob doesn't `pong` back.
-    sim.elapse(PING_TIMEOUT);
+    sim.elapse(pingmgr::PING_TIMEOUT);
 
     // Alice now decides to disconnect Bob.
     sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob)))

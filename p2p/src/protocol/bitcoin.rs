@@ -7,6 +7,7 @@ use nonempty::NonEmpty;
 pub mod addrmgr;
 pub mod connmgr;
 pub mod network;
+pub mod pingmgr;
 pub mod syncmgr;
 pub use network::Network;
 pub mod channel;
@@ -17,13 +18,14 @@ mod tests;
 use addrmgr::AddressManager;
 use channel::Channel;
 use connmgr::ConnectionManager;
+use pingmgr::PingManager;
 use syncmgr::SyncManager;
 
 use crate::address_book::AddressBook;
 use crate::event::Event;
 use crate::protocol::{self, Link, Message, Out, PeerId, Protocol, Timeout, TimeoutSource};
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::HashSet;
 use std::fmt::Debug;
 use std::net;
 
@@ -47,16 +49,10 @@ pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
 
 /// Maximum number of addresses to return when receiving a `getaddr` message.
 const MAX_GETADDR_ADDRESSES: usize = 8;
-/// Maximum number of latencies recorded per peer.
-const MAX_RECORDED_LATENCIES: usize = 64;
 /// Maximum height difference for a stale peer, to maintain the connection (2 weeks).
 const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 /// Time to wait for response during peer handshake before disconnecting the peer.
 const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
-/// Time interval to wait between sent pings.
-const PING_INTERVAL: LocalDuration = LocalDuration::from_mins(2);
-/// Time to wait to receive a pong when sending a ping.
-const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 
 /// A time offset, in seconds.
 type TimeOffset = i64;
@@ -166,6 +162,8 @@ pub struct Bitcoin<T> {
     syncmgr: SyncManager<T, Channel<RawNetworkMessage>>,
     /// Peer connection manager.
     connmgr: ConnectionManager<Channel<RawNetworkMessage>>,
+    /// Ping manager.
+    pingmgr: PingManager<Channel<RawNetworkMessage>>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Set of connected peers that have completed the handshake.
@@ -333,6 +331,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 max_inbound_peers,
             },
         );
+        let pingmgr = PingManager::new(rng.clone(), outbound.clone());
 
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),
@@ -348,6 +347,7 @@ impl<T: BlockTree> Bitcoin<T> {
             addrmgr,
             syncmgr,
             connmgr,
+            pingmgr,
             rng,
             outbound,
             ready: HashSet::new(),
@@ -443,10 +443,6 @@ struct Peer {
     link: Link,
     /// Peer state.
     state: PeerState,
-    /// Nonce and time the last ping was sent to this peer.
-    last_ping: Option<(u64, LocalTime)>,
-    /// Observed round-trip latencies for this peer.
-    latencies: VecDeque<LocalDuration>,
     /// Peer nonce. Used to detect self-connections.
     nonce: u64,
     /// Peer user agent string.
@@ -475,12 +471,10 @@ impl Peer {
             time_offset: 0,
             state,
             link,
-            last_ping: None,
-            latencies: VecDeque::new(),
             services: ServiceFlags::NONE,
+            nonce,
             user_agent: String::default(),
             ctx,
-            nonce,
             rng,
         }
     }
@@ -496,26 +490,6 @@ impl Peer {
 
     fn is_outbound(&self) -> bool {
         self.link.is_outbound()
-    }
-
-    fn ping(&mut self, local_time: LocalTime) -> NetworkMessage {
-        let nonce = self.rng.u64(..);
-        self.last_ping = Some((nonce, local_time));
-
-        NetworkMessage::Ping(nonce)
-    }
-
-    /// Calculate the average latency of this peer.
-    #[allow(dead_code)]
-    fn latency(&self) -> LocalDuration {
-        let sum: LocalDuration = self.latencies.iter().sum();
-
-        sum / self.latencies.len() as u32
-    }
-
-    fn record_latency(&mut self, sample: LocalDuration) {
-        self.latencies.push_front(sample);
-        self.latencies.truncate(MAX_RECORDED_LATENCIES);
     }
 
     fn receive_verack(&mut self, time: LocalTime) {
@@ -577,6 +551,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr);
                 self.connmgr.peer_disconnected(&addr, &self.addrmgr);
+                self.pingmgr.peer_disconnected(&addr);
             }
             Input::Received(addr, msg) => {
                 self.outbound
@@ -684,34 +659,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         self.syncmgr.received_timeout(addr, local_time);
                     }
                     TimeoutSource::Ping(addr) => {
-                        if let Some(peer) = self.peers.get_mut(&addr) {
-                            if let PeerState::Ready { last_active, .. } = peer.state {
-                                let now = self.clock.local_time();
-
-                                if let Some((_, last_ping)) = peer.last_ping {
-                                    // A ping was sent and we're waiting for a `pong`. If too much
-                                    // time has passed, we consider this peer dead, and disconnect
-                                    // from them.
-                                    if now - last_ping >= PING_TIMEOUT {
-                                        let address = peer.address;
-
-                                        log::debug!(
-                                            target: self.target, "{}: Disconnecting (ping timeout)",
-
-                                            address
-                                        );
-                                        self.disconnect(address);
-                                    }
-                                } else if now - last_active >= PING_INTERVAL {
-                                    let ping = peer.ping(now);
-
-                                    self.outbound
-                                        .message(peer.address, ping)
-                                        .set_timeout(TimeoutSource::Ping(addr), PING_TIMEOUT)
-                                        .set_timeout(TimeoutSource::Ping(addr), PING_INTERVAL);
-                                }
-                            }
-                        }
+                        self.pingmgr.received_timeout(addr, local_time);
                     }
                 }
             }
@@ -728,7 +676,6 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) {
-        let builder = message::Builder::new(self.network);
         let now = self.clock.local_time();
         let cmd = msg.cmd();
 
@@ -743,7 +690,7 @@ impl<T: BlockTree> Bitcoin<T> {
             return;
         }
 
-        let mut peer = if let Some(peer) = self.peers.get_mut(&addr) {
+        let peer = if let Some(peer) = self.peers.get_mut(&addr) {
             peer
         } else {
             debug!(target: self.target, "Received {:?} from unknown peer {}", cmd, addr);
@@ -762,23 +709,11 @@ impl<T: BlockTree> Bitcoin<T> {
         } = peer.state
         {
             *last_active = now;
-        }
 
-        if peer.is_ready() {
             if let NetworkMessage::Ping(nonce) = msg.payload {
-                return self
-                    .outbound
-                    .push(builder.message(addr, NetworkMessage::Pong(nonce)));
+                return self.pingmgr.ping_received(addr, nonce);
             } else if let NetworkMessage::Pong(nonce) = msg.payload {
-                match peer.last_ping {
-                    Some((last_nonce, last_time)) if nonce == last_nonce => {
-                        peer.record_latency(now - last_time);
-                        peer.last_ping = None;
-                    }
-                    // Unsolicited or redundant `pong`. Ignore.
-                    _ => {}
-                }
-                return;
+                return self.pingmgr.pong_received(addr, nonce, now);
             } else if let NetworkMessage::Addr(addrs) = msg.payload {
                 if addrs.is_empty() {
                     // Peer misbehaving, got empty message.
@@ -915,7 +850,6 @@ impl<T: BlockTree> Bitcoin<T> {
                     self.addrmgr
                         .peer_negotiated(&addr, peer.services, peer.link, now);
 
-                    let ping = peer.ping(now);
                     let link = peer.link;
 
                     match link {
@@ -923,16 +857,14 @@ impl<T: BlockTree> Bitcoin<T> {
                             self.outbound
                                 .message(addr, NetworkMessage::Verack)
                                 .message(addr, NetworkMessage::SendHeaders)
-                                .message(addr, NetworkMessage::GetAddr)
-                                .message(addr, ping);
+                                .message(addr, NetworkMessage::GetAddr);
                         }
                         Link::Inbound => {
-                            self.outbound
-                                .message(addr, NetworkMessage::SendHeaders)
-                                .message(addr, ping);
+                            self.outbound.message(addr, NetworkMessage::SendHeaders);
                         }
                     }
 
+                    self.pingmgr.peer_negotiated(peer.address, now);
                     self.syncmgr.peer_negotiated(
                         peer.address,
                         peer.height,

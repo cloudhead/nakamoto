@@ -16,7 +16,7 @@ use crate::protocol::{Event, Out, PeerId};
 use crate::protocol::{Message, TimeoutSource};
 
 use super::network::Network;
-use super::{addrmgr, connmgr, message, syncmgr, Locators};
+use super::{addrmgr, connmgr, message, pingmgr, syncmgr, Locators};
 
 pub use connmgr::Disconnect;
 
@@ -109,6 +109,23 @@ impl addrmgr::Events for Channel<RawNetworkMessage> {
     fn event(&self, event: addrmgr::Event) {
         debug!(target: self.target, "[addr] {}", &event);
         self.event(Event::AddrManager(event));
+    }
+}
+
+impl pingmgr::Ping for Channel<RawNetworkMessage> {
+    fn ping(&self, addr: net::SocketAddr, nonce: u64) -> &Self {
+        self.message(addr, NetworkMessage::Ping(nonce));
+        self
+    }
+
+    fn pong(&self, addr: net::SocketAddr, nonce: u64) -> &Self {
+        self.message(addr, NetworkMessage::Pong(nonce));
+        self
+    }
+
+    fn set_timeout(&self, addr: net::SocketAddr, timeout: LocalDuration) -> &Self {
+        self.set_timeout(TimeoutSource::Ping(addr), timeout);
+        self
     }
 }
 
