@@ -75,8 +75,8 @@ impl Default for NodeConfig {
             address_book: AddressBook::default(),
             timeout: time::Duration::from_secs(60),
             home: PathBuf::from(env::var("HOME").unwrap_or_default()),
-            target_outbound_peers: bitcoin::TARGET_OUTBOUND_PEERS,
-            max_inbound_peers: bitcoin::MAX_INBOUND_PEERS,
+            target_outbound_peers: bitcoin::connmgr::TARGET_OUTBOUND_PEERS,
+            max_inbound_peers: bitcoin::connmgr::MAX_INBOUND_PEERS,
             name: "self",
         }
     }

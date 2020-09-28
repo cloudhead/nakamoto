@@ -13,6 +13,10 @@ use crate::protocol::{Link, PeerId, Timeout};
 pub const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
 /// Time to wait until idle.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
+/// Target number of concurrent outbound peer connections.
+pub const TARGET_OUTBOUND_PEERS: usize = 8;
+/// Maximum number of inbound peer connections.
+pub const MAX_INBOUND_PEERS: usize = 16;
 
 /// Ability to connect to peers.
 pub trait Connect {

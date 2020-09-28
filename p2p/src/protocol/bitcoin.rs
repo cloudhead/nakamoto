@@ -44,10 +44,6 @@ use nakamoto_common::collections::HashMap;
 pub const PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
-/// Target number of concurrent outbound peer connections.
-pub const TARGET_OUTBOUND_PEERS: usize = 8;
-/// Maximum number of inbound peer connections.
-pub const MAX_INBOUND_PEERS: usize = 16;
 
 /// Maximum number of addresses to return when receiving a `getaddr` message.
 const MAX_GETADDR_ADDRESSES: usize = 8;
@@ -238,8 +234,8 @@ impl Default for Config {
             services: ServiceFlags::NONE,
             whitelist: Whitelist::default(),
             protocol_version: PROTOCOL_VERSION,
-            target_outbound_peers: TARGET_OUTBOUND_PEERS,
-            max_inbound_peers: MAX_INBOUND_PEERS,
+            target_outbound_peers: connmgr::TARGET_OUTBOUND_PEERS,
+            max_inbound_peers: connmgr::MAX_INBOUND_PEERS,
             user_agent: USER_AGENT,
             target: "self",
         }
