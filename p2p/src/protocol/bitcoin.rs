@@ -684,9 +684,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 target: self.target, "{}: Received message with invalid magic: {}",
                 addr, msg.magic
             );
-            self.disconnect(addr);
-
-            return;
+            return self.disconnect(addr);
         }
 
         let peer = if let Some(peer) = self.peers.get_mut(&addr) {
@@ -702,33 +700,64 @@ impl<T: BlockTree> Bitcoin<T> {
             addr, cmd, peer.state
         );
 
-        if let PeerState::Ready {
-            ref mut last_active,
-            ..
-        } = peer.state
-        {
-            *last_active = now;
+        match &mut peer.state {
+            PeerState::Ready {
+                ref mut last_active,
+                ..
+            } => {
+                *last_active = now;
 
-            if let NetworkMessage::Ping(nonce) = msg.payload {
-                return self.pingmgr.ping_received(addr, nonce);
-            } else if let NetworkMessage::Pong(nonce) = msg.payload {
-                return self.pingmgr.pong_received(addr, nonce, now);
-            } else if let NetworkMessage::Addr(addrs) = msg.payload {
-                if addrs.is_empty() {
-                    // Peer misbehaving, got empty message.
-                    return;
+                match msg.payload {
+                    NetworkMessage::Ping(nonce) => {
+                        self.pingmgr.ping_received(addr, nonce);
+                    }
+                    NetworkMessage::Pong(nonce) => {
+                        self.pingmgr.pong_received(addr, nonce, now);
+                    }
+                    NetworkMessage::Headers(headers) => {
+                        self.syncmgr.received_headers(&addr, headers, &self.clock);
+                    }
+                    NetworkMessage::GetHeaders(GetHeadersMessage {
+                        locator_hashes,
+                        stop_hash,
+                        ..
+                    }) => {
+                        self.syncmgr
+                            .received_getheaders(&addr, (locator_hashes, stop_hash));
+                    }
+                    NetworkMessage::Inv(inventory) => {
+                        // Receive an `inv` message. This will happen if we are out of sync with a
+                        // peer. And blocks are being announced. Otherwise, we expect to receive a
+                        // `headers` message.
+                        self.syncmgr.received_inv(addr, inventory, &self.clock);
+                    }
+                    NetworkMessage::Addr(addrs) => {
+                        if addrs.is_empty() {
+                            // Peer misbehaving, got empty message.
+                            return;
+                        }
+                        self.addrmgr
+                            .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
+                    }
+                    NetworkMessage::GetAddr => {
+                        // TODO: Use `sample` here when it returns an iterator.
+                        let addrs = self
+                            .addrmgr
+                            .iter()
+                            // Don't send the peer their own address, nor non-TCP addresses.
+                            .filter(|a| a.socket_addr().map_or(false, |s| s != addr))
+                            .take(MAX_GETADDR_ADDRESSES)
+                            // TODO: Return a non-zero time value.
+                            .map(|a| (0, a.clone()))
+                            .collect();
+
+                        self.outbound.message(addr, NetworkMessage::Addr(addrs));
+                    }
+                    _ => {
+                        debug!(target: self.target, "{}: Ignoring {:?}", peer.address, cmd);
+                    }
                 }
-                self.addrmgr
-                    .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
-
-                return;
-            } else if let NetworkMessage::Headers(headers) = msg.payload {
-                return self.syncmgr.received_headers(&addr, headers, &self.clock);
             }
-        }
-
-        // TODO: Make sure we handle all messages at all times in some way.
-        match &peer.state {
             PeerState::Handshake(Handshake::AwaitingVersion) => {
                 if let NetworkMessage::Version(VersionMessage {
                     // Peer's best height.
@@ -833,7 +862,6 @@ impl<T: BlockTree> Bitcoin<T> {
                                 .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
                         }
                     }
-                    return;
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
@@ -871,43 +899,10 @@ impl<T: BlockTree> Bitcoin<T> {
                         peer.link,
                         &self.clock,
                     );
-
-                    return;
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
                     return self.disconnect(addr);
-                }
-            }
-            PeerState::Ready { .. } => {
-                if let NetworkMessage::GetHeaders(GetHeadersMessage {
-                    locator_hashes,
-                    stop_hash,
-                    ..
-                }) = msg.payload
-                {
-                    return self
-                        .syncmgr
-                        .received_getheaders(&addr, (locator_hashes, stop_hash));
-                } else if let NetworkMessage::Inv(inventory) = msg.payload {
-                    // Receive an `inv` message. This will happen if we are out of sync with a
-                    // peer. And blocks are being announced. Otherwise, we expect to receive a
-                    // `headers` message.
-                    return self.syncmgr.received_inv(addr, inventory, &self.clock);
-                } else if let NetworkMessage::GetAddr = msg.payload {
-                    // TODO: Use `sample` here when it returns an iterator.
-                    let addrs = self
-                        .addrmgr
-                        .iter()
-                        // Don't send the peer their own address, nor non-TCP addresses.
-                        .filter(|a| a.socket_addr().map_or(false, |s| s != addr))
-                        .take(MAX_GETADDR_ADDRESSES)
-                        // TODO: Return a non-zero time value.
-                        .map(|a| (0, a.clone()))
-                        .collect();
-
-                    self.outbound.message(addr, NetworkMessage::Addr(addrs));
-                    return;
                 }
             }
             PeerState::Disconnecting => {
@@ -917,8 +912,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 );
             }
         }
-
-        debug!(target: self.target, "{}: Ignoring {:?}", peer.address, cmd);
     }
 
     fn version(
