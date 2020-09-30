@@ -173,7 +173,7 @@ pub struct Bitcoin<T> {
     /// Random number generator.
     rng: fastrand::Rng,
     /// Outbound channel. Used to communicate protocol events with a reactor.
-    outbound: Upstream,
+    upstream: Upstream,
 }
 
 /// Protocol builder. Consume to build a new protocol instance.
@@ -295,7 +295,7 @@ impl<T: BlockTree> Bitcoin<T> {
         clock: AdjustedTime<PeerId>,
         rng: fastrand::Rng,
         config: Config,
-        outbound: chan::Sender<Out<RawNetworkMessage>>,
+        upstream: chan::Sender<Out<RawNetworkMessage>>,
     ) -> Self {
         let Config {
             network,
@@ -311,9 +311,9 @@ impl<T: BlockTree> Bitcoin<T> {
         } = config;
 
         let height = tree.height();
-        let outbound = Upstream::new(network, protocol_version, target, outbound);
+        let upstream = Upstream::new(network, protocol_version, target, upstream);
 
-        let addrmgr = AddressManager::from(address_book, rng.clone(), outbound.clone());
+        let addrmgr = AddressManager::from(address_book, rng.clone(), upstream.clone());
         let syncmgr = SyncManager::new(
             tree,
             syncmgr::Config {
@@ -322,16 +322,16 @@ impl<T: BlockTree> Bitcoin<T> {
                 params: params.clone(),
             },
             rng.clone(),
-            outbound.clone(),
+            upstream.clone(),
         );
         let connmgr = ConnectionManager::new(
-            outbound.clone(),
+            upstream.clone(),
             connmgr::Config {
                 target_outbound_peers,
                 max_inbound_peers,
             },
         );
-        let pingmgr = PingManager::new(rng.clone(), outbound.clone());
+        let pingmgr = PingManager::new(rng.clone(), upstream.clone());
 
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),
@@ -349,7 +349,7 @@ impl<T: BlockTree> Bitcoin<T> {
             connmgr,
             pingmgr,
             rng,
-            outbound,
+            upstream,
         }
     }
 
@@ -368,7 +368,7 @@ impl<T: BlockTree> Bitcoin<T> {
         );
 
         // Set a timeout for receiving the `version` message.
-        self.outbound
+        self.upstream
             .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
     }
 }
@@ -516,7 +516,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let nonce = self.rng.u64(..);
 
                         self.connected(addr, local_addr, nonce, link);
-                        self.outbound
+                        self.upstream
                             .message(addr, self.version(addr, local_addr, nonce, self.height));
                     }
                 }
@@ -529,7 +529,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                 self.pingmgr.peer_disconnected(&addr);
             }
             Input::Received(addr, msg) => {
-                self.outbound
+                self.upstream
                     .event(Event::Received(addr, msg.payload.clone()));
                 self.receive(addr, msg);
             }
@@ -559,7 +559,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                                 let r = self.rng.usize(..n);
                                 let p = peers.nth(r).unwrap();
 
-                                self.outbound.message(p.address, msg);
+                                self.upstream.message(p.address, msg);
                                 reply.send(Some(p.address)).ok();
                             }
                             _ => {
@@ -571,7 +571,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         debug!(target: self.target, "Received command: Broadcast({:?})", msg);
 
                         for peer in self.outbound() {
-                            self.outbound.message(peer.address, msg.clone());
+                            self.upstream.message(peer.address, msg.clone());
                         }
                     }
                     Command::ImportHeaders(headers, reply) => {
@@ -602,10 +602,10 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         let ix = self.rng.usize(..peers.len());
                         let peer = *peers.iter().nth(ix).unwrap();
 
-                        self.outbound.message(peer.address, NetworkMessage::Tx(tx));
+                        self.upstream.message(peer.address, NetworkMessage::Tx(tx));
                     }
                     Command::Shutdown => {
-                        self.outbound.push(Out::Shutdown);
+                        self.upstream.push(Out::Shutdown);
                     }
                 }
             }
@@ -724,7 +724,7 @@ impl<T: BlockTree> Bitcoin<T> {
                             .map(|a| (0, a.clone()))
                             .collect();
 
-                        self.outbound.message(addr, NetworkMessage::Addr(addrs));
+                        self.upstream.message(addr, NetworkMessage::Addr(addrs));
                     }
                     _ => {
                         debug!(target: self.target, "{}: Ignoring {:?}", peer.address, cmd);
@@ -823,13 +823,13 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     match peer.link {
                         Link::Outbound => {
-                            self.outbound
+                            self.upstream
                                 .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
                         }
                         Link::Inbound => {
                             let nonce = peer.nonce;
 
-                            self.outbound
+                            self.upstream
                                 .message(addr, self.version(addr, local_addr, nonce, self.height))
                                 .message(addr, NetworkMessage::Verack)
                                 .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
@@ -855,13 +855,13 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     match link {
                         Link::Outbound => {
-                            self.outbound
+                            self.upstream
                                 .message(addr, NetworkMessage::Verack)
                                 .message(addr, NetworkMessage::SendHeaders)
                                 .message(addr, NetworkMessage::GetAddr);
                         }
                         Link::Inbound => {
-                            self.outbound.message(addr, NetworkMessage::SendHeaders);
+                            self.upstream.message(addr, NetworkMessage::SendHeaders);
                         }
                     }
 
