@@ -644,7 +644,15 @@ fn test_getaddr() {
     let alice = sim.get("alice");
 
     // Disconnect a peer.
-    let peer = *sim.peer("alice").protocol.ready.iter().next().unwrap();
+    let peer = sim
+        .peer("alice")
+        .protocol
+        .peers
+        .values()
+        .filter(|p| p.is_ready())
+        .next()
+        .unwrap()
+        .address;
     let result = sim.input(&alice, Input::Disconnected(peer));
 
     // This should trigger a `getaddr` because Alice isn't connected to enough peers now.

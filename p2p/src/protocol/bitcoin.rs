@@ -165,8 +165,6 @@ pub struct Bitcoin<T> {
     pingmgr: PingManager<Channel<RawNetworkMessage>>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
-    /// Set of connected peers that have completed the handshake.
-    ready: HashSet<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
     target: &'static str,
     /// Random number generator.
@@ -349,7 +347,6 @@ impl<T: BlockTree> Bitcoin<T> {
             pingmgr,
             rng,
             outbound,
-            ready: HashSet::new(),
         }
     }
 
@@ -532,7 +529,6 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
             }
             Input::Disconnected(addr) => {
                 self.peers.remove(&addr);
-                self.ready.remove(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr);
                 self.connmgr.peer_disconnected(&addr, &self.addrmgr);
@@ -608,10 +604,11 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                         debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
                         // FIXME: Consolidate with `Query`.
-                        let ix = self.rng.usize(..self.ready.len());
-                        let peer = *self.ready.iter().nth(ix).unwrap();
+                        let peers = self.outbound().collect::<Vec<_>>();
+                        let ix = self.rng.usize(..peers.len());
+                        let peer = *peers.iter().nth(ix).unwrap();
 
-                        self.outbound.message(peer, NetworkMessage::Tx(tx));
+                        self.outbound.message(peer.address, NetworkMessage::Tx(tx));
                     }
                     Command::Shutdown => {
                         self.outbound.push(Out::Shutdown);
@@ -856,7 +853,6 @@ impl<T: BlockTree> Bitcoin<T> {
 
                     peer.receive_verack(now);
 
-                    self.ready.insert(addr);
                     self.clock.record_offset(addr, peer.time_offset);
                     self.addrmgr
                         .peer_negotiated(&addr, peer.services, peer.link, now);
