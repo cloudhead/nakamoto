@@ -2,7 +2,6 @@
 #![warn(missing_docs)]
 use crossbeam_channel as chan;
 use log::*;
-use nonempty::NonEmpty;
 
 pub mod addrmgr;
 pub mod connmgr;
@@ -33,7 +32,7 @@ use bitcoin::consensus::params::Params;
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
+use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_network::VersionMessage;
 
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
@@ -724,7 +723,7 @@ impl<T: BlockTree> Bitcoin<T> {
 
                 return;
             } else if let NetworkMessage::Headers(headers) = msg.payload {
-                return self.receive_headers(addr, headers);
+                return self.syncmgr.received_headers(&addr, headers, &self.clock);
             }
         }
 
@@ -887,12 +886,14 @@ impl<T: BlockTree> Bitcoin<T> {
                     ..
                 }) = msg.payload
                 {
-                    self.syncmgr
+                    return self
+                        .syncmgr
                         .received_getheaders(&addr, (locator_hashes, stop_hash));
-
-                    return;
                 } else if let NetworkMessage::Inv(inventory) = msg.payload {
-                    return self.receive_inv(addr, inventory);
+                    // Receive an `inv` message. This will happen if we are out of sync with a
+                    // peer. And blocks are being announced. Otherwise, we expect to receive a
+                    // `headers` message.
+                    return self.syncmgr.received_inv(addr, inventory, &self.clock);
                 } else if let NetworkMessage::GetAddr = msg.payload {
                     // TODO: Use `sample` here when it returns an iterator.
                     let addrs = self
@@ -950,27 +951,6 @@ impl<T: BlockTree> Bitcoin<T> {
             // Whether we want to receive transaction `inv` messages.
             relay: false,
         })
-    }
-
-    /// Receive an `inv` message. This will happen if we are out of sync with a peer. And blocks
-    /// are being announced. Otherwise, we expect to receive a `headers` message.
-    fn receive_inv(&mut self, addr: PeerId, inv: Vec<Inventory>) {
-        self.syncmgr.received_inv(addr, inv, &self.clock);
-    }
-
-    fn receive_headers(&mut self, addr: PeerId, headers: Vec<BlockHeader>) {
-        let headers = if let Some(headers) = NonEmpty::from_vec(headers) {
-            headers
-        } else {
-            return;
-        };
-
-        debug!(
-            target: self.target, "{}: Received {} header(s)",
-            addr,
-            headers.len()
-        );
-        self.syncmgr.received_headers(&addr, headers, &self.clock);
     }
 
     fn disconnect(&mut self, addr: PeerId) {

@@ -6,11 +6,13 @@ use super::*;
 use simulator::PeerConfig;
 
 use bitcoin::consensus::params::Params;
+use bitcoin::network::message_blockdata::Inventory;
 use bitcoin_hashes::hex::FromHex;
 
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
+use nonempty::NonEmpty;
 use quickcheck_macros::quickcheck;
 
 use nakamoto_chain::block::cache::BlockCache;

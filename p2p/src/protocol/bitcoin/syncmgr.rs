@@ -117,6 +117,8 @@ pub struct SyncManager<T, U> {
 /// An event emitted by the sync manager.
 #[derive(Debug)]
 pub enum Event {
+    /// Headers received from a peer.
+    ReceivedHeaders(PeerId, usize),
     /// Invalid headers received from a peer.
     ReceivedInvalidHeaders(PeerId, Error),
     /// Unsolicited headers received.
@@ -138,6 +140,9 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::ReceivedHeaders(addr, count) => {
+                write!(fmt, "{}: Received {} header(s)", addr, count)
+            }
             Event::ReceivedInvalidHeaders(addr, error) => {
                 write!(fmt, "{}: Received invalid headers: {}", addr, error)
             }
@@ -292,9 +297,17 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
     pub fn received_headers(
         &mut self,
         from: &PeerId,
-        headers: NonEmpty<BlockHeader>,
+        headers: Vec<BlockHeader>,
         clock: &impl Clock,
     ) {
+        let headers = if let Some(headers) = NonEmpty::from_vec(headers) {
+            headers
+        } else {
+            return;
+        };
+        self.upstream
+            .event(Event::ReceivedHeaders(*from, headers.len()));
+
         let length = headers.len();
         let best = headers.last().block_hash();
         let peer = self.peers.get_mut(from).unwrap();
