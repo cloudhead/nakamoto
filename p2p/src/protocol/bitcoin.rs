@@ -354,8 +354,6 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     fn connected(&mut self, addr: PeerId, local_addr: net::SocketAddr, nonce: u64, link: Link) {
-        let rng = self.rng.clone();
-
         // TODO: Keep negotiated peers in a different set with a user agent.
         // TODO: Handle case where peer already exists.
         self.peers.insert(
@@ -366,8 +364,6 @@ impl<T: BlockTree> Bitcoin<T> {
                 PeerState::Handshake(Handshake::default()),
                 nonce,
                 link,
-                rng,
-                self.target,
             ),
         );
 
@@ -446,10 +442,6 @@ struct Peer {
     nonce: u64,
     /// Peer user agent string.
     user_agent: String,
-    /// Random number generator.
-    rng: fastrand::Rng,
-    /// Informational context for this peer. Used for logging purposes only.
-    ctx: &'static str,
 }
 
 impl Peer {
@@ -460,8 +452,6 @@ impl Peer {
         state: PeerState,
         nonce: u64,
         link: Link,
-        rng: fastrand::Rng,
-        ctx: &'static str,
     ) -> Self {
         Self {
             address,
@@ -473,8 +463,6 @@ impl Peer {
             services: ServiceFlags::NONE,
             nonce,
             user_agent: String::default(),
-            ctx,
-            rng,
         }
     }
 
@@ -499,8 +487,6 @@ impl Peer {
         if state == self.state {
             return;
         }
-        debug!(target: self.ctx, "{}: {:?} -> {:?}", self.address, self.state, state);
-
         self.state = state;
     }
 }
@@ -870,6 +856,8 @@ impl<T: BlockTree> Bitcoin<T> {
             }
             PeerState::Handshake(Handshake::AwaitingVerack) => {
                 if msg.payload == NetworkMessage::Verack {
+                    debug!(target: self.target, "{}: Peer negotiated", peer.address);
+
                     peer.receive_verack(now);
 
                     self.ready.insert(addr);
@@ -947,6 +935,8 @@ impl<T: BlockTree> Bitcoin<T> {
     }
 
     fn disconnect(&mut self, addr: PeerId) {
+        debug!(target: self.target, "{}: Peer disconnecting..", addr);
+
         let peer = self
             .peers
             .get_mut(&addr)
