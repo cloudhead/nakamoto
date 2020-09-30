@@ -629,12 +629,8 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
                     }
                     TimeoutSource::Handshake(addr) => {
                         if let Some(peer) = self.peers.get_mut(&addr) {
-                            match peer.state {
-                                PeerState::Handshake(Handshake::AwaitingVerack)
-                                | PeerState::Handshake(Handshake::AwaitingVersion) => {
-                                    self.disconnect(addr);
-                                }
-                                _ => {}
+                            if let PeerState::Handshake(_) = peer.state {
+                                self.disconnect(addr);
                             }
                         } else {
                             debug!(target: self.target, "Peer {} no longer exists (ignoring)", addr);
@@ -851,7 +847,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
-                    return self.disconnect(addr);
+                    self.disconnect(addr);
                 }
             }
             PeerState::Handshake(Handshake::AwaitingVerack) => {
@@ -890,7 +886,7 @@ impl<T: BlockTree> Bitcoin<T> {
                 } else {
                     // TODO: Include disconnect reason.
                     debug!(target: self.target, "{}: Peer misbehaving", addr);
-                    return self.disconnect(addr);
+                    self.disconnect(addr);
                 }
             }
             PeerState::Disconnecting => {

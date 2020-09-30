@@ -32,6 +32,8 @@ const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 const READ_TIMEOUT: time::Duration = time::Duration::from_secs(6);
 /// Maximum time to wait when writing to a socket.
 const WRITE_TIMEOUT: time::Duration = time::Duration::from_secs(3);
+/// Maximum amount of time to wait for i/o.
+const WAIT_TIMEOUT: LocalDuration = LocalDuration::from_mins(60);
 
 #[derive(Debug)]
 struct Socket<R: Read + Write, M> {
@@ -262,11 +264,7 @@ where
         let mut timeouts = Vec::with_capacity(32);
 
         loop {
-            let timeout = self
-                .timeouts
-                .next()
-                .unwrap_or(LocalDuration::from_mins(60))
-                .into();
+            let timeout = self.timeouts.next().unwrap_or(WAIT_TIMEOUT).into();
             let result = self.sources.wait_timeout(&mut events, timeout); // Blocking.
             let local_time = SystemTime::now().into();
 

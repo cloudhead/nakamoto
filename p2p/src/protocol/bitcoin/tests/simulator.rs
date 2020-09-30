@@ -100,6 +100,7 @@ impl InputResult {
     }
 
     #[track_caller]
+    #[allow(clippy::expect_fun_call)]
     pub fn message<F>(&self, f: F) -> (PeerId, &NetworkMessage)
     where
         F: Fn(&PeerId, &NetworkMessage) -> bool,
