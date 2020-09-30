@@ -467,15 +467,6 @@ impl Peer {
         matches!(self.state, PeerState::Ready { .. })
     }
 
-    #[allow(dead_code)]
-    fn is_inbound(&self) -> bool {
-        self.link == Link::Inbound
-    }
-
-    fn is_outbound(&self) -> bool {
-        self.link.is_outbound()
-    }
-
     fn receive_verack(&mut self, time: LocalTime) {
         self.transition(PeerState::Ready { last_active: time });
     }
@@ -650,7 +641,7 @@ impl<T: BlockTree> Bitcoin<T> {
     fn outbound(&self) -> impl Iterator<Item = &Peer> + Clone {
         self.peers
             .values()
-            .filter(|p| p.is_ready() && p.is_outbound())
+            .filter(|p| p.is_ready() && p.link.is_outbound())
     }
 
     fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) {
