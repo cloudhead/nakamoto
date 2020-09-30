@@ -62,6 +62,9 @@ type Locators = (Vec<BlockHash>, BlockHash);
 /// Input into the state machine.
 type Input = protocol::Input<RawNetworkMessage, Command>;
 
+/// Upstream communication channel. The protocol interacts with the peer network via this channel.
+type Upstream = Channel<RawNetworkMessage>;
+
 /// A command or request that can be sent to the protocol.
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -156,13 +159,13 @@ pub struct Bitcoin<T> {
     /// Peer whitelist.
     whitelist: Whitelist,
     /// Peer address manager.
-    addrmgr: AddressManager<Channel<RawNetworkMessage>>,
+    addrmgr: AddressManager<Upstream>,
     /// Blockchain synchronization manager.
-    syncmgr: SyncManager<T, Channel<RawNetworkMessage>>,
+    syncmgr: SyncManager<T, Upstream>,
     /// Peer connection manager.
-    connmgr: ConnectionManager<Channel<RawNetworkMessage>>,
+    connmgr: ConnectionManager<Upstream>,
     /// Ping manager.
-    pingmgr: PingManager<Channel<RawNetworkMessage>>,
+    pingmgr: PingManager<Upstream>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
@@ -170,7 +173,7 @@ pub struct Bitcoin<T> {
     /// Random number generator.
     rng: fastrand::Rng,
     /// Outbound channel. Used to communicate protocol events with a reactor.
-    outbound: Channel<RawNetworkMessage>,
+    outbound: Upstream,
 }
 
 /// Protocol builder. Consume to build a new protocol instance.
@@ -308,7 +311,7 @@ impl<T: BlockTree> Bitcoin<T> {
         } = config;
 
         let height = tree.height();
-        let outbound = Channel::new(network, protocol_version, target, outbound);
+        let outbound = Upstream::new(network, protocol_version, target, outbound);
 
         let addrmgr = AddressManager::from(address_book, rng.clone(), outbound.clone());
         let syncmgr = SyncManager::new(
