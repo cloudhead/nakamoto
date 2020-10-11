@@ -2,49 +2,51 @@
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::iter;
+use std::marker::PhantomData;
+use std::mem;
 use std::path::Path;
 
-use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode::{Decodable, Encodable};
 
 use nakamoto_common::block::store::{Error, Store};
 use nakamoto_common::block::Height;
 
-/// Size in bytes of a block header.
-const HEADER_SIZE: usize = 80;
-
 /// Append a block to the end of the stream.
-fn put<S: Seek + Write, I: Iterator<Item = BlockHeader>>(
+fn put<H: Sized + Encodable, S: Seek + Write, I: Iterator<Item = H>>(
     mut stream: S,
     headers: I,
 ) -> Result<Height, Error> {
     let mut pos = stream.seek(io::SeekFrom::End(0))?;
+    let size = std::mem::size_of::<H>();
 
     for header in headers {
         pos += header.consensus_encode(&mut stream)? as u64;
     }
-    Ok(pos / HEADER_SIZE as u64)
+    Ok(pos / size as u64)
 }
 
 /// Get a block from the stream.
-fn get<S: Seek + Read>(mut stream: S, ix: u64) -> Result<BlockHeader, Error> {
-    let mut buf = [0; HEADER_SIZE];
+fn get<H: Decodable, S: Seek + Read>(mut stream: S, ix: u64) -> Result<H, Error> {
+    let size = std::mem::size_of::<H>();
+    let mut buf = vec![0; size]; // TODO: Use an array when rust has const-generics.
 
-    stream.seek(io::SeekFrom::Start(ix * HEADER_SIZE as u64))?;
+    stream.seek(io::SeekFrom::Start(ix * size as u64))?;
     stream.read_exact(&mut buf)?;
 
-    BlockHeader::consensus_decode(&buf[..]).map_err(Error::from)
+    H::consensus_decode(&buf[..]).map_err(Error::from)
 }
 
 /// An iterator over block headers in a file.
 #[derive(Debug)]
-pub struct Iter {
+pub struct Iter<H> {
     height: Height,
     file: fs::File,
+
+    _phantom: PhantomData<H>,
 }
 
-impl Iterator for Iter {
-    type Item = Result<(Height, BlockHeader), Error>;
+impl<H: Decodable> Iterator for Iter<H> {
+    type Item = Result<(Height, H), Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
         let height = self.height;
@@ -68,13 +70,13 @@ impl Iterator for Iter {
 
 /// A `Store` backed by a single file.
 #[derive(Debug)]
-pub struct File {
+pub struct File<H> {
     file: fs::File,
-    genesis: BlockHeader,
+    genesis: H,
 }
 
-impl File {
-    pub fn open<P: AsRef<Path>>(path: P, genesis: BlockHeader) -> io::Result<Self> {
+impl<H> File<H> {
+    pub fn open<P: AsRef<Path>>(path: P, genesis: H) -> io::Result<Self> {
         fs::OpenOptions::new()
             .create(true)
             .read(true)
@@ -83,7 +85,7 @@ impl File {
             .map(|file| Self { file, genesis })
     }
 
-    pub fn create<P: AsRef<Path>>(path: P, genesis: BlockHeader) -> Result<Self, Error> {
+    pub fn create<P: AsRef<Path>>(path: P, genesis: H) -> Result<Self, Error> {
         let file = fs::OpenOptions::new()
             .create_new(true)
             .read(true)
@@ -94,20 +96,22 @@ impl File {
     }
 }
 
-impl Store for File {
+impl<H: 'static + Copy + Encodable + Decodable> Store for File<H> {
+    type Header = H;
+
     /// Get the genesis block.
-    fn genesis(&self) -> BlockHeader {
+    fn genesis(&self) -> H {
         self.genesis
     }
 
     /// Append a block to the end of the file.
-    fn put<I: Iterator<Item = BlockHeader>>(&mut self, headers: I) -> Result<Height, Error> {
+    fn put<I: Iterator<Item = Self::Header>>(&mut self, headers: I) -> Result<Height, Error> {
         self::put(&mut self.file, headers)
     }
 
     /// Get the block at the given height. Returns `io::ErrorKind::UnexpectedEof` if
     /// the height is not found.
-    fn get(&self, height: Height) -> Result<BlockHeader, Error> {
+    fn get(&self, height: Height) -> Result<H, Error> {
         if let Some(ix) = height.checked_sub(1) {
             // Clone so this function doesn't have to take a `&mut self`.
             let mut file = self.file.try_clone()?;
@@ -120,8 +124,10 @@ impl Store for File {
     /// Rollback the chain to the given height. Behavior is undefined if the given
     /// height is not contained in the store.
     fn rollback(&mut self, height: Height) -> Result<(), Error> {
+        let size = mem::size_of::<H>();
+
         self.file
-            .set_len((height) * HEADER_SIZE as u64)
+            .set_len((height) * size as u64)
             .map_err(Error::from)
     }
 
@@ -131,10 +137,14 @@ impl Store for File {
     }
 
     /// Iterate over all headers in the store.
-    fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, H), Error>>> {
         // Clone so this function doesn't have to take a `&mut self`.
         match self.file.try_clone() {
-            Ok(file) => Box::new(iter::once(Ok((0, self.genesis))).chain(Iter { height: 1, file })),
+            Ok(file) => Box::new(iter::once(Ok((0, self.genesis))).chain(Iter {
+                height: 1,
+                file,
+                _phantom: PhantomData,
+            })),
             Err(err) => Box::new(iter::once(Err(Error::Io(err)))),
         }
     }
@@ -143,13 +153,14 @@ impl Store for File {
     fn len(&self) -> Result<usize, Error> {
         let meta = self.file.metadata()?;
         let len = meta.len();
+        let size = mem::size_of::<H>();
 
         assert!(len <= usize::MAX as u64);
 
-        if len as usize % HEADER_SIZE != 0 {
+        if len as usize % size != 0 {
             return Err(Error::Corruption);
         }
-        Ok(len as usize / HEADER_SIZE + 1)
+        Ok(len as usize / size + 1)
     }
 
     /// Return the block height of the store.
@@ -166,10 +177,11 @@ impl Store for File {
     fn heal(&mut self) -> Result<(), Error> {
         let meta = self.file.metadata()?;
         let len = meta.len();
+        let size = mem::size_of::<H>();
 
         assert!(len <= usize::MAX as u64);
 
-        let extraneous = len as usize % HEADER_SIZE;
+        let extraneous = len as usize % size;
         if extraneous != 0 {
             self.file.set_len(len - extraneous as u64)?;
         }
@@ -180,10 +192,14 @@ impl Store for File {
 
 #[cfg(test)]
 mod test {
-    use super::{BlockHeader, Error, File, Height, Store};
     use std::{io, iter};
 
-    fn store(path: &str) -> File {
+    use super::{Error, File, Height, Store};
+    use crate::block::BlockHeader;
+
+    const HEADER_SIZE: usize = 80;
+
+    fn store(path: &str) -> File<BlockHeader> {
         let tmp = tempfile::tempdir().unwrap();
         let genesis = BlockHeader {
             version: 1,
@@ -352,10 +368,13 @@ mod test {
 
         assert_eq!(store.len().unwrap(), 3);
 
+        let size = std::mem::size_of::<BlockHeader>();
+        assert_eq!(size, HEADER_SIZE);
+
         // Intentionally corrupt the file, by truncating it by 32 bytes.
         store
             .file
-            .set_len(headers.len() as u64 * super::HEADER_SIZE as u64 - 32)
+            .set_len(headers.len() as u64 * size as u64 - 32)
             .unwrap();
 
         assert_eq!(

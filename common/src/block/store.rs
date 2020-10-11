@@ -1,7 +1,6 @@
 #![allow(clippy::len_without_is_empty)]
 use crate::block::Height;
 
-use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode;
 use thiserror::Error;
 
@@ -16,18 +15,21 @@ pub enum Error {
 }
 
 pub trait Store {
+    /// The type of header used in the store.
+    type Header: Sized;
+
     /// Get the genesis block.
-    fn genesis(&self) -> BlockHeader;
+    fn genesis(&self) -> Self::Header;
     /// Append a batch of consecutive block headers to the end of the chain.
-    fn put<I: Iterator<Item = BlockHeader>>(&mut self, headers: I) -> Result<Height, Error>;
+    fn put<I: Iterator<Item = Self::Header>>(&mut self, headers: I) -> Result<Height, Error>;
     /// Get the block at the given height.
-    fn get(&self, height: Height) -> Result<BlockHeader, Error>;
+    fn get(&self, height: Height) -> Result<Self::Header, Error>;
     /// Rollback the chain to the given height.
     fn rollback(&mut self, height: Height) -> Result<(), Error>;
     /// Synchronize the changes to disk.
     fn sync(&mut self) -> Result<(), Error>;
     /// Iterate over all headers in the store.
-    fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>>;
+    fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, Self::Header), Error>>>;
     /// Return the number of headers in the store.
     fn len(&self) -> Result<usize, Error>;
     /// Return the store block height.

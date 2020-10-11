@@ -50,7 +50,7 @@ pub struct BlockCache<S: Store> {
     store: S,
 }
 
-impl<S: Store> BlockCache<S> {
+impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     /// Create a new `BlockCache` from a `Store`, consensus parameters, and checkpoints.
     pub fn from(
         store: S,
@@ -466,7 +466,7 @@ impl<S: Store> BlockCache<S> {
     }
 }
 
-impl<S: Store> BlockTree for BlockCache<S> {
+impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
     /// Import blocks into the block tree. Blocks imported this way don't have to form a chain.
     fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
         &mut self,

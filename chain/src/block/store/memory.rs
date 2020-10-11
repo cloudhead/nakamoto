@@ -1,33 +1,40 @@
 //! Ephemeral storage backend for blocks.
-use bitcoin::blockdata::block::BlockHeader;
 use nonempty::NonEmpty;
 
 use nakamoto_common::block::store::{Error, Store};
 use nakamoto_common::block::Height;
 
 #[derive(Debug, Clone)]
-pub struct Memory(NonEmpty<BlockHeader>);
+pub struct Memory<H>(NonEmpty<H>);
 
-impl Memory {
-    pub fn new(chain: NonEmpty<BlockHeader>) -> Self {
+impl<H> Memory<H> {
+    pub fn new(chain: NonEmpty<H>) -> Self {
         Self(chain)
     }
 }
 
-impl Store for Memory {
+impl<H: Default> Default for Memory<H> {
+    fn default() -> Self {
+        Self(NonEmpty::new(H::default()))
+    }
+}
+
+impl<H: 'static + Copy + Clone> Store for Memory<H> {
+    type Header = H;
+
     /// Get the genesis block.
-    fn genesis(&self) -> BlockHeader {
+    fn genesis(&self) -> H {
         *self.0.first()
     }
 
     /// Append a batch of consecutive block headers to the end of the chain.
-    fn put<I: Iterator<Item = BlockHeader>>(&mut self, headers: I) -> Result<Height, Error> {
+    fn put<I: Iterator<Item = H>>(&mut self, headers: I) -> Result<Height, Error> {
         self.0.tail.extend(headers);
         Ok(self.0.len() as Height - 1)
     }
 
     /// Get the block at the given height.
-    fn get(&self, height: Height) -> Result<BlockHeader, Error> {
+    fn get(&self, height: Height) -> Result<H, Error> {
         match self.0.get(height as usize) {
             Some(header) => Ok(*header),
             None => Err(Error::Io(std::io::Error::new(
@@ -52,7 +59,7 @@ impl Store for Memory {
     }
 
     /// Iterate over all headers in the store.
-    fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, BlockHeader), Error>>> {
+    fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, H), Error>>> {
         Box::new(
             self.0
                 .clone()

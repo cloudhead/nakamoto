@@ -293,7 +293,7 @@ fn arbitrary_chain<G: Gen>(height: Height, g: &mut G) -> NonEmpty<BlockHeader> {
 }
 
 #[derive(Clone)]
-struct BlockImport(BlockCache<store::Memory>, BlockHeader);
+struct BlockImport(BlockCache<store::Memory<BlockHeader>>, BlockHeader);
 
 impl std::fmt::Debug for BlockImport {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
