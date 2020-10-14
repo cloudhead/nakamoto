@@ -127,7 +127,7 @@ impl InputResult {
 pub struct Peer {
     pub id: PeerId,
     pub name: &'static str,
-    pub protocol: Bitcoin<model::Cache>,
+    pub protocol: Bitcoin<model::Cache, model::FilterCache>,
     pub outbound: chan::Receiver<Out<RawNetworkMessage>>,
 
     events: Vec<Event<NetworkMessage>>,
@@ -162,7 +162,7 @@ pub struct Sim {
 
 impl Sim {
     fn new(
-        peers: Vec<(PeerId, Builder<model::Cache>)>,
+        peers: Vec<(PeerId, Builder<model::Cache, model::FilterCache>)>,
         time: LocalTime,
         rng: fastrand::Rng,
     ) -> Self {
@@ -364,11 +364,11 @@ impl Sim {
     }
 }
 
-pub fn handshake<T: BlockTree>(
-    alice: &mut Bitcoin<T>,
+pub fn handshake<T: BlockTree, F: Filters>(
+    alice: &mut Bitcoin<T, F>,
     alice_addr: net::SocketAddr,
     alice_rx: chan::Receiver<Out<RawNetworkMessage>>,
-    bob: &mut Bitcoin<T>,
+    bob: &mut Bitcoin<T, F>,
     bob_addr: net::SocketAddr,
     bob_rx: chan::Receiver<Out<RawNetworkMessage>>,
     local_time: LocalTime,

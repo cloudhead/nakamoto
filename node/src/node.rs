@@ -10,7 +10,9 @@ use crossbeam_channel as chan;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
+use nakamoto_chain::filter::cache::FilterCache;
 
+use nakamoto_common::block::filter::{FilterHeader, Filters};
 use nakamoto_common::block::store::Store;
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
@@ -155,6 +157,22 @@ impl Node {
         let cache = BlockCache::from(store, params, &checkpoints)?;
         let rng = fastrand::Rng::new();
 
+        log::info!("Initializing block filters..");
+
+        let cfheaders_path = dir.join("filters.db");
+        let cfheaders_store = match store::File::create(&cfheaders_path, FilterHeader::genesis()) {
+            Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
+                log::info!("Found existing store {:?}", cfheaders_path);
+                store::File::open(cfheaders_path, FilterHeader::genesis())?
+            }
+            Err(err) => panic!(err.to_string()),
+            Ok(store) => {
+                log::info!("Initializing new filter header store {:?}", cfheaders_path);
+                store
+            }
+        };
+        let filters = FilterCache::new(cfheaders_store);
+
         log::info!("{} peer(s) found..", self.config.address_book.len());
         log::debug!("{:?}", self.config.address_book);
 
@@ -170,6 +188,7 @@ impl Node {
         let builder = bitcoin::Builder {
             cache,
             clock,
+            filters,
             rng,
             cfg,
         };
@@ -181,7 +200,7 @@ impl Node {
 
     /// Start the node process, supplying the block cache. This function is meant to be run in
     /// its own thread.
-    pub fn run_with<T: BlockTree>(mut self, cache: T) -> Result<(), Error> {
+    pub fn run_with<T: BlockTree, F: Filters>(mut self, cache: T, filters: F) -> Result<(), Error> {
         let cfg = bitcoin::Config::from(
             self.config.name,
             self.config.network,
@@ -202,6 +221,7 @@ impl Node {
         let builder = bitcoin::Builder {
             cache,
             clock,
+            filters,
             rng,
             cfg,
         };

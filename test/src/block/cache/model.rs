@@ -1,10 +1,14 @@
-//! Block cache model.
+//! Block cache *model*.
 //! Not for production use.
+
+use std::ops::Range;
+
+use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader, Filters};
 use nakamoto_common::block::iter::Iter;
 use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::Height;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use nonempty::NonEmpty;
 
@@ -184,5 +188,98 @@ impl BlockTree for Cache {
 
     fn is_known(&self, hash: &BlockHash) -> bool {
         self.headers.contains_key(hash)
+    }
+}
+
+pub struct FilterCache {
+    headers: NonEmpty<(FilterHash, FilterHeader)>,
+    filters: BTreeMap<Height, BlockFilter>,
+}
+
+impl FilterCache {
+    pub fn new() -> Self {
+        Self {
+            headers: NonEmpty::new((FilterHash::default(), FilterHeader::genesis())),
+            filters: BTreeMap::new(),
+        }
+    }
+}
+
+// Nb. This custom clone implementation is needed because `BlockFilter` is not `Clone`. ಠ_ಠ
+impl Clone for FilterCache {
+    fn clone(&self) -> Self {
+        Self {
+            headers: self.headers.clone(),
+            filters: self
+                .filters
+                .iter()
+                .map(|(h, cf)| {
+                    (
+                        *h,
+                        BlockFilter {
+                            content: cf.content.clone(),
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+}
+
+impl Filters for FilterCache {
+    fn get_filters(&self, range: Range<Height>) -> Result<Vec<BlockFilter>, filter::Error> {
+        Ok(self
+            .filters
+            .range(range)
+            .map(|(_, f)| BlockFilter {
+                // Nb. `BlockFilter` currently isn't `Clone`.
+                content: f.content.clone(),
+            })
+            .collect())
+    }
+
+    fn import_filter(&mut self, height: Height, filter: BlockFilter) -> Result<(), filter::Error> {
+        self.filters.insert(height, filter);
+
+        Ok(())
+    }
+
+    fn get_header(&self, height: Height) -> Result<(FilterHash, FilterHeader), filter::Error> {
+        match self.headers.get(height as usize) {
+            Some(result) => Ok(result.clone()),
+            None => Err(filter::Error::NotFound(height)),
+        }
+    }
+
+    fn get_headers(
+        &self,
+        range: Range<Height>,
+    ) -> Result<Vec<(FilterHash, FilterHeader)>, filter::Error> {
+        assert!(range.start < range.end);
+
+        Ok(self
+            .headers
+            .iter()
+            .cloned()
+            .skip(range.start as usize)
+            .take(range.end as usize - range.start as usize)
+            .collect())
+    }
+
+    fn import_headers(
+        &mut self,
+        headers: Vec<(FilterHash, FilterHeader)>,
+    ) -> Result<(), filter::Error> {
+        self.headers.tail.extend(headers);
+
+        Ok(())
+    }
+
+    fn tip(&self) -> &(FilterHash, FilterHeader) {
+        self.headers.last()
+    }
+
+    fn height(&self) -> Height {
+        self.headers.tail.len() as Height
     }
 }

@@ -9,5 +9,7 @@
 pub mod block;
 pub use block::*;
 
+pub mod filter;
+
 #[cfg(test)]
 mod tests;

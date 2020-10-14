@@ -1,3 +1,4 @@
+pub mod filter;
 pub mod genesis;
 pub mod iter;
 pub mod store;

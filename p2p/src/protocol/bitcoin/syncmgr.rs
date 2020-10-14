@@ -374,6 +374,8 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
                         }
                     }
                     Err(err) => {
+                        // FIXME: If we have a storage error, we should return an error
+                        // here instead of recording a misbehavior.
                         self.record_misbehavior(from);
                         self.upstream
                             .event(Event::ReceivedInvalidHeaders(*from, err));

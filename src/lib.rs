@@ -2,6 +2,8 @@
 
 #[cfg(feature = "nakamoto-chain")]
 pub use nakamoto_chain as chain;
+#[cfg(feature = "nakamoto-common")]
+pub use nakamoto_common as common;
 #[cfg(feature = "nakamoto-daemon")]
 pub use nakamoto_daemon as daemon;
 #[cfg(feature = "nakamoto-node")]

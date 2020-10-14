@@ -7,6 +7,7 @@ pub mod addrmgr;
 pub mod connmgr;
 pub mod network;
 pub mod pingmgr;
+pub mod spvmgr;
 pub mod syncmgr;
 pub use network::Network;
 pub mod channel;
@@ -18,6 +19,7 @@ use addrmgr::AddressManager;
 use channel::Channel;
 use connmgr::ConnectionManager;
 use pingmgr::PingManager;
+use spvmgr::SpvManager;
 use syncmgr::SyncManager;
 
 use crate::address_book::AddressBook;
@@ -35,6 +37,7 @@ use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_network::VersionMessage;
 
+use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
@@ -74,7 +77,7 @@ pub enum Command {
     GetBlock(BlockHash),
     /// Broadcast to outbound peers.
     Broadcast(NetworkMessage),
-    /// Send to message to a random peer.
+    /// Send a message to a random peer.
     Query(NetworkMessage, chan::Sender<Option<net::SocketAddr>>),
     /// Connect to a peer.
     Connect(net::SocketAddr),
@@ -141,7 +144,7 @@ mod message {
 /// An instantiation of `Protocol`, for the Bitcoin P2P network. Parametrized over the
 /// block-tree.
 #[derive(Debug)]
-pub struct Bitcoin<T> {
+pub struct Bitcoin<T, F> {
     /// Peer states.
     peers: HashMap<PeerId, Peer>,
     /// Bitcoin network we're connecting to.
@@ -166,6 +169,8 @@ pub struct Bitcoin<T> {
     connmgr: ConnectionManager<Upstream>,
     /// Ping manager.
     pingmgr: PingManager<Upstream>,
+    /// SPV (Simply Payment Verification) manager.
+    spvmgr: SpvManager<F, Upstream>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
@@ -178,9 +183,11 @@ pub struct Bitcoin<T> {
 
 /// Protocol builder. Consume to build a new protocol instance.
 #[derive(Clone)]
-pub struct Builder<T: BlockTree> {
+pub struct Builder<T: BlockTree, F: Filters> {
     /// Block cache.
     pub cache: T,
+    /// Filter cache.
+    pub filters: F,
     /// Clock.
     pub clock: AdjustedTime<PeerId>,
     /// RNG.
@@ -189,12 +196,12 @@ pub struct Builder<T: BlockTree> {
     pub cfg: Config,
 }
 
-impl<T: BlockTree> protocol::ProtocolBuilder for Builder<T> {
+impl<T: BlockTree, F: Filters> protocol::ProtocolBuilder for Builder<T, F> {
     type Message = RawNetworkMessage;
-    type Protocol = Bitcoin<T>;
+    type Protocol = Bitcoin<T, F>;
 
-    fn build(self, tx: chan::Sender<Out<RawNetworkMessage>>) -> Bitcoin<T> {
-        Bitcoin::new(self.cache, self.clock, self.rng, self.cfg, tx)
+    fn build(self, tx: chan::Sender<Out<RawNetworkMessage>>) -> Bitcoin<T, F> {
+        Bitcoin::new(self.cache, self.filters, self.clock, self.rng, self.cfg, tx)
     }
 }
 
@@ -288,10 +295,11 @@ impl Whitelist {
     }
 }
 
-impl<T: BlockTree> Bitcoin<T> {
+impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
     /// Construct a new Bitcoin state machine.
     pub fn new(
         tree: T,
+        filters: F,
         clock: AdjustedTime<PeerId>,
         rng: fastrand::Rng,
         config: Config,
@@ -332,6 +340,7 @@ impl<T: BlockTree> Bitcoin<T> {
             },
         );
         let pingmgr = PingManager::new(rng.clone(), upstream.clone());
+        let spvmgr = SpvManager::new(filters, upstream.clone());
 
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),
@@ -348,6 +357,7 @@ impl<T: BlockTree> Bitcoin<T> {
             syncmgr,
             connmgr,
             pingmgr,
+            spvmgr,
             rng,
             upstream,
         }
@@ -482,7 +492,7 @@ impl Peer {
     }
 }
 
-impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
+impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
     type Command = self::Command;
 
     fn initialize(&mut self, time: LocalTime) {
@@ -639,7 +649,7 @@ impl<T: BlockTree> Protocol<RawNetworkMessage> for Bitcoin<T> {
     }
 }
 
-impl<T: BlockTree> Bitcoin<T> {
+impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
     /// Get outbound & ready peers.
     fn outbound(&self) -> impl Iterator<Item = &Peer> + Clone {
         self.peers
@@ -703,6 +713,25 @@ impl<T: BlockTree> Bitcoin<T> {
                         // peer. And blocks are being announced. Otherwise, we expect to receive a
                         // `headers` message.
                         self.syncmgr.received_inv(addr, inventory, &self.clock);
+                    }
+                    NetworkMessage::CFHeaders(msg) => {
+                        self.spvmgr
+                            .received_cfheaders(&addr, msg, &self.syncmgr.tree)
+                            .unwrap();
+                    }
+                    NetworkMessage::GetCFHeaders(msg) => {
+                        self.spvmgr
+                            .received_getcfheaders(&addr, msg, &self.syncmgr.tree)
+                            .unwrap();
+                    }
+                    NetworkMessage::CFilter(msg) => {
+                        self.spvmgr
+                            .received_cfilter(&addr, msg, &self.syncmgr.tree)
+                            .unwrap();
+                    }
+                    NetworkMessage::GetCFilters(msg) => {
+                        self.spvmgr
+                            .received_getcfilters(&addr, msg, &self.syncmgr.tree);
                     }
                     NetworkMessage::Addr(addrs) => {
                         if addrs.is_empty() {
@@ -784,7 +813,9 @@ impl<T: BlockTree> Bitcoin<T> {
                     }
                     // If the peer is too far behind, there's no use connecting to it, we'll
                     // have to wait for it to catch up.
-                    if height.saturating_sub(start_height as Height) > MAX_STALE_HEIGHT_DIFFERENCE
+                    if peer.link.is_outbound()
+                        && height.saturating_sub(start_height as Height)
+                            > MAX_STALE_HEIGHT_DIFFERENCE
                         && !whitelisted
                     {
                         debug!(

@@ -7,16 +7,17 @@ use crossbeam_channel as chan;
 
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::GetHeadersMessage;
+use bitcoin::network::message_filter::{CFHeaders, CFilter};
 
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::tree::ImportResult;
-use nakamoto_common::block::BlockHeader;
+use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
 use crate::protocol::{Event, Out, PeerId};
 use crate::protocol::{Message, TimeoutSource};
 
 use super::network::Network;
-use super::{addrmgr, connmgr, message, pingmgr, syncmgr, Locators};
+use super::{addrmgr, connmgr, message, pingmgr, spvmgr, syncmgr, Locators};
 
 pub use connmgr::Disconnect;
 
@@ -174,5 +175,32 @@ impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
             _ => {}
         }
         self.event(Event::SyncManager(event));
+    }
+}
+
+#[allow(unused_variables)]
+impl spvmgr::SyncFilters for Channel<RawNetworkMessage> {
+    fn get_cfheaders(&self, start_height: Height, stop_hash: BlockHash, timeout: LocalDuration) {
+        todo!()
+    }
+
+    fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders) {
+        todo!()
+    }
+
+    fn get_cfilters(&self, start_height: Height, stop_hash: BlockHash, timeout: LocalDuration) {
+        todo!()
+    }
+
+    fn send_cfilter(&self, addr: PeerId, cfilter: CFilter) {
+        todo!()
+    }
+}
+
+impl spvmgr::Events for Channel<RawNetworkMessage> {
+    fn event(&self, event: spvmgr::Event) {
+        debug!(target: self.target, "[cflr] {}", &event);
+
+        self.event(Event::SpvManager(event));
     }
 }

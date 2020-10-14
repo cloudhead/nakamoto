@@ -61,7 +61,7 @@ mod setup {
     pub fn singleton(
         network: Network,
     ) -> (
-        Bitcoin<model::Cache>,
+        Bitcoin<model::Cache, model::FilterCache>,
         chan::Receiver<Out<RawNetworkMessage>>,
         LocalTime,
     ) {
@@ -69,6 +69,7 @@ mod setup {
 
         let genesis = constants::genesis_block(network.into()).header;
         let cache = model::Cache::new(genesis);
+        let filters = model::FilterCache::new();
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
         let (tx, rx) = chan::unbounded();
@@ -77,6 +78,7 @@ mod setup {
             Builder {
                 cache,
                 clock,
+                filters,
                 rng: fastrand::Rng::new(),
                 cfg: CONFIG.clone(),
             }
@@ -90,12 +92,12 @@ mod setup {
         network: Network,
     ) -> (
         (
-            Bitcoin<model::Cache>,
+            Bitcoin<model::Cache, model::FilterCache>,
             PeerId,
             chan::Receiver<Out<RawNetworkMessage>>,
         ),
         (
-            Bitcoin<model::Cache>,
+            Bitcoin<model::Cache, model::FilterCache>,
             PeerId,
             chan::Receiver<Out<RawNetworkMessage>>,
         ),
@@ -105,12 +107,14 @@ mod setup {
 
         let genesis = constants::genesis_block(network.into()).header;
         let cache = model::Cache::new(genesis);
+        let filters = model::FilterCache::new();
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
 
         let builder = Builder {
             cache,
             clock,
+            filters,
             rng: fastrand::Rng::new(),
             cfg: CONFIG.clone(),
         };
@@ -142,12 +146,16 @@ mod setup {
         rng: fastrand::Rng,
         mut cfgs: Vec<PeerConfig>,
         configure: fn(&mut Config),
-    ) -> (Vec<(PeerId, Builder<model::Cache>)>, LocalTime) {
+    ) -> (
+        Vec<(PeerId, Builder<model::Cache, model::FilterCache>)>,
+        LocalTime,
+    ) {
         use bitcoin::blockdata::constants;
 
         let genesis = constants::genesis_block(network.into()).header;
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
+        let filters = model::FilterCache::new();
         let size = cfgs.len();
 
         assert!(size > 0);
@@ -193,6 +201,7 @@ mod setup {
             let peer = Builder {
                 cache: tree.clone(),
                 clock: clock.clone(),
+                filters: filters.clone(),
                 rng: rng.clone(),
                 cfg,
             };
@@ -217,6 +226,7 @@ fn test_handshake() {
     let tree = model::Cache::new(genesis);
     let clock = AdjustedTime::default();
     let local_time = LocalTime::from(SystemTime::now());
+    let filters = model::FilterCache::new();
 
     let alice_addr = ([127, 0, 0, 1], 8333).into();
     let bob_addr = ([127, 0, 0, 2], 8333).into();
@@ -224,6 +234,7 @@ fn test_handshake() {
     let builder = Builder {
         cache: tree,
         clock,
+        filters,
         rng: fastrand::Rng::new(),
         cfg: setup::CONFIG.clone(),
     };
@@ -278,6 +289,7 @@ fn test_initial_sync() {
     let store = store::Memory::new(BITCOIN_HEADERS.clone());
     let network = bitcoin::Network::Bitcoin;
     let params = Params::new(network);
+    let filters = model::FilterCache::new();
 
     let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
     let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
@@ -301,11 +313,25 @@ fn test_initial_sync() {
     )
     .unwrap();
 
-    let mut alice = Bitcoin::new(alice_tree, clock.clone(), Rng::new(), config, alice_tx);
+    let mut alice = Bitcoin::new(
+        alice_tree,
+        filters.clone(),
+        clock.clone(),
+        Rng::new(),
+        config,
+        alice_tx,
+    );
 
     // Bob connects to Alice.
     {
-        let mut bob = Bitcoin::new(bob_tree, clock, Rng::new(), setup::CONFIG.clone(), bob_tx);
+        let mut bob = Bitcoin::new(
+            bob_tree,
+            filters,
+            clock,
+            Rng::new(),
+            setup::CONFIG.clone(),
+            bob_tx,
+        );
 
         simulator::handshake(
             &mut bob,
