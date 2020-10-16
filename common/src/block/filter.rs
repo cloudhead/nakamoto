@@ -1,3 +1,6 @@
+//! Compact block filter core types and traits.
+#![warn(missing_docs)]
+
 use std::io;
 use std::ops::Range;
 
@@ -11,6 +14,7 @@ pub use bitcoin::util::bip158::BlockFilter;
 
 use super::Height;
 use crate::block::store;
+use crate::network::Network;
 
 /// A filter header.
 ///
@@ -81,8 +85,32 @@ impl FilterHeader {
         }
     }
 
-    pub fn genesis() -> Self {
-        Self::default()
+    /// Filter header for the genesis block.
+    ///
+    /// ```
+    /// use nakamoto_common::block::filter::{FilterHash, FilterHeader};
+    /// use nakamoto_common::network::Network;
+    /// use bitcoin_hashes::hex::FromHex;
+    ///
+    /// let genesis = FilterHeader::genesis(Network::Testnet);
+    ///
+    /// assert_eq!(
+    ///     FilterHash::from(genesis),
+    ///     FilterHash::from_hex(
+    ///         "21584579b7eb08997773e5aeff3a7f932700042d0ed2a6129012b7d7ae81b750"
+    ///     ).unwrap()
+    /// );
+    /// ```
+    pub fn genesis(network: Network) -> Self {
+        let genesis = network.genesis_block();
+        let filter = BlockFilter::new_script_filter(&genesis, |_| {
+            panic!("FilterHeader::genesis: genesis block should have no inputs")
+        })
+        .unwrap();
+
+        FilterHeader {
+            hash: filter.filter_id(&FilterHash::default()),
+        }
     }
 }
 
@@ -97,15 +125,23 @@ pub enum Error {
     Store(#[from] store::Error),
 }
 
+/// A trait for types that provide read/write access to compact block filters, and filter headers.
 pub trait Filters {
+    /// Get filters, given a block height range.
     fn get_filters(&self, range: Range<Height>) -> Result<Vec<BlockFilter>, Error>;
+    /// Import the filter for the given block height.
     fn import_filter(&mut self, height: Height, filter: BlockFilter) -> Result<(), Error>;
+    /// Get filter headers given a block height range.
     fn get_headers(&self, range: Range<Height>) -> Result<Vec<(FilterHash, FilterHeader)>, Error>;
+    /// Get the filter header at the given height. Includes the hash of the filter itself.
     fn get_header(&self, height: Height) -> Result<(FilterHash, FilterHeader), Error>;
+    /// Import filter headers.
     fn import_headers(&mut self, headers: Vec<(FilterHash, FilterHeader)>) -> Result<(), Error>;
+    /// Get the tip of the filter header chain.
     fn tip(&self) -> &(FilterHash, FilterHeader);
+    /// Get the height of the filter header chain.
     fn height(&self) -> Height;
-
+    /// Get the filter header previous to the given height.
     fn get_prev_header(&self, height: Height) -> Result<FilterHeader, Error> {
         if height == 0 {
             // If the start height is `0` (genesis), we return the zero hash as the parent.

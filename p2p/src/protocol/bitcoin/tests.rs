@@ -17,6 +17,7 @@ use quickcheck_macros::quickcheck;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
+use nakamoto_common::block::filter::FilterHeader;
 use nakamoto_common::block::store::Store;
 use nakamoto_common::block::BlockHeader;
 
@@ -36,6 +37,7 @@ fn payload<M: Message>(o: &Out<M>) -> Option<(net::SocketAddr, &M::Payload)> {
 
 mod setup {
     use super::*;
+    use nakamoto_common::block::filter::FilterHeader;
 
     lazy_static! {
         /// Test protocol config.
@@ -65,11 +67,9 @@ mod setup {
         chan::Receiver<Out<RawNetworkMessage>>,
         LocalTime,
     ) {
-        use bitcoin::blockdata::constants;
-
-        let genesis = constants::genesis_block(network.into()).header;
+        let genesis = network.genesis();
         let cache = model::Cache::new(genesis);
-        let filters = model::FilterCache::new();
+        let filters = model::FilterCache::new(FilterHeader::genesis(network));
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
         let (tx, rx) = chan::unbounded();
@@ -107,7 +107,7 @@ mod setup {
 
         let genesis = constants::genesis_block(network.into()).header;
         let cache = model::Cache::new(genesis);
-        let filters = model::FilterCache::new();
+        let filters = model::FilterCache::new(FilterHeader::genesis(network));
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
 
@@ -155,7 +155,7 @@ mod setup {
         let genesis = constants::genesis_block(network.into()).header;
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
-        let filters = model::FilterCache::new();
+        let filters = model::FilterCache::new(FilterHeader::genesis(network));
         let size = cfgs.len();
 
         assert!(size > 0);
@@ -226,7 +226,7 @@ fn test_handshake() {
     let tree = model::Cache::new(genesis);
     let clock = AdjustedTime::default();
     let local_time = LocalTime::from(SystemTime::now());
-    let filters = model::FilterCache::new();
+    let filters = model::FilterCache::new(FilterHeader::default());
 
     let alice_addr = ([127, 0, 0, 1], 8333).into();
     let bob_addr = ([127, 0, 0, 2], 8333).into();
@@ -289,7 +289,7 @@ fn test_initial_sync() {
     let store = store::Memory::new(BITCOIN_HEADERS.clone());
     let network = bitcoin::Network::Bitcoin;
     let params = Params::new(network);
-    let filters = model::FilterCache::new();
+    let filters = model::FilterCache::new(FilterHeader::genesis(Network::Mainnet));
 
     let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
     let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();

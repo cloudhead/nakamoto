@@ -197,9 +197,9 @@ pub struct FilterCache {
 }
 
 impl FilterCache {
-    pub fn new() -> Self {
+    pub fn new(genesis: FilterHeader) -> Self {
         Self {
-            headers: NonEmpty::new((FilterHash::default(), FilterHeader::genesis())),
+            headers: NonEmpty::new((FilterHash::default(), genesis)),
             filters: BTreeMap::new(),
         }
     }

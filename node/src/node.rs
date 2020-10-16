@@ -161,10 +161,13 @@ impl Node {
         log::info!("Initializing block filters..");
 
         let cfheaders_path = dir.join("filters.db");
-        let cfheaders_store = match store::File::create(&cfheaders_path, FilterHeader::genesis()) {
+        let cfheaders_store = match store::File::create(
+            &cfheaders_path,
+            FilterHeader::genesis(self.config.network),
+        ) {
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", cfheaders_path);
-                store::File::open(cfheaders_path, FilterHeader::genesis())?
+                store::File::open(cfheaders_path, FilterHeader::genesis(self.config.network))?
             }
             Err(err) => panic!(err.to_string()),
             Ok(store) => {
