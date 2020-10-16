@@ -1,13 +1,13 @@
 //! Bitcoin peer network. Eg. *Mainnet*.
 
-use bitcoin::blockdata::block::BlockHeader;
+use bitcoin::blockdata::block::{Block, BlockHeader};
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin_hashes::hex::FromHex;
 
 use bitcoin_hashes::sha256d;
 
-use nakamoto_common::block::Height;
+use crate::block::Height;
 
 /// Bitcoin peer network.
 #[derive(Debug, Copy, Clone)]
@@ -48,7 +48,7 @@ impl Network {
 
     /// Blockchain checkpoints.
     pub fn checkpoints(&self) -> Box<dyn Iterator<Item = (Height, BlockHash)>> {
-        use crate::checkpoints;
+        use crate::block::checkpoints;
 
         let iter = match self {
             Network::Mainnet => &checkpoints::MAINNET,
@@ -100,8 +100,10 @@ impl Network {
 }
 
 impl Network {
+    /// Get the genesis block header.
+    ///
     /// ```
-    /// use nakamoto_p2p::protocol::bitcoin::Network;
+    /// use nakamoto_common::network::Network;
     ///
     /// let network = Network::Mainnet;
     /// let genesis = network.genesis();
@@ -109,15 +111,20 @@ impl Network {
     /// assert_eq!(network.genesis_hash(), genesis.block_hash());
     /// ```
     pub fn genesis(&self) -> BlockHeader {
+        self.genesis_block().header
+    }
+
+    /// Get the genesis block.
+    pub fn genesis_block(&self) -> Block {
         use bitcoin::blockdata::constants;
 
-        constants::genesis_block((*self).into()).header
+        constants::genesis_block((*self).into())
     }
 
     /// Get the hash of the genesis block of this network.
     pub fn genesis_hash(&self) -> BlockHash {
+        use crate::block::genesis;
         use bitcoin_hashes::Hash;
-        use nakamoto_common::block::genesis;
 
         let hash = match self {
             Self::Mainnet => genesis::MAINNET,

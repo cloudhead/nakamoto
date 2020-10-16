@@ -4,13 +4,11 @@ use crossbeam_channel as chan;
 use log::*;
 
 pub mod addrmgr;
+pub mod channel;
 pub mod connmgr;
-pub mod network;
 pub mod pingmgr;
 pub mod spvmgr;
 pub mod syncmgr;
-pub use network::Network;
-pub mod channel;
 
 #[cfg(test)]
 mod tests;
@@ -42,6 +40,7 @@ use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::collections::HashMap;
+use nakamoto_common::network::{self, Network};
 
 /// Peer-to-peer protocol version.
 /// For now, we only support `70012`, due to lacking `sendcmpct` support.

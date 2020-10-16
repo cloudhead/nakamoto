@@ -17,12 +17,13 @@ use nakamoto_common::block::store::Store;
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::network::Network;
 
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_p2p::protocol::bitcoin::Command;
-use nakamoto_p2p::protocol::bitcoin::{self, connmgr, syncmgr, Network};
+use nakamoto_p2p::protocol::bitcoin::{self, connmgr, syncmgr};
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::TimeoutSource;
 use nakamoto_p2p::reactor::poll::{Reactor, Waker};

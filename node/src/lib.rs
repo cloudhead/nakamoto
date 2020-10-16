@@ -5,8 +5,8 @@ pub mod node;
 use std::net;
 use std::time;
 
+pub use nakamoto_common::network::Network;
 pub use nakamoto_p2p::address_book::AddressBook;
-pub use nakamoto_p2p::protocol::bitcoin::Network;
 
 #[cfg(test)]
 mod tests;

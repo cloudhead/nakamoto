@@ -1,3 +1,4 @@
+pub mod checkpoints;
 pub mod filter;
 pub mod genesis;
 pub mod iter;
