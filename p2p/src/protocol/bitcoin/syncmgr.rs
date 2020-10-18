@@ -11,6 +11,7 @@ use bitcoin::consensus::params::Params;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_blockdata::Inventory;
 
+use nakamoto_common::block::store;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
@@ -299,11 +300,11 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
         from: &PeerId,
         headers: Vec<BlockHeader>,
         clock: &impl Clock,
-    ) {
+    ) -> Result<ImportResult, store::Error> {
         let headers = if let Some(headers) = NonEmpty::from_vec(headers) {
             headers
         } else {
-            return;
+            return Ok(ImportResult::TipUnchanged);
         };
         self.upstream
             .event(Event::ReceivedHeaders(*from, headers.len()));
@@ -315,7 +316,7 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
         peer.last_active = Some(clock.local_time());
 
         if self.tree.contains(&best) {
-            return;
+            return Ok(ImportResult::TipUnchanged);
         }
 
         match self.inflight.remove(from) {
@@ -336,8 +337,8 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
                 }
 
                 match result {
-                    Ok(ImportResult::TipUnchanged) => {}
-                    Ok(ImportResult::TipChanged(tip, height, _)) => {
+                    Ok(ImportResult::TipUnchanged) => Ok(ImportResult::TipUnchanged),
+                    Ok(ImportResult::TipChanged(tip, height, reverted)) => {
                         let peer = self.peers.get_mut(from).unwrap();
 
                         if height > peer.height {
@@ -372,14 +373,12 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
                                 OnTimeout::Disconnect,
                             );
                         }
+
+                        Ok(ImportResult::TipChanged(tip, height, reverted))
                     }
-                    Err(err) => {
-                        // FIXME: If we have a storage error, we should return an error
-                        // here instead of recording a misbehavior.
-                        self.record_misbehavior(from);
-                        self.upstream
-                            .event(Event::ReceivedInvalidHeaders(*from, err));
-                    }
+                    Err(err) => self
+                        .handle_error(from, err)
+                        .and_then(|()| Ok(ImportResult::TipUnchanged)),
                 }
             }
             // Header announcement.
@@ -388,7 +387,8 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
 
                 match self.tree.import_blocks(headers.into_iter(), clock) {
                     Ok(import_result @ ImportResult::TipUnchanged) => {
-                        self.upstream.event(Event::HeadersImported(import_result));
+                        self.upstream
+                            .event(Event::HeadersImported(import_result.clone()));
 
                         // Try to find a common ancestor that leads up to the first header in
                         // the list we received.
@@ -402,15 +402,18 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
                             timeout,
                             OnTimeout::Ignore,
                         );
+
+                        Ok(import_result)
                     }
                     Ok(import_result) => {
-                        self.upstream.event(Event::HeadersImported(import_result));
-                    }
-                    Err(err) => {
-                        self.record_misbehavior(from);
                         self.upstream
-                            .event(Event::ReceivedInvalidHeaders(*from, err));
+                            .event(Event::HeadersImported(import_result.clone()));
+
+                        Ok(import_result)
                     }
+                    Err(err) => self
+                        .handle_error(from, err)
+                        .and_then(|()| Ok(ImportResult::TipUnchanged)),
                 }
             }
             // We've received a large number of unsolicited headers. This is more than the
@@ -419,6 +422,8 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
             _ => {
                 self.upstream
                     .event(Event::ReceivedUnsolicitedHeaders(*from, length));
+
+                Ok(ImportResult::TipUnchanged)
             }
         }
     }
@@ -461,7 +466,9 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
 
         for header in headers.into_iter() {
             match self.tree.extend_tip(header, clock) {
-                Ok(ImportResult::TipChanged(tip, height, _)) => {
+                Ok(ImportResult::TipChanged(tip, height, reverted)) => {
+                    debug_assert!(reverted.is_empty());
+
                     import_result = ImportResult::TipChanged(tip, height, vec![]);
                 }
                 Ok(ImportResult::TipUnchanged) => {
@@ -556,6 +563,33 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
     }
 
     ///////////////////////////////////////////////////////////////////////////
+
+    fn handle_error(&mut self, from: &PeerId, err: Error) -> Result<(), store::Error> {
+        match err {
+            // If this is an error with the underlying store, we have to propagate
+            // this up, because we can't handle it here.
+            Error::Store(e) => Err(e),
+
+            // If we got a bad block from the peer, we can handle it here.
+            Error::InvalidBlockPoW
+            | Error::InvalidBlockTarget(_, _)
+            | Error::InvalidBlockHash(_, _)
+            | Error::InvalidBlockHeight(_)
+            | Error::InvalidBlockTime(_, _) => {
+                self.record_misbehavior(from);
+                self.upstream
+                    .event(Event::ReceivedInvalidHeaders(*from, err));
+
+                Ok(())
+            }
+
+            // Harmless errors can be ignored.
+            Error::DuplicateBlock(_) | Error::BlockMissing(_) => Ok(()),
+
+            // TODO: This will be removed.
+            Error::BlockImportAborted(_, _, _) => Ok(()),
+        }
+    }
 
     fn record_misbehavior(&mut self, _peer: &PeerId) {
         // TODO

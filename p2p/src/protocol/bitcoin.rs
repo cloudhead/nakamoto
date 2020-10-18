@@ -697,7 +697,9 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
                         self.pingmgr.pong_received(addr, nonce, now);
                     }
                     NetworkMessage::Headers(headers) => {
-                        self.syncmgr.received_headers(&addr, headers, &self.clock);
+                        if let Err(e) = self.syncmgr.received_headers(&addr, headers, &self.clock) {
+                            log::error!("Error receiving headers: {}", e);
+                        }
                     }
                     NetworkMessage::GetHeaders(GetHeadersMessage {
                         locator_hashes,
