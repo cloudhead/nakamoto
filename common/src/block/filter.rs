@@ -151,4 +151,6 @@ pub trait Filters {
             Ok(header)
         }
     }
+    /// Rollback headers to the given height.
+    fn rollback(&mut self, height: Height) -> Result<(), Error>;
 }

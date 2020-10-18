@@ -41,4 +41,7 @@ impl<S: Store<Header = FilterHeader>> Filters for FilterCache<S> {
     fn height(&self) -> Height {
         todo!()
     }
+    fn rollback(&mut self, height: Height) -> Result<(), Error> {
+        todo!()
+    }
 }

@@ -282,4 +282,19 @@ impl Filters for FilterCache {
     fn height(&self) -> Height {
         self.headers.tail.len() as Height
     }
+
+    fn rollback(&mut self, height: Height) -> Result<(), filter::Error> {
+        self.headers.tail.truncate(height as usize);
+
+        let heights = self
+            .filters
+            .range(height + 1..)
+            .map(|(h, _)| *h)
+            .collect::<Vec<_>>();
+
+        for h in heights {
+            self.filters.remove(&h);
+        }
+        Ok(())
+    }
 }
