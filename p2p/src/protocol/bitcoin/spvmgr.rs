@@ -8,16 +8,23 @@
 
 use thiserror::Error;
 
+use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 
 use nakamoto_common::block::filter::{self, BlockFilter, FilterHeader, Filters};
+use nakamoto_common::block::time::Clock;
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
+use nakamoto_common::collections::HashMap;
 
-use super::{PeerId, Timeout};
+use super::{Link, PeerId, Timeout};
 
 /// Maximum filter headers to be expected in a message.
-const MAX_CFHEADERS: usize = 1000;
+const MAX_MESSAGE_CFHEADERS: usize = 2000;
+
+/// Maximum filters to be expected in a message.
+#[allow(dead_code)]
+const MAX_MESSAGE_CFILTERS: usize = 1000;
 
 /// An error originating in the SPV manager.
 #[derive(Error, Debug)]
@@ -47,9 +54,21 @@ impl std::fmt::Display for Event {
 pub trait SyncFilters {
     /// Get compact filter headers from peer, starting at the start height, and ending at the
     /// stop hash.
-    fn get_cfheaders(&self, start_height: Height, stop_hash: BlockHash, timeout: Timeout);
+    fn get_cfheaders(
+        &self,
+        addr: PeerId,
+        start_height: Height,
+        stop_hash: BlockHash,
+        timeout: Timeout,
+    );
     /// Get compact filters from a peer.
-    fn get_cfilters(&self, start_height: Height, stop_hash: BlockHash, timeout: Timeout);
+    fn get_cfilters(
+        &self,
+        addr: PeerId,
+        start_height: Height,
+        stop_hash: BlockHash,
+        timeout: Timeout,
+    );
     /// Send compact filter headers to a peer.
     fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders);
     /// Send a compact filter to a peer.
@@ -62,28 +81,55 @@ pub trait Events {
     fn event(&self, event: Event);
 }
 
+/// SPV manager configuration.
+#[derive(Debug)]
+pub struct Config {
+    /// How long to wait for a response from a peer.
+    pub request_timeout: Timeout,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            request_timeout: Timeout::from_secs(30),
+        }
+    }
+}
+
+/// A SPV peer.
+#[derive(Debug)]
+struct Peer {}
+
 /// A compact block filter manager.
 #[derive(Debug)]
 pub struct SpvManager<F, U> {
+    config: Config,
+    peers: HashMap<PeerId, Peer>,
     filters: F,
     upstream: U,
 }
 
 impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
     /// Create a new filter manager.
-    pub fn new(filters: F, upstream: U) -> Self {
-        Self { upstream, filters }
+    pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
+        let peers = HashMap::with_hasher(rng.clone().into());
+
+        Self {
+            config,
+            peers,
+            upstream,
+            filters,
+        }
     }
 
     /// Called periodically. Triggers syncing if necessary.
-    #[track_caller]
     pub fn idle<T: BlockTree>(&mut self, tree: &T) {
         let filter_height = self.filters.height();
         let block_height = tree.height();
 
         if filter_height < block_height {
             // We need to sync the filter header chain.
-            // TODO
+            self.sync(tree);
         } else if filter_height > block_height {
             panic!("SpvManager::idle: filter chain is longer than header chain!");
         }
@@ -124,7 +170,7 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
             return Err(Error::InvalidMessage(*addr));
         }
 
-        if hashes.len() > MAX_CFHEADERS {
+        if hashes.len() > MAX_MESSAGE_CFHEADERS {
             return Err(Error::InvalidMessage(*addr));
         }
 
@@ -235,5 +281,51 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
             return;
         }
         // TODO
+    }
+
+    /// Called when a new peer was negotiated.
+    pub fn peer_negotiated(
+        &mut self,
+        id: PeerId,
+        _height: Height,
+        _services: ServiceFlags,
+        _link: Link,
+        _clock: &impl Clock,
+    ) {
+        self.peers.insert(id, Peer {});
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+
+    /// Attempt to sync the filter header chain.
+    fn sync<T: BlockTree>(&mut self, tree: &T) {
+        let start_height = self.filters.height() + 1;
+        let stop_height = tree.height();
+        let count = (stop_height - start_height) as usize + 1; // Start and stop are inclusive.
+
+        debug_assert!(start_height <= stop_height);
+
+        // Cap request to `MAX_MESSAGE_CFHEADERS`.
+        let stop_hash = if count > MAX_MESSAGE_CFHEADERS {
+            let stop_height = start_height + MAX_MESSAGE_CFHEADERS as Height - 1;
+            let stop_block = tree
+                .get_block_by_height(stop_height)
+                .expect("all headers up to the tip exist");
+
+            stop_block.block_hash()
+        } else {
+            let (hash, _) = tree.tip();
+
+            hash
+        };
+
+        if let Some(peer) = self.peers.keys().next() {
+            self.upstream.get_cfheaders(
+                *peer,
+                start_height,
+                stop_hash,
+                self.config.request_timeout,
+            );
+        }
     }
 }

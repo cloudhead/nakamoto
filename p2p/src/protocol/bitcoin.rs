@@ -339,7 +339,12 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
             },
         );
         let pingmgr = PingManager::new(rng.clone(), upstream.clone());
-        let spvmgr = SpvManager::new(filters, upstream.clone());
+        let spvmgr = SpvManager::new(
+            spvmgr::Config::default(),
+            rng.clone(),
+            filters,
+            upstream.clone(),
+        );
 
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),

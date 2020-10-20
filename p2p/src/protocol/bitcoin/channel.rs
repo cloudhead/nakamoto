@@ -7,7 +7,7 @@ use crossbeam_channel as chan;
 
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::GetHeadersMessage;
-use bitcoin::network::message_filter::{CFHeaders, CFilter};
+use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
 
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::tree::ImportResult;
@@ -180,15 +180,34 @@ impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
 
 #[allow(unused_variables)]
 impl spvmgr::SyncFilters for Channel<RawNetworkMessage> {
-    fn get_cfheaders(&self, start_height: Height, stop_hash: BlockHash, timeout: LocalDuration) {
-        todo!()
+    fn get_cfheaders(
+        &self,
+        addr: PeerId,
+        start_height: Height,
+        stop_hash: BlockHash,
+        timeout: LocalDuration,
+    ) {
+        self.message(
+            addr,
+            NetworkMessage::GetCFHeaders(GetCFHeaders {
+                filter_type: 0x0,
+                start_height: start_height as u32,
+                stop_hash,
+            }),
+        );
     }
 
     fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders) {
         todo!()
     }
 
-    fn get_cfilters(&self, start_height: Height, stop_hash: BlockHash, timeout: LocalDuration) {
+    fn get_cfilters(
+        &self,
+        addr: PeerId,
+        start_height: Height,
+        stop_hash: BlockHash,
+        timeout: LocalDuration,
+    ) {
         todo!()
     }
 
