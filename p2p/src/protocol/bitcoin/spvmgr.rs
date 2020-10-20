@@ -75,6 +75,25 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
         Self { upstream, filters }
     }
 
+    /// Called periodically. Triggers syncing if necessary.
+    #[track_caller]
+    pub fn idle<T: BlockTree>(&mut self, tree: &T) {
+        let filter_height = self.filters.height();
+        let block_height = tree.height();
+
+        if filter_height < block_height {
+            // We need to sync the filter header chain.
+            // TODO
+        } else if filter_height > block_height {
+            panic!("SpvManager::idle: filter chain is longer than header chain!");
+        }
+    }
+
+    /// Rollback filter header chain by a given number of headers.
+    pub fn rollback(&mut self, n: usize) -> Result<(), filter::Error> {
+        self.filters.rollback(n)
+    }
+
     /// Handle a `cfheaders` message from a peer.
     pub fn received_cfheaders<T: BlockTree>(
         &mut self,

@@ -151,6 +151,6 @@ pub trait Filters {
             Ok(header)
         }
     }
-    /// Rollback headers to the given height.
-    fn rollback(&mut self, height: Height) -> Result<(), Error>;
+    /// Rollback chain by the given number of headers.
+    fn rollback(&mut self, n: usize) -> Result<(), Error>;
 }

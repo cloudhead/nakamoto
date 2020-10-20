@@ -697,8 +697,23 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
                         self.pingmgr.pong_received(addr, nonce, now);
                     }
                     NetworkMessage::Headers(headers) => {
-                        if let Err(e) = self.syncmgr.received_headers(&addr, headers, &self.clock) {
-                            log::error!("Error receiving headers: {}", e);
+                        match self.syncmgr.received_headers(&addr, headers, &self.clock) {
+                            Err(e) => log::error!("Error receiving headers: {}", e),
+                            Ok(ImportResult::TipChanged(_, _, reverted))
+                                if !reverted.is_empty() =>
+                            {
+                                // By rolling back the filter headers, we will trigger
+                                // a re-download of the missing headers, which should result
+                                // in us having the new headers.
+                                self.spvmgr.rollback(reverted.len()).unwrap()
+                            }
+                            Ok(ImportResult::TipChanged(_, _, _)) => {
+                                // Trigger an idle check, since we're going to have to catch up
+                                // on the new block header(s). This is not required, but reduces
+                                // latency.
+                                self.spvmgr.idle(&self.syncmgr.tree);
+                            }
+                            _ => {}
                         }
                     }
                     NetworkMessage::GetHeaders(GetHeadersMessage {
