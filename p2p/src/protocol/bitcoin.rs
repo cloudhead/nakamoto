@@ -918,6 +918,13 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
                     }
 
                     self.pingmgr.peer_negotiated(peer.address, now);
+                    self.spvmgr.peer_negotiated(
+                        peer.address,
+                        peer.height,
+                        peer.services,
+                        peer.link,
+                        &self.clock,
+                    );
                     self.syncmgr.peer_negotiated(
                         peer.address,
                         peer.height,

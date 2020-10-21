@@ -3,16 +3,13 @@
 //! Manages BIP 157/8 compact block filter sync.
 //!
 
-// TODO: Make sure to only call `get_cfheaders` on peers with support.
-// use bitcoin::network::constants::ServiceFlags;
-
 use thiserror::Error;
 
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 
 use nakamoto_common::block::filter::{self, BlockFilter, FilterHeader, Filters};
-use nakamoto_common::block::time::Clock;
+use nakamoto_common::block::time::{Clock, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::HashMap;
@@ -98,7 +95,10 @@ impl Default for Config {
 
 /// A SPV peer.
 #[derive(Debug)]
-struct Peer {}
+struct Peer {
+    height: Height,
+    last_active: LocalTime,
+}
 
 /// A compact block filter manager.
 #[derive(Debug)]
@@ -287,12 +287,25 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
     pub fn peer_negotiated(
         &mut self,
         id: PeerId,
-        _height: Height,
-        _services: ServiceFlags,
-        _link: Link,
-        _clock: &impl Clock,
+        height: Height,
+        services: ServiceFlags,
+        link: Link,
+        clock: &impl Clock,
     ) {
-        self.peers.insert(id, Peer {});
+        if !link.is_outbound() {
+            return;
+        }
+        if !services.has(ServiceFlags::COMPACT_FILTERS) {
+            return;
+        }
+
+        self.peers.insert(
+            id,
+            Peer {
+                last_active: clock.local_time(),
+                height,
+            },
+        );
     }
 
     ////////////////////////////////////////////////////////////////////////////
