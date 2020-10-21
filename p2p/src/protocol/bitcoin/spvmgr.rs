@@ -283,6 +283,11 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
         // TODO
     }
 
+    /// Called when a peer disconnected.
+    pub fn peer_disconnected(&mut self, id: &PeerId) {
+        self.peers.remove(id);
+    }
+
     /// Called when a new peer was negotiated.
     pub fn peer_negotiated(
         &mut self,

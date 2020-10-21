@@ -537,6 +537,7 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
             }
             Input::Disconnected(addr) => {
                 self.peers.remove(&addr);
+                self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr);
                 self.connmgr.peer_disconnected(&addr, &self.addrmgr);
