@@ -191,6 +191,7 @@ impl BlockTree for Cache {
     }
 }
 
+#[derive(Clone)]
 pub struct FilterCache {
     headers: NonEmpty<(FilterHash, FilterHeader)>,
     filters: BTreeMap<Height, BlockFilter>,
@@ -201,27 +202,6 @@ impl FilterCache {
         Self {
             headers: NonEmpty::new((FilterHash::default(), genesis)),
             filters: BTreeMap::new(),
-        }
-    }
-}
-
-// Nb. This custom clone implementation is needed because `BlockFilter` is not `Clone`. ಠ_ಠ
-impl Clone for FilterCache {
-    fn clone(&self) -> Self {
-        Self {
-            headers: self.headers.clone(),
-            filters: self
-                .filters
-                .iter()
-                .map(|(h, cf)| {
-                    (
-                        *h,
-                        BlockFilter {
-                            content: cf.content.clone(),
-                        },
-                    )
-                })
-                .collect(),
         }
     }
 }
