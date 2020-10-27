@@ -3,6 +3,7 @@
 //! Manages BIP 157/8 compact block filter sync.
 //!
 
+use nonempty::NonEmpty;
 use thiserror::Error;
 
 use bitcoin::network::constants::ServiceFlags;
@@ -107,6 +108,7 @@ pub struct SpvManager<F, U> {
     peers: HashMap<PeerId, Peer>,
     filters: F,
     upstream: U,
+    rng: fastrand::Rng,
 }
 
 impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
@@ -119,6 +121,7 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
             peers,
             upstream,
             filters,
+            rng,
         }
     }
 
@@ -337,9 +340,12 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
             hash
         };
 
-        if let Some(peer) = self.peers.keys().next() {
+        if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
+            let ix = self.rng.usize(..peers.len());
+            let peer = peers.get(ix).unwrap(); // Can't fail.
+
             self.upstream.get_cfheaders(
-                *peer,
+                **peer,
                 start_height,
                 stop_hash,
                 self.config.request_timeout,
