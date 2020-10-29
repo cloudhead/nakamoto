@@ -145,24 +145,23 @@ pub trait Filters {
     /// Import the filter for the given block height.
     fn import_filter(&mut self, height: Height, filter: BlockFilter) -> Result<(), Error>;
     /// Get filter headers given a block height range.
-    fn get_headers(&self, range: Range<Height>) -> Result<Vec<(FilterHash, FilterHeader)>, Error>;
+    fn get_headers(&self, range: Range<Height>) -> Vec<(FilterHash, FilterHeader)>;
     /// Get the filter header at the given height. Includes the hash of the filter itself.
-    fn get_header(&self, height: Height) -> Result<(FilterHash, FilterHeader), Error>;
+    fn get_header(&self, height: Height) -> Option<(FilterHash, FilterHeader)>;
     /// Import filter headers.
     fn import_headers(&mut self, headers: Vec<(FilterHash, FilterHeader)>)
         -> Result<Height, Error>;
     /// Get the tip of the filter header chain.
-    fn tip(&self) -> &(FilterHash, FilterHeader);
+    fn tip(&self) -> (&FilterHash, &FilterHeader);
     /// Get the height of the filter header chain.
     fn height(&self) -> Height;
     /// Get the filter header previous to the given height.
-    fn get_prev_header(&self, height: Height) -> Result<FilterHeader, Error> {
+    fn get_prev_header(&self, height: Height) -> Option<FilterHeader> {
         if height == 0 {
             // If the start height is `0` (genesis), we return the zero hash as the parent.
-            Ok(FilterHeader::default())
+            Some(FilterHeader::default())
         } else {
-            let (_, header) = self.get_header(height - 1)?;
-            Ok(header)
+            self.get_header(height - 1).map(|(_, h)| h)
         }
     }
     /// Rollback chain by the given number of headers.

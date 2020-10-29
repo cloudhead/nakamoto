@@ -4,6 +4,8 @@
 use std::io;
 use std::ops::Range;
 
+use nonempty::NonEmpty;
+
 use bitcoin::consensus::{encode, Decodable, Encodable};
 
 pub use nakamoto_common::block::filter::{
@@ -50,12 +52,18 @@ impl StoredHeader {
 }
 
 pub struct FilterCache<S> {
+    headers: NonEmpty<StoredHeader>,
     header_store: S,
 }
 
 impl<S: Store<Header = StoredHeader>> FilterCache<S> {
     pub fn new(header_store: S) -> Self {
-        Self { header_store }
+        let headers = NonEmpty::new(header_store.genesis());
+
+        Self {
+            header_store,
+            headers,
+        }
     }
 }
 
@@ -67,31 +75,50 @@ impl<S: Store<Header = StoredHeader>> Filters for FilterCache<S> {
     fn import_filter(&mut self, height: Height, filter: BlockFilter) -> Result<(), Error> {
         todo!()
     }
-    fn get_header(&self, height: Height) -> Result<(FilterHash, FilterHeader), Error> {
-        todo!()
+
+    fn get_header(&self, height: Height) -> Option<(FilterHash, FilterHeader)> {
+        self.headers
+            .get(height as usize)
+            .map(|s| (s.hash, s.header))
     }
-    fn get_headers(&self, range: Range<Height>) -> Result<Vec<(FilterHash, FilterHeader)>, Error> {
-        todo!()
+
+    fn get_headers(&self, range: Range<Height>) -> Vec<(FilterHash, FilterHeader)> {
+        self.headers
+            .iter()
+            .skip(range.start as usize)
+            .take(range.end as usize - range.start as usize)
+            .map(|h| (h.hash, h.header))
+            .collect()
     }
+
     fn import_headers(
         &mut self,
         headers: Vec<(FilterHash, FilterHeader)>,
     ) -> Result<Height, Error> {
-        self.header_store
-            .put(
-                headers
-                    .into_iter()
-                    .map(|(hash, header)| StoredHeader { hash, header }),
-            )
-            .map_err(Error::from)
+        let iter = headers
+            .into_iter()
+            .map(|(hash, header)| StoredHeader { hash, header });
+
+        self.headers.tail.extend(iter.clone());
+        self.header_store.put(iter).map_err(Error::from)
     }
-    fn tip(&self) -> &(FilterHash, FilterHeader) {
-        todo!()
+
+    fn tip(&self) -> (&FilterHash, &FilterHeader) {
+        let StoredHeader { hash, header } = self.headers.last();
+        (hash, header)
     }
+
     fn height(&self) -> Height {
-        0
+        self.headers.tail.len() as Height
     }
+
     fn rollback(&mut self, n: usize) -> Result<(), Error> {
-        todo!()
+        // Height to rollback to.
+        let height = self.height() - n as Height;
+
+        self.header_store.rollback(height)?;
+        self.headers.tail.truncate(height as usize);
+
+        Ok(())
     }
 }

@@ -224,26 +224,19 @@ impl Filters for FilterCache {
         Ok(())
     }
 
-    fn get_header(&self, height: Height) -> Result<(FilterHash, FilterHeader), filter::Error> {
-        match self.headers.get(height as usize) {
-            Some(result) => Ok(result.clone()),
-            None => Err(filter::Error::NotFound(height)),
-        }
+    fn get_header(&self, height: Height) -> Option<(FilterHash, FilterHeader)> {
+        self.headers.get(height as usize).map(|h| h.clone())
     }
 
-    fn get_headers(
-        &self,
-        range: Range<Height>,
-    ) -> Result<Vec<(FilterHash, FilterHeader)>, filter::Error> {
+    fn get_headers(&self, range: Range<Height>) -> Vec<(FilterHash, FilterHeader)> {
         assert!(range.start < range.end);
 
-        Ok(self
-            .headers
+        self.headers
             .iter()
             .cloned()
             .skip(range.start as usize)
             .take(range.end as usize - range.start as usize)
-            .collect())
+            .collect()
     }
 
     fn import_headers(
@@ -255,8 +248,9 @@ impl Filters for FilterCache {
         Ok(self.height())
     }
 
-    fn tip(&self) -> &(FilterHash, FilterHeader) {
-        self.headers.last()
+    fn tip(&self) -> (&FilterHash, &FilterHeader) {
+        let (hash, header) = self.headers.last();
+        (&hash, &header)
     }
 
     fn height(&self) -> Height {

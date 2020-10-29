@@ -213,9 +213,13 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
             return Err(Error::Ignored("getcfheaders", *addr));
         };
 
-        if let Ok(headers) = self.filters.get_headers(start_height..stop_height) {
+        let headers = self.filters.get_headers(start_height..stop_height);
+        if !headers.is_empty() {
             let hashes = headers.iter().map(|(hash, _)| *hash);
-            let prev_header = self.filters.get_prev_header(start_height)?;
+            let prev_header = self
+                .filters
+                .get_prev_header(start_height)
+                .expect("SpvManager::received_getcfheaders: all headers up to the tip must exist");
 
             self.upstream.send_cfheaders(
                 *addr,
@@ -252,7 +256,7 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
         };
 
         // The expected hash for this block filter.
-        let hash = if let Ok((hash, _)) = self.filters.get_header(height) {
+        let hash = if let Some((hash, _)) = self.filters.get_header(height) {
             hash
         } else {
             // Can't handle this message, we don't have the header.
@@ -261,7 +265,10 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
 
         // Note that in case this fails, we have a bug in our implementation, since filter
         // headers are supposed to be downloaded in-order.
-        let prev_header = self.filters.get_prev_header(height)?;
+        let prev_header = self
+            .filters
+            .get_prev_header(height)
+            .expect("SpvManager::received_cfilter: all headers up to the tip must exist");
         let filter = BlockFilter::new(&msg.filter);
 
         if filter.filter_id(&prev_header.into()) != hash {
