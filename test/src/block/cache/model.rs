@@ -249,10 +249,10 @@ impl Filters for FilterCache {
     fn import_headers(
         &mut self,
         headers: Vec<(FilterHash, FilterHeader)>,
-    ) -> Result<(), filter::Error> {
+    ) -> Result<Height, filter::Error> {
         self.headers.tail.extend(headers);
 
-        Ok(())
+        Ok(self.height())
     }
 
     fn tip(&self) -> &(FilterHash, FilterHeader) {

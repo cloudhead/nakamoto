@@ -10,9 +10,10 @@ use crossbeam_channel as chan;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
+use nakamoto_chain::filter;
 use nakamoto_chain::filter::cache::FilterCache;
 
-use nakamoto_common::block::filter::{FilterHeader, Filters};
+use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::store::Store;
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
@@ -160,14 +161,12 @@ impl Node {
 
         log::info!("Initializing block filters..");
 
+        let cfheaders_genesis = filter::cache::StoredHeader::genesis(self.config.network);
         let cfheaders_path = dir.join("filters.db");
-        let cfheaders_store = match store::File::create(
-            &cfheaders_path,
-            FilterHeader::genesis(self.config.network),
-        ) {
+        let cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", cfheaders_path);
-                store::File::open(cfheaders_path, FilterHeader::genesis(self.config.network))?
+                store::File::open(cfheaders_path, cfheaders_genesis)?
             }
             Err(err) => panic!(err.to_string()),
             Ok(store) => {

@@ -149,7 +149,7 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
         addr: &PeerId,
         msg: CFHeaders,
         tree: &T,
-    ) -> Result<(), Error> {
+    ) -> Result<Height, Error> {
         if msg.filter_type != 0x0 {
             return Err(Error::InvalidMessage(*addr));
         }

@@ -114,6 +114,19 @@ impl FilterHeader {
     }
 }
 
+/// Get the genesis filter hash for the given network.
+pub fn genesis_hash(network: Network) -> FilterHash {
+    use bitcoin::hashes::Hash;
+
+    let genesis = network.genesis_block();
+    let filter = BlockFilter::new_script_filter(&genesis, |_| {
+        panic!("FilterHeader::genesis_hash: genesis block should have no inputs")
+    })
+    .unwrap();
+
+    FilterHash::hash(&filter.content)
+}
+
 /// An error related to the filters access.
 #[derive(Debug, Error)]
 pub enum Error {
@@ -136,7 +149,8 @@ pub trait Filters {
     /// Get the filter header at the given height. Includes the hash of the filter itself.
     fn get_header(&self, height: Height) -> Result<(FilterHash, FilterHeader), Error>;
     /// Import filter headers.
-    fn import_headers(&mut self, headers: Vec<(FilterHash, FilterHeader)>) -> Result<(), Error>;
+    fn import_headers(&mut self, headers: Vec<(FilterHash, FilterHeader)>)
+        -> Result<Height, Error>;
     /// Get the tip of the filter header chain.
     fn tip(&self) -> &(FilterHash, FilterHeader);
     /// Get the height of the filter header chain.
