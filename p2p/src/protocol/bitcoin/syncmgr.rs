@@ -378,7 +378,7 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
                     }
                     Err(err) => self
                         .handle_error(from, err)
-                        .and_then(|()| Ok(ImportResult::TipUnchanged)),
+                        .map(|()| ImportResult::TipUnchanged),
                 }
             }
             // Header announcement.
@@ -413,7 +413,7 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
                     }
                     Err(err) => self
                         .handle_error(from, err)
-                        .and_then(|()| Ok(ImportResult::TipUnchanged)),
+                        .map(|()| ImportResult::TipUnchanged),
                 }
             }
             // We've received a large number of unsolicited headers. This is more than the

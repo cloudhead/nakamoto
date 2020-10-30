@@ -293,7 +293,7 @@ impl<K: Hash + Eq> AdjustedTime<K> {
         let mut offsets = self.samples.clone();
         let count = offsets.len();
 
-        offsets.sort();
+        offsets.sort_unstable();
 
         // Don't adjust if less than 5 samples exist.
         if count < MIN_TIME_SAMPLES {

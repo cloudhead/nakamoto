@@ -615,7 +615,7 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                         // FIXME: Consolidate with `Query`.
                         let peers = self.outbound().collect::<Vec<_>>();
                         let ix = self.rng.usize(..peers.len());
-                        let peer = *peers.iter().nth(ix).unwrap();
+                        let peer = *peers.get(ix).unwrap();
 
                         self.upstream.message(peer.address, NetworkMessage::Tx(tx));
                     }

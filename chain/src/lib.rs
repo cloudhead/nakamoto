@@ -1,6 +1,7 @@
 //! Functionality around proof-of-work chains.
 #[allow(clippy::len_without_is_empty)]
 #[allow(clippy::collapsible_if)]
+#[allow(clippy::type_complexity)]
 #[deny(
     unsafe_code,
     missing_debug_implementations,

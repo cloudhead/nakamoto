@@ -138,7 +138,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         // Gracefully handle the case where `height` < `MEDIUM_TIME_SPAN`.
         let available = &mut times[0..(end - start) as usize];
 
-        available.sort();
+        available.sort_unstable();
         available[available.len() / 2]
     }
 

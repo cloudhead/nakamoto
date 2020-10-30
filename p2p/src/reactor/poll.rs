@@ -328,8 +328,7 @@ where
             while let Some(event) = self.events.pop_front() {
                 protocol.step(event, local_time);
 
-                let control = self.process::<P>(&rx, local_time)?;
-                if control == Control::Shutdown {
+                if let Control::Shutdown = self.process::<P>(&rx, local_time)? {
                     return Ok(());
                 }
             }

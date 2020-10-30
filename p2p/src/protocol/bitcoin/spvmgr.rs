@@ -234,7 +234,7 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
         }
         // We must be syncing, since we have the block headers requested but
         // not the associated filter headers. Simply ignore the request.
-        return Err(Error::Ignored("getcfheaders", *addr));
+        Err(Error::Ignored("getcfheaders", *addr))
     }
 
     /// Handle a `cfilter` message.

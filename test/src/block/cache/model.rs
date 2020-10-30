@@ -225,7 +225,7 @@ impl Filters for FilterCache {
     }
 
     fn get_header(&self, height: Height) -> Option<(FilterHash, FilterHeader)> {
-        self.headers.get(height as usize).map(|h| h.clone())
+        self.headers.get(height as usize).copied()
     }
 
     fn get_headers(&self, range: Range<Height>) -> Vec<(FilterHash, FilterHeader)> {
