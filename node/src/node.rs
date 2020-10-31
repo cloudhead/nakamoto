@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::net;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{self, SystemTime};
@@ -288,6 +289,14 @@ impl Handle for NodeHandle {
             }
             _ => None,
         })
+    }
+
+    fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {
+        assert!(
+            !range.is_empty(),
+            "NodeHandle::get_filters: range cannot be empty"
+        );
+        self.command(Command::GetFilters(range))
     }
 
     fn broadcast(&self, msg: Self::Message) -> Result<(), handle::Error> {
