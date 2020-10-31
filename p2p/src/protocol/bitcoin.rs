@@ -549,67 +549,65 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                 self.receive(addr, msg);
             }
             Input::Sent(_addr, _msg) => {}
-            Input::Command(cmd) => {
-                match cmd {
-                    Command::Connect(addr) => {
-                        debug!(target: self.target, "Received command: Connect({})", addr);
+            Input::Command(cmd) => match cmd {
+                Command::Connect(addr) => {
+                    debug!(target: self.target, "Received command: Connect({})", addr);
 
-                        self.whitelist.addr.insert(addr.ip());
-                        self.connmgr.connect(&addr, &mut self.addrmgr, local_time);
-                    }
-                    Command::Disconnect(addr) => {
-                        debug!(target: self.target, "Received command: Disconnect({})", addr);
+                    self.whitelist.addr.insert(addr.ip());
+                    self.connmgr.connect(&addr, &mut self.addrmgr, local_time);
+                }
+                Command::Disconnect(addr) => {
+                    debug!(target: self.target, "Received command: Disconnect({})", addr);
 
-                        self.disconnect(addr);
-                    }
-                    Command::Query(msg, reply) => {
-                        debug!(target: self.target, "Received command: Query({:?})", msg);
+                    self.disconnect(addr);
+                }
+                Command::Query(msg, reply) => {
+                    debug!(target: self.target, "Received command: Query({:?})", msg);
 
-                        reply.send(self.query(msg)).ok();
-                    }
-                    Command::Broadcast(msg) => {
-                        debug!(target: self.target, "Received command: Broadcast({:?})", msg);
+                    reply.send(self.query(msg)).ok();
+                }
+                Command::Broadcast(msg) => {
+                    debug!(target: self.target, "Received command: Broadcast({:?})", msg);
 
-                        for peer in self.outbound() {
-                            self.upstream.message(peer.address, msg.clone());
-                        }
-                    }
-                    Command::ImportHeaders(headers, reply) => {
-                        debug!(target: self.target, "Received command: ImportHeaders(..)");
-
-                        let result = self.syncmgr.import_blocks(headers.into_iter(), &self.clock);
-
-                        match result {
-                            Ok(import_result) => {
-                                reply.send(Ok(import_result.clone())).ok();
-
-                                if let ImportResult::TipChanged(_, height, _) = import_result {
-                                    self.height = height;
-                                }
-                            }
-                            Err(err) => {
-                                reply.send(Err(err)).ok();
-                            }
-                        }
-                    }
-                    Command::GetTip(_) => todo!(),
-                    Command::GetBlock(hash) => {
-                        self.query(NetworkMessage::GetBlocks(GetBlocksMessage {
-                            locator_hashes: vec![],
-                            stop_hash: hash,
-                            version: self.protocol_version,
-                        }));
-                    }
-                    Command::SubmitTransaction(tx) => {
-                        debug!(target: self.target, "Received command: SubmitTransaction(..)");
-
-                        self.query(NetworkMessage::Tx(tx));
-                    }
-                    Command::Shutdown => {
-                        self.upstream.push(Out::Shutdown);
+                    for peer in self.outbound() {
+                        self.upstream.message(peer.address, msg.clone());
                     }
                 }
-            }
+                Command::ImportHeaders(headers, reply) => {
+                    debug!(target: self.target, "Received command: ImportHeaders(..)");
+
+                    let result = self.syncmgr.import_blocks(headers.into_iter(), &self.clock);
+
+                    match result {
+                        Ok(import_result) => {
+                            reply.send(Ok(import_result.clone())).ok();
+
+                            if let ImportResult::TipChanged(_, height, _) = import_result {
+                                self.height = height;
+                            }
+                        }
+                        Err(err) => {
+                            reply.send(Err(err)).ok();
+                        }
+                    }
+                }
+                Command::GetTip(_) => todo!(),
+                Command::GetBlock(hash) => {
+                    self.query(NetworkMessage::GetBlocks(GetBlocksMessage {
+                        locator_hashes: vec![],
+                        stop_hash: hash,
+                        version: self.protocol_version,
+                    }));
+                }
+                Command::SubmitTransaction(tx) => {
+                    debug!(target: self.target, "Received command: SubmitTransaction(..)");
+
+                    self.query(NetworkMessage::Tx(tx));
+                }
+                Command::Shutdown => {
+                    self.upstream.push(Out::Shutdown);
+                }
+            },
             Input::Timeout(source) => {
                 trace!(target: self.target, "Received timeout for {:?}", source);
 
