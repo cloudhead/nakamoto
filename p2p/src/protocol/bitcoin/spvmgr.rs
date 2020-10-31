@@ -3,6 +3,8 @@
 //! Manages BIP 157/8 compact block filter sync.
 //!
 
+use std::ops::Range;
+
 use nonempty::NonEmpty;
 use thiserror::Error;
 
@@ -323,19 +325,20 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
         );
     }
 
-    ////////////////////////////////////////////////////////////////////////////
+    /// Send a `getcfilters` message to a random peer.
+    pub fn send_getcfilters<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
+        let count = range.end as usize - range.start as usize;
 
-    /// Attempt to sync the filter header chain.
-    fn sync<T: BlockTree>(&mut self, tree: &T) {
-        let start_height = self.filters.height() + 1;
-        let stop_height = tree.height();
-        let count = (stop_height - start_height) as usize + 1; // Start and stop are inclusive.
+        debug_assert!(range.start < range.end);
+        debug_assert!(!range.is_empty());
 
-        debug_assert!(start_height <= stop_height);
+        if range.is_empty() {
+            return;
+        }
 
         // Cap request to `MAX_MESSAGE_CFHEADERS`.
         let stop_hash = if count > MAX_MESSAGE_CFHEADERS {
-            let stop_height = start_height + MAX_MESSAGE_CFHEADERS as Height - 1;
+            let stop_height = range.start + MAX_MESSAGE_CFHEADERS as Height - 1;
             let stop_block = tree
                 .get_block_by_height(stop_height)
                 .expect("all headers up to the tip exist");
@@ -353,10 +356,20 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
 
             self.upstream.get_cfheaders(
                 **peer,
-                start_height,
+                range.start,
                 stop_hash,
                 self.config.request_timeout,
             );
         }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+
+    /// Attempt to sync the filter header chain.
+    fn sync<T: BlockTree>(&mut self, tree: &T) {
+        let start_height = self.filters.height() + 1;
+        let stop_height = tree.height();
+
+        self.send_getcfilters(start_height..stop_height + 1, tree);
     }
 }

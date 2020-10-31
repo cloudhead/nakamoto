@@ -27,6 +27,7 @@ use crate::protocol::{self, Link, Message, Out, PeerId, Protocol, Timeout, Timeo
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::net;
+use std::ops::Range;
 
 use bitcoin::consensus::params::Params;
 use bitcoin::network::address::Address;
@@ -74,6 +75,8 @@ pub enum Command {
     GetTip(chan::Sender<BlockHeader>),
     /// Get a block from the active chain.
     GetBlock(BlockHash),
+    /// Get block filters.
+    GetFilters(Range<Height>),
     /// Broadcast to outbound peers.
     Broadcast(NetworkMessage),
     /// Send a message to a random peer.
@@ -592,6 +595,9 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                     }
                 }
                 Command::GetTip(_) => todo!(),
+                Command::GetFilters(range) => {
+                    self.spvmgr.send_getcfilters(range, &self.syncmgr.tree);
+                }
                 Command::GetBlock(hash) => {
                     self.query(NetworkMessage::GetBlocks(GetBlocksMessage {
                         locator_hashes: vec![],
