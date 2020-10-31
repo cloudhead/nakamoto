@@ -565,22 +565,7 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                     Command::Query(msg, reply) => {
                         debug!(target: self.target, "Received command: Query({:?})", msg);
 
-                        let mut peers = self.outbound();
-
-                        match peers.clone().count() {
-                            n if n > 0 => {
-                                // TODO: We should have a `sample` function that takes an iterator
-                                // and picks a random item or returns `None` if it's empty.
-                                let r = self.rng.usize(..n);
-                                let p = peers.nth(r).unwrap();
-
-                                self.upstream.message(p.address, msg);
-                                reply.send(Some(p.address)).ok();
-                            }
-                            _ => {
-                                reply.send(None).ok();
-                            }
-                        }
+                        reply.send(self.query(msg)).ok();
                     }
                     Command::Broadcast(msg) => {
                         debug!(target: self.target, "Received command: Broadcast({:?})", msg);
@@ -618,12 +603,7 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                     Command::SubmitTransaction(tx) => {
                         debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
-                        // FIXME: Consolidate with `Query`.
-                        let peers = self.outbound().collect::<Vec<_>>();
-                        let ix = self.rng.usize(..peers.len());
-                        let peer = *peers.get(ix).unwrap();
-
-                        self.upstream.message(peer.address, NetworkMessage::Tx(tx));
+                        self.query(NetworkMessage::Tx(tx));
                     }
                     Command::Shutdown => {
                         self.upstream.push(Out::Shutdown);
