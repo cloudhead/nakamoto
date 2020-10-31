@@ -32,7 +32,7 @@ use bitcoin::consensus::params::Params;
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use bitcoin::network::message_blockdata::GetHeadersMessage;
+use bitcoin::network::message_blockdata::{GetBlocksMessage, GetHeadersMessage};
 use bitcoin::network::message_network::VersionMessage;
 
 use nakamoto_common::block::filter::Filters;
@@ -608,7 +608,13 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                         }
                     }
                     Command::GetTip(_) => todo!(),
-                    Command::GetBlock(_) => todo!(),
+                    Command::GetBlock(hash) => {
+                        self.query(NetworkMessage::GetBlocks(GetBlocksMessage {
+                            locator_hashes: vec![],
+                            stop_hash: hash,
+                            version: self.protocol_version,
+                        }));
+                    }
                     Command::SubmitTransaction(tx) => {
                         debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
@@ -660,6 +666,23 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
         self.peers
             .values()
             .filter(|p| p.is_ready() && p.link.is_outbound())
+    }
+
+    /// Send a message to a random peer. Returns the peer id.
+    fn query(&self, msg: NetworkMessage) -> Option<PeerId> {
+        let peers = self.outbound().collect::<Vec<_>>();
+
+        match peers.len() {
+            n if n > 0 => {
+                let r = self.rng.usize(..n);
+                let p = peers.get(r).unwrap();
+
+                self.upstream.message(p.address, msg);
+
+                Some(p.address)
+            }
+            _ => None,
+        }
     }
 
     fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) {
