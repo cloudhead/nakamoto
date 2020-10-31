@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::net;
+use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{self, SystemTime};
@@ -13,7 +14,7 @@ use nakamoto_chain::block::store;
 use nakamoto_chain::filter;
 use nakamoto_chain::filter::cache::FilterCache;
 
-use nakamoto_common::block::filter::Filters;
+use nakamoto_common::block::filter::{BlockFilter, Filters};
 use nakamoto_common::block::store::Store;
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
@@ -288,6 +289,14 @@ impl Handle for NodeHandle {
             }
             _ => None,
         })
+    }
+
+    fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {
+        assert!(
+            !range.is_empty(),
+            "NodeHandle::get_filters: range cannot be empty"
+        );
+        self.command(Command::GetFilters(range))
     }
 
     fn broadcast(&self, msg: Self::Message) -> Result<(), handle::Error> {

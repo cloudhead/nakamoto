@@ -1,8 +1,10 @@
 use std::net;
+use std::ops::Range;
 
 use crossbeam_channel as chan;
 use thiserror::Error;
 
+use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_p2p::protocol::Link;
@@ -40,6 +42,8 @@ pub trait Handle {
     fn get_tip(&self) -> Result<BlockHeader, Error>;
     /// Get a full block from the network.
     fn get_block(&self, hash: &BlockHash) -> Result<Block, Error>;
+    /// Get compact filters from the network.
+    fn get_filters(&self, range: Range<Height>) -> Result<(), Error>;
     /// Broadcast a message to all *outbound* peers.
     fn broadcast(&self, msg: Self::Message) -> Result<(), Error>;
     /// Send a message to a random *outbound* peer. Return the chosen
