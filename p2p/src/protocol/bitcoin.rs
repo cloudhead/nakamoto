@@ -596,6 +596,9 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                 }
                 Command::GetTip(_) => todo!(),
                 Command::GetFilters(range) => {
+                    debug!(target: self.target,
+                        "Received command: GetFilters({}..{})", range.start, range.end);
+
                     self.spvmgr.send_getcfilters(range, &self.syncmgr.tree);
                 }
                 Command::GetBlock(hash) => {
