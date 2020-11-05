@@ -1,19 +1,25 @@
+//! Block header storage.
 #![allow(clippy::len_without_is_empty)]
 use crate::block::Height;
 
 use bitcoin::consensus::encode;
 use thiserror::Error;
 
+/// A block storage error.
 #[derive(Debug, Error)]
 pub enum Error {
+    /// An I/O error.
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
+    /// An error decoding block data.
     #[error("error decoding block: {0}")]
     Decoding(#[from] encode::Error),
+    /// A data-corruption error.
     #[error("error: the store data is corrupt")]
     Corruption,
 }
 
+/// Represents objects that can store block headers.
 pub trait Store {
     /// The type of header used in the store.
     type Header: Sized;

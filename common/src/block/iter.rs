@@ -1,3 +1,4 @@
+//! Double-ended iterator over a `NonEmpty` blockchain.
 use nonempty::NonEmpty;
 
 use super::Height;
@@ -11,6 +12,7 @@ pub struct Iter<'a, T> {
 }
 
 impl<'a, T> Iter<'a, T> {
+    /// Create a new iterator.
     pub fn new(chain: &'a NonEmpty<T>) -> Self {
         Self {
             chain,

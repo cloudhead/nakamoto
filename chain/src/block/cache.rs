@@ -17,14 +17,36 @@ use bitcoin::network::constants::Network;
 
 use nonempty::NonEmpty;
 
-use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
+use nakamoto_common::block::tree::{self, BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::{
     self,
     iter::Iter,
     store::Store,
     time::{self, Clock},
-    Bits, BlockTime, CachedBlock, Height,
+    Bits, BlockTime, Height, Work,
 };
+
+/// A block that is being stored by the block cache.
+#[derive(Debug, Clone, Copy)]
+struct CachedBlock {
+    pub height: Height,
+    pub hash: BlockHash,
+    pub header: BlockHeader,
+}
+
+impl std::ops::Deref for CachedBlock {
+    type Target = BlockHeader;
+
+    fn deref(&self) -> &Self::Target {
+        &self.header
+    }
+}
+
+impl tree::Header for CachedBlock {
+    fn work(&self) -> Work {
+        self.header.work()
+    }
+}
 
 /// A chain candidate, forking off the active chain.
 #[derive(Debug)]
@@ -102,7 +124,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     ///
     /// Panics if the range is negative.
     ///
-    pub fn range<'a>(
+    fn range<'a>(
         &'a self,
         range: std::ops::Range<Height>,
     ) -> impl Iterator<Item = &CachedBlock> + 'a {

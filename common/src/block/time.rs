@@ -1,3 +1,4 @@
+//! Block time and other time-related types.
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::time::{SystemTime, UNIX_EPOCH};

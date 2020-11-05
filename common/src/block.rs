@@ -1,3 +1,4 @@
+//! Block-related types and functions.
 pub mod checkpoints;
 pub mod filter;
 pub mod genesis;
@@ -9,8 +10,6 @@ pub mod tree;
 pub use bitcoin::blockdata::block::{Block, BlockHeader};
 pub use bitcoin::blockdata::transaction::Transaction;
 pub use bitcoin::hash_types::BlockHash;
-
-use std::ops::Deref;
 
 /// Difficulty target of a block.
 pub type Target = bitcoin::util::uint::Uint256;
@@ -26,27 +25,6 @@ pub type Height = u64;
 
 /// Block time (seconds since Epoch).
 pub type BlockTime = u32;
-
-#[derive(Debug, Clone, Copy)]
-pub struct CachedBlock {
-    pub height: Height,
-    pub hash: BlockHash,
-    pub header: BlockHeader,
-}
-
-impl Deref for CachedBlock {
-    type Target = BlockHeader;
-
-    fn deref(&self) -> &Self::Target {
-        &self.header
-    }
-}
-
-impl tree::Header for CachedBlock {
-    fn work(&self) -> Work {
-        self.header.work()
-    }
-}
 
 /// Get the locator indexes starting from a given height, and going backwards, exponentially
 /// backing off.

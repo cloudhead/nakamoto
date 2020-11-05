@@ -1,3 +1,4 @@
+//! Collections used in `nakamoto`.
 use bitcoin_hashes::siphash24::Hash;
 
 /// A `HashMap` which uses `fastrand::Rng` for its random state.
@@ -6,6 +7,7 @@ pub type HashMap<K, V> = std::collections::HashMap<K, V, RandomState>;
 /// A `HashSet` which uses `fastrand::Rng` for its random state.
 pub type HashSet<K> = std::collections::HashSet<K, RandomState>;
 
+/// Hasher using `siphash24`.
 #[derive(Default)]
 pub struct Hasher {
     data: Vec<u8>,
@@ -33,13 +35,14 @@ impl std::hash::Hasher for Hasher {
     }
 }
 
+/// Random hasher state.
 pub struct RandomState {
     key1: u64,
     key2: u64,
 }
 
 impl RandomState {
-    pub fn new(rng: fastrand::Rng) -> Self {
+    fn new(rng: fastrand::Rng) -> Self {
         Self {
             key1: rng.u64(..),
             key2: rng.u64(..),
