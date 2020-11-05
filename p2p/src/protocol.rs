@@ -1,3 +1,4 @@
+//! P2P protocol traits and types.
 pub mod bitcoin;
 pub use self::bitcoin::Bitcoin;
 
@@ -26,6 +27,7 @@ pub enum Link {
 }
 
 impl Link {
+    /// Check whether the link is outbound.
     pub fn is_outbound(&self) -> bool {
         *self == Link::Outbound
     }

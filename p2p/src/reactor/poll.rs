@@ -1,3 +1,4 @@
+//! Poll-based reactor. This is a single-threaded reactor using a `poll` loop.
 pub use popol::Waker;
 
 use bitcoin::consensus::encode::Decodable;

@@ -3,6 +3,7 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::single_match)]
 #![allow(clippy::comparison_chain)]
+#![warn(missing_docs)]
 pub mod address_book;
 pub mod error;
 pub mod event;
@@ -19,6 +20,7 @@ mod fallible;
 #[macro_use]
 extern crate lazy_static;
 
+/// Makes a function randomly fail with the given error.
 #[macro_export]
 macro_rules! fallible {
     ($err:expr) => {
