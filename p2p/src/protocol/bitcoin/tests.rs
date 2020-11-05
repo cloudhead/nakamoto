@@ -675,8 +675,7 @@ fn test_getaddr() {
         .protocol
         .peers
         .values()
-        .filter(|p| p.is_ready())
-        .next()
+        .find(|p| p.is_ready())
         .unwrap()
         .address;
     let result = sim.input(&alice, Input::Disconnected(peer));
