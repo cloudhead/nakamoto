@@ -562,6 +562,15 @@ impl<T: BlockTree, U: SyncHeaders + Disconnect + Idle> SyncManager<T, U> {
         }
     }
 
+    /// Get the best known height out of all our peers.
+    pub fn best_height(&self) -> Height {
+        self.peers
+            .iter()
+            .map(|(_, p)| p.height)
+            .max()
+            .unwrap_or_else(|| self.tree.height())
+    }
+
     ///////////////////////////////////////////////////////////////////////////
 
     fn handle_error(&mut self, from: &PeerId, err: Error) -> Result<(), store::Error> {

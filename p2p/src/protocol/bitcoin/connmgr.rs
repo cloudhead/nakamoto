@@ -223,6 +223,14 @@ impl<U: Connect + Disconnect + Events + Idle + addrmgr::GetAddresses + addrmgr::
         }
     }
 
+    /// Returns outbound peer addresses.
+    pub fn outbound_peers(&self) -> impl Iterator<Item = &PeerId> {
+        self.connected
+            .iter()
+            .filter(|(_, p)| p.link.is_outbound())
+            .map(|(addr, _)| addr)
+    }
+
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections(&mut self, addrmgr: &AddressManager<U>) {
         let current = self.outbound().count();

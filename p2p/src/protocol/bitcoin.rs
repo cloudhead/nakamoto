@@ -177,6 +177,8 @@ pub struct Bitcoin<T, F> {
     clock: AdjustedTime<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
     target: &'static str,
+    /// Last time a "tick" was triggered.
+    last_tick: LocalTime,
     /// Random number generator.
     rng: fastrand::Rng,
     /// Outbound channel. Used to communicate protocol events with a reactor.
@@ -365,6 +367,7 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
             connmgr,
             pingmgr,
             spvmgr,
+            last_tick: LocalTime::default(),
             rng,
             upstream,
         }
@@ -509,8 +512,7 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
     }
 
     fn step(&mut self, input: Input, local_time: LocalTime) {
-        // The local time is set from outside the protocol.
-        self.clock.set_local_time(local_time);
+        self.tick(local_time);
 
         match input {
             Input::Connected {
@@ -669,6 +671,36 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
                 Some(p.address)
             }
             _ => None,
+        }
+    }
+
+    fn tick(&mut self, local_time: LocalTime) {
+        // The local time is set from outside the protocol.
+        self.clock.set_local_time(local_time);
+
+        if local_time - self.last_tick >= LocalDuration::from_secs(30) {
+            let (tip, _) = self.syncmgr.tree.tip();
+            let height = self.syncmgr.tree.height();
+            let best = self.syncmgr.best_height();
+            let sync = height as f64 / best as f64 * 100.;
+            let peers = self.connmgr.outbound_peers().count();
+
+            // TODO: Add cache sizes on disk
+            // TODO: Add protocol state(s)
+            // TODO: Trim block hash
+            // TODO: Add average headers/s or bandwidth
+
+            log::info!(
+                "tip = {tip}, height = {height}/{best} ({sync}%), outbound = {peers}/{target}",
+                tip = tip,
+                height = height,
+                best = best,
+                sync = sync,
+                peers = peers,
+                target = connmgr::TARGET_OUTBOUND_PEERS
+            );
+
+            self.last_tick = local_time;
         }
     }
 
