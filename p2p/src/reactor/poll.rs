@@ -146,18 +146,20 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 }
 
 /// A single-threaded non-blocking reactor.
-pub struct Reactor<R: Write + Read, M: Message, C, T> {
+///
+/// * `R`: The underlying stream type, eg. `net::TcpStream`.
+/// * `M`: The type of message being exchanged between peers.
+/// * `C`: The commands being sent to the node, by API users.
+pub struct Reactor<R: Write + Read, M: Message, C> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
     events: VecDeque<Input<M, C>>,
     subscriber: chan::Sender<Event<M::Payload>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
-    timeouts: TimeoutManager<T>,
+    timeouts: TimeoutManager<TimeoutSource>,
 }
 
-impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C, T>
-    Reactor<R, M, C, T>
-{
+impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> Reactor<R, M, C> {
     /// Construct a new reactor, given a channel to send events on.
     pub fn new(subscriber: chan::Sender<Event<M::Payload>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
@@ -212,7 +214,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C, T
 }
 
 impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
-    Reactor<net::TcpStream, M, C, TimeoutSource>
+    Reactor<net::TcpStream, M, C>
 where
     M::Payload: Debug + Send + Sync,
 {
