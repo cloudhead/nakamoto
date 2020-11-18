@@ -93,7 +93,7 @@ pub struct Node {
     commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
     events: chan::Receiver<Event<NetworkMessage>>,
-    reactor: Reactor<net::TcpStream, RawNetworkMessage, Command>,
+    reactor: Reactor<net::TcpStream, RawNetworkMessage>,
 }
 
 impl Node {

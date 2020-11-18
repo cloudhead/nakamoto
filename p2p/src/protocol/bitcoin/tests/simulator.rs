@@ -261,14 +261,13 @@ impl Sim {
     }
 
     /// Process a protocol output event.
-    pub fn schedule<M, C>(
+    pub fn schedule<M>(
         events: &mut Vec<Event<<M as protocol::Message>::Payload>>,
-        inbox: &mut VecDeque<(PeerId, protocol::Input<M, C>)>,
+        inbox: &mut VecDeque<(PeerId, protocol::Input<M>)>,
         peer: &PeerId,
         out: Out<M>,
     ) where
         M: Message + Debug,
-        C: Debug,
     {
         let peer = *peer;
 
@@ -394,19 +393,13 @@ pub fn handshake<T: BlockTree, F: Filters>(
     assert!(bob.peers.values().all(|p| p.is_ready()));
 }
 
-pub fn run<P: Protocol<M, Command = C>, M: Message + Debug, C: Debug>(
+pub fn run<P: Protocol<M>, M: Message + Debug>(
     peers: Vec<(PeerId, &mut P, chan::Receiver<Out<M>>)>,
-    inputs: Vec<Vec<protocol::Input<M, C>>>,
+    inputs: Vec<Vec<protocol::Input<M>>>,
     local_time: LocalTime,
 ) {
-    let mut sim: HashMap<
-        PeerId,
-        (
-            &mut P,
-            VecDeque<protocol::Input<M, C>>,
-            chan::Receiver<Out<M>>,
-        ),
-    > = HashMap::with_hasher(fastrand::Rng::new().into());
+    let mut sim: HashMap<PeerId, (&mut P, VecDeque<protocol::Input<M>>, chan::Receiver<Out<M>>)> =
+        HashMap::with_hasher(fastrand::Rng::new().into());
     let mut events = VecDeque::new();
     let mut tmp = Vec::new();
 

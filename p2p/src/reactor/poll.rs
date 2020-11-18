@@ -12,7 +12,9 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use crate::error::Error;
 use crate::event::Event;
 use crate::fallible;
-use crate::protocol::{Input, Link, Message, Out, Protocol, ProtocolBuilder, TimeoutSource};
+use crate::protocol::{
+    Command, Input, Link, Message, Out, Protocol, ProtocolBuilder, TimeoutSource,
+};
 use crate::reactor::time::TimeoutManager;
 
 use log::*;
@@ -64,7 +66,7 @@ impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
     }
 }
 
-impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
+impl<R: Read + Write, M: Message + Encodable + Decodable + Debug> Socket<R, M> {
     /// Create a new socket from a `io::Read` and an address pair.
     fn from(r: R, local_address: net::SocketAddr, address: net::SocketAddr) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
@@ -114,9 +116,9 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    fn drain<C>(
+    fn drain(
         &mut self,
-        events: &mut VecDeque<Input<M, C>>,
+        events: &mut VecDeque<Input<M>>,
         source: &mut popol::Source,
     ) -> Result<(), encode::Error> {
         while let Some(msg) = self.queue.pop_front() {
@@ -150,20 +152,20 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 /// * `R`: The underlying stream type, eg. `net::TcpStream`.
 /// * `M`: The type of message being exchanged between peers.
 /// * `C`: The commands being sent to the node, by API users.
-pub struct Reactor<R: Write + Read, M: Message, C> {
+pub struct Reactor<R: Write + Read, M: Message> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
-    events: VecDeque<Input<M, C>>,
+    events: VecDeque<Input<M>>,
     subscriber: chan::Sender<Event<M::Payload>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
     timeouts: TimeoutManager<TimeoutSource>,
 }
 
-impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> Reactor<R, M, C> {
+impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug> Reactor<R, M> {
     /// Construct a new reactor, given a channel to send events on.
     pub fn new(subscriber: chan::Sender<Event<M::Payload>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
-        let events: VecDeque<Input<M, C>> = VecDeque::new();
+        let events: VecDeque<Input<M>> = VecDeque::new();
 
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
@@ -213,16 +215,15 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug, C> R
     }
 }
 
-impl<M: Message + Decodable + Encodable + Debug, C: Send + Sync + Clone>
-    Reactor<net::TcpStream, M, C>
+impl<M: Message + Decodable + Encodable + Debug> Reactor<net::TcpStream, M>
 where
     M::Payload: Debug + Send + Sync,
 {
     /// Run the given protocol with the reactor.
-    pub fn run<B: ProtocolBuilder<Message = M, Protocol = P>, P: Protocol<M, Command = C>>(
+    pub fn run<B: ProtocolBuilder<Message = M, Protocol = P>, P: Protocol<M>>(
         &mut self,
         builder: B,
-        commands: chan::Receiver<C>,
+        commands: chan::Receiver<Command<M>>,
         listen_addrs: &[net::SocketAddr],
     ) -> Result<(), Error> {
         let listener = if listen_addrs.is_empty() {

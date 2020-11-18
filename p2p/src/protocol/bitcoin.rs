@@ -27,7 +27,6 @@ use crate::protocol::{self, Link, Message, Out, PeerId, Protocol, Timeout, Timeo
 use std::collections::HashSet;
 use std::fmt::Debug;
 use std::net;
-use std::ops::Range;
 
 use bitcoin::consensus::params::Params;
 use bitcoin::network::address::Address;
@@ -38,8 +37,8 @@ use bitcoin::network::message_network::VersionMessage;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
-use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::block::tree::{BlockTree, ImportResult};
+use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::HashMap;
 use nakamoto_common::network::{self, Network};
 
@@ -56,6 +55,9 @@ const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 /// Time to wait for response during peer handshake before disconnecting the peer.
 const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
 
+/// Instantiation of `protocol::Command` for this implementation.
+pub type Command = protocol::Command<RawNetworkMessage>;
+
 /// A time offset, in seconds.
 type TimeOffset = i64;
 
@@ -63,38 +65,10 @@ type TimeOffset = i64;
 type Locators = (Vec<BlockHash>, BlockHash);
 
 /// Input into the state machine.
-type Input = protocol::Input<RawNetworkMessage, Command>;
+type Input = protocol::Input<RawNetworkMessage>;
 
 /// Upstream communication channel. The protocol interacts with the peer network via this channel.
 type Upstream = Channel<RawNetworkMessage>;
-
-/// A command or request that can be sent to the protocol.
-#[derive(Debug, Clone)]
-pub enum Command {
-    /// Get the tip of the active chain.
-    GetTip(chan::Sender<BlockHeader>),
-    /// Get a block from the active chain.
-    GetBlock(BlockHash),
-    /// Get block filters.
-    GetFilters(Range<Height>),
-    /// Broadcast to outbound peers.
-    Broadcast(NetworkMessage),
-    /// Send a message to a random peer.
-    Query(NetworkMessage, chan::Sender<Option<net::SocketAddr>>),
-    /// Connect to a peer.
-    Connect(net::SocketAddr),
-    /// Disconnect from a peer.
-    Disconnect(net::SocketAddr),
-    /// Import headers directly into the block store.
-    ImportHeaders(
-        Vec<BlockHeader>,
-        chan::Sender<Result<ImportResult, tree::Error>>,
-    ),
-    /// Submit a transaction to the network.
-    SubmitTransaction(Transaction),
-    /// Shutdown the protocol.
-    Shutdown,
-}
 
 impl Message for RawNetworkMessage {
     type Payload = NetworkMessage;
@@ -503,8 +477,6 @@ impl Peer {
 }
 
 impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
-    type Command = self::Command;
-
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.syncmgr.initialize(time);

@@ -6,10 +6,13 @@ use crate::event::Event;
 
 use std::fmt::Debug;
 use std::net;
+use std::ops::Range;
 
 use crossbeam_channel as chan;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::block::tree::{self, ImportResult};
+use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
@@ -31,6 +34,34 @@ impl Link {
     pub fn is_outbound(&self) -> bool {
         *self == Link::Outbound
     }
+}
+
+/// A command or request that can be sent to the protocol.
+#[derive(Debug, Clone)]
+pub enum Command<M: Message> {
+    /// Get the tip of the active chain.
+    GetTip(chan::Sender<BlockHeader>),
+    /// Get a block from the active chain.
+    GetBlock(BlockHash),
+    /// Get block filters.
+    GetFilters(Range<Height>),
+    /// Broadcast to outbound peers.
+    Broadcast(M::Payload),
+    /// Send a message to a random peer.
+    Query(M::Payload, chan::Sender<Option<net::SocketAddr>>),
+    /// Connect to a peer.
+    Connect(net::SocketAddr),
+    /// Disconnect from a peer.
+    Disconnect(net::SocketAddr),
+    /// Import headers directly into the block store.
+    ImportHeaders(
+        Vec<BlockHeader>,
+        chan::Sender<Result<ImportResult, tree::Error>>,
+    ),
+    /// Submit a transaction to the network.
+    SubmitTransaction(Transaction),
+    /// Shutdown the protocol.
+    Shutdown,
 }
 
 /// A message that can be sent to a peer.
@@ -64,7 +95,7 @@ pub enum TimeoutSource {
 /// A protocol input event, parametrized over the network message type.
 /// These are input events generated outside of the protocol.
 #[derive(Debug, Clone)]
-pub enum Input<M, C> {
+pub enum Input<M: Message> {
     /// New connection with a peer.
     Connected {
         /// Remote peer id.
@@ -81,7 +112,7 @@ pub enum Input<M, C> {
     /// Sent a message to a remote peer, of the given size.
     Sent(PeerId, usize),
     /// An external command has been received.
-    Command(C),
+    Command(Command<M>),
     /// A timeout has been reached.
     Timeout(TimeoutSource),
 }
@@ -125,13 +156,10 @@ pub trait ProtocolBuilder {
 /// A finite-state machine that can advance one step at a time, given an input event.
 /// Parametrized over the message type.
 pub trait Protocol<M: Message> {
-    /// A command to query or control the protocol.
-    type Command;
-
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     fn initialize(&mut self, time: LocalTime);
 
     /// Process the next event and advance the state-machine by one step.
     /// Returns messages destined for peers.
-    fn step(&mut self, event: Input<M, Self::Command>, local_time: LocalTime);
+    fn step(&mut self, event: Input<M>, local_time: LocalTime);
 }
