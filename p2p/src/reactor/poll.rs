@@ -118,13 +118,13 @@ impl<R: Read + Write, M: Message + Encodable + Decodable + Debug> Socket<R, M> {
 
     fn drain(
         &mut self,
-        events: &mut VecDeque<Input<M>>,
+        inputs: &mut VecDeque<Input<M>>,
         source: &mut popol::Source,
     ) -> Result<(), encode::Error> {
         while let Some(msg) = self.queue.pop_front() {
             match self.write(&msg) {
                 Ok(n) => {
-                    events.push_back(Input::Sent(self.address, n));
+                    inputs.push_back(Input::Sent(self.address, n));
                 }
                 Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
                     source.set(popol::interest::WRITE);
@@ -154,7 +154,7 @@ impl<R: Read + Write, M: Message + Encodable + Decodable + Debug> Socket<R, M> {
 /// * `C`: The commands being sent to the node, by API users.
 pub struct Reactor<R: Write + Read, M: Message> {
     peers: HashMap<net::SocketAddr, Socket<R, M>>,
-    events: VecDeque<Input<M>>,
+    inputs: VecDeque<Input<M>>,
     subscriber: chan::Sender<Event<M::Payload>>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
@@ -165,7 +165,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug> Reac
     /// Construct a new reactor, given a channel to send events on.
     pub fn new(subscriber: chan::Sender<Event<M::Payload>>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
-        let events: VecDeque<Input<M>> = VecDeque::new();
+        let inputs: VecDeque<Input<M>> = VecDeque::new();
 
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
@@ -174,7 +174,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug> Reac
         Ok(Self {
             peers,
             sources,
-            events,
+            inputs,
             subscriber,
             waker,
             timeouts,
@@ -196,7 +196,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug> Reac
         stream: R,
         link: Link,
     ) {
-        self.events.push_back(Input::Connected {
+        self.inputs.push_back(Input::Connected {
             addr,
             local_addr,
             link,
@@ -209,7 +209,7 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug> Reac
 
     /// Unregister a peer from the reactor.
     fn unregister_peer(&mut self, addr: net::SocketAddr) {
-        self.events.push_back(Input::Disconnected(addr));
+        self.inputs.push_back(Input::Disconnected(addr));
         self.sources.unregister(&Source::Peer(addr));
         self.peers.remove(&addr);
     }
@@ -254,7 +254,7 @@ where
         }
 
         // Drain input events in case some were added during the processing of outputs.
-        while let Some(event) = self.events.pop_front() {
+        while let Some(event) = self.inputs.pop_front() {
             protocol.step(event, local_time);
 
             if let Control::Shutdown = self.process::<P>(&rx, local_time)? {
@@ -311,7 +311,7 @@ where
                             },
                             Source::Waker => {
                                 for cmd in commands.try_iter() {
-                                    self.events.push_back(Input::Command(cmd));
+                                    self.inputs.push_back(Input::Command(cmd));
                                 }
                             }
                         }
@@ -322,14 +322,14 @@ where
 
                     if !timeouts.is_empty() {
                         for t in timeouts.drain(..) {
-                            self.events.push_back(Input::Timeout(t));
+                            self.inputs.push_back(Input::Timeout(t));
                         }
                     }
                 }
                 Err(err) => return Err(err.into()),
             }
 
-            while let Some(event) = self.events.pop_front() {
+            while let Some(event) = self.inputs.pop_front() {
                 protocol.step(event, local_time);
 
                 if let Control::Shutdown = self.process::<P>(&rx, local_time)? {
@@ -365,7 +365,7 @@ where
 
                         peer.queue.push_back(msg);
 
-                        if let Err(err) = peer.drain(&mut self.events, src) {
+                        if let Err(err) = peer.drain(&mut self.inputs, src) {
                             error!("{}: Write error: {}", addr, err.to_string());
 
                             peer.disconnect().ok();
@@ -386,7 +386,7 @@ where
                             self.register_peer(addr, local_addr, stream, Link::Outbound);
                         }
                         Err(err) => {
-                            self.events
+                            self.inputs
                                 .push_back(Input::Timeout(TimeoutSource::Connect));
 
                             error!("{}: Connection error: {}", addr, err.to_string());
@@ -435,7 +435,7 @@ where
         loop {
             match socket.read() {
                 Ok(msg) => {
-                    self.events.push_back(Input::Received(*addr, msg));
+                    self.inputs.push_back(Input::Received(*addr, msg));
                 }
                 Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
                     break;
@@ -456,7 +456,7 @@ where
         let src = self.sources.get_mut(source).unwrap();
         let socket = self.peers.get_mut(&addr).unwrap();
 
-        if let Err(err) = socket.drain(&mut self.events, src) {
+        if let Err(err) = socket.drain(&mut self.inputs, src) {
             error!("{}: Write error: {}", addr, err.to_string());
 
             socket.disconnect().ok();

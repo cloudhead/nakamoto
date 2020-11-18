@@ -118,7 +118,7 @@ mod message {
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
 /// An instantiation of `Protocol`, for the Bitcoin P2P network. Parametrized over the
-/// block-tree.
+/// block-tree and compact filter store.
 #[derive(Debug)]
 pub struct Bitcoin<T, F> {
     /// Peer states.
