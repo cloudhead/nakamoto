@@ -113,7 +113,7 @@ pub enum Out<M: Message> {
     Connect(PeerId, Timeout),
     /// Disconnect from a peer.
     Disconnect(PeerId),
-    /// Set a timeout associated with a peer.
+    /// Set a timeout.
     SetTimeout(Timeout),
     /// An event has occured.
     Event(Event<M::Payload>),
