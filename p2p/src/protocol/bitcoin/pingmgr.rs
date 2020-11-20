@@ -5,8 +5,9 @@ use std::net;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::collections::HashMap;
 
-use crate::protocol::{PeerId, Timeout};
+use crate::protocol::PeerId;
 
+use super::channel::SetTimeout;
 use super::connmgr;
 
 /// Time interval to wait between sent pings.
@@ -20,7 +21,6 @@ const MAX_RECORDED_LATENCIES: usize = 64;
 pub trait Ping {
     fn ping(&self, addr: net::SocketAddr, nonce: u64) -> &Self;
     fn pong(&self, addr: net::SocketAddr, nonce: u64) -> &Self;
-    fn set_timeout(&self, addr: net::SocketAddr, timeout: Timeout) -> &Self;
 }
 
 #[derive(Debug)]
@@ -60,7 +60,7 @@ pub struct PingManager<U> {
     upstream: U,
 }
 
-impl<U: Ping + connmgr::Disconnect> PingManager<U> {
+impl<U: Ping + SetTimeout + connmgr::Disconnect> PingManager<U> {
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
 
@@ -89,8 +89,8 @@ impl<U: Ping + connmgr::Disconnect> PingManager<U> {
         self.peers.remove(addr);
     }
 
-    pub fn received_timeout(&mut self, addr: PeerId, now: LocalTime) {
-        if let Some(peer) = self.peers.get_mut(&addr) {
+    pub fn received_timeout(&mut self, now: LocalTime) {
+        for peer in self.peers.values_mut() {
             match peer.state {
                 State::AwaitingPong { since, .. } => {
                     // A ping was sent and we're waiting for a `pong`. If too much
@@ -109,8 +109,8 @@ impl<U: Ping + connmgr::Disconnect> PingManager<U> {
 
                         self.upstream
                             .ping(peer.address, nonce)
-                            .set_timeout(addr, PING_TIMEOUT)
-                            .set_timeout(addr, PING_INTERVAL);
+                            .set_timeout(PING_TIMEOUT)
+                            .set_timeout(PING_INTERVAL);
 
                         peer.state = State::AwaitingPong { nonce, since: now };
                     }

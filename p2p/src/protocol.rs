@@ -79,19 +79,6 @@ pub trait Message: Send + Sync + 'static {
     fn display(&self) -> &'static str;
 }
 
-/// Timeout source descriptor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TimeoutSource {
-    /// Header sync.
-    Synch(Option<PeerId>),
-    /// Peer connect.
-    Connect,
-    /// Peer handshake.
-    Handshake(PeerId),
-    /// Peer ping.
-    Ping(PeerId),
-}
-
 /// A protocol input event, parametrized over the network message type.
 /// These are input events generated outside of the protocol.
 #[derive(Debug, Clone)]
@@ -114,7 +101,7 @@ pub enum Input<M: Message> {
     /// An external command has been received.
     Command(Command<M>),
     /// A timeout has been reached.
-    Timeout(TimeoutSource),
+    Timeout,
 }
 
 /// Output of a state transition (step) of the `Protocol` state machine.
@@ -127,7 +114,7 @@ pub enum Out<M: Message> {
     /// Disconnect from a peer.
     Disconnect(PeerId),
     /// Set a timeout associated with a peer.
-    SetTimeout(TimeoutSource, Timeout),
+    SetTimeout(Timeout),
     /// An event has occured.
     Event(Event<M::Payload>),
     /// Shutdown protocol.

@@ -15,6 +15,7 @@ mod tests;
 
 use addrmgr::AddressManager;
 use channel::Channel;
+use channel::SetTimeout as _;
 use connmgr::ConnectionManager;
 use pingmgr::PingManager;
 use spvmgr::SpvManager;
@@ -22,7 +23,7 @@ use syncmgr::SyncManager;
 
 use crate::address_book::AddressBook;
 use crate::event::Event;
-use crate::protocol::{self, Link, Message, Out, PeerId, Protocol, Timeout, TimeoutSource};
+use crate::protocol::{self, Link, Message, Out, PeerId, Protocol, Timeout};
 
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -347,7 +348,14 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
         }
     }
 
-    fn connected(&mut self, addr: PeerId, local_addr: net::SocketAddr, nonce: u64, link: Link) {
+    fn connected(
+        &mut self,
+        addr: PeerId,
+        local_addr: net::SocketAddr,
+        nonce: u64,
+        link: Link,
+        local_time: LocalTime,
+    ) {
         // TODO: Keep negotiated peers in a different set with a user agent.
         // TODO: Handle case where peer already exists.
         self.peers.insert(
@@ -355,15 +363,14 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
             Peer::new(
                 addr,
                 local_addr,
-                PeerState::Handshake(Handshake::default()),
+                PeerState::Handshake(Handshake::AwaitingVersion { since: local_time }),
                 nonce,
                 link,
             ),
         );
 
         // Set a timeout for receiving the `version` message.
-        self.upstream
-            .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
+        self.upstream.set_timeout(HANDSHAKE_TIMEOUT);
     }
 }
 
@@ -386,15 +393,9 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
 #[derive(Copy, Clone, Debug, PartialOrd, PartialEq, Ord, Eq)]
 enum Handshake {
     /// Waiting for "version" message from remote.
-    AwaitingVersion,
+    AwaitingVersion { since: LocalTime },
     /// Waiting for "verack" message from remote.
-    AwaitingVerack,
-}
-
-impl Default for Handshake {
-    fn default() -> Self {
-        Self::AwaitingVersion
-    }
+    AwaitingVerack { since: LocalTime },
 }
 
 /// State of a remote peer.
@@ -501,12 +502,12 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
 
                 match link {
                     Link::Inbound => {
-                        self.connected(addr, local_addr, 0, link);
+                        self.connected(addr, local_addr, 0, link, local_time);
                     }
                     Link::Outbound => {
                         let nonce = self.rng.u64(..);
 
-                        self.connected(addr, local_addr, nonce, link);
+                        self.connected(addr, local_addr, nonce, link, local_time);
                         self.upstream
                             .message(addr, self.version(addr, local_addr, nonce, self.height));
                     }
@@ -591,29 +592,31 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                     self.upstream.push(Out::Shutdown);
                 }
             },
-            Input::Timeout(source) => {
-                trace!(target: self.target, "Received timeout for {:?}", source);
+            Input::Timeout => {
+                trace!(target: self.target, "Received timeout");
 
-                // We may not have the peer anymore, if it was disconnected and remove in
-                // the meantime.
-                match source {
-                    TimeoutSource::Connect => {
-                        self.connmgr.received_timeout(local_time, &self.addrmgr);
-                    }
-                    TimeoutSource::Handshake(addr) => {
-                        if let Some(peer) = self.peers.get_mut(&addr) {
-                            if let PeerState::Handshake(_) = peer.state {
-                                self.disconnect(addr);
+                self.connmgr.received_timeout(local_time, &self.addrmgr);
+                self.syncmgr.received_timeout(local_time);
+                self.pingmgr.received_timeout(local_time);
+
+                {
+                    let mut timed_out = Vec::new();
+
+                    for (addr, peer) in self.peers.iter() {
+                        if let PeerState::Handshake(hs) = peer.state {
+                            match hs {
+                                Handshake::AwaitingVerack { since }
+                                | Handshake::AwaitingVersion { since } => {
+                                    if local_time - since >= HANDSHAKE_TIMEOUT {
+                                        timed_out.push(*addr);
+                                    }
+                                }
                             }
-                        } else {
-                            debug!(target: self.target, "Peer {} no longer exists (ignoring)", addr);
                         }
                     }
-                    TimeoutSource::Synch(addr) => {
-                        self.syncmgr.received_timeout(addr, local_time);
-                    }
-                    TimeoutSource::Ping(addr) => {
-                        self.pingmgr.received_timeout(addr, local_time);
+
+                    for addr in timed_out {
+                        self.disconnect(addr);
                     }
                 }
             }
@@ -663,7 +666,7 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
             // TODO: Add average headers/s or bandwidth
 
             log::info!(
-                "tip = {tip}, height = {height}/{best} ({sync}%), outbound = {peers}/{target}",
+                "tip = {tip}, height = {height}/{best} ({sync:.1}%), outbound = {peers}/{target}",
                 tip = tip,
                 height = height,
                 best = best,
@@ -796,7 +799,7 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
                     }
                 }
             }
-            PeerState::Handshake(Handshake::AwaitingVersion) => {
+            PeerState::Handshake(Handshake::AwaitingVersion { .. }) => {
                 if let NetworkMessage::Version(VersionMessage {
                     // Peer's best height.
                     start_height,
@@ -886,20 +889,22 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
                     peer.time_offset = timestamp - now.block_time() as i64;
                     peer.services = services;
                     peer.user_agent = user_agent;
-                    peer.transition(PeerState::Handshake(Handshake::AwaitingVerack));
+                    peer.transition(PeerState::Handshake(Handshake::AwaitingVerack {
+                        since: now,
+                    }));
 
                     match peer.link {
                         Link::Outbound => {
-                            self.upstream
-                                .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
+                            self.upstream.set_timeout(HANDSHAKE_TIMEOUT);
                         }
                         Link::Inbound => {
                             let nonce = peer.nonce;
 
                             self.upstream
                                 .message(addr, self.version(addr, local_addr, nonce, self.height))
-                                .message(addr, NetworkMessage::Verack)
-                                .set_timeout(TimeoutSource::Handshake(addr), HANDSHAKE_TIMEOUT);
+                                .message(addr, NetworkMessage::Verack);
+
+                            self.upstream.set_timeout(HANDSHAKE_TIMEOUT);
                         }
                     }
                 } else {
@@ -908,7 +913,7 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
                     self.disconnect(addr);
                 }
             }
-            PeerState::Handshake(Handshake::AwaitingVerack) => {
+            PeerState::Handshake(Handshake::AwaitingVerack { .. }) => {
                 if msg.payload == NetworkMessage::Verack {
                     debug!(target: self.target, "{}: Peer negotiated", peer.address);
 

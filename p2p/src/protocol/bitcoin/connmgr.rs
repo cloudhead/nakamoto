@@ -6,6 +6,7 @@ use std::net;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
 use super::addrmgr::{self, AddressManager};
+use super::channel::SetTimeout;
 use crate::protocol::{Link, PeerId, Timeout};
 
 /// Time to wait for a new connection.
@@ -34,12 +35,6 @@ pub trait Disconnect {
 pub trait Events {
     /// Emit event.
     fn event(&self, event: Event);
-}
-
-/// Ability to set idle timeout.
-pub trait Idle {
-    /// Set idle timeout.
-    fn idle(&self, timeout: Timeout);
 }
 
 /// A connection-related event.
@@ -111,7 +106,7 @@ pub struct ConnectionManager<U> {
     upstream: U,
 }
 
-impl<U: Connect + Disconnect + Events + Idle + addrmgr::GetAddresses + addrmgr::Events>
+impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::GetAddresses + addrmgr::Events>
     ConnectionManager<U>
 {
     /// Create a new connection manager.
@@ -138,7 +133,7 @@ impl<U: Connect + Disconnect + Events + Idle + addrmgr::GetAddresses + addrmgr::
         for addr in addrs {
             self.connect(&addr, addrmgr, time);
         }
-        self.upstream.idle(IDLE_TIMEOUT);
+        self.upstream.set_timeout(IDLE_TIMEOUT);
     }
 
     /// Connect to a peer.
@@ -218,7 +213,7 @@ impl<U: Connect + Disconnect + Events + Idle + addrmgr::GetAddresses + addrmgr::
     pub fn received_timeout(&mut self, local_time: LocalTime, addrmgr: &AddressManager<U>) {
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.maintain_connections(addrmgr);
-            self.upstream.idle(IDLE_TIMEOUT);
+            self.upstream.set_timeout(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
     }

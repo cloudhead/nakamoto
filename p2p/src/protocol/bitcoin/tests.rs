@@ -377,7 +377,7 @@ fn test_idle() {
     let bob = sim.get("bob");
     let alice = sim.get("alice");
 
-    sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob)))
+    sim.input(&alice, Input::Timeout)
         .any(|o| {
             matches!(o, Out::Message(
                 addr,
@@ -392,7 +392,7 @@ fn test_idle() {
     sim.elapse(pingmgr::PING_TIMEOUT);
 
     // Alice now decides to disconnect Bob.
-    sim.input(&alice, Input::Timeout(TimeoutSource::Ping(bob)))
+    sim.input(&alice, Input::Timeout)
         .any(|o| matches!(o, Out::Disconnect(addr) if addr == &bob))
         .expect("Alice disconnects Bob");
 }
@@ -423,9 +423,7 @@ fn test_getheaders_timeout() {
         .find(|o| matches!(payload(o), Some((_, NetworkMessage::GetHeaders(_)))))
         .expect("a `getheaders` message should be returned");
     out.iter()
-        .find(
-            |o| matches!(o, Out::SetTimeout(TimeoutSource::Synch(Some(addr)), _) if addr == &remote_addr),
-        )
+        .find(|o| matches!(o, Out::SetTimeout(_)))
         .expect("a timer should be returned");
 }
 
@@ -546,16 +544,11 @@ fn test_getheaders_retry(seed: u64) {
     asked.insert(addr);
     result.schedule(&mut sim);
 
-    // Keep track of who we asked last.
-    let mut last_asked = addr;
     // While there's still peers to ask...
     while asked.len() < ask {
         sim.elapse(syncmgr::REQUEST_TIMEOUT);
 
-        let result = sim.input(
-            &alice,
-            Input::Timeout(TimeoutSource::Synch(Some(last_asked))),
-        );
+        let result = sim.input(&alice, Input::Timeout);
         let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
 
         assert!(
@@ -565,13 +558,13 @@ fn test_getheaders_retry(seed: u64) {
 
         asked.insert(addr);
         result.schedule(&mut sim);
-
-        last_asked = addr;
     }
 }
 
 #[test]
 fn test_handshake_version_timeout() {
+    logger::init(Level::Debug);
+
     let network = Network::Mainnet;
     let (mut instance, rx, time) = setup::singleton(network);
 
@@ -588,10 +581,10 @@ fn test_handshake_version_timeout() {
             time,
         );
         rx.try_iter()
-            .find(|o| matches!(o, Out::SetTimeout(TimeoutSource::Handshake(addr), _) if addr == &remote))
+            .find(|o| matches!(o, Out::SetTimeout(_)))
             .expect("a timer should be returned");
 
-        instance.step(Input::Timeout(TimeoutSource::Handshake(remote)), time);
+        instance.step(Input::Timeout, time + HANDSHAKE_TIMEOUT);
         assert!(rx
             .iter()
             .any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
@@ -628,12 +621,13 @@ fn test_handshake_verack_timeout() {
             ),
             time,
         );
-        rx.try_iter().find(|o| matches!(o, Out::SetTimeout(TimeoutSource::Handshake(addr), _) if *addr == remote))
+        rx.try_iter()
+            .find(|o| matches!(o, Out::SetTimeout(_)))
             .expect("a timer should be returned");
 
         time = time + LocalDuration::from_secs(60);
 
-        instance.step(Input::Timeout(TimeoutSource::Handshake(remote)), time);
+        instance.step(Input::Timeout, time);
         assert!(rx
             .iter()
             .any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
@@ -698,7 +692,7 @@ fn test_getaddr() {
 
     // After some time, Alice tries to connect to the new address.
     sim.elapse(connmgr::IDLE_TIMEOUT);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Connect))
+    sim.input(&alice, Input::Timeout)
         .any(|o| matches!(o, Out::Connect(addr, _) if addr == &toto))
         .expect("Alice tries to connect to Toto");
 }
@@ -717,7 +711,6 @@ fn test_stale_tip() {
             PeerConfig::new("bob", chain),
         ],
         configure: |cfg| {
-            // Each peer only needs to connect to three other peers.
             cfg.target_outbound_peers = 1;
         },
         initialize: false,
@@ -758,16 +751,16 @@ fn test_stale_tip() {
 
     // Timeout the request.
     sim.elapse(syncmgr::REQUEST_TIMEOUT);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(Some(bob))));
+    sim.input(&alice, Input::Timeout);
 
     // Some time has passed. The tip timestamp should be considered stale now.
     sim.elapse(syncmgr::TIP_STALE_DURATION);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(None)))
-        .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+    sim.input(&alice, Input::Timeout)
+        .event(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))));
 
     // Timeout the request.
     sim.elapse(syncmgr::REQUEST_TIMEOUT);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(Some(bob))));
+    sim.input(&alice, Input::Timeout);
 
     // Now send another header and wait until the chain update is stale.
     sim.input(
@@ -783,8 +776,8 @@ fn test_stale_tip() {
     // Some more time has passed.
     // Chain update should be stale this time.
     sim.elapse(syncmgr::TIP_STALE_DURATION);
-    sim.input(&alice, Input::Timeout(TimeoutSource::Synch(None)))
-        .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+    sim.input(&alice, Input::Timeout)
+        .event(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))));
 }
 
 #[test]
@@ -906,7 +899,7 @@ fn prop_connect_timeout(seed: u64) {
     attempted.pop().unwrap();
 
     sim.elapse(connmgr::IDLE_TIMEOUT);
-    let result = sim.input(&alice, Input::Timeout(TimeoutSource::Connect));
+    let result = sim.input(&alice, Input::Timeout);
 
     result
         .all(|o| match o {

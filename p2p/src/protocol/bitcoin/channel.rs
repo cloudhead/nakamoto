@@ -13,8 +13,8 @@ use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
+use crate::protocol::Message;
 use crate::protocol::{Event, Out, PeerId};
-use crate::protocol::{Message, TimeoutSource};
 
 use super::network::Network;
 use super::{addrmgr, connmgr, message, pingmgr, spvmgr, syncmgr, Locators};
@@ -61,15 +61,22 @@ impl<M: Message> Channel<M> {
         self
     }
 
-    /// Set a timeout.
-    pub fn set_timeout(&self, source: TimeoutSource, timeout: LocalDuration) -> &Self {
-        self.push(Out::SetTimeout(source, timeout));
-        self
-    }
-
     /// Push an event to the queue.
     pub fn event(&self, event: Event<M::Payload>) {
         self.push(Out::Event(event));
+    }
+}
+
+/// The ability to set timeouts.
+pub trait SetTimeout {
+    /// Set a timeout. Returns the unique timeout identifier.
+    fn set_timeout(&self, timeout: LocalDuration) -> &Self;
+}
+
+impl SetTimeout for Channel<RawNetworkMessage> {
+    fn set_timeout(&self, timeout: LocalDuration) -> &Self {
+        self.push(Out::SetTimeout(timeout));
+        self
     }
 }
 
@@ -90,12 +97,6 @@ impl connmgr::Disconnect for Channel<RawNetworkMessage> {
     fn disconnect(&self, addr: net::SocketAddr) {
         debug!(target: self.target, "[conn] Disconnecting from {}..", addr);
         self.push(Out::Disconnect(addr));
-    }
-}
-
-impl connmgr::Idle for Channel<RawNetworkMessage> {
-    fn idle(&self, timeout: LocalDuration) {
-        self.set_timeout(TimeoutSource::Connect, timeout);
     }
 }
 
@@ -123,26 +124,10 @@ impl pingmgr::Ping for Channel<RawNetworkMessage> {
         self.message(addr, NetworkMessage::Pong(nonce));
         self
     }
-
-    fn set_timeout(&self, addr: net::SocketAddr, timeout: LocalDuration) -> &Self {
-        self.set_timeout(TimeoutSource::Ping(addr), timeout);
-        self
-    }
-}
-
-impl syncmgr::Idle for Channel<RawNetworkMessage> {
-    fn idle(&self, timeout: LocalDuration) {
-        self.set_timeout(TimeoutSource::Synch(None), timeout);
-    }
 }
 
 impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
-    fn get_headers(
-        &self,
-        addr: PeerId,
-        (locator_hashes, stop_hash): Locators,
-        timeout: LocalDuration,
-    ) {
+    fn get_headers(&self, addr: PeerId, (locator_hashes, stop_hash): Locators) {
         let msg = NetworkMessage::GetHeaders(GetHeadersMessage {
             version: self.version,
             // Starting hashes, highest heights first.
@@ -151,8 +136,7 @@ impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
             stop_hash,
         });
 
-        self.message(addr, msg)
-            .set_timeout(TimeoutSource::Synch(Some(addr)), timeout);
+        self.message(addr, msg);
     }
 
     fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>) {

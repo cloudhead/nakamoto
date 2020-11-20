@@ -101,6 +101,25 @@ impl InputResult {
 
     #[track_caller]
     #[allow(clippy::expect_fun_call)]
+    pub fn event<F>(&self, f: F)
+    where
+        F: Fn(&Event<NetworkMessage>) -> bool,
+    {
+        self.outputs
+            .iter()
+            .filter_map(|out| match out {
+                Out::Event(event) => Some(event),
+                _ => None,
+            })
+            .find(|event| f(event))
+            .expect(&format!(
+                "expected event was not found in output: {:?}",
+                self.outputs
+            ));
+    }
+
+    #[track_caller]
+    #[allow(clippy::expect_fun_call)]
     pub fn message<F>(&self, f: F) -> (PeerId, &NetworkMessage)
     where
         F: Fn(&PeerId, &NetworkMessage) -> bool,
