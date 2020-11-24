@@ -7,7 +7,7 @@ use thiserror::Error;
 use nakamoto_common as common;
 use nakamoto_p2p as p2p;
 
-use p2p::protocol::bitcoin::Command;
+use p2p::protocol::Command;
 
 /// A node error.
 #[derive(Error, Debug)]

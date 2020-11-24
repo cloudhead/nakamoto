@@ -1,18 +1,20 @@
 //! Poll-based reactor. This is a single-threaded reactor using a `poll` loop.
 pub use popol::Waker;
 
-use bitcoin::consensus::encode::Decodable;
 use bitcoin::consensus::encode::{self, Encodable};
 use bitcoin::network::stream_reader::StreamReader;
+use bitcoin::{consensus::encode::Decodable, network::message::RawNetworkMessage};
 
 use crossbeam_channel as chan;
 
+use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::block::tree::BlockTree;
 
 use crate::error::Error;
 use crate::event::Event;
 use crate::fallible;
-use crate::protocol::{Command, Input, Link, Message, Out, Protocol, ProtocolBuilder};
+use crate::protocol::{self, Command, Input, Link, Out};
 use crate::reactor::time::TimeoutManager;
 
 use log::*;
@@ -64,7 +66,7 @@ impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
     }
 }
 
-impl<R: Read + Write, M: Message + Encodable + Decodable + Debug> Socket<R, M> {
+impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     /// Create a new socket from a `io::Read` and an address pair.
     fn from(r: R, local_address: net::SocketAddr, address: net::SocketAddr) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
@@ -116,7 +118,7 @@ impl<R: Read + Write, M: Message + Encodable + Decodable + Debug> Socket<R, M> {
 
     fn drain(
         &mut self,
-        inputs: &mut VecDeque<Input<M>>,
+        inputs: &mut VecDeque<Input>,
         source: &mut popol::Source,
     ) -> Result<(), encode::Error> {
         while let Some(msg) = self.queue.pop_front() {
@@ -146,24 +148,21 @@ impl<R: Read + Write, M: Message + Encodable + Decodable + Debug> Socket<R, M> {
 }
 
 /// A single-threaded non-blocking reactor.
-///
-/// * `R`: The underlying stream type, eg. `net::TcpStream`.
-/// * `M`: The type of message being exchanged between peers.
-/// * `C`: The commands being sent to the node, by API users.
-pub struct Reactor<R: Write + Read, M: Message> {
-    peers: HashMap<net::SocketAddr, Socket<R, M>>,
-    inputs: VecDeque<Input<M>>,
-    subscriber: chan::Sender<Event<M::Payload>>,
+pub struct Reactor<R: Write + Read> {
+    peers: HashMap<net::SocketAddr, Socket<R, RawNetworkMessage>>,
+    inputs: VecDeque<Input>,
+    subscriber: chan::Sender<Event>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
     timeouts: TimeoutManager<()>,
 }
 
-impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug> Reactor<R, M> {
+/// The `R` parameter represents the underlying stream type, eg. `net::TcpStream`.
+impl<R: Write + Read + AsRawFd> Reactor<R> {
     /// Construct a new reactor, given a channel to send events on.
-    pub fn new(subscriber: chan::Sender<Event<M::Payload>>) -> Result<Self, io::Error> {
+    pub fn new(subscriber: chan::Sender<Event>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
-        let inputs: VecDeque<Input<M>> = VecDeque::new();
+        let inputs: VecDeque<Input> = VecDeque::new();
 
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
@@ -213,15 +212,12 @@ impl<R: Write + Read + AsRawFd, M: Message + Encodable + Decodable + Debug> Reac
     }
 }
 
-impl<M: Message + Decodable + Encodable + Debug> Reactor<net::TcpStream, M>
-where
-    M::Payload: Debug + Send + Sync,
-{
+impl Reactor<net::TcpStream> {
     /// Run the given protocol with the reactor.
-    pub fn run<B: ProtocolBuilder<Message = M, Protocol = P>, P: Protocol<M>>(
+    pub fn run<T: BlockTree, F: Filters>(
         &mut self,
-        builder: B,
-        commands: chan::Receiver<Command<M>>,
+        builder: protocol::Builder<T, F>,
+        commands: chan::Receiver<Command>,
         listen_addrs: &[net::SocketAddr],
     ) -> Result<(), Error> {
         let listener = if listen_addrs.is_empty() {
@@ -247,7 +243,7 @@ where
 
         protocol.initialize(local_time);
 
-        if let Control::Shutdown = self.process::<P>(&rx, local_time)? {
+        if let Control::Shutdown = self.process(&rx, local_time)? {
             return Ok(());
         }
 
@@ -255,7 +251,7 @@ where
         while let Some(event) = self.inputs.pop_front() {
             protocol.step(event, local_time);
 
-            if let Control::Shutdown = self.process::<P>(&rx, local_time)? {
+            if let Control::Shutdown = self.process(&rx, local_time)? {
                 return Ok(());
             }
         }
@@ -330,7 +326,7 @@ where
             while let Some(event) = self.inputs.pop_front() {
                 protocol.step(event, local_time);
 
-                if let Control::Shutdown = self.process::<P>(&rx, local_time)? {
+                if let Control::Shutdown = self.process(&rx, local_time)? {
                     return Ok(());
                 }
             }
@@ -338,9 +334,9 @@ where
     }
 
     /// Process protocol state machine outputs.
-    fn process<P: Protocol<M>>(
+    fn process(
         &mut self,
-        outputs: &chan::Receiver<Out<M>>,
+        outputs: &chan::Receiver<Out>,
         local_time: LocalTime,
     ) -> Result<Control, Error> {
         // Note that there may be messages destined for a peer that has since been
@@ -352,7 +348,7 @@ where
                         let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
                         {
-                            let mut s = format!("{:?}", msg.payload());
+                            let mut s = format!("{:?}", msg.payload);
 
                             if s.len() > 96 {
                                 s.truncate(96);

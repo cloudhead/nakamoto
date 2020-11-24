@@ -288,7 +288,7 @@ impl<U: Events> AddressManager<U> {
     /// use bitcoin::network::address::Address;
     /// use bitcoin::network::constants::ServiceFlags;
     ///
-    /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{AddressManager, Source};
+    /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Source};
     /// use nakamoto_common::block::BlockTime;
     ///
     /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), ());
@@ -399,7 +399,7 @@ impl<U: Events> AddressManager<U> {
     /// use bitcoin::network::address::Address;
     /// use bitcoin::network::constants::ServiceFlags;
     ///
-    /// use nakamoto_p2p::protocol::bitcoin::addrmgr::{Source, AddressManager};
+    /// use nakamoto_p2p::protocol::addrmgr::{Source, AddressManager};
     /// use nakamoto_common::block::BlockTime;
     ///
     /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), ());

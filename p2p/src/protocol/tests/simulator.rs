@@ -50,17 +50,17 @@ impl Net {
 #[derive(Debug)]
 pub struct InputResult {
     peer: PeerId,
-    outputs: Vec<Out<RawNetworkMessage>>,
+    outputs: Vec<Out>,
 }
 
-impl From<InputResult> for Vec<Out<RawNetworkMessage>> {
+impl From<InputResult> for Vec<Out> {
     fn from(input: InputResult) -> Self {
         input.outputs.into_iter().collect()
     }
 }
 
 impl IntoIterator for InputResult {
-    type Item = Out<RawNetworkMessage>;
+    type Item = Out;
     type IntoIter = std::vec::IntoIter<Self::Item>;
 
     fn into_iter(self) -> Self::IntoIter {
@@ -71,21 +71,21 @@ impl IntoIterator for InputResult {
 impl InputResult {
     pub fn find<F, T>(&self, f: F) -> Option<T>
     where
-        F: Fn(&Out<RawNetworkMessage>) -> Option<T>,
+        F: Fn(&Out) -> Option<T>,
     {
         self.outputs.iter().find_map(|m| f(&m))
     }
 
-    pub fn any<F>(&self, f: F) -> Option<&Out<RawNetworkMessage>>
+    pub fn any<F>(&self, f: F) -> Option<&Out>
     where
-        F: Fn(&Out<RawNetworkMessage>) -> bool,
+        F: Fn(&Out) -> bool,
     {
         self.outputs.iter().find(|m| f(&m))
     }
 
     pub fn all<F>(&self, f: F) -> Option<()>
     where
-        F: Fn(&Out<RawNetworkMessage>) -> bool,
+        F: Fn(&Out) -> bool,
     {
         if self
             .outputs
@@ -103,7 +103,7 @@ impl InputResult {
     #[allow(clippy::expect_fun_call)]
     pub fn event<F>(&self, f: F)
     where
-        F: Fn(&Event<NetworkMessage>) -> bool,
+        F: Fn(&Event) -> bool,
     {
         self.outputs
             .iter()
@@ -146,10 +146,10 @@ impl InputResult {
 pub struct Peer {
     pub id: PeerId,
     pub name: &'static str,
-    pub protocol: Bitcoin<model::Cache, model::FilterCache>,
-    pub outbound: chan::Receiver<Out<RawNetworkMessage>>,
+    pub protocol: Protocol<model::Cache, model::FilterCache>,
+    pub outbound: chan::Receiver<Out>,
 
-    events: Vec<Event<NetworkMessage>>,
+    events: Vec<Event>,
 }
 
 impl Peer {
@@ -157,11 +157,7 @@ impl Peer {
         self.protocol.initialize(time)
     }
 
-    pub fn schedule(
-        &mut self,
-        inbox: &mut VecDeque<(PeerId, Input)>,
-        output: Out<RawNetworkMessage>,
-    ) {
+    pub fn schedule(&mut self, inbox: &mut VecDeque<(PeerId, Input)>, output: Out) {
         Sim::schedule(&mut self.events, inbox, &self.id, output)
     }
 }
@@ -265,10 +261,7 @@ impl Sim {
     }
 
     /// Drain the outgoing events queue for the given peer.
-    pub fn events<'a>(
-        &'a mut self,
-        addr: &PeerId,
-    ) -> impl Iterator<Item = Event<NetworkMessage>> + 'a {
+    pub fn events<'a>(&'a mut self, addr: &PeerId) -> impl Iterator<Item = Event> + 'a {
         self.peers.get_mut(addr).unwrap().events.drain(..)
     }
 
@@ -280,20 +273,18 @@ impl Sim {
     }
 
     /// Process a protocol output event.
-    pub fn schedule<M>(
-        events: &mut Vec<Event<<M as protocol::Message>::Payload>>,
-        inbox: &mut VecDeque<(PeerId, protocol::Input<M>)>,
+    pub fn schedule(
+        events: &mut Vec<Event>,
+        inbox: &mut VecDeque<(PeerId, Input)>,
         peer: &PeerId,
-        out: Out<M>,
-    ) where
-        M: Message + Debug,
-    {
+        out: Out,
+    ) {
         let peer = *peer;
 
         match out {
             Out::Message(receiver, msg) => {
                 info!("(sim) {} -> {}: {:?}", peer, receiver, msg);
-                inbox.push_back((receiver, protocol::Input::Received(peer, msg)))
+                inbox.push_back((receiver, Input::Received(peer, msg)))
             }
             Out::Connect(remote, _timeout) => {
                 assert!(remote != peer, "self-connections are not allowed");
@@ -301,7 +292,7 @@ impl Sim {
 
                 inbox.push_back((
                     remote,
-                    protocol::Input::Connected {
+                    Input::Connected {
                         addr: peer,
                         local_addr: remote,
                         link: Link::Inbound,
@@ -309,7 +300,7 @@ impl Sim {
                 ));
                 inbox.push_back((
                     peer,
-                    protocol::Input::Connected {
+                    Input::Connected {
                         addr: remote,
                         local_addr: peer,
                         link: Link::Outbound,
@@ -319,8 +310,8 @@ impl Sim {
             Out::Disconnect(remote) => {
                 info!("(sim) {} =/= {}", peer, remote);
 
-                inbox.push_back((remote, protocol::Input::Disconnected(peer)));
-                inbox.push_back((peer, protocol::Input::Disconnected(remote)));
+                inbox.push_back((remote, Input::Disconnected(peer)));
+                inbox.push_back((peer, Input::Disconnected(remote)));
             }
             Out::Event(event) => {
                 events.push(event);
@@ -383,12 +374,12 @@ impl Sim {
 }
 
 pub fn handshake<T: BlockTree, F: Filters>(
-    alice: &mut Bitcoin<T, F>,
+    alice: &mut Protocol<T, F>,
     alice_addr: net::SocketAddr,
-    alice_rx: chan::Receiver<Out<RawNetworkMessage>>,
-    bob: &mut Bitcoin<T, F>,
+    alice_rx: chan::Receiver<Out>,
+    bob: &mut Protocol<T, F>,
     bob_addr: net::SocketAddr,
-    bob_rx: chan::Receiver<Out<RawNetworkMessage>>,
+    bob_rx: chan::Receiver<Out>,
     local_time: LocalTime,
 ) {
     self::run(
@@ -412,12 +403,12 @@ pub fn handshake<T: BlockTree, F: Filters>(
     assert!(bob.peers.values().all(|p| p.is_ready()));
 }
 
-pub fn run<P: Protocol<M>, M: Message + Debug>(
-    peers: Vec<(PeerId, &mut P, chan::Receiver<Out<M>>)>,
-    inputs: Vec<Vec<protocol::Input<M>>>,
+pub fn run<T: BlockTree, F: Filters>(
+    peers: Vec<(PeerId, &mut Protocol<T, F>, chan::Receiver<Out>)>,
+    inputs: Vec<Vec<Input>>,
     local_time: LocalTime,
 ) {
-    let mut sim: HashMap<PeerId, (&mut P, VecDeque<protocol::Input<M>>, chan::Receiver<Out<M>>)> =
+    let mut sim: HashMap<PeerId, (&mut Protocol<T, F>, VecDeque<Input>, chan::Receiver<Out>)> =
         HashMap::with_hasher(fastrand::Rng::new().into());
     let mut events = VecDeque::new();
     let mut tmp = Vec::new();
