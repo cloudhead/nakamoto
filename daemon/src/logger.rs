@@ -25,23 +25,22 @@ impl Log for Logger {
             }
 
             fn write(record: &log::Record, module: &str, mut stream: impl io::Write) {
-                let level_string = match record.level() {
-                    Level::Error => record.level().to_string().red(),
-                    Level::Warn => record.level().to_string().yellow(),
-                    Level::Info => record.level().to_string().green(),
-                    Level::Debug => record.level().to_string().white(),
-                    Level::Trace => record.level().to_string().white().dimmed(),
+                let message = format!("{} {}", module.bold(), record.args().to_string());
+                let message = match record.level() {
+                    Level::Error => message.red(),
+                    Level::Warn => message.yellow(),
+                    Level::Info => message.normal(),
+                    Level::Debug => message.dimmed(),
+                    Level::Trace => message.white().dimmed(),
                 };
 
                 writeln!(
                     stream,
-                    "{}  {:<5} {}  {}",
+                    "{} {}",
                     Local::now()
                         .to_rfc3339_opts(SecondsFormat::Millis, true)
                         .white(),
-                    level_string,
-                    module.bold(),
-                    record.args().to_string()
+                    message,
                 )
                 .expect("write shouldn't fail");
             };
