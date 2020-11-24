@@ -4,6 +4,7 @@
 #[allow(clippy::type_complexity)]
 #[deny(
     unsafe_code,
+    missing_docs,
     missing_debug_implementations,
     missing_copy_implementations
 )]

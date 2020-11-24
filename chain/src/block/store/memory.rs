@@ -4,10 +4,12 @@ use nonempty::NonEmpty;
 use nakamoto_common::block::store::{Error, Store};
 use nakamoto_common::block::Height;
 
+/// In-memory block store.
 #[derive(Debug, Clone)]
 pub struct Memory<H>(NonEmpty<H>);
 
 impl<H> Memory<H> {
+    /// Create a new in-memory block store.
     pub fn new(chain: NonEmpty<H>) -> Self {
         Self(chain)
     }

@@ -1,3 +1,4 @@
+//! Logging module.
 use std::io;
 
 use chrono::prelude::*;
@@ -50,6 +51,7 @@ impl Log for Logger {
     fn flush(&self) {}
 }
 
+/// Initialize a new logger.
 pub fn init(level: Level) -> Result<(), SetLoggerError> {
     let logger = Logger { level };
 

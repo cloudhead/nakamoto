@@ -1,3 +1,6 @@
+//! Nakamoto's node library. This is the entry point for using the light-client
+//! from a library.
+#![deny(missing_docs, unsafe_code)]
 pub mod error;
 pub mod handle;
 pub mod node;
@@ -11,6 +14,8 @@ pub use nakamoto_p2p::address_book::AddressBook;
 #[cfg(test)]
 mod tests;
 
+/// Run the light-client. Takes an initial list of peers to connect to, a list of listen addresses
+/// and the Bitcoin network to connect to.
 pub fn run(
     connect: &[net::SocketAddr],
     listen: &[net::SocketAddr],
@@ -34,7 +39,6 @@ pub fn run(
     };
 
     let mut cfg = NodeConfig {
-        discovery: true,
         network,
         listen: if listen.is_empty() {
             vec![([0, 0, 0, 0], 0).into()]

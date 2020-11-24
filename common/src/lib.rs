@@ -1,6 +1,6 @@
 //! Library of common Bitcoin functionality shared by all crates.
 #![allow(clippy::type_complexity)]
-#![warn(missing_docs)]
+#![deny(missing_docs, unsafe_code)]
 pub mod block;
 pub mod collections;
 pub mod network;

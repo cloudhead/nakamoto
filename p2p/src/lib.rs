@@ -3,7 +3,7 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::single_match)]
 #![allow(clippy::comparison_chain)]
-#![warn(missing_docs)]
+#![deny(missing_docs, unsafe_code)]
 pub mod address_book;
 pub mod error;
 pub mod event;

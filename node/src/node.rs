@@ -1,3 +1,5 @@
+//! Core nakamoto node functionality. Wraps all the other modules under a unified
+//! interface.
 use std::env;
 use std::fs;
 use std::io;
@@ -37,19 +39,28 @@ use crate::handle::{self, Handle};
 /// Node configuration.
 #[derive(Debug, Clone)]
 pub struct NodeConfig {
-    pub discovery: bool,
+    /// Node listen addresses.
     pub listen: Vec<net::SocketAddr>,
+    /// Bitcoin network.
     pub network: Network,
+    /// Initial address book.
     pub address_book: AddressBook,
+    /// Target number of outbound peers to connect to.
     pub target_outbound_peers: usize,
+    /// Maximum number of inbound peers supported.
     pub max_inbound_peers: usize,
+    /// Timeout duration for node commands.
     pub timeout: time::Duration,
+    /// Node home path, where runtime data is stored, eg. block headers and filters.
     pub home: PathBuf,
+    /// Node name. Used for logging only.
     pub name: &'static str,
 }
 
+#[cfg(test)]
 impl NodeConfig {
-    pub fn named(name: &'static str) -> Self {
+    /// Create a default node configuration with a name.
+    pub(crate) fn named(name: &'static str) -> Self {
         Self {
             name,
             ..Self::default()
@@ -73,7 +84,6 @@ impl From<NodeConfig> for bitcoin::Config {
 impl Default for NodeConfig {
     fn default() -> Self {
         Self {
-            discovery: true,
             listen: vec![([0, 0, 0, 0], 0).into()],
             network: Network::default(),
             address_book: AddressBook::default(),
@@ -88,6 +98,7 @@ impl Default for NodeConfig {
 
 /// A light-node process.
 pub struct Node {
+    /// Node configuration.
     pub config: NodeConfig,
 
     commands: chan::Receiver<Command>,

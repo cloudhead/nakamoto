@@ -76,6 +76,7 @@ pub struct File<H> {
 }
 
 impl<H> File<H> {
+    /// Open a new file store from the given path and genesis header.
     pub fn open<P: AsRef<Path>>(path: P, genesis: H) -> io::Result<Self> {
         fs::OpenOptions::new()
             .create(true)
@@ -85,6 +86,7 @@ impl<H> File<H> {
             .map(|file| Self { file, genesis })
     }
 
+    /// Create a new file store at the given path, with the provided genesis header.
     pub fn create<P: AsRef<Path>>(path: P, genesis: H) -> Result<Self, Error> {
         let file = fs::OpenOptions::new()
             .create_new(true)

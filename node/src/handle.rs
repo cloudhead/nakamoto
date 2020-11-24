@@ -1,3 +1,5 @@
+//! Node handles are created from nodes by users of the library, to communicate with the underlying
+//! protocol instance.
 use std::net;
 use std::ops::Range;
 
@@ -8,12 +10,16 @@ use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_p2p::protocol::Link;
 
+/// An error resulting from a handle method.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// The command channel disconnected.
     #[error("command channel disconnected")]
     Disconnected,
+    /// The operation timed out.
     #[error("the operation timed out")]
     Timeout,
+    /// An I/O error occured.
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
