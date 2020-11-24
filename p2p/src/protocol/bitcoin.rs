@@ -49,8 +49,6 @@ pub const PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
 
-/// Maximum number of addresses to return when receiving a `getaddr` message.
-const MAX_GETADDR_ADDRESSES: usize = 8;
 /// Maximum height difference for a stale peer, to maintain the connection (2 weeks).
 const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 /// Time to wait for response during peer handshake before disconnecting the peer.
@@ -598,6 +596,7 @@ impl<T: BlockTree, F: Filters> Protocol<RawNetworkMessage> for Bitcoin<T, F> {
                 self.connmgr.received_timeout(local_time, &self.addrmgr);
                 self.syncmgr.received_timeout(local_time);
                 self.pingmgr.received_timeout(local_time);
+                self.addrmgr.received_timeout(local_time);
 
                 {
                     let mut timed_out = Vec::new();
@@ -781,18 +780,7 @@ impl<T: BlockTree, F: Filters> Bitcoin<T, F> {
                             .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
                     }
                     NetworkMessage::GetAddr => {
-                        // TODO: Use `sample` here when it returns an iterator.
-                        let addrs = self
-                            .addrmgr
-                            .iter()
-                            // Don't send the peer their own address, nor non-TCP addresses.
-                            .filter(|a| a.socket_addr().map_or(false, |s| s != addr))
-                            .take(MAX_GETADDR_ADDRESSES)
-                            // TODO: Return a non-zero time value.
-                            .map(|a| (0, a.clone()))
-                            .collect();
-
-                        self.upstream.message(addr, NetworkMessage::Addr(addrs));
+                        self.addrmgr.received_getaddr(&addr);
                     }
                     _ => {
                         debug!(target: self.target, "{}: Ignoring {:?}", peer.address, cmd);

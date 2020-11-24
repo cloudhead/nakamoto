@@ -7,12 +7,20 @@ use std::net;
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 
-use nakamoto_common::block::time::LocalTime;
+use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::BlockTime;
 use nakamoto_common::collections::{HashMap, HashSet};
 
 use super::{Link, PeerId};
 use crate::address_book::AddressBook;
+
+/// Time to wait until a request times out.
+pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
+
+/// Maximum number of addresses to return when receiving a `getaddr` message.
+const MAX_GETADDR_ADDRESSES: usize = 8;
+/// Maximum number of addresses we store for a given address range.
+const MAX_RANGE_SIZE: usize = 256;
 
 /// Address manager event emission.
 pub trait Events {
@@ -21,21 +29,16 @@ pub trait Events {
 }
 
 /// Capability of getting new addresses.
-pub trait GetAddresses {
+pub trait SyncAddresses {
     /// Get new addresses from a peer.
     fn get_addresses(&self, addr: PeerId);
+    /// Send addresses to a peer.
+    fn send_addresses(&self, addr: PeerId, addrs: Vec<(BlockTime, Address)>);
 }
 
 impl Events for () {
     fn event(&self, _event: Event) {}
 }
-
-impl GetAddresses for () {
-    fn get_addresses(&self, _addr: PeerId) {}
-}
-
-/// Maximum number of addresses we store for a given address range.
-const MAX_RANGE_SIZE: usize = 256;
 
 /// An event emitted by the address manager.
 #[derive(Debug)]
@@ -103,15 +106,60 @@ pub struct AddressManager<U> {
     connected: HashSet<net::IpAddr>,
     sources: HashSet<net::SocketAddr>,
     local_addrs: HashSet<net::SocketAddr>,
+    /// The last time we asked our peers for new addresses.
+    last_request: Option<LocalTime>,
     upstream: U,
     rng: fastrand::Rng,
 }
 
-impl<U: GetAddresses> AddressManager<U> {
+impl<U> AddressManager<U> {
+    /// Iterate over all addresses.
+    pub fn iter(&self) -> impl Iterator<Item = &Address> {
+        self.addresses.iter().map(|(_, ka)| &ka.addr)
+    }
+
+    /// Check whether we have unused addresses.
+    pub fn is_exhausted(&self) -> bool {
+        for addr in self.addresses.keys() {
+            if !self.connected.contains(addr) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl<U: SyncAddresses> AddressManager<U> {
     /// Get addresses from peers.
     pub fn get_addresses(&self) {
         for peer in &self.sources {
             self.upstream.get_addresses(*peer);
+        }
+    }
+
+    /// Called when we receive a `getaddr` message.
+    pub fn received_getaddr(&mut self, from: &net::SocketAddr) {
+        // TODO: Use `sample` here when it returns an iterator.
+        let addrs = self
+            .iter()
+            // Don't send the peer their own address, nor non-TCP addresses.
+            .filter(|a| a.socket_addr().map_or(false, |s| &s != from))
+            .take(MAX_GETADDR_ADDRESSES)
+            // TODO: Return a non-zero time value.
+            .map(|a| (0, a.clone()))
+            .collect();
+
+        self.upstream.send_addresses(*from, addrs);
+    }
+
+    /// Called when a timeout is received.
+    pub fn received_timeout(&mut self, local_time: LocalTime) {
+        // If we're already using all the addresses we have available, we should fetch more.
+        if local_time - self.last_request.unwrap_or_default() >= REQUEST_TIMEOUT
+            && self.is_exhausted()
+        {
+            self.get_addresses();
+            self.last_request = Some(local_time);
         }
     }
 }
@@ -125,6 +173,7 @@ impl<U: Events> AddressManager<U> {
             connected: HashSet::with_hasher(rng.clone().into()),
             sources: HashSet::with_hasher(rng.clone().into()),
             local_addrs: HashSet::with_hasher(rng.clone().into()),
+            last_request: None,
             upstream,
             rng,
         }
@@ -437,11 +486,6 @@ impl<U: Events> AddressManager<U> {
         }
 
         None
-    }
-
-    /// Iterate over all addresses.
-    pub fn iter(&self) -> impl Iterator<Item = &Address> {
-        self.addresses.iter().map(|(_, ka)| &ka.addr)
     }
 
     ////////////////////////////////////////////////////////////////////////////

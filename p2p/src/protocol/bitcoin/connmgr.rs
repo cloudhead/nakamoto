@@ -106,9 +106,7 @@ pub struct ConnectionManager<U> {
     upstream: U,
 }
 
-impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::GetAddresses + addrmgr::Events>
-    ConnectionManager<U>
-{
+impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> ConnectionManager<U> {
     /// Create a new connection manager.
     pub fn new(upstream: U, config: Config) -> Self {
         Self {
@@ -248,11 +246,9 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::GetAddresses + add
                     todo!();
                 }
             } else {
-                // TODO: Don't ask for addresses many times in a row.
+                // We're out of addresses. We don't need to do anything here, the address manager
+                // will eventually find new addresses.
                 Events::event(&self.upstream, Event::AddressBookExhausted);
-
-                // We're out of addresses, ask for more!
-                addrmgr.get_addresses();
             }
         }
     }

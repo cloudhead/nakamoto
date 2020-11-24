@@ -5,13 +5,14 @@ use std::net;
 
 use crossbeam_channel as chan;
 
+use bitcoin::network::address::Address;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
 
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::tree::ImportResult;
-use nakamoto_common::block::{BlockHash, BlockHeader, Height};
+use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
 use crate::protocol::Message;
 use crate::protocol::{Event, Out, PeerId};
@@ -80,9 +81,13 @@ impl SetTimeout for Channel<RawNetworkMessage> {
     }
 }
 
-impl addrmgr::GetAddresses for Channel<RawNetworkMessage> {
+impl addrmgr::SyncAddresses for Channel<RawNetworkMessage> {
     fn get_addresses(&self, addr: PeerId) {
         self.message(addr, NetworkMessage::GetAddr);
+    }
+
+    fn send_addresses(&self, addr: PeerId, addrs: Vec<(BlockTime, Address)>) {
+        self.message(addr, NetworkMessage::Addr(addrs));
     }
 }
 

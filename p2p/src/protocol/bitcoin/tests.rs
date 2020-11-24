@@ -674,8 +674,13 @@ fn test_getaddr() {
         .address;
     let result = sim.input(&alice, Input::Disconnected(peer));
 
-    // This should trigger a `getaddr` because Alice isn't connected to enough peers now.
-    let (peer, _) = result.message(|_, msg| matches!(msg, NetworkMessage::GetAddr));
+    // We are unable to connect to a new peer because our address book is exhausted.
+    result.event(|e| matches!(e, Event::ConnManager(connmgr::Event::AddressBookExhausted)));
+
+    // When we receive a timeout, we fetch new addresses, since our addresses have been exhausted.
+    let (peer, _) = sim
+        .input(&alice, Input::Timeout)
+        .message(|_, msg| matches!(msg, NetworkMessage::GetAddr));
 
     // We respond to the `getaddr` with a new peer address, Toto.
     let toto: net::SocketAddr = ([14, 45, 16, 57], 8333).into();
