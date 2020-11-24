@@ -25,10 +25,10 @@ use nakamoto_common::network::Network;
 
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::address_book::AddressBook;
-use nakamoto_p2p::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use nakamoto_p2p::protocol::bitcoin::Command;
-use nakamoto_p2p::protocol::bitcoin::{self, connmgr, syncmgr};
+use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
+use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
+use nakamoto_p2p::protocol::{connmgr, syncmgr};
 use nakamoto_p2p::reactor::poll::{Reactor, Waker};
 
 pub use nakamoto_p2p::event::Event;
@@ -68,7 +68,7 @@ impl NodeConfig {
     }
 }
 
-impl From<NodeConfig> for bitcoin::Config {
+impl From<NodeConfig> for p2p::protocol::Config {
     fn from(cfg: NodeConfig) -> Self {
         Self {
             network: cfg.network,
@@ -89,8 +89,8 @@ impl Default for NodeConfig {
             address_book: AddressBook::default(),
             timeout: time::Duration::from_secs(60),
             home: PathBuf::from(env::var("HOME").unwrap_or_default()),
-            target_outbound_peers: bitcoin::connmgr::TARGET_OUTBOUND_PEERS,
-            max_inbound_peers: bitcoin::connmgr::MAX_INBOUND_PEERS,
+            target_outbound_peers: p2p::protocol::connmgr::TARGET_OUTBOUND_PEERS,
+            max_inbound_peers: p2p::protocol::connmgr::MAX_INBOUND_PEERS,
             name: "self",
         }
     }
@@ -103,15 +103,15 @@ pub struct Node {
 
     commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
-    events: chan::Receiver<Event<NetworkMessage>>,
-    reactor: Reactor<net::TcpStream, RawNetworkMessage>,
+    events: chan::Receiver<Event>,
+    reactor: Reactor<net::TcpStream>,
 }
 
 impl Node {
     /// Create a new node.
     pub fn new(config: NodeConfig) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
-        let (subscriber, events) = chan::unbounded::<Event<NetworkMessage>>();
+        let (subscriber, events) = chan::unbounded::<Event>();
         let reactor = p2p::reactor::poll::Reactor::new(subscriber)?;
 
         Ok(Self {
@@ -190,16 +190,16 @@ impl Node {
         log::info!("{} peer(s) found..", self.config.address_book.len());
         log::debug!("{:?}", self.config.address_book);
 
-        let cfg = bitcoin::Config {
+        let cfg = p2p::protocol::Config {
             network: self.config.network,
             params: self.config.network.params(),
             target: self.config.name,
             address_book: self.config.address_book,
             target_outbound_peers: self.config.target_outbound_peers,
             max_inbound_peers: self.config.max_inbound_peers,
-            ..bitcoin::Config::default()
+            ..p2p::protocol::Config::default()
         };
-        let builder = bitcoin::Builder {
+        let builder = p2p::protocol::Builder {
             cache,
             clock,
             filters,
@@ -215,7 +215,7 @@ impl Node {
     /// Start the node process, supplying the block cache. This function is meant to be run in
     /// its own thread.
     pub fn run_with<T: BlockTree, F: Filters>(mut self, cache: T, filters: F) -> Result<(), Error> {
-        let cfg = bitcoin::Config::from(
+        let cfg = p2p::protocol::Config::from(
             self.config.name,
             self.config.network,
             self.config.address_book,
@@ -232,7 +232,7 @@ impl Node {
         log::info!("{} peer(s) found..", cfg.address_book.len());
         log::debug!("{:?}", cfg.address_book);
 
-        let builder = bitcoin::Builder {
+        let builder = p2p::protocol::Builder {
             cache,
             clock,
             filters,
@@ -260,7 +260,7 @@ impl Node {
 /// An instance of [`Handle`] for [`Node`].
 pub struct NodeHandle {
     commands: chan::Sender<Command>,
-    events: chan::Receiver<Event<NetworkMessage>>,
+    events: chan::Receiver<Event>,
     waker: Arc<Waker>,
     timeout: time::Duration,
 }
@@ -281,9 +281,6 @@ impl NodeHandle {
 }
 
 impl Handle for NodeHandle {
-    type Message = NetworkMessage;
-    type Event = Event<NetworkMessage>;
-
     fn get_tip(&self) -> Result<BlockHeader, handle::Error> {
         let (transmit, receive) = chan::bounded::<BlockHeader>(1);
         self.command(Command::GetTip(transmit))?;
@@ -309,11 +306,11 @@ impl Handle for NodeHandle {
         self.command(Command::GetFilters(range))
     }
 
-    fn broadcast(&self, msg: Self::Message) -> Result<(), handle::Error> {
+    fn broadcast(&self, msg: NetworkMessage) -> Result<(), handle::Error> {
         self.command(Command::Broadcast(msg))
     }
 
-    fn query(&self, msg: Self::Message) -> Result<Option<net::SocketAddr>, handle::Error> {
+    fn query(&self, msg: NetworkMessage) -> Result<Option<net::SocketAddr>, handle::Error> {
         let (transmit, receive) = chan::bounded::<Option<net::SocketAddr>>(1);
         self.command(Command::Query(msg, transmit))?;
 
@@ -364,7 +361,7 @@ impl Handle for NodeHandle {
     /// or timeout if the specified amount of time has elapsed.
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
     where
-        F: Fn(Event<NetworkMessage>) -> Option<T>,
+        F: Fn(Event) -> Option<T>,
     {
         let start = time::Instant::now();
         let events = self.events.clone();

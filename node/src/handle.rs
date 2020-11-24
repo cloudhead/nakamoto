@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
-use nakamoto_p2p::protocol::Link;
+use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 
 /// An error resulting from a handle method.
 #[derive(Error, Debug)]
@@ -38,11 +38,6 @@ impl<T> From<chan::SendError<T>> for Error {
 
 /// A handle for communicating with a node process.
 pub trait Handle {
-    /// Node event generated during protocol operation.
-    type Event;
-    /// The message payload exchanged between nodes in the network.
-    type Message;
-
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<BlockHeader, Error>;
     /// Get a full block from the network.
@@ -50,10 +45,10 @@ pub trait Handle {
     /// Get compact filters from the network.
     fn get_filters(&self, range: Range<Height>) -> Result<(), Error>;
     /// Broadcast a message to all *outbound* peers.
-    fn broadcast(&self, msg: Self::Message) -> Result<(), Error>;
+    fn broadcast(&self, msg: NetworkMessage) -> Result<(), Error>;
     /// Send a message to a random *outbound* peer. Return the chosen
     /// peer or nothing if no peer was available.
-    fn query(&self, msg: Self::Message) -> Result<Option<net::SocketAddr>, Error>;
+    fn query(&self, msg: NetworkMessage) -> Result<Option<net::SocketAddr>, Error>;
     /// Connect to the designated peer address.
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, Error>;
     /// Disconnect from the designated peer address.
@@ -67,7 +62,7 @@ pub trait Handle {
         headers: Vec<BlockHeader>,
     ) -> Result<Result<ImportResult, block::tree::Error>, Error>;
     /// Wait for the given predicate to be fulfilled.
-    fn wait<F: Fn(Self::Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
+    fn wait<F: Fn(Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected.
     fn wait_for_peers(&self, count: usize) -> Result<(), Error>;
     /// Wait for the node to be ready and in sync with the blockchain.

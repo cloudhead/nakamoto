@@ -6,7 +6,7 @@ use std::net;
 use crossbeam_channel as chan;
 
 use bitcoin::network::address::Address;
-use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+use bitcoin::network::message::NetworkMessage;
 use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
 
@@ -14,7 +14,6 @@ use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
-use crate::protocol::Message;
 use crate::protocol::{Event, Out, PeerId};
 
 use super::network::Network;
@@ -24,24 +23,24 @@ pub use connmgr::Disconnect;
 
 /// Used to construct a protocol output.
 #[derive(Debug, Clone)]
-pub struct Channel<M: Message> {
+pub struct Channel {
     /// Protocol version.
     version: u32,
     /// Output channel.
-    outbound: chan::Sender<Out<M>>,
+    outbound: chan::Sender<Out>,
     /// Network magic number.
     builder: message::Builder,
     /// Log target.
     target: &'static str,
 }
 
-impl<M: Message> Channel<M> {
+impl Channel {
     /// Create a new output builder.
     pub fn new(
         network: Network,
         version: u32,
         target: &'static str,
-        outbound: chan::Sender<Out<M>>,
+        outbound: chan::Sender<Out>,
     ) -> Self {
         Self {
             version,
@@ -52,18 +51,18 @@ impl<M: Message> Channel<M> {
     }
 
     /// Push an output to the queue.
-    pub fn push(&self, output: Out<M>) {
+    pub fn push(&self, output: Out) {
         self.outbound.send(output).unwrap();
     }
 
     /// Push a message to the queue.
-    pub fn message(&self, addr: PeerId, message: M::Payload) -> &Self {
+    pub fn message(&self, addr: PeerId, message: NetworkMessage) -> &Self {
         self.push(self.builder.message(addr, message));
         self
     }
 
     /// Push an event to the queue.
-    pub fn event(&self, event: Event<M::Payload>) {
+    pub fn event(&self, event: Event) {
         self.push(Out::Event(event));
     }
 }
@@ -74,14 +73,14 @@ pub trait SetTimeout {
     fn set_timeout(&self, timeout: LocalDuration) -> &Self;
 }
 
-impl SetTimeout for Channel<RawNetworkMessage> {
+impl SetTimeout for Channel {
     fn set_timeout(&self, timeout: LocalDuration) -> &Self {
         self.push(Out::SetTimeout(timeout));
         self
     }
 }
 
-impl addrmgr::SyncAddresses for Channel<RawNetworkMessage> {
+impl addrmgr::SyncAddresses for Channel {
     fn get_addresses(&self, addr: PeerId) {
         self.message(addr, NetworkMessage::GetAddr);
     }
@@ -91,35 +90,35 @@ impl addrmgr::SyncAddresses for Channel<RawNetworkMessage> {
     }
 }
 
-impl connmgr::Connect for Channel<RawNetworkMessage> {
+impl connmgr::Connect for Channel {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
         debug!(target: self.target, "[conn] Connecting to {}..", addr);
         self.push(Out::Connect(addr, timeout));
     }
 }
 
-impl connmgr::Disconnect for Channel<RawNetworkMessage> {
+impl connmgr::Disconnect for Channel {
     fn disconnect(&self, addr: net::SocketAddr) {
         debug!(target: self.target, "[conn] Disconnecting from {}..", addr);
         self.push(Out::Disconnect(addr));
     }
 }
 
-impl connmgr::Events for Channel<RawNetworkMessage> {
+impl connmgr::Events for Channel {
     fn event(&self, event: connmgr::Event) {
         debug!(target: self.target, "[conn] {}", &event);
         self.event(Event::ConnManager(event));
     }
 }
 
-impl addrmgr::Events for Channel<RawNetworkMessage> {
+impl addrmgr::Events for Channel {
     fn event(&self, event: addrmgr::Event) {
         debug!(target: self.target, "[addr] {}", &event);
         self.event(Event::AddrManager(event));
     }
 }
 
-impl pingmgr::Ping for Channel<RawNetworkMessage> {
+impl pingmgr::Ping for Channel {
     fn ping(&self, addr: net::SocketAddr, nonce: u64) -> &Self {
         self.message(addr, NetworkMessage::Ping(nonce));
         self
@@ -131,7 +130,7 @@ impl pingmgr::Ping for Channel<RawNetworkMessage> {
     }
 }
 
-impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
+impl syncmgr::SyncHeaders for Channel {
     fn get_headers(&self, addr: PeerId, (locator_hashes, stop_hash): Locators) {
         let msg = NetworkMessage::GetHeaders(GetHeadersMessage {
             version: self.version,
@@ -168,7 +167,7 @@ impl syncmgr::SyncHeaders for Channel<RawNetworkMessage> {
 }
 
 #[allow(unused_variables)]
-impl spvmgr::SyncFilters for Channel<RawNetworkMessage> {
+impl spvmgr::SyncFilters for Channel {
     fn get_cfheaders(
         &self,
         addr: PeerId,
@@ -205,7 +204,7 @@ impl spvmgr::SyncFilters for Channel<RawNetworkMessage> {
     }
 }
 
-impl spvmgr::Events for Channel<RawNetworkMessage> {
+impl spvmgr::Events for Channel {
     fn event(&self, event: spvmgr::Event) {
         debug!(target: self.target, "[cflr] {}", &event);
 

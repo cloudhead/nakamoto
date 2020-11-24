@@ -25,12 +25,11 @@ use nakamoto_test::block::cache::model;
 use nakamoto_test::logger;
 use nakamoto_test::BITCOIN_HEADERS;
 
-use crate::protocol::bitcoin::{connmgr, pingmgr, Bitcoin, Builder};
-use crate::protocol::ProtocolBuilder;
+use crate::protocol::{connmgr, pingmgr, Builder, Protocol};
 
-fn payload<M: Message>(o: &Out<M>) -> Option<(net::SocketAddr, &M::Payload)> {
+fn payload(o: &Out) -> Option<(net::SocketAddr, &NetworkMessage)> {
     match o {
-        Out::Message(a, m) => Some((*a, m.payload())),
+        Out::Message(a, m) => Some((*a, &m.payload)),
         _ => None,
     }
 }
@@ -63,8 +62,8 @@ mod setup {
     pub fn singleton(
         network: Network,
     ) -> (
-        Bitcoin<model::Cache, model::FilterCache>,
-        chan::Receiver<Out<RawNetworkMessage>>,
+        Protocol<model::Cache, model::FilterCache>,
+        chan::Receiver<Out>,
         LocalTime,
     ) {
         let genesis = network.genesis();
@@ -92,14 +91,14 @@ mod setup {
         network: Network,
     ) -> (
         (
-            Bitcoin<model::Cache, model::FilterCache>,
+            Protocol<model::Cache, model::FilterCache>,
             PeerId,
-            chan::Receiver<Out<RawNetworkMessage>>,
+            chan::Receiver<Out>,
         ),
         (
-            Bitcoin<model::Cache, model::FilterCache>,
+            Protocol<model::Cache, model::FilterCache>,
             PeerId,
-            chan::Receiver<Out<RawNetworkMessage>>,
+            chan::Receiver<Out>,
         ),
         LocalTime,
     ) {
@@ -313,7 +312,7 @@ fn test_initial_sync() {
     )
     .unwrap();
 
-    let mut alice = Bitcoin::new(
+    let mut alice = Protocol::new(
         alice_tree,
         filters.clone(),
         clock.clone(),
@@ -324,7 +323,7 @@ fn test_initial_sync() {
 
     // Bob connects to Alice.
     {
-        let mut bob = Bitcoin::new(
+        let mut bob = Protocol::new(
             bob_tree,
             filters,
             clock,
