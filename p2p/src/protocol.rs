@@ -137,7 +137,7 @@ pub trait ProtocolBuilder {
 
     /// Build a new protocol instance, given an outbound channel. Protocol events
     /// and outputs are sent over this channel.
-    fn build(self, tx: chan::Sender<Out<Self::Message>>) -> Self::Protocol;
+    fn build(self, upstream: chan::Sender<Out<Self::Message>>) -> Self::Protocol;
 }
 
 /// A finite-state machine that can advance one step at a time, given an input event.

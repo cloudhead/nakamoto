@@ -177,8 +177,15 @@ impl<T: BlockTree, F: Filters> protocol::ProtocolBuilder for Builder<T, F> {
     type Message = RawNetworkMessage;
     type Protocol = Bitcoin<T, F>;
 
-    fn build(self, tx: chan::Sender<Out<RawNetworkMessage>>) -> Bitcoin<T, F> {
-        Bitcoin::new(self.cache, self.filters, self.clock, self.rng, self.cfg, tx)
+    fn build(self, upstream: chan::Sender<Out<RawNetworkMessage>>) -> Bitcoin<T, F> {
+        Bitcoin::new(
+            self.cache,
+            self.filters,
+            self.clock,
+            self.rng,
+            self.cfg,
+            upstream,
+        )
     }
 }
 
