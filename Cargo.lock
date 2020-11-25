@@ -200,8 +200,8 @@ name = "nakamoto"
 version = "0.1.0"
 dependencies = [
  "nakamoto-chain",
+ "nakamoto-client",
  "nakamoto-common",
- "nakamoto-daemon",
  "nakamoto-node",
  "nakamoto-p2p",
  "nakamoto-test",
@@ -224,6 +224,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "nakamoto-client"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "fastrand",
+ "log",
+ "nakamoto-chain",
+ "nakamoto-common",
+ "nakamoto-p2p",
+ "nakamoto-test",
+ "thiserror",
+]
+
+[[package]]
 name = "nakamoto-common"
 version = "0.1.0"
 dependencies = [
@@ -236,7 +250,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "nakamoto-daemon"
+name = "nakamoto-node"
 version = "0.1.0"
 dependencies = [
  "argh",
@@ -244,21 +258,7 @@ dependencies = [
  "chrono",
  "colored",
  "log",
- "nakamoto-node",
- "thiserror",
-]
-
-[[package]]
-name = "nakamoto-node"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "fastrand",
- "log",
- "nakamoto-chain",
- "nakamoto-common",
- "nakamoto-p2p",
- "nakamoto-test",
+ "nakamoto-client",
  "thiserror",
 ]
 

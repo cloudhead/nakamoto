@@ -16,16 +16,16 @@ members = [
   "chain",
   "node",
   "test",
-  "daemon",
+  "client",
 ]
 
 [features]
-default = ["nakamoto-node", "nakamoto-chain", "nakamoto-p2p", "nakamoto-common"]
+default = ["nakamoto-client", "nakamoto-chain", "nakamoto-p2p", "nakamoto-common"]
 
 [dependencies]
 nakamoto-common = { version = "0.1.0", path = "./common", optional = true }
 nakamoto-node = { version = "0.1.0", path = "./node", optional = true }
-nakamoto-daemon = { version = "0.1.0", path = "./daemon", optional = true }
+nakamoto-client = { version = "0.1.0", path = "./client", optional = true }
 nakamoto-chain = { version = "0.1.0", path = "./chain", optional = true }
 nakamoto-p2p = { version = "0.1.0", path = "./p2p", optional = true }
 nakamoto-test = { version = "0.1.0", path = "./test", optional = true }

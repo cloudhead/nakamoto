@@ -1,4 +1,4 @@
-//! Core nakamoto node functionality. Wraps all the other modules under a unified
+//! Core nakamoto client functionality. Wraps all the other modules under a unified
 //! interface.
 use std::env;
 use std::fs;
@@ -36,10 +36,10 @@ pub use nakamoto_p2p::event::Event;
 use crate::error::Error;
 use crate::handle::{self, Handle};
 
-/// Node configuration.
+/// Client configuration.
 #[derive(Debug, Clone)]
-pub struct NodeConfig {
-    /// Node listen addresses.
+pub struct ClientConfig {
+    /// Client listen addresses.
     pub listen: Vec<net::SocketAddr>,
     /// Bitcoin network.
     pub network: Network,
@@ -49,17 +49,17 @@ pub struct NodeConfig {
     pub target_outbound_peers: usize,
     /// Maximum number of inbound peers supported.
     pub max_inbound_peers: usize,
-    /// Timeout duration for node commands.
+    /// Timeout duration for client commands.
     pub timeout: time::Duration,
-    /// Node home path, where runtime data is stored, eg. block headers and filters.
+    /// Client home path, where runtime data is stored, eg. block headers and filters.
     pub home: PathBuf,
-    /// Node name. Used for logging only.
+    /// Client name. Used for logging only.
     pub name: &'static str,
 }
 
 #[cfg(test)]
-impl NodeConfig {
-    /// Create a default node configuration with a name.
+impl ClientConfig {
+    /// Create a default client configuration with a name.
     pub(crate) fn named(name: &'static str) -> Self {
         Self {
             name,
@@ -68,8 +68,8 @@ impl NodeConfig {
     }
 }
 
-impl From<NodeConfig> for p2p::protocol::Config {
-    fn from(cfg: NodeConfig) -> Self {
+impl From<ClientConfig> for p2p::protocol::Config {
+    fn from(cfg: ClientConfig) -> Self {
         Self {
             network: cfg.network,
             target: cfg.name,
@@ -81,7 +81,7 @@ impl From<NodeConfig> for p2p::protocol::Config {
     }
 }
 
-impl Default for NodeConfig {
+impl Default for ClientConfig {
     fn default() -> Self {
         Self {
             listen: vec![([0, 0, 0, 0], 0).into()],
@@ -96,10 +96,10 @@ impl Default for NodeConfig {
     }
 }
 
-/// A light-node process.
-pub struct Node {
-    /// Node configuration.
-    pub config: NodeConfig,
+/// A light-client process.
+pub struct Client {
+    /// Client configuration.
+    pub config: ClientConfig,
 
     commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
@@ -107,9 +107,9 @@ pub struct Node {
     reactor: Reactor<net::TcpStream>,
 }
 
-impl Node {
-    /// Create a new node.
-    pub fn new(config: NodeConfig) -> Result<Self, Error> {
+impl Client {
+    /// Create a new client.
+    pub fn new(config: ClientConfig) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (subscriber, events) = chan::unbounded::<Event>();
         let reactor = p2p::reactor::poll::Reactor::new(subscriber)?;
@@ -123,12 +123,12 @@ impl Node {
         })
     }
 
-    /// Seed the node's address book with peer addresses.
+    /// Seed the client's address book with peer addresses.
     pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> Result<(), Error> {
         self.config.address_book.seed(seeds).map_err(Error::from)
     }
 
-    /// Start the node process. This function is meant to be run in its own thread.
+    /// Start the client process. This function is meant to be run in its own thread.
     pub fn run(mut self) -> Result<(), Error> {
         let home = self.config.home.join(".nakamoto");
         let dir = home.join(self.config.network.as_str());
@@ -139,7 +139,7 @@ impl Node {
         let genesis = self.config.network.genesis();
         let params = self.config.network.params();
 
-        log::info!("Initializing node ({:?})..", self.config.network);
+        log::info!("Initializing client ({:?})..", self.config.network);
         log::info!(
             "Genesis block hash is {}",
             self.config.network.genesis_hash()
@@ -212,7 +212,7 @@ impl Node {
         Ok(())
     }
 
-    /// Start the node process, supplying the block cache. This function is meant to be run in
+    /// Start the client process, supplying the block cache. This function is meant to be run in
     /// its own thread.
     pub fn run_with<T: BlockTree, F: Filters>(mut self, cache: T, filters: F) -> Result<(), Error> {
         let cfg = p2p::protocol::Config::from(
@@ -221,7 +221,7 @@ impl Node {
             self.config.address_book,
         );
 
-        log::info!("Initializing node ({:?})..", cfg.network);
+        log::info!("Initializing client ({:?})..", cfg.network);
         log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
         log::info!("Chain height is {}", cache.height());
 
@@ -246,9 +246,9 @@ impl Node {
         Ok(())
     }
 
-    /// Create a new handle to communicate with the node.
-    pub fn handle(&mut self) -> NodeHandle {
-        NodeHandle {
+    /// Create a new handle to communicate with the client.
+    pub fn handle(&mut self) -> ClientHandle {
+        ClientHandle {
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
             events: self.events.clone(),
@@ -257,15 +257,15 @@ impl Node {
     }
 }
 
-/// An instance of [`Handle`] for [`Node`].
-pub struct NodeHandle {
+/// An instance of [`Handle`] for [`Client`].
+pub struct ClientHandle {
     commands: chan::Sender<Command>,
     events: chan::Receiver<Event>,
     waker: Arc<Waker>,
     timeout: time::Duration,
 }
 
-impl NodeHandle {
+impl ClientHandle {
     /// Set the timeout for operations that wait on the network.
     pub fn set_timeout(&mut self, timeout: time::Duration) {
         self.timeout = timeout;
@@ -280,7 +280,7 @@ impl NodeHandle {
     }
 }
 
-impl Handle for NodeHandle {
+impl Handle for ClientHandle {
     fn get_tip(&self) -> Result<BlockHeader, handle::Error> {
         let (transmit, receive) = chan::bounded::<BlockHeader>(1);
         self.command(Command::GetTip(transmit))?;
@@ -301,7 +301,7 @@ impl Handle for NodeHandle {
     fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {
         assert!(
             !range.is_empty(),
-            "NodeHandle::get_filters: range cannot be empty"
+            "ClientHandle::get_filters: range cannot be empty"
         );
         self.command(Command::GetFilters(range))
     }

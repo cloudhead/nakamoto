@@ -1,0 +1,19 @@
+[package]
+name = "nakamoto-client"
+description = "Bitcoin light-client library used by nakamoto crate"
+version = "0.1.0"
+authors = ["Alexis Sellier <self@cloudhead.io>"]
+edition = "2018"
+license = "MIT"
+
+[dependencies]
+nakamoto-p2p = { version = "0.1.0", path = "../p2p" }
+nakamoto-chain = { version = "0.1.0", path = "../chain" }
+nakamoto-common = { version = "0.1.0", path = "../common" }
+crossbeam-channel = { version = "0.4" }
+thiserror = "1.0"
+log = "0.4"
+fastrand = "1.3.5"
+
+[dev-dependencies]
+nakamoto-test = { version = "0.1.0", path = "../test" }

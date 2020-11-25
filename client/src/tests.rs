@@ -7,13 +7,13 @@ use nakamoto_chain::filter::cache::FilterCache;
 use nakamoto_common::block::Height;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
+use crate::client::{Client, ClientConfig, ClientHandle, Event};
 use crate::error;
 use crate::handle::Handle;
-use crate::node::{Event, Node, NodeConfig, NodeHandle};
 
 fn network(
-    cfgs: &[NodeConfig],
-) -> Result<Vec<(NodeHandle, net::SocketAddr, thread::JoinHandle<()>)>, error::Error> {
+    cfgs: &[ClientConfig],
+) -> Result<Vec<(ClientHandle, net::SocketAddr, thread::JoinHandle<()>)>, error::Error> {
     let mut handles = Vec::new();
 
     for cfg in cfgs.iter().cloned() {
@@ -21,7 +21,7 @@ fn network(
         let genesis = cfg.network.genesis();
         let params = cfg.network.params();
 
-        let mut node = Node::new(cfg)?;
+        let mut node = Client::new(cfg)?;
         let handle = node.handle();
 
         let t = thread::spawn({
@@ -61,9 +61,9 @@ fn test_full_sync() {
     logger::init(log::Level::Debug);
 
     let nodes = network(&[
-        NodeConfig::named("olive"),
-        NodeConfig::named("alice"),
-        NodeConfig::named("misha"),
+        ClientConfig::named("olive"),
+        ClientConfig::named("alice"),
+        ClientConfig::named("misha"),
     ])
     .unwrap();
 
