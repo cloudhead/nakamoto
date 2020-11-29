@@ -166,12 +166,11 @@ pub struct PeerManager<U> {
     peers: HashMap<PeerId, Peer>,
     upstream: U,
     rng: fastrand::Rng,
-    height: Height,
 }
 
 impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
     /// Create a new peer manager.
-    pub fn new(config: Config, height: Height, rng: fastrand::Rng, upstream: U) -> Self {
+    pub fn new(config: Config, rng: fastrand::Rng, upstream: U) -> Self {
         let connections = HashMap::with_hasher(rng.clone().into());
         let peers = HashMap::with_hasher(rng.clone().into());
 
@@ -181,7 +180,6 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             peers,
             upstream,
             rng,
-            height,
         }
     }
 
@@ -208,6 +206,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
         addr: net::SocketAddr,
         local_addr: net::SocketAddr,
         link: Link,
+        height: Height,
         local_time: LocalTime,
     ) {
         self.connections.insert(
@@ -226,7 +225,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                 let nonce = self.rng.u64(..);
                 self.upstream.version(
                     addr,
-                    self.version(addr, local_addr, nonce, self.height, local_time),
+                    self.version(addr, local_addr, nonce, height, local_time),
                 );
             }
         }
@@ -245,6 +244,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
         &mut self,
         addr: &PeerId,
         msg: VersionMessage,
+        height: Height,
         now: LocalTime,
         addrs: &mut addrmgr::AddressManager<T>,
     ) {
@@ -271,7 +271,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                 receiver,
                 ..
             } = msg;
-            let height = self.height;
+
             let whitelisted = self.config.whitelist.contains(&addr.ip(), &user_agent)
                 || addrmgr::is_local(&addr.ip());
 
@@ -329,7 +329,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                     self.upstream
                         .version(
                             conn.addr,
-                            self.version(conn.addr, conn.local_addr, nonce, self.height, now),
+                            self.version(conn.addr, conn.local_addr, nonce, height, now),
                         )
                         .verack(conn.addr)
                         .set_timeout(HANDSHAKE_TIMEOUT);

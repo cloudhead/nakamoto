@@ -228,14 +228,8 @@ mod message {
 pub struct Protocol<T, F> {
     /// Bitcoin network we're connecting to.
     network: network::Network,
-    /// Services offered by us.
-    services: ServiceFlags,
     /// Our protocol version.
     protocol_version: u32,
-    /// Our user agent.
-    user_agent: &'static str,
-    /// Block height of active chain.
-    height: Height,
     /// Consensus parameters.
     params: Params,
     /// Peer whitelist.
@@ -406,7 +400,6 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
             params,
         } = config;
 
-        let height = tree.height();
         let upstream = Upstream::new(network, protocol_version, target, upstream);
 
         let addrmgr = AddressManager::from(address_book, rng.clone(), upstream.clone());
@@ -441,21 +434,17 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 services,
                 user_agent,
             },
-            height,
             rng.clone(),
             upstream.clone(),
         );
 
         Self {
             network,
-            services,
             protocol_version,
-            user_agent,
             whitelist,
             target,
             params,
             clock,
-            height,
             addrmgr,
             syncmgr,
             connmgr,
@@ -485,6 +474,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 local_addr,
                 link,
             } => {
+                let height = self.syncmgr.tree.height();
                 // This is usually not that useful, except when our local address is actually the
                 // address our peers see.
                 self.addrmgr.record_local_addr(local_addr);
@@ -492,7 +482,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 self.connmgr
                     .peer_connected(addr, local_addr, link, local_time);
                 self.peermgr
-                    .peer_connected(addr, local_addr, link, local_time);
+                    .peer_connected(addr, local_addr, link, height, local_time);
             }
             Input::Disconnected(addr) => {
                 self.spvmgr.peer_disconnected(&addr);
@@ -540,10 +530,6 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                     match result {
                         Ok(import_result) => {
                             reply.send(Ok(import_result.clone())).ok();
-
-                            if let ImportResult::TipChanged(_, height, _) = import_result {
-                                self.height = height;
-                            }
                         }
                         Err(err) => {
                             reply.send(Err(err)).ok();
@@ -657,8 +643,10 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
 
         match msg.payload {
             NetworkMessage::Version(msg) => {
+                let height = self.syncmgr.tree.height();
+
                 self.peermgr
-                    .received_version(&addr, msg, now, &mut self.addrmgr);
+                    .received_version(&addr, msg, height, now, &mut self.addrmgr);
             }
             NetworkMessage::Verack => {
                 if let Some(peer) = self.peermgr.received_verack(&addr, now) {
