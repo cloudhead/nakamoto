@@ -147,6 +147,11 @@ pub struct Peer {
 }
 
 impl Peer {
+    /// Get the peer's address.
+    pub fn address(&self) -> net::SocketAddr {
+        self.conn.addr
+    }
+
     /// Check whether the peer has successfully negotiated.
     pub fn is_negotiated(&self) -> bool {
         matches!(self.state, PeerState::Negotiated { .. })

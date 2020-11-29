@@ -746,8 +746,7 @@ fn test_getaddr() {
         .peers()
         .find(|p| p.is_negotiated())
         .unwrap()
-        .conn
-        .addr;
+        .address();
     let result = sim.input(&alice, Input::Disconnected(peer));
 
     // We are unable to connect to a new peer because our address book is exhausted.

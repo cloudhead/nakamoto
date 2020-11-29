@@ -529,7 +529,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                     debug!(target: self.target, "Received command: Broadcast({:?})", msg);
 
                     for peer in self.peermgr.outbound() {
-                        self.upstream.message(peer.conn.addr, msg.clone());
+                        self.upstream.message(peer.address(), msg.clone());
                     }
                 }
                 Command::ImportHeaders(headers, reply) => {
@@ -594,9 +594,9 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 let r = self.rng.usize(..n);
                 let p = peers.get(r).unwrap();
 
-                self.upstream.message(p.conn.addr, msg);
+                self.upstream.message(p.address(), msg);
 
-                Some(p.conn.addr)
+                Some(p.address())
             }
             _ => None,
         }
@@ -662,19 +662,19 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
             }
             NetworkMessage::Verack => {
                 if let Some(peer) = self.peermgr.received_verack(&addr, now) {
-                    self.clock.record_offset(peer.conn.addr, peer.time_offset);
+                    self.clock.record_offset(peer.address(), peer.time_offset);
                     self.addrmgr
                         .peer_negotiated(&addr, peer.services, peer.conn.link, now);
-                    self.pingmgr.peer_negotiated(peer.conn.addr, now);
+                    self.pingmgr.peer_negotiated(peer.address(), now);
                     self.spvmgr.peer_negotiated(
-                        peer.conn.addr,
+                        peer.address(),
                         peer.height,
                         peer.services,
                         peer.conn.link,
                         &self.clock,
                     );
                     self.syncmgr.peer_negotiated(
-                        peer.conn.addr,
+                        peer.address(),
                         peer.height,
                         peer.services,
                         peer.conn.link,
