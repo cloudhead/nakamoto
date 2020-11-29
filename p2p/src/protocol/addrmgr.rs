@@ -162,6 +162,40 @@ impl<U: SyncAddresses> AddressManager<U> {
             self.last_request = Some(local_time);
         }
     }
+
+    /// Called when a peer has handshaked.
+    pub fn peer_negotiated(
+        &mut self,
+        addr: &net::SocketAddr,
+        services: ServiceFlags,
+        link: Link,
+        time: LocalTime,
+    ) {
+        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
+            return;
+        }
+
+        let ka = self
+            .addresses
+            .get_mut(&addr.ip())
+            .expect("the address must exist");
+
+        ka.last_success = Some(time);
+        ka.addr.services = services;
+
+        if link.is_outbound() {
+            self.sources.insert(*addr);
+            self.upstream.get_addresses(*addr);
+        }
+    }
+}
+
+impl<U> AddressManager<U> {
+    /// Record an address of ours as seen by a remote peer.
+    /// This helps avoid self-connections.
+    pub fn record_local_addr(&mut self, addr: net::SocketAddr) {
+        self.local_addrs.insert(addr);
+    }
 }
 
 impl<U: Events> AddressManager<U> {
@@ -205,12 +239,6 @@ impl<U: Events> AddressManager<U> {
         self.address_ranges.clear();
     }
 
-    /// Record an address of ours as seen by a remote peer.
-    /// This helps avoid self-connections.
-    pub fn record_local_addr(&mut self, addr: net::SocketAddr) {
-        self.local_addrs.insert(addr);
-    }
-
     /// Same as `insert`, but supports adding bare socket addresses to the address manager.
     /// This is useful when adding addresses manually, or from sources other than the network.
     pub fn insert_sockaddr(
@@ -241,31 +269,6 @@ impl<U: Events> AddressManager<U> {
         // TODO: We shouldn't remove. We should keep for later.
         self.remove_address(&addr.ip());
         self.sources.remove(&addr);
-    }
-
-    /// Called when a peer has handshaked.
-    pub fn peer_negotiated(
-        &mut self,
-        addr: &net::SocketAddr,
-        services: ServiceFlags,
-        link: Link,
-        time: LocalTime,
-    ) {
-        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
-            return;
-        }
-
-        let ka = self
-            .addresses
-            .get_mut(&addr.ip())
-            .expect("the address must exist");
-
-        ka.last_success = Some(time);
-        ka.addr.services = services;
-
-        if link.is_outbound() {
-            self.sources.insert(*addr);
-        }
     }
 
     /// Called when a peer has connected.

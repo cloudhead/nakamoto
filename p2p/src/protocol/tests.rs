@@ -7,6 +7,7 @@ use simulator::PeerConfig;
 
 use bitcoin::consensus::params::Params;
 use bitcoin::network::message_blockdata::Inventory;
+use bitcoin::network::Address;
 use bitcoin_hashes::hex::FromHex;
 
 use std::collections::VecDeque;
@@ -265,15 +266,15 @@ fn test_handshake() {
     );
 
     assert!(
-        alice.peers.values().all(|p| p.is_ready()),
+        alice.peermgr.peers().all(|p| p.is_negotiated()),
         "alice: {:#?}",
-        alice.peers
+        alice.peermgr.peers().collect::<Vec<_>>()
     );
 
     assert!(
-        bob.peers.values().all(|p| p.is_ready()),
+        bob.peermgr.peers().all(|p| p.is_negotiated()),
         "bob: {:#?}",
-        bob.peers
+        bob.peermgr.peers().collect::<Vec<_>>()
     );
 }
 
@@ -392,7 +393,7 @@ fn test_idle() {
 
     // Alice now decides to disconnect Bob.
     sim.input(&alice, Input::Timeout)
-        .any(|o| matches!(o, Out::Disconnect(addr) if addr == &bob))
+        .any(|o| matches!(o, Out::Disconnect(addr, DisconnectReason::PeerTimeout) if addr == &bob))
         .expect("Alice disconnects Bob");
 }
 
@@ -583,10 +584,10 @@ fn test_handshake_version_timeout() {
             .find(|o| matches!(o, Out::SetTimeout(_)))
             .expect("a timer should be returned");
 
-        instance.step(Input::Timeout, time + HANDSHAKE_TIMEOUT);
-        assert!(rx
-            .iter()
-            .any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
+        instance.step(Input::Timeout, time + peermgr::HANDSHAKE_TIMEOUT);
+        assert!(rx.iter().any(
+            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout) if a == remote)
+        ));
 
         instance.step(Input::Disconnected(remote), time);
     }
@@ -615,7 +616,9 @@ fn test_handshake_verack_timeout() {
                 remote,
                 RawNetworkMessage {
                     magic: network.magic(),
-                    payload: instance.version(local, remote, 0, 0),
+                    payload: NetworkMessage::Version(
+                        instance.peermgr.version(local, remote, 0, 0, time),
+                    ),
                 },
             ),
             time,
@@ -627,12 +630,85 @@ fn test_handshake_verack_timeout() {
         time = time + LocalDuration::from_secs(60);
 
         instance.step(Input::Timeout, time);
-        assert!(rx
-            .iter()
-            .any(|o| matches!(o, Out::Disconnect(a) if a == remote)));
+        assert!(rx.iter().any(
+            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout) if a == remote)
+        ));
 
         instance.step(Input::Disconnected(remote), time);
     }
+}
+
+#[test]
+fn test_handshake_initial_messages() {
+    let network = Network::Mainnet;
+    let (mut instance, rx, time) = setup::singleton(network);
+
+    let remote = ([131, 31, 11, 33], 11111).into();
+    let local = ([0, 0, 0, 0], 0).into();
+
+    instance.step(
+        Input::Connected {
+            addr: remote,
+            local_addr: local,
+            link: Link::Outbound,
+        },
+        time,
+    );
+
+    instance.step(
+        Input::Received(
+            remote,
+            RawNetworkMessage {
+                magic: network.magic(),
+                payload: NetworkMessage::Version(
+                    instance.peermgr.version(local, remote, 0, 0, time),
+                ),
+            },
+        ),
+        time,
+    );
+    instance.step(
+        Input::Received(
+            remote,
+            RawNetworkMessage {
+                magic: network.magic(),
+                payload: NetworkMessage::Verack,
+            },
+        ),
+        time,
+    );
+
+    let outs = rx.try_iter().collect::<Vec<_>>();
+
+    outs.iter()
+        .find(|o| {
+            matches!(
+                o,
+                Out::Message(
+                    addr,
+                    RawNetworkMessage {
+                        payload: NetworkMessage::SendHeaders,
+                        ..
+                    },
+                ) if addr == &remote
+            )
+        })
+        .expect("the `sendheaders` message should be sent");
+
+    outs.iter()
+        .find(|o| {
+            matches!(
+                o,
+                Out::Message(
+                    addr,
+                    RawNetworkMessage {
+                        payload: NetworkMessage::GetAddr,
+                        ..
+                    },
+                ) if addr == &remote
+            )
+        })
+        .expect("the `getaddr` message should be sent");
 }
 
 #[test]
@@ -666,11 +742,12 @@ fn test_getaddr() {
     let peer = sim
         .peer("alice")
         .protocol
-        .peers
-        .values()
-        .find(|p| p.is_ready())
+        .peermgr
+        .peers()
+        .find(|p| p.is_negotiated())
         .unwrap()
-        .address;
+        .conn
+        .addr;
     let result = sim.input(&alice, Input::Disconnected(peer));
 
     // We are unable to connect to a new peer because our address book is exhausted.
@@ -722,11 +799,16 @@ fn test_stale_tip() {
     }
     .into();
 
+    let time = sim.time;
     let alice = sim.get("alice");
     let bob = sim.get("bob");
 
     // Pretend `Bob` has a chain of height 144.
-    let version = sim.peer("bob").protocol.version(alice, bob, 1, 144);
+    let version = sim
+        .peer("bob")
+        .protocol
+        .peermgr
+        .version(alice, bob, 1, 144, time);
 
     // Handshake.
     sim.input(
@@ -737,7 +819,10 @@ fn test_stale_tip() {
             link: Link::Outbound,
         },
     );
-    sim.input(&alice, Input::Received(bob, msg.raw(version)));
+    sim.input(
+        &alice,
+        Input::Received(bob, msg.raw(NetworkMessage::Version(version))),
+    );
     sim.input(
         &alice,
         Input::Received(bob, msg.raw(NetworkMessage::Verack)),

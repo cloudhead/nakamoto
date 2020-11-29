@@ -4,7 +4,7 @@ use std::net;
 use bitcoin::network::message::NetworkMessage;
 
 use crate::protocol::PeerId;
-use crate::protocol::{addrmgr, connmgr, spvmgr, syncmgr};
+use crate::protocol::{addrmgr, connmgr, peermgr, spvmgr, syncmgr};
 
 /// A peer-to-peer event.
 #[derive(Debug)]
@@ -19,6 +19,8 @@ pub enum Event {
     SyncManager(syncmgr::Event),
     /// A connection manager event.
     ConnManager(connmgr::Event),
+    /// A peer manager event.
+    PeerManager(peermgr::Event),
     /// An SPV manager event.
     SpvManager(spvmgr::Event),
 }

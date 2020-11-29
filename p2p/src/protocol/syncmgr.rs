@@ -17,7 +17,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::HashMap;
 
 use super::channel::{Disconnect, SetTimeout};
-use super::{Link, Locators, PeerId, Timeout};
+use super::{DisconnectReason, Link, Locators, PeerId, Timeout};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
@@ -40,6 +40,8 @@ pub trait SyncHeaders {
     fn get_headers(&self, addr: PeerId, locators: Locators);
     /// Send headers to a peer.
     fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>);
+    /// Send initial post-negotiation messages, eg. `sendheaders`.
+    fn negotiate(&self, addr: PeerId);
     /// Emit a sync-related event.
     fn event(&self, event: Event);
 }
@@ -237,6 +239,7 @@ impl<T: BlockTree, U: SetTimeout + SyncHeaders + Disconnect> SyncManager<T, U> {
         clock: &impl Clock,
     ) {
         self.register(id, height, services, link);
+        self.upstream.negotiate(id);
         self.sync(clock.local_time());
     }
 
@@ -534,7 +537,8 @@ impl<T: BlockTree, U: SetTimeout + SyncHeaders + Disconnect> SyncManager<T, U> {
             match on_timeout {
                 OnTimeout::Disconnect => {
                     self.unregister(&peer);
-                    self.upstream.disconnect(*peer);
+                    self.upstream
+                        .disconnect(*peer, DisconnectReason::PeerTimeout);
                 }
                 OnTimeout::Ignore => {
                     // It's likely that the peer just didn't have the requested header.

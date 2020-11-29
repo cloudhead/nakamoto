@@ -9,17 +9,16 @@ use bitcoin::network::address::Address;
 use bitcoin::network::message::NetworkMessage;
 use bitcoin::network::message_blockdata::GetHeadersMessage;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
+use bitcoin::network::message_network::VersionMessage;
 
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
-use crate::protocol::{Event, Out, PeerId};
+use crate::protocol::{DisconnectReason, Event, Out, PeerId};
 
 use super::network::Network;
-use super::{addrmgr, connmgr, message, pingmgr, spvmgr, syncmgr, Locators};
-
-pub use connmgr::Disconnect;
+use super::{addrmgr, connmgr, message, peermgr, pingmgr, spvmgr, syncmgr, Locators};
 
 /// Used to construct a protocol output.
 #[derive(Debug, Clone)]
@@ -67,6 +66,18 @@ impl Channel {
     }
 }
 
+/// Ability to disconnect from peers.
+pub trait Disconnect {
+    /// Disconnect from peer.
+    fn disconnect(&self, addr: net::SocketAddr, reason: DisconnectReason);
+}
+
+impl Disconnect for Channel {
+    fn disconnect(&self, addr: net::SocketAddr, reason: DisconnectReason) {
+        self.push(Out::Disconnect(addr, reason));
+    }
+}
+
 /// The ability to set timeouts.
 pub trait SetTimeout {
     /// Set a timeout. Returns the unique timeout identifier.
@@ -97,13 +108,6 @@ impl connmgr::Connect for Channel {
     }
 }
 
-impl connmgr::Disconnect for Channel {
-    fn disconnect(&self, addr: net::SocketAddr) {
-        debug!(target: self.target, "[conn] Disconnecting from {}..", addr);
-        self.push(Out::Disconnect(addr));
-    }
-}
-
 impl connmgr::Events for Channel {
     fn event(&self, event: connmgr::Event) {
         debug!(target: self.target, "[conn] {}", &event);
@@ -115,6 +119,13 @@ impl addrmgr::Events for Channel {
     fn event(&self, event: addrmgr::Event) {
         debug!(target: self.target, "[addr] {}", &event);
         self.event(Event::AddrManager(event));
+    }
+}
+
+impl peermgr::Events for Channel {
+    fn event(&self, event: peermgr::Event) {
+        debug!(target: self.target, "[peer] {}", &event);
+        self.event(Event::PeerManager(event));
     }
 }
 
@@ -149,6 +160,10 @@ impl syncmgr::SyncHeaders for Channel {
         self.push(msg);
     }
 
+    fn negotiate(&self, addr: PeerId) {
+        self.message(addr, NetworkMessage::SendHeaders);
+    }
+
     fn event(&self, event: syncmgr::Event) {
         debug!(target: self.target, "[sync] {}", &event);
 
@@ -163,6 +178,18 @@ impl syncmgr::SyncHeaders for Channel {
             _ => {}
         }
         self.event(Event::SyncManager(event));
+    }
+}
+
+impl peermgr::Handshake for Channel {
+    fn version(&self, addr: PeerId, msg: VersionMessage) -> &Self {
+        self.message(addr, NetworkMessage::Version(msg));
+        self
+    }
+
+    fn verack(&self, addr: PeerId) -> &Self {
+        self.message(addr, NetworkMessage::Verack);
+        self
     }
 }
 

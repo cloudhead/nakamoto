@@ -6,8 +6,8 @@ use std::net;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
 use super::addrmgr::{self, AddressManager};
-use super::channel::SetTimeout;
-use crate::protocol::{Link, PeerId, Timeout};
+use super::channel::{Disconnect, SetTimeout};
+use crate::protocol::{DisconnectReason, Link, PeerId, Timeout};
 
 /// Time to wait for a new connection.
 /// TODO: Should be in config.
@@ -23,12 +23,6 @@ pub const MAX_INBOUND_PEERS: usize = 16;
 pub trait Connect {
     /// Connect to peer.
     fn connect(&self, addr: net::SocketAddr, timeout: Timeout);
-}
-
-/// Ability to disconnect from peers.
-pub trait Disconnect {
-    /// Disconnect from peer.
-    fn disconnect(&self, addr: net::SocketAddr);
 }
 
 /// Ability to emit events.
@@ -148,11 +142,11 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Disconnect from a peer.
-    pub fn disconnect(&mut self, addr: PeerId) {
+    pub fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
         if self.connected.contains_key(&addr) {
             debug_assert!(!self.disconnected.contains(&addr));
 
-            self.upstream.disconnect(addr);
+            self.upstream.disconnect(addr, reason);
         }
     }
 
@@ -171,8 +165,8 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
         match link {
             Link::Inbound if self.connected.len() >= self.config.max_inbound_peers => {
                 // Don't allow inbound connections beyond the configured limit.
-                // TODO: Include disconnect reason.
-                self.upstream.disconnect(address);
+                self.upstream
+                    .disconnect(address, DisconnectReason::ConnectionLimit);
             }
             _ => {
                 self.disconnected.remove(&address);

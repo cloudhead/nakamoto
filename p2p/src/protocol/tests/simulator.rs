@@ -307,8 +307,8 @@ impl Sim {
                     },
                 ));
             }
-            Out::Disconnect(remote) => {
-                info!("(sim) {} =/= {}", peer, remote);
+            Out::Disconnect(remote, reason) => {
+                info!("(sim) {} =/= {} ({})", peer, remote, reason);
 
                 inbox.push_back((remote, Input::Disconnected(peer)));
                 inbox.push_back((peer, Input::Disconnected(remote)));
@@ -399,8 +399,8 @@ pub fn handshake<T: BlockTree, F: Filters>(
         local_time,
     );
 
-    assert!(alice.peers.values().all(|p| p.is_ready()));
-    assert!(bob.peers.values().all(|p| p.is_ready()));
+    assert!(alice.peermgr.peers().all(|p| p.is_negotiated()));
+    assert!(bob.peermgr.peers().all(|p| p.is_negotiated()));
 }
 
 pub fn run<T: BlockTree, F: Filters>(

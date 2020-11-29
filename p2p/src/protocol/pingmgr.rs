@@ -7,8 +7,10 @@ use nakamoto_common::collections::HashMap;
 
 use crate::protocol::PeerId;
 
-use super::channel::SetTimeout;
-use super::connmgr;
+use super::{
+    channel::{Disconnect, SetTimeout},
+    DisconnectReason,
+};
 
 /// Time interval to wait between sent pings.
 pub const PING_INTERVAL: LocalDuration = LocalDuration::from_mins(2);
@@ -60,7 +62,7 @@ pub struct PingManager<U> {
     upstream: U,
 }
 
-impl<U: Ping + SetTimeout + connmgr::Disconnect> PingManager<U> {
+impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
 
@@ -97,8 +99,8 @@ impl<U: Ping + SetTimeout + connmgr::Disconnect> PingManager<U> {
                     // time has passed, we consider this peer dead, and disconnect
                     // from them.
                     if now - since >= PING_TIMEOUT {
-                        // TODO: Include reason for disconnect (ping timeout).
-                        self.upstream.disconnect(peer.address);
+                        self.upstream
+                            .disconnect(peer.address, DisconnectReason::PeerTimeout);
                     }
                 }
                 State::Idle { since } => {
@@ -119,11 +121,11 @@ impl<U: Ping + SetTimeout + connmgr::Disconnect> PingManager<U> {
         }
     }
 
-    pub fn ping_received(&mut self, addr: PeerId, nonce: u64) {
+    pub fn received_ping(&mut self, addr: PeerId, nonce: u64) {
         self.upstream.pong(addr, nonce);
     }
 
-    pub fn pong_received(&mut self, addr: PeerId, nonce: u64, now: LocalTime) {
+    pub fn received_pong(&mut self, addr: PeerId, nonce: u64, now: LocalTime) {
         if let Some(peer) = self.peers.get_mut(&addr) {
             match peer.state {
                 State::AwaitingPong {
