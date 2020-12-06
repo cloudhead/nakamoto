@@ -21,16 +21,17 @@ use nakamoto_common::block::store::Store;
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction};
-use nakamoto_common::network::Network;
+
+pub use nakamoto_common::network::Network;
 
 use nakamoto_p2p as p2p;
-use nakamoto_p2p::address_book::AddressBook;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::{connmgr, syncmgr};
 use nakamoto_p2p::reactor::poll::{Reactor, Waker};
 
+pub use nakamoto_p2p::address_book::AddressBook;
 pub use nakamoto_p2p::event::Event;
 
 use crate::error::Error;
