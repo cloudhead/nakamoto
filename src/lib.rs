@@ -1,4 +1,14 @@
-//! Nakamoto is a high-assurance Bitcoin light-client library and daemon.
+//! Nakamoto is a high-assurance Bitcoin light-client library.
+//!
+//! The project is broken down into the following crates:
+//!
+//! * [`client`]: the core light-client library
+//! * [`p2p`]: the protocol implementation and network code
+//! * [`chain`]: the block store and fork selection logic
+//! * [`common`]: common functionality used by all crates
+//!
+//! The [`client`] crate is intended to be the entry point for most users of the
+//! library, and is a good place to start, to see how everything fits together.
 
 #[cfg(feature = "nakamoto-chain")]
 pub use nakamoto_chain as chain;
