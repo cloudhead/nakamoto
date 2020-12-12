@@ -11,9 +11,18 @@ use crate::client::{Client, ClientConfig, ClientHandle, Event};
 use crate::error;
 use crate::handle::Handle;
 
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
+
 fn network(
     cfgs: &[ClientConfig],
-) -> Result<Vec<(ClientHandle, net::SocketAddr, thread::JoinHandle<()>)>, error::Error> {
+) -> Result<
+    Vec<(
+        ClientHandle<Reactor>,
+        net::SocketAddr,
+        thread::JoinHandle<()>,
+    )>,
+    error::Error,
+> {
     let mut handles = Vec::new();
 
     for cfg in cfgs.iter().cloned() {

@@ -1,6 +1,4 @@
 //! Poll-based reactor. This is a single-threaded reactor using a `poll` loop.
-pub use popol::Waker;
-
 use bitcoin::consensus::encode::{self, Encodable};
 use bitcoin::network::stream_reader::StreamReader;
 use bitcoin::{consensus::encode::Decodable, network::message::RawNetworkMessage};
@@ -11,6 +9,7 @@ use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 
+use nakamoto_p2p;
 use nakamoto_p2p::error::Error;
 use nakamoto_p2p::event::Event;
 use nakamoto_p2p::protocol::{self, Command, Input, Link, Out};
@@ -160,32 +159,6 @@ pub struct Reactor<R: Write + Read> {
 
 /// The `R` parameter represents the underlying stream type, eg. `net::TcpStream`.
 impl<R: Write + Read + AsRawFd> Reactor<R> {
-    /// Construct a new reactor, given a channel to send events on.
-    pub fn new(subscriber: chan::Sender<Event>) -> Result<Self, io::Error> {
-        let peers = HashMap::new();
-        let inputs: VecDeque<Input> = VecDeque::new();
-
-        let mut sources = popol::Sources::new();
-        let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
-        let timeouts = TimeoutManager::new();
-
-        Ok(Self {
-            peers,
-            sources,
-            inputs,
-            subscriber,
-            waker,
-            timeouts,
-        })
-    }
-
-    /// Return a new waker.
-    ///
-    /// Used to wake up the main event loop.
-    pub fn waker(&mut self) -> Arc<popol::Waker> {
-        self.waker.clone()
-    }
-
     /// Register a peer with the reactor.
     fn register_peer(
         &mut self,
@@ -213,9 +186,30 @@ impl<R: Write + Read + AsRawFd> Reactor<R> {
     }
 }
 
-impl Reactor<net::TcpStream> {
+impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
+    type Waker = Arc<popol::Waker>;
+
+    /// Construct a new reactor, given a channel to send events on.
+    fn new(subscriber: chan::Sender<Event>) -> Result<Self, io::Error> {
+        let peers = HashMap::new();
+        let inputs: VecDeque<Input> = VecDeque::new();
+
+        let mut sources = popol::Sources::new();
+        let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
+        let timeouts = TimeoutManager::new();
+
+        Ok(Self {
+            peers,
+            sources,
+            inputs,
+            subscriber,
+            waker,
+            timeouts,
+        })
+    }
+
     /// Run the given protocol with the reactor.
-    pub fn run<T: BlockTree, F: Filters>(
+    fn run<T: BlockTree, F: Filters>(
         &mut self,
         builder: protocol::Builder<T, F>,
         commands: chan::Receiver<Command>,
@@ -334,6 +328,20 @@ impl Reactor<net::TcpStream> {
         }
     }
 
+    /// Wake the waker.
+    fn wake(waker: &Arc<popol::Waker>) -> io::Result<()> {
+        waker.wake()
+    }
+
+    /// Return a new waker.
+    ///
+    /// Used to wake up the main event loop.
+    fn waker(&mut self) -> Arc<popol::Waker> {
+        self.waker.clone()
+    }
+}
+
+impl Reactor<net::TcpStream> {
     /// Process protocol state machine outputs.
     fn process(
         &mut self,

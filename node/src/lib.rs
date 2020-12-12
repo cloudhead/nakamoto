@@ -9,6 +9,9 @@ pub use nakamoto_client::error::Error;
 
 pub mod logger;
 
+/// The network reactor we're going to use.
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
+
 /// Run the light-client. Takes an initial list of peers to connect to, a list of listen addresses
 /// and the Bitcoin network to connect to.
 pub fn run(
@@ -46,5 +49,5 @@ pub fn run(
         cfg.target_outbound_peers = connect.len();
     }
 
-    Client::new(cfg)?.run()
+    Client::<Reactor>::new(cfg)?.run()
 }

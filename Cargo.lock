@@ -274,6 +274,7 @@ dependencies = [
  "colored",
  "log",
  "nakamoto-client",
+ "nakamoto-net-poll",
  "thiserror",
 ]
 

@@ -39,6 +39,7 @@ pub mod address_book;
 pub mod error;
 pub mod event;
 pub mod protocol;
+pub mod reactor;
 pub use bitcoin;
 
 pub use protocol::PeerId;

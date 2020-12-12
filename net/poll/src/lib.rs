@@ -29,6 +29,8 @@
 pub mod reactor;
 pub mod time;
 
+pub use reactor::Reactor;
+
 #[cfg(test)]
 mod fallible;
 

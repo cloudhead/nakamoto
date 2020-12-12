@@ -6,7 +6,6 @@ use std::io;
 use std::net;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::{self, SystemTime};
 
 use crossbeam_channel as chan;
@@ -32,8 +31,7 @@ use nakamoto_p2p::protocol::{connmgr, syncmgr};
 
 pub use nakamoto_p2p::address_book::AddressBook;
 pub use nakamoto_p2p::event::Event;
-
-use nakamoto_net_poll::reactor::{Reactor, Waker};
+pub use nakamoto_p2p::reactor::Reactor;
 
 use crate::error::Error;
 use crate::handle::{self, Handle};
@@ -99,22 +97,22 @@ impl Default for ClientConfig {
 }
 
 /// A light-client process.
-pub struct Client {
+pub struct Client<R> {
     /// Client configuration.
     pub config: ClientConfig,
 
     commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
     events: chan::Receiver<Event>,
-    reactor: Reactor<net::TcpStream>,
+    reactor: R,
 }
 
-impl Client {
+impl<R: Reactor> Client<R> {
     /// Create a new client.
     pub fn new(config: ClientConfig) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (subscriber, events) = chan::unbounded::<Event>();
-        let reactor = Reactor::new(subscriber)?;
+        let reactor = R::new(subscriber)?;
 
         Ok(Self {
             commands,
@@ -249,7 +247,7 @@ impl Client {
     }
 
     /// Create a new handle to communicate with the client.
-    pub fn handle(&mut self) -> ClientHandle {
+    pub fn handle(&mut self) -> ClientHandle<R> {
         ClientHandle {
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
@@ -260,14 +258,14 @@ impl Client {
 }
 
 /// An instance of [`Handle`] for [`Client`].
-pub struct ClientHandle {
+pub struct ClientHandle<R: Reactor> {
     commands: chan::Sender<Command>,
     events: chan::Receiver<Event>,
-    waker: Arc<Waker>,
+    waker: R::Waker,
     timeout: time::Duration,
 }
 
-impl ClientHandle {
+impl<R: Reactor> ClientHandle<R> {
     /// Set the timeout for operations that wait on the network.
     pub fn set_timeout(&mut self, timeout: time::Duration) {
         self.timeout = timeout;
@@ -276,13 +274,13 @@ impl ClientHandle {
     /// Send a command to the command channel, and wake up the event loop.
     pub fn command(&self, cmd: Command) -> Result<(), handle::Error> {
         self.commands.send(cmd)?;
-        self.waker.wake()?;
+        R::wake(&self.waker)?;
 
         Ok(())
     }
 }
 
-impl Handle for ClientHandle {
+impl<R: Reactor> Handle for ClientHandle<R> {
     fn get_tip(&self) -> Result<BlockHeader, handle::Error> {
         let (transmit, receive) = chan::bounded::<BlockHeader>(1);
         self.command(Command::GetTip(transmit))?;
