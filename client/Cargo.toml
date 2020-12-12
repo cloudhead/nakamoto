@@ -10,6 +10,7 @@ license = "MIT"
 nakamoto-p2p = { version = "0.1.0", path = "../p2p" }
 nakamoto-chain = { version = "0.1.0", path = "../chain" }
 nakamoto-common = { version = "0.1.0", path = "../common" }
+nakamoto-net-poll = { version = "0.1.0", path = "../net/poll" }
 crossbeam-channel = { version = "0.4" }
 thiserror = "1.0"
 log = "0.4"

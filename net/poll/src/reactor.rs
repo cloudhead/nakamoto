@@ -11,11 +11,9 @@ use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 
-use crate::error::Error;
-use crate::event::Event;
-use crate::fallible;
-use crate::protocol::{self, Command, Input, Link, Out};
-use crate::reactor::time::TimeoutManager;
+use nakamoto_p2p::error::Error;
+use nakamoto_p2p::event::Event;
+use nakamoto_p2p::protocol::{self, Command, Input, Link, Out};
 
 use log::*;
 
@@ -28,6 +26,9 @@ use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 use std::time;
 use std::time::SystemTime;
+
+use crate::fallible;
+use crate::time::TimeoutManager;
 
 /// Maximum peer-to-peer message size.
 const MAX_MESSAGE_SIZE: usize = 1024 * 1024;

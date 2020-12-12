@@ -29,10 +29,11 @@ use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::{connmgr, syncmgr};
-use nakamoto_p2p::reactor::poll::{Reactor, Waker};
 
 pub use nakamoto_p2p::address_book::AddressBook;
 pub use nakamoto_p2p::event::Event;
+
+use nakamoto_net_poll::reactor::{Reactor, Waker};
 
 use crate::error::Error;
 use crate::handle::{self, Handle};
@@ -113,7 +114,7 @@ impl Client {
     pub fn new(config: ClientConfig) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (subscriber, events) = chan::unbounded::<Event>();
-        let reactor = p2p::reactor::poll::Reactor::new(subscriber)?;
+        let reactor = Reactor::new(subscriber)?;
 
         Ok(Self {
             commands,

@@ -34,7 +34,7 @@ impl<K> TimeoutManager<K> {
     /// to be reached.  Returns `None` if there are no timeouts.
     ///
     /// ```
-    /// use nakamoto_p2p::reactor::time::{LocalTime, LocalDuration, TimeoutManager};
+    /// use nakamoto_net_poll::time::{LocalTime, LocalDuration, TimeoutManager};
     ///
     /// let mut tm = TimeoutManager::new();
     /// let now = LocalTime::now();
@@ -68,7 +68,7 @@ impl<K> TimeoutManager<K> {
     /// have timed out. Returns the number of keys that timed out.
     ///
     /// ```
-    /// use nakamoto_p2p::reactor::time::{LocalTime, LocalDuration, TimeoutManager};
+    /// use nakamoto_net_poll::time::{LocalTime, LocalDuration, TimeoutManager};
     ///
     /// let mut tm = TimeoutManager::new();
     /// let now = LocalTime::now();

@@ -1,6 +1,6 @@
 [package]
 name = "nakamoto-p2p"
-description = "Peer-to-peer networking for the nakamoto crate"
+description = "Peer-to-peer protocol state machine for the nakamoto crate"
 version = "0.1.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
@@ -14,7 +14,6 @@ thiserror = "1.0"
 bitcoin_hashes = "0.9.0"
 crossbeam-channel = { version = "0.4" }
 fastrand = "1.3.5"
-popol = "0.3"
 nonempty = "0.5"
 
 [dev-dependencies]

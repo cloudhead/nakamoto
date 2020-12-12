@@ -232,6 +232,7 @@ dependencies = [
  "log",
  "nakamoto-chain",
  "nakamoto-common",
+ "nakamoto-net-poll",
  "nakamoto-p2p",
  "nakamoto-test",
  "thiserror",
@@ -247,6 +248,20 @@ dependencies = [
  "log",
  "nonempty",
  "thiserror",
+]
+
+[[package]]
+name = "nakamoto-net-poll"
+version = "0.1.0"
+dependencies = [
+ "bitcoin",
+ "crossbeam-channel",
+ "fastrand",
+ "lazy_static",
+ "log",
+ "nakamoto-common",
+ "nakamoto-p2p",
+ "popol",
 ]
 
 [[package]]
@@ -276,7 +291,6 @@ dependencies = [
  "nakamoto-common",
  "nakamoto-test",
  "nonempty",
- "popol",
  "quickcheck",
  "quickcheck_macros",
  "tempfile",
