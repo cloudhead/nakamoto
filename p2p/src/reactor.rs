@@ -15,8 +15,12 @@ pub trait Reactor {
     /// The type of waker this reactor uses.
     type Waker: Send;
 
-    /// Create a new reactor, initializing it with a channel to send protocol events on.
-    fn new(subscriber: chan::Sender<Event>) -> Result<Self, io::Error>
+    /// Create a new reactor, initializing it with a channel to send protocol events on, and
+    /// a channel to receive commands.
+    fn new(
+        subscriber: chan::Sender<Event>,
+        commands: chan::Receiver<Command>,
+    ) -> Result<Self, io::Error>
     where
         Self: Sized;
 
@@ -24,7 +28,6 @@ pub trait Reactor {
     fn run<T: BlockTree, F: Filters>(
         &mut self,
         builder: protocol::Builder<T, F>,
-        commands: chan::Receiver<Command>,
         listen_addrs: &[net::SocketAddr],
     ) -> Result<(), Error>;
 

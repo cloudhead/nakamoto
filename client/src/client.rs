@@ -101,7 +101,6 @@ pub struct Client<R> {
     /// Client configuration.
     pub config: ClientConfig,
 
-    commands: chan::Receiver<Command>,
     handle: chan::Sender<Command>,
     events: chan::Receiver<Event>,
     reactor: R,
@@ -112,10 +111,9 @@ impl<R: Reactor> Client<R> {
     pub fn new(config: ClientConfig) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (subscriber, events) = chan::unbounded::<Event>();
-        let reactor = R::new(subscriber)?;
+        let reactor = R::new(subscriber, commands)?;
 
         Ok(Self {
-            commands,
             events,
             handle,
             reactor,
@@ -207,7 +205,7 @@ impl<R: Reactor> Client<R> {
             cfg,
         };
 
-        self.reactor.run(builder, self.commands, &listen)?;
+        self.reactor.run(builder, &listen)?;
 
         Ok(())
     }
@@ -240,8 +238,7 @@ impl<R: Reactor> Client<R> {
             cfg,
         };
 
-        self.reactor
-            .run(builder, self.commands, &self.config.listen)?;
+        self.reactor.run(builder, &self.config.listen)?;
 
         Ok(())
     }

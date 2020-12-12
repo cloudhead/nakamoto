@@ -152,6 +152,7 @@ pub struct Reactor<R: Write + Read> {
     peers: HashMap<net::SocketAddr, Socket<R, RawNetworkMessage>>,
     inputs: VecDeque<Input>,
     subscriber: chan::Sender<Event>,
+    commands: chan::Receiver<Command>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
     timeouts: TimeoutManager<()>,
@@ -190,7 +191,10 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
     type Waker = Arc<popol::Waker>;
 
     /// Construct a new reactor, given a channel to send events on.
-    fn new(subscriber: chan::Sender<Event>) -> Result<Self, io::Error> {
+    fn new(
+        subscriber: chan::Sender<Event>,
+        commands: chan::Receiver<Command>,
+    ) -> Result<Self, io::Error> {
         let peers = HashMap::new();
         let inputs: VecDeque<Input> = VecDeque::new();
 
@@ -203,6 +207,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
             sources,
             inputs,
             subscriber,
+            commands,
             waker,
             timeouts,
         })
@@ -212,7 +217,6 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
     fn run<T: BlockTree, F: Filters>(
         &mut self,
         builder: protocol::Builder<T, F>,
-        commands: chan::Receiver<Command>,
         listen_addrs: &[net::SocketAddr],
     ) -> Result<(), Error> {
         let listener = if listen_addrs.is_empty() {
@@ -299,7 +303,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
                                 }
                             },
                             Source::Waker => {
-                                for cmd in commands.try_iter() {
+                                for cmd in self.commands.try_iter() {
                                     self.inputs.push_back(Input::Command(cmd));
                                 }
                             }
