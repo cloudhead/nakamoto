@@ -1,7 +1,6 @@
 //! Poll-based reactor. This is a single-threaded reactor using a `poll` loop.
-use bitcoin::consensus::encode::{self, Encodable};
-use bitcoin::network::stream_reader::StreamReader;
-use bitcoin::{consensus::encode::Decodable, network::message::RawNetworkMessage};
+use bitcoin::consensus::encode;
+use bitcoin::network::message::RawNetworkMessage;
 
 use crossbeam_channel as chan;
 
@@ -27,24 +26,15 @@ use std::time;
 use std::time::SystemTime;
 
 use crate::fallible;
+use crate::socket::Socket;
 use crate::time::TimeoutManager;
 
-/// Maximum peer-to-peer message size.
-const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 /// Maximum time to wait when reading from a socket.
 const READ_TIMEOUT: time::Duration = time::Duration::from_secs(6);
 /// Maximum time to wait when writing to a socket.
 const WRITE_TIMEOUT: time::Duration = time::Duration::from_secs(3);
 /// Maximum amount of time to wait for i/o.
 const WAIT_TIMEOUT: LocalDuration = LocalDuration::from_mins(60);
-
-#[derive(Debug)]
-struct Socket<R: Read + Write, M> {
-    raw: StreamReader<R>,
-    address: net::SocketAddr,
-    local_address: net::SocketAddr,
-    queue: VecDeque<M>,
-}
 
 #[must_use]
 #[derive(Debug, PartialEq, Eq)]
@@ -58,93 +48,6 @@ enum Source {
     Peer(net::SocketAddr),
     Listener,
     Waker,
-}
-
-impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
-    fn disconnect(&self) -> io::Result<()> {
-        self.raw.stream.shutdown(net::Shutdown::Both)
-    }
-}
-
-impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
-    /// Create a new socket from a `io::Read` and an address pair.
-    fn from(r: R, local_address: net::SocketAddr, address: net::SocketAddr) -> Self {
-        let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
-        let queue = VecDeque::new();
-
-        Self {
-            raw,
-            local_address,
-            address,
-            queue,
-        }
-    }
-
-    fn read(&mut self) -> Result<M, encode::Error> {
-        fallible! { encode::Error::Io(io::ErrorKind::Other.into()) };
-
-        match self.raw.read_next::<M>() {
-            Ok(msg) => {
-                trace!("{}: (read) {:#?}", self.address, msg);
-
-                Ok(msg)
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    fn write(&mut self, msg: &M) -> Result<usize, encode::Error> {
-        fallible! { encode::Error::Io(io::ErrorKind::Other.into()) };
-
-        let mut buf = [0u8; MAX_MESSAGE_SIZE];
-
-        match msg.consensus_encode(&mut buf[..]) {
-            Ok(len) => {
-                trace!("{}: (write) {:#?}", self.address, msg);
-
-                // TODO: Is it possible to get a `WriteZero` here, given
-                // the non-blocking socket?
-                self.raw.stream.write_all(&buf[..len])?;
-                self.raw.stream.flush()?;
-
-                Ok(len)
-            }
-            Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WriteZero => {
-                unreachable!();
-            }
-            Err(err) => Err(err),
-        }
-    }
-
-    fn drain(
-        &mut self,
-        inputs: &mut VecDeque<Input>,
-        source: &mut popol::Source,
-    ) -> Result<(), encode::Error> {
-        while let Some(msg) = self.queue.pop_front() {
-            match self.write(&msg) {
-                Ok(n) => {
-                    inputs.push_back(Input::Sent(self.address, n));
-                }
-                Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
-                    source.set(popol::interest::WRITE);
-                    self.queue.push_front(msg);
-
-                    return Ok(());
-                }
-                Err(err) => {
-                    // An unexpected error occured. Push the message back to the front of the
-                    // queue in case we're able to recover from it.
-                    self.queue.push_front(msg);
-
-                    return Err(err);
-                }
-            }
-        }
-        source.unset(popol::interest::WRITE);
-
-        Ok(())
-    }
 }
 
 /// A single-threaded non-blocking reactor.
@@ -370,7 +273,7 @@ impl Reactor<net::TcpStream> {
                             debug!("{}: Sending: {}", addr, s);
                         }
 
-                        peer.queue.push_back(msg);
+                        peer.queue(msg);
 
                         if let Err(err) = peer.drain(&mut self.inputs, src) {
                             error!("{}: Write error: {}", addr, err.to_string());

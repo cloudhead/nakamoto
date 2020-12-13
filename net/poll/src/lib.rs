@@ -27,6 +27,7 @@
 
 #[cfg(unix)]
 pub mod reactor;
+pub mod socket;
 pub mod time;
 
 pub use reactor::Reactor;
