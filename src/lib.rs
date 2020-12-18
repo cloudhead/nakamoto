@@ -3,7 +3,7 @@
 //! The project is broken down into the following crates:
 //!
 //! * [`client`]: the core light-client library
-//! * [`p2p`]: the protocol implementation and network code
+//! * [`p2p`]: the protocol implementation
 //! * [`chain`]: the block store and fork selection logic
 //! * [`common`]: common functionality used by all crates
 //!

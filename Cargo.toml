@@ -21,7 +21,13 @@ members = [
 ]
 
 [features]
-default = ["nakamoto-client", "nakamoto-chain", "nakamoto-p2p", "nakamoto-common"]
+default = [
+  "nakamoto-client",
+  "nakamoto-chain",
+  "nakamoto-p2p",
+  "nakamoto-common",
+  "nakamoto-net-poll"
+]
 
 [dependencies]
 nakamoto-common = { version = "0.1.0", path = "./common", optional = true }
@@ -30,3 +36,4 @@ nakamoto-client = { version = "0.1.0", path = "./client", optional = true }
 nakamoto-chain = { version = "0.1.0", path = "./chain", optional = true }
 nakamoto-p2p = { version = "0.1.0", path = "./p2p", optional = true }
 nakamoto-test = { version = "0.1.0", path = "./test", optional = true }
+nakamoto-net-poll = { version = "0.1.0", path = "./net/poll", optional = true }
