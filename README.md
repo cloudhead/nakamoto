@@ -26,6 +26,22 @@ them. From a high-level, we have:
 * `nakamoto-common`: common functionality used by all crates
 * `nakamoto-node`: a standalone light-client daemon
 
+## Status
+
+While the project is still in its infancy, the base functionality has been
+implemented. Nakamoto is able to discover peers, download and verify the
+longest chain and handle forks, while implementing the full header verification
+protocol.
+
+Client side block filtering (BIP 157/158) is in the works, and is the next
+major milestone.
+
+Once peer-to-peer layer encryption (BIP 151) lands in Core, it will also
+be implemented in Nakamoto.
+
+Finally, a C FFI will be implemented, to make it easy to embed the client
+in mobile applications.
+
 ## Projects goals
 
 * __High assurance__: the library should be thoroughly tested using modern
