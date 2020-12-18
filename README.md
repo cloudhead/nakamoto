@@ -1,25 +1,51 @@
 nakamoto
 ========
 
-Nakamoto is a high-assurance Bitcoin light-client implementation in Rust. Its primary
-focus is on low resource utilization, reliability and ease of use.
+Nakamoto is a high-assurance Bitcoin light-client implementation in Rust, with
+a focus on low resource utilization, modularity and security.
 
-## Goals
+The vision for the project is to build a set of libraries that are easy to
+embed in any program and on any platform, be it mobile or desktop. The
+project's small cpu, memory and code footprint is made possible by its
+efficient runtime and minimal set of dependencies. The implementation
+language, Rust, opens up the possibility for programs written in other
+languages (eg. Swift, Python, Java), to bind directly to it via a foreign
+function interface (FFI).
 
-* __High assurance__: the library should be thoroughly tested using modern techniques such as *property*
-  and *model-based testing* as well as *discrete event simulation* and *fuzzing*. These approaches
-  benefit from a clean separation between I/O and protocol logic and have been shown to
-  catch more bugs than unit testing.
+## Design
 
-* __Security__: as a library that may find its way into wallet implementations, a primary goal is
-  security and auditability. For this reason, we try to minimize the total dependency footprint,
-  keep the code easy to read and forbid any unsafe code.
+Nakamoto is split into several crates, each handling a different aspect of the
+light-client protocol. Although these crates are designed to be used in tandem,
+swapping implementations is trivial, due to the explicit boundaries between
+them. From a high-level, we have:
 
-* __Efficiency__: blockchain synchronization should be done as efficiently as possible,
-  with low memory and disk overhead. We target resource-constrained environments, such as mobile.
+* `nakamoto-client`: the core light-client library
+* `nakamoto-p2p`: the protocol state-machine implementation
+* `nakamoto-chain`: the block store and fork selection logic
+* `nakamoto-net-poll`: the default *poll*-based networking library
+* `nakamoto-common`: common functionality used by all crates
+* `nakamoto-node`: a standalone light-client daemon
 
-* __Privacy__: when possible, privacy-preserving techniques should be employed. For example, *Client Side
-  Block Filtering* (BIP 157/158) should be used over bloom filters (BIP 37) to ensure user privacy.
+## Projects goals
+
+* __High assurance__: the library should be thoroughly tested using modern
+  techniques such as *property* and *model-based testing* as well as *discrete
+  event simulation* and *fuzzing*. These approaches benefit from a clean
+  separation between I/O and protocol logic and have been shown to catch more
+  bugs than unit testing.
+
+* __Security__: as a library that may find its way into wallet implementations,
+  a primary goal is security and auditability. For this reason, we try to
+  minimize the total dependency footprint, keep the code easy to read and
+  forbid any unsafe code.
+
+* __Efficiency__: blockchain synchronization should be done as efficiently as
+  possible, with low memory and disk overhead. We target resource-constrained
+  environments, such as mobile.
+
+* __Privacy__: when possible, privacy-preserving techniques should be employed.
+  For example, *Client Side Block Filtering* (BIP 157/158) should be used over
+  bloom filters (BIP 37) to ensure user privacy.
 
 ## Contributing
 
@@ -34,14 +60,14 @@ In your *Cargo.toml*:
 
 ## Running the tests
 
-    cargo test --all --release
+    cargo test --all
 
 ## Donations
 
 To help fund the project and ensure its ongoing development and maintenance, your
 support in Bitcoin is appreciated at the following address:
 
-    bc1qptvwp33hk9ulaf607l6wft64serj9rh0zfec7e
+    bc1qa47tl4vmz8j82wdsdkmxex30r23c9ljs84fxah
 
 ## License
 
