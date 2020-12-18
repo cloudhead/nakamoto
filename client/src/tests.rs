@@ -30,7 +30,7 @@ fn network(
         let genesis = cfg.network.genesis();
         let params = cfg.network.params();
 
-        let mut node = Client::new(cfg)?;
+        let node = Client::new(cfg)?;
         let handle = node.handle();
 
         let t = thread::spawn({

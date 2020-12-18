@@ -243,7 +243,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
     /// Return a new waker.
     ///
     /// Used to wake up the main event loop.
-    fn waker(&mut self) -> Arc<popol::Waker> {
+    fn waker(&self) -> Arc<popol::Waker> {
         self.waker.clone()
     }
 }

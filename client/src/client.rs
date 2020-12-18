@@ -244,7 +244,7 @@ impl<R: Reactor> Client<R> {
     }
 
     /// Create a new handle to communicate with the client.
-    pub fn handle(&mut self) -> ClientHandle<R> {
+    pub fn handle(&self) -> ClientHandle<R> {
         ClientHandle {
             waker: self.reactor.waker(),
             commands: self.handle.clone(),

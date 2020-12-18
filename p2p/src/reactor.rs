@@ -35,5 +35,5 @@ pub trait Reactor {
     fn wake(waker: &Self::Waker) -> io::Result<()>;
 
     /// Return a new waker.
-    fn waker(&mut self) -> Self::Waker;
+    fn waker(&self) -> Self::Waker;
 }
