@@ -4,13 +4,13 @@ nakamoto
 Nakamoto is a high-assurance Bitcoin light-client implementation in Rust, with
 a focus on low resource utilization, modularity and security.
 
-The vision for the project is to build a set of libraries that are easy to
-embed in any program and on any platform, be it mobile or desktop. The
-project's small cpu, memory and code footprint is made possible by its
-efficient runtime and minimal set of dependencies. The implementation
-language, Rust, opens up the possibility for programs written in other
-languages (eg. Swift, Python, Java), to bind directly to it via a foreign
-function interface (FFI).
+The vision for the project is to build a set of libraries targeting light
+client functionality, that are easy to embed in any program and on any
+platform, be it mobile or desktop. The project's small cpu, memory and code
+footprint is made possible by its efficient runtime and minimal set of
+dependencies. The implementation language, Rust, opens up the possibility for
+programs written in other languages (eg. Swift, Python, Java), to bind directly
+to it via a foreign function interface (FFI).
 
 ## Design
 
@@ -63,10 +63,6 @@ in mobile applications.
   For example, *Client Side Block Filtering* (BIP 157/158) should be used over
   bloom filters (BIP 37) to ensure user privacy.
 
-## Contributing
-
-If you'd like to contribute to the development of Nakamoto, please get in touch!
-
 ## Usage
 
 In your *Cargo.toml*:
@@ -78,12 +74,31 @@ In your *Cargo.toml*:
 
     cargo test --all
 
+## Contributing
+
+If you'd like to contribute to the development of Nakamoto, please get in touch!
+
 ## Donations
 
 To help fund the project and ensure its ongoing development and maintenance, your
 support in Bitcoin is appreciated at the following address:
 
     bc1qa47tl4vmz8j82wdsdkmxex30r23c9ljs84fxah
+
+## Motivation
+
+Looking at ecosystems that aren't light-client friendly—Ethereum for example—we
+see that the vast majority of users are forced into trusting third parties when
+transacting on the network.  This is completely counter to the idea and *raison
+d'être* of blockchains, and poses a giant security and privacy risk.
+Unfortunately, this is due to the lackluster support for light-clients, both at
+the protocol level, and in terms of the available implementations. Light-clients
+are necessary for the average user to be able to securily interface with a
+network like Ethereum or Bitcoin.
+
+For this purpose, Nakamoto was conceived as a client that can efficiently run
+on any mobile device, with the highest standards of privacy and security
+achievable given the constraints.
 
 ## License
 
