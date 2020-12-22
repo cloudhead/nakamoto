@@ -602,6 +602,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 0.
             };
             let peers = self.connmgr.outbound_peers().count();
+            let target = self.connmgr.config.target_outbound_peers;
 
             // TODO: Add cache sizes on disk
             // TODO: Add protocol state(s)
@@ -615,7 +616,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 best = best,
                 sync = sync,
                 peers = peers,
-                target = connmgr::TARGET_OUTBOUND_PEERS
+                target = target,
             );
 
             self.last_tick = local_time;
