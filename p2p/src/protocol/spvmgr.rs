@@ -4,6 +4,7 @@
 //!
 
 use std::ops::Range;
+use std::time::SystemTime;
 
 use nonempty::NonEmpty;
 use thiserror::Error;
@@ -11,7 +12,7 @@ use thiserror::Error;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 
-use nakamoto_common::block::filter::{self, BlockFilter, FilterHeader, Filters};
+use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
@@ -46,11 +47,63 @@ pub enum Error {
 
 /// An event originating in the SPV manager.
 #[derive(Debug)]
-pub enum Event {}
+pub enum Event {
+    /// Filters were imported successfully.
+    FilterImported {
+        /// Peer we received from.
+        from: PeerId,
+        /// Filter hash.
+        hash: FilterHash,
+    },
+    /// Filter headers were imported successfully.
+    FilterHeadersImported {
+        /// Peer we received from.
+        from: PeerId,
+        /// Number of headers.
+        count: usize,
+        /// New filter header chain height.
+        height: Height,
+    },
+    /// Started syncing filters with a peer.
+    Syncing(PeerId),
+    /// Finished syncing filters up to the specified hash and height.
+    Synced(BlockHash, Height),
+    /// A peer has timed out responding to a filter request.
+    TimedOut(PeerId),
+    /// Block header chain rollback detected.
+    RollbackDetected(Height),
+}
 
 impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(fmt, "")
+        match self {
+            Event::TimedOut(addr) => write!(fmt, "Peer {} timed out", addr),
+            Event::FilterImported { from, hash } => {
+                write!(fmt, "Filter {} imported from {}", hash, from)
+            }
+            Event::FilterHeadersImported {
+                from,
+                count,
+                height,
+            } => {
+                write!(
+                    fmt,
+                    "Imported {} filter headers from {}, height = {}",
+                    count, from, height
+                )
+            }
+            Event::Synced(hash, height) => {
+                write!(fmt, "Headers synced up to hash={} height={}", hash, height)
+            }
+            Event::Syncing(addr) => write!(fmt, "Syncing headers with {}", addr),
+            Event::RollbackDetected(height) => {
+                write!(
+                    fmt,
+                    "Rollback detected: discarding filters from height {}..",
+                    height
+                )
+            }
+        }
     }
 }
 
@@ -186,30 +239,41 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             return Err(Error::InvalidMessage(*addr));
         };
         let hashes = msg.filter_hashes;
+        let count = hashes.len();
 
         if start_height > stop_height {
             return Err(Error::InvalidMessage(*addr));
         }
 
-        if hashes.len() > MAX_MESSAGE_CFHEADERS {
+        if count > MAX_MESSAGE_CFHEADERS {
             return Err(Error::InvalidMessage(*addr));
         }
 
-        if (stop_height - start_height) as usize != hashes.len() {
+        if (stop_height - start_height) as usize != count {
             return Err(Error::InvalidMessage(*addr));
         }
 
         // Ok, looks like everything's valid..
 
         let mut last_header = prev_header;
-        let mut headers = Vec::with_capacity(hashes.len());
+        let mut headers = Vec::with_capacity(count);
 
         // Create headers out of the hashes.
         for filter_hash in hashes {
             last_header = FilterHeader::new(filter_hash, &last_header);
             headers.push((filter_hash, last_header));
         }
-        self.filters.import_headers(headers).map_err(Error::from)
+        self.filters
+            .import_headers(headers)
+            .map(|height| {
+                self.upstream.event(Event::FilterHeadersImported {
+                    from: *addr,
+                    count,
+                    height,
+                });
+                height
+            })
+            .map_err(Error::from)
     }
 
     /// Handle a `getcfheaders` message from a peer.
@@ -295,6 +359,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
 
         self.filters
             .import_filter(height, filter)
+            .map(|_| {
+                self.upstream
+                    .event(Event::FilterImported { from: *addr, hash })
+            })
             .map_err(Error::from)
     }
 
