@@ -27,7 +27,7 @@ pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
 /// Maximum number of headers sent in a `headers` message.
 pub const MAX_MESSAGE_HEADERS: usize = 2000;
 /// Idle timeout.
-pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(10);
+pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 
 /// Maximum headers announced in a `headers` message, when unsolicited.
 const MAX_HEADERS_ANNOUNCED: usize = 8;

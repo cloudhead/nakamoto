@@ -137,6 +137,9 @@ impl std::ops::Add<LocalDuration> for LocalTime {
 pub struct LocalDuration(u128);
 
 impl LocalDuration {
+    /// The time interval between blocks. The "block time".
+    pub const BLOCK_INTERVAL: LocalDuration = Self::from_mins(10);
+
     /// Create a new duration from whole seconds.
     pub const fn from_secs(secs: u64) -> Self {
         Self(secs as u128 * 1000)
