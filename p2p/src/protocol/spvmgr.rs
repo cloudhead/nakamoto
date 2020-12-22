@@ -4,7 +4,6 @@
 //!
 
 use std::ops::Range;
-use std::time::SystemTime;
 
 use nonempty::NonEmpty;
 use thiserror::Error;
@@ -66,8 +65,8 @@ pub enum Event {
     },
     /// Started syncing filters with a peer.
     Syncing(PeerId),
-    /// Finished syncing filters up to the specified hash and height.
-    Synced(BlockHash, Height),
+    /// Finished syncing filters up to the specified height.
+    Synced(Height),
     /// A peer has timed out responding to a filter request.
     TimedOut(PeerId),
     /// Block header chain rollback detected.
@@ -92,8 +91,8 @@ impl std::fmt::Display for Event {
                     count, from, height
                 )
             }
-            Event::Synced(hash, height) => {
-                write!(fmt, "Headers synced up to hash={} height={}", hash, height)
+            Event::Synced(height) => {
+                write!(fmt, "Filter headers synced up to height = {}", height)
             }
             Event::Syncing(addr) => write!(fmt, "Syncing headers with {}", addr),
             Event::RollbackDetected(height) => {
@@ -271,6 +270,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                     count,
                     height,
                 });
+
+                if height == tree.height() {
+                    self.upstream.event(Event::Synced(height));
+                }
                 height
             })
             .map_err(Error::from)
