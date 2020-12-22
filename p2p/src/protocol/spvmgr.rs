@@ -213,6 +213,11 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         self.filters.rollback(n)
     }
 
+    /// Send a `getcfilters` message to a random peer.
+    pub fn get_cfilters<T: BlockTree>(&mut self, _range: Range<Height>, _tree: &T) {
+        todo!()
+    }
+
     /// Handle a `cfheaders` message from a peer.
     pub fn received_cfheaders<T: BlockTree>(
         &mut self,
@@ -412,8 +417,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         );
     }
 
-    /// Send a `getcfilters` message to a random peer.
-    pub fn send_getcfilters<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
+    /// Send a `getcfheaders` message to a random peer.
+    pub fn send_getcfheaders<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
         let count = range.end as usize - range.start as usize;
 
         debug_assert!(range.start < range.end);
@@ -457,6 +462,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         let start_height = self.filters.height() + 1;
         let stop_height = tree.height();
 
-        self.send_getcfilters(start_height..stop_height + 1, tree);
+        self.send_getcfheaders(start_height..stop_height + 1, tree);
     }
 }

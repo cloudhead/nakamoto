@@ -542,7 +542,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                     debug!(target: self.target,
                         "Received command: GetFilters({}..{})", range.start, range.end);
 
-                    self.spvmgr.send_getcfilters(range, &self.syncmgr.tree);
+                    self.spvmgr.get_cfilters(range, &self.syncmgr.tree);
                 }
                 Command::GetBlock(hash) => {
                     self.query(NetworkMessage::GetBlocks(GetBlocksMessage {
