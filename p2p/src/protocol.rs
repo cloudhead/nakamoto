@@ -462,6 +462,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
         self.clock.set_local_time(time);
         self.syncmgr.initialize(time);
         self.connmgr.initialize(time, &mut self.addrmgr);
+        self.spvmgr.initialize(time, &self.syncmgr.tree);
     }
 
     /// Process the next input and advance the state machine by one step.
@@ -690,7 +691,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                         // Trigger an idle check, since we're going to have to catch up
                         // on the new block header(s). This is not required, but reduces
                         // latency.
-                        self.spvmgr.idle(&self.syncmgr.tree);
+                        self.spvmgr.idle(now, &self.syncmgr.tree);
                     }
                     _ => {}
                 }

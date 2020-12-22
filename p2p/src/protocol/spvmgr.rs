@@ -12,12 +12,16 @@ use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 
 use nakamoto_common::block::filter::{self, BlockFilter, FilterHeader, Filters};
-use nakamoto_common::block::time::{Clock, LocalTime};
+use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::HashMap;
 
+use super::channel::SetTimeout;
 use super::{Link, PeerId, Timeout};
+
+/// Idle timeout.
+pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 
 /// Maximum filter headers to be expected in a message.
 const MAX_MESSAGE_CFHEADERS: usize = 2000;
@@ -110,10 +114,12 @@ pub struct SpvManager<F, U> {
     peers: HashMap<PeerId, Peer>,
     filters: F,
     upstream: U,
+    /// Last time we idled.
+    last_idle: Option<LocalTime>,
     rng: fastrand::Rng,
 }
 
-impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
+impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
@@ -123,20 +129,30 @@ impl<F: Filters, U: SyncFilters + Events> SpvManager<F, U> {
             peers,
             upstream,
             filters,
+            last_idle: None,
             rng,
         }
     }
 
-    /// Called periodically. Triggers syncing if necessary.
-    pub fn idle<T: BlockTree>(&mut self, tree: &T) {
-        let filter_height = self.filters.height();
-        let block_height = tree.height();
+    /// Initialize the spv manager. Should only be called once.
+    pub fn initialize<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+        self.idle(now, tree);
+    }
 
-        if filter_height < block_height {
-            // We need to sync the filter header chain.
-            self.sync(tree);
-        } else if filter_height > block_height {
-            panic!("SpvManager::idle: filter chain is longer than header chain!");
+    /// Called periodically. Triggers syncing if necessary.
+    pub fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+        if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
+            let filter_height = self.filters.height();
+            let block_height = tree.height();
+
+            if filter_height < block_height {
+                // We need to sync the filter header chain.
+                self.sync(tree);
+                self.last_idle = Some(now);
+                self.upstream.set_timeout(IDLE_TIMEOUT);
+            } else if filter_height > block_height {
+                panic!("SpvManager::idle: filter chain is longer than header chain!");
+            }
         }
     }
 
