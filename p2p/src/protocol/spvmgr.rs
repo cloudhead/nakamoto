@@ -64,7 +64,14 @@ pub enum Event {
         height: Height,
     },
     /// Started syncing filters with a peer.
-    Syncing(PeerId),
+    Syncing {
+        /// The remote peer.
+        peer: PeerId,
+        /// The start height from which we're syncing.
+        start_height: Height,
+        /// The stop hash.
+        stop_hash: BlockHash,
+    },
     /// Finished syncing filters up to the specified height.
     Synced(Height),
     /// A peer has timed out responding to a filter request.
@@ -94,7 +101,15 @@ impl std::fmt::Display for Event {
             Event::Synced(height) => {
                 write!(fmt, "Filter headers synced up to height = {}", height)
             }
-            Event::Syncing(addr) => write!(fmt, "Syncing headers with {}", addr),
+            Event::Syncing {
+                peer,
+                start_height,
+                stop_hash,
+            } => write!(
+                fmt,
+                "Syncing filter headers with {}, start = {}, stop = {}",
+                peer, start_height, stop_hash
+            ),
             Event::RollbackDetected(height) => {
                 write!(
                     fmt,
@@ -444,11 +459,17 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
 
         if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
             let ix = self.rng.usize(..peers.len());
-            let peer = peers.get(ix).unwrap(); // Can't fail.
+            let peer = *peers.get(ix).unwrap(); // Can't fail.
+            let start_height = range.start;
 
+            self.upstream.event(Event::Syncing {
+                peer: *peer,
+                start_height,
+                stop_hash,
+            });
             self.upstream.get_cfheaders(
-                **peer,
-                range.start,
+                *peer,
+                start_height,
                 stop_hash,
                 self.config.request_timeout,
             );
