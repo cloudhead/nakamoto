@@ -662,6 +662,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                         peer.services,
                         peer.conn.link,
                         &self.clock,
+                        &self.syncmgr.tree,
                     );
                     self.syncmgr.peer_negotiated(
                         peer.address(),

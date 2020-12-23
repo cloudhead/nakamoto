@@ -233,7 +233,7 @@ impl spvmgr::SyncFilters for Channel {
 
 impl spvmgr::Events for Channel {
     fn event(&self, event: spvmgr::Event) {
-        debug!(target: self.target, "[cflr] {}", &event);
+        debug!(target: self.target, "[spv] {}", &event);
 
         self.event(Event::SpvManager(event));
     }

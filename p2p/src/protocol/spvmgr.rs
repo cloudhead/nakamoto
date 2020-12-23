@@ -209,17 +209,9 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     /// Called periodically. Triggers syncing if necessary.
     pub fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            let filter_height = self.filters.height();
-            let block_height = tree.height();
-
-            if filter_height < block_height {
-                // We need to sync the filter header chain.
-                self.sync(tree);
-                self.last_idle = Some(now);
-                self.upstream.set_timeout(IDLE_TIMEOUT);
-            } else if filter_height > block_height {
-                panic!("SpvManager::idle: filter chain is longer than header chain!");
-            }
+            self.sync(tree);
+            self.last_idle = Some(now);
+            self.upstream.set_timeout(IDLE_TIMEOUT);
         }
     }
 
@@ -408,13 +400,14 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     }
 
     /// Called when a new peer was negotiated.
-    pub fn peer_negotiated(
+    pub fn peer_negotiated<T: BlockTree>(
         &mut self,
         id: PeerId,
         height: Height,
         services: ServiceFlags,
         link: Link,
         clock: &impl Clock,
+        tree: &T,
     ) {
         if !link.is_outbound() {
             return;
@@ -430,17 +423,22 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 height,
             },
         );
+        self.sync(tree);
     }
 
     /// Send a `getcfheaders` message to a random peer.
-    pub fn send_getcfheaders<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
+    pub fn send_getcfheaders<T: BlockTree>(
+        &mut self,
+        range: Range<Height>,
+        tree: &T,
+    ) -> Option<(PeerId, Height, BlockHash)> {
         let count = range.end as usize - range.start as usize;
 
         debug_assert!(range.start < range.end);
         debug_assert!(!range.is_empty());
 
         if range.is_empty() {
-            return;
+            return None;
         }
 
         // Cap request to `MAX_MESSAGE_CFHEADERS`.
@@ -462,27 +460,40 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             let peer = *peers.get(ix).unwrap(); // Can't fail.
             let start_height = range.start;
 
-            self.upstream.event(Event::Syncing {
-                peer: *peer,
-                start_height,
-                stop_hash,
-            });
             self.upstream.get_cfheaders(
                 *peer,
                 start_height,
                 stop_hash,
                 self.config.request_timeout,
             );
+            return Some((*peer, start_height, stop_hash));
         }
+        None
     }
 
     ////////////////////////////////////////////////////////////////////////////
 
     /// Attempt to sync the filter header chain.
     fn sync<T: BlockTree>(&mut self, tree: &T) {
-        let start_height = self.filters.height() + 1;
-        let stop_height = tree.height();
+        let filter_height = self.filters.height();
+        let block_height = tree.height();
 
-        self.send_getcfheaders(start_height..stop_height + 1, tree);
+        if filter_height < block_height {
+            // We need to sync the filter header chain.
+            let start_height = self.filters.height() + 1;
+            let stop_height = tree.height();
+
+            if let Some((peer, start_height, stop_hash)) =
+                self.send_getcfheaders(start_height..stop_height + 1, tree)
+            {
+                self.upstream.event(Event::Syncing {
+                    peer,
+                    start_height,
+                    stop_hash,
+                });
+            }
+        } else if filter_height > block_height {
+            panic!("SpvManager::idle: filter chain is longer than header chain!");
+        }
     }
 }
