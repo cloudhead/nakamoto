@@ -516,7 +516,7 @@ impl<T: BlockTree, U: SetTimeout + SyncHeaders + Disconnect> SyncManager<T, U> {
         }
     }
 
-    /// Called when we received a timeout previously set on a peer.
+    /// Called when we received a timeout.
     pub fn received_timeout(&mut self, local_time: LocalTime) {
         let timeout = self.config.request_timeout;
         let timed_out = self

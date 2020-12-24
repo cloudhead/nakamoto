@@ -568,6 +568,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 self.pingmgr.received_timeout(local_time);
                 self.addrmgr.received_timeout(local_time);
                 self.peermgr.received_timeout(local_time);
+                self.spvmgr.received_timeout(local_time, &self.syncmgr.tree);
             }
         };
     }

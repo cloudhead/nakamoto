@@ -215,6 +215,11 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         }
     }
 
+    /// A timeout was received.
+    pub fn received_timeout<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+        self.idle(now, tree);
+    }
+
     /// Rollback filter header chain by a given number of headers.
     pub fn rollback(&mut self, n: usize) -> Result<(), filter::Error> {
         self.filters.rollback(n)
@@ -285,6 +290,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
 
                 if height == tree.height() {
                     self.upstream.event(Event::Synced(height));
+                } else {
+                    self.sync(tree);
                 }
                 height
             })
