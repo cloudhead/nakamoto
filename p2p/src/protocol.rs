@@ -226,6 +226,8 @@ mod message {
 /// block-tree and compact filter store.
 #[derive(Debug)]
 pub struct Protocol<T, F> {
+    /// Block tree.
+    tree: T,
     /// Bitcoin network we're connecting to.
     network: network::Network,
     /// Our protocol version.
@@ -237,7 +239,7 @@ pub struct Protocol<T, F> {
     /// Peer address manager.
     addrmgr: AddressManager<Upstream>,
     /// Blockchain synchronization manager.
-    syncmgr: SyncManager<T, Upstream>,
+    syncmgr: SyncManager<Upstream>,
     /// Peer connection manager.
     connmgr: ConnectionManager<Upstream>,
     /// Ping manager.
@@ -404,7 +406,6 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
 
         let addrmgr = AddressManager::from(address_book, rng.clone(), upstream.clone());
         let syncmgr = SyncManager::new(
-            tree,
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
                 request_timeout: syncmgr::REQUEST_TIMEOUT,
@@ -439,6 +440,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
         );
 
         Self {
+            tree,
             network,
             protocol_version,
             whitelist,
@@ -460,9 +462,9 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     pub fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
-        self.syncmgr.initialize(time);
+        self.syncmgr.initialize(time, &self.tree);
         self.connmgr.initialize(time, &mut self.addrmgr);
-        self.spvmgr.initialize(time, &self.syncmgr.tree);
+        self.spvmgr.initialize(time, &self.tree);
     }
 
     /// Process the next input and advance the state machine by one step.
@@ -475,7 +477,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 local_addr,
                 link,
             } => {
-                let height = self.syncmgr.tree.height();
+                let height = self.tree.height();
                 // This is usually not that useful, except when our local address is actually the
                 // address our peers see.
                 self.addrmgr.record_local_addr(local_addr);
@@ -526,7 +528,11 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 Command::ImportHeaders(headers, reply) => {
                     debug!(target: self.target, "Received command: ImportHeaders(..)");
 
-                    let result = self.syncmgr.import_blocks(headers.into_iter(), &self.clock);
+                    let result = self.syncmgr.import_blocks(
+                        headers.into_iter(),
+                        &self.clock,
+                        &mut self.tree,
+                    );
 
                     match result {
                         Ok(import_result) => {
@@ -542,7 +548,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                     debug!(target: self.target,
                         "Received command: GetFilters({}..{})", range.start, range.end);
 
-                    self.spvmgr.get_cfilters(range, &self.syncmgr.tree);
+                    self.spvmgr.get_cfilters(range, &self.tree);
                 }
                 Command::GetBlock(hash) => {
                     self.query(NetworkMessage::GetBlocks(GetBlocksMessage {
@@ -564,11 +570,11 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 trace!(target: self.target, "Received timeout");
 
                 self.connmgr.received_timeout(local_time, &self.addrmgr);
-                self.syncmgr.received_timeout(local_time);
+                self.syncmgr.received_timeout(local_time, &self.tree);
                 self.pingmgr.received_timeout(local_time);
                 self.addrmgr.received_timeout(local_time);
                 self.peermgr.received_timeout(local_time);
-                self.spvmgr.received_timeout(local_time, &self.syncmgr.tree);
+                self.spvmgr.received_timeout(local_time, &self.tree);
             }
         };
     }
@@ -595,9 +601,12 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
         self.clock.set_local_time(local_time);
 
         if local_time - self.last_tick >= LocalDuration::from_secs(30) {
-            let (tip, _) = self.syncmgr.tree.tip();
-            let height = self.syncmgr.tree.height();
-            let best = self.syncmgr.best_height();
+            let (tip, _) = self.tree.tip();
+            let height = self.tree.height();
+            let best = self
+                .syncmgr
+                .best_height()
+                .unwrap_or_else(|| self.tree.height());
             let sync = if best > 0 {
                 height as f64 / best as f64 * 100.
             } else {
@@ -646,7 +655,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
 
         match msg.payload {
             NetworkMessage::Version(msg) => {
-                let height = self.syncmgr.tree.height();
+                let height = self.tree.height();
 
                 self.peermgr
                     .received_version(&addr, msg, height, now, &mut self.addrmgr);
@@ -663,7 +672,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                         peer.services,
                         peer.conn.link,
                         &self.clock,
-                        &self.syncmgr.tree,
+                        &self.tree,
                     );
                     self.syncmgr.peer_negotiated(
                         peer.address(),
@@ -671,6 +680,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                         peer.services,
                         peer.conn.link,
                         &self.clock,
+                        &self.tree,
                     );
                 }
             }
@@ -681,7 +691,10 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 self.pingmgr.received_pong(addr, nonce, now);
             }
             NetworkMessage::Headers(headers) => {
-                match self.syncmgr.received_headers(&addr, headers, &self.clock) {
+                match self
+                    .syncmgr
+                    .received_headers(&addr, headers, &self.clock, &mut self.tree)
+                {
                     Err(e) => log::error!("Error receiving headers: {}", e),
                     Ok(ImportResult::TipChanged(_, _, reverted)) if !reverted.is_empty() => {
                         // By rolling back the filter headers, we will trigger
@@ -693,7 +706,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                         // Trigger an idle check, since we're going to have to catch up
                         // on the new block header(s). This is not required, but reduces
                         // latency.
-                        self.spvmgr.idle(now, &self.syncmgr.tree);
+                        self.spvmgr.idle(now, &self.tree);
                     }
                     _ => {}
                 }
@@ -703,33 +716,36 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 stop_hash,
                 ..
             }) => {
-                self.syncmgr
-                    .received_getheaders(&addr, (locator_hashes, stop_hash));
+                self.syncmgr.received_getheaders(
+                    &addr,
+                    (locator_hashes, stop_hash),
+                    &mut self.tree,
+                );
             }
             NetworkMessage::Inv(inventory) => {
                 // Receive an `inv` message. This will happen if we are out of sync with a
                 // peer. And blocks are being announced. Otherwise, we expect to receive a
                 // `headers` message.
-                self.syncmgr.received_inv(addr, inventory, &self.clock);
+                self.syncmgr
+                    .received_inv(addr, inventory, &self.clock, &self.tree);
             }
             NetworkMessage::CFHeaders(msg) => {
                 self.spvmgr
-                    .received_cfheaders(&addr, msg, &self.syncmgr.tree)
+                    .received_cfheaders(&addr, msg, &self.tree)
                     .unwrap();
             }
             NetworkMessage::GetCFHeaders(msg) => {
                 self.spvmgr
-                    .received_getcfheaders(&addr, msg, &self.syncmgr.tree)
+                    .received_getcfheaders(&addr, msg, &self.tree)
                     .unwrap();
             }
             NetworkMessage::CFilter(msg) => {
                 self.spvmgr
-                    .received_cfilter(&addr, msg, &self.syncmgr.tree)
+                    .received_cfilter(&addr, msg, &self.tree)
                     .unwrap();
             }
             NetworkMessage::GetCFilters(msg) => {
-                self.spvmgr
-                    .received_getcfilters(&addr, msg, &self.syncmgr.tree);
+                self.spvmgr.received_getcfilters(&addr, msg, &self.tree);
             }
             NetworkMessage::Addr(addrs) => {
                 if addrs.is_empty() {

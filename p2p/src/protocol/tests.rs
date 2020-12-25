@@ -343,8 +343,8 @@ fn test_initial_sync() {
             local_time,
         );
 
-        assert_eq!(alice.syncmgr.tree.height(), height);
-        assert_eq!(bob.syncmgr.tree.height(), height);
+        assert_eq!(alice.tree.height(), height);
+        assert_eq!(bob.tree.height(), height);
     }
     alice.step(Input::Disconnected(bob_addr), local_time);
 }
