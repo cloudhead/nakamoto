@@ -59,13 +59,18 @@ pub struct FilterCache<S> {
 }
 
 impl<S: Store<Header = StoredHeader>> FilterCache<S> {
-    pub fn new(header_store: S) -> Self {
-        let headers = NonEmpty::new(header_store.genesis());
+    pub fn from(header_store: S) -> Result<Self, nakamoto_common::block::store::Error> {
+        let mut headers = NonEmpty::new(header_store.genesis());
 
-        Self {
+        for result in header_store.iter().skip(1) {
+            let (_, header) = result?;
+            headers.push(header);
+        }
+
+        Ok(Self {
             header_store,
             headers,
-        }
+        })
     }
 }
 

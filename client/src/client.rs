@@ -160,7 +160,7 @@ impl<R: Reactor> Client<R> {
             store.heal()?; // Rollback store to the last valid header.
         }
         log::info!("Store height = {}", store.height()?);
-        log::info!("Loading blocks from store..");
+        log::info!("Loading block headers from store..");
 
         let local_time = SystemTime::now().into();
         let checkpoints = self.config.network.checkpoints().collect::<Vec<_>>();
@@ -183,7 +183,12 @@ impl<R: Reactor> Client<R> {
                 store
             }
         };
-        let filters = FilterCache::new(cfheaders_store);
+        log::info!("Filters height = {}", cfheaders_store.height()?);
+        log::info!("Loading filter headers from store..");
+
+        let filters = FilterCache::from(cfheaders_store)?;
+
+        log::info!("Verifying filter headers..");
 
         filters.verify()?; // Verify store integrity.
 

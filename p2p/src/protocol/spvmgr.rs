@@ -287,6 +287,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                     count,
                     height,
                 });
+                assert!(height <= tree.height());
 
                 if height == tree.height() {
                     self.upstream.event(Event::Synced(height));

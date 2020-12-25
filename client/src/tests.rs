@@ -40,7 +40,7 @@ fn network(
             move || {
                 let store = store::Memory::new((genesis, vec![]).into());
                 let cache = BlockCache::from(store, params, &checkpoints).unwrap();
-                let filters = FilterCache::new(store::Memory::default());
+                let filters = FilterCache::from(store::Memory::default()).unwrap();
 
                 node.run_with(cache, filters).unwrap();
             }

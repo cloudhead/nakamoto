@@ -12,7 +12,7 @@ pub enum Error {
     #[error("i/o error: {0}")]
     Io(#[from] std::io::Error),
     /// An error decoding block data.
-    #[error("error decoding block: {0}")]
+    #[error("error decoding header: {0}")]
     Decoding(#[from] encode::Error),
     /// A data-corruption error.
     #[error("error: the store data is corrupt")]
