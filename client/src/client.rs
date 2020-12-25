@@ -185,6 +185,8 @@ impl<R: Reactor> Client<R> {
         };
         let filters = FilterCache::new(cfheaders_store);
 
+        filters.verify()?; // Verify store integrity.
+
         log::info!("{} peer(s) found..", self.config.address_book.len());
         log::debug!("{:?}", self.config.address_book);
 

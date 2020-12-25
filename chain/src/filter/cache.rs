@@ -16,6 +16,8 @@ pub use nakamoto_common::block::store::Store;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Network;
 
+use crate::filter::store;
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StoredHeader {
     hash: FilterHash,
@@ -64,6 +66,23 @@ impl<S: Store<Header = StoredHeader>> FilterCache<S> {
             header_store,
             headers,
         }
+    }
+}
+
+impl<S> FilterCache<S> {
+    /// Verify the filter header chain. Returns `true` if the chain is valid.
+    pub fn verify(&self) -> Result<(), store::Error> {
+        let prev_header = FilterHeader::default();
+
+        for stored_header in self.headers.iter() {
+            let expected = FilterHeader::new(stored_header.hash, &prev_header);
+            let actual = stored_header.header;
+
+            if actual != expected {
+                return Err(store::Error::Integrity);
+            }
+        }
+        Ok(())
     }
 }
 

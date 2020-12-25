@@ -4,6 +4,7 @@ use std::io;
 use crossbeam_channel as chan;
 use thiserror::Error;
 
+use nakamoto_chain as chain;
 use nakamoto_common as common;
 use nakamoto_p2p as p2p;
 
@@ -27,6 +28,9 @@ pub enum Error {
     /// An error coming from the block store.
     #[error(transparent)]
     BlockStore(#[from] common::block::store::Error),
+    /// An error coming from the filter store.
+    #[error(transparent)]
+    FilterStore(#[from] chain::filter::store::Error),
     /// A communication channel error.
     #[error("command channel disconnected")]
     Channel,
