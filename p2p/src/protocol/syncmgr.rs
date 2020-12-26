@@ -334,16 +334,18 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                         .event(Event::HeadersImported(imported.clone()));
                 }
 
+                if let Ok(ImportResult::TipChanged(tip, height, _)) = result {
+                    let peer = self.peers.get_mut(from).unwrap();
+
+                    if height > peer.height {
+                        peer.tip = tip;
+                        peer.height = height;
+                    }
+                }
+
                 match result {
                     Ok(ImportResult::TipUnchanged) => Ok(ImportResult::TipUnchanged),
                     Ok(ImportResult::TipChanged(tip, height, reverted)) => {
-                        let peer = self.peers.get_mut(from).unwrap();
-
-                        if height > peer.height {
-                            peer.tip = tip;
-                            peer.height = height;
-                        }
-
                         // Keep track of when we last updated our tip. This is useful to check
                         // whether our tip is stale.
                         self.last_tip_update = Some(clock.local_time());
