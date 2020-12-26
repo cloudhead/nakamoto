@@ -144,7 +144,7 @@ impl<R: Reactor> Client<R> {
         );
 
         let path = dir.join("headers.db");
-        let mut store = match store::File::create(&path, genesis) {
+        let store = match store::File::create(&path, genesis) {
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", path);
                 store::File::open(path, genesis)?
@@ -172,7 +172,7 @@ impl<R: Reactor> Client<R> {
 
         let cfheaders_genesis = filter::cache::StoredHeader::genesis(self.config.network);
         let cfheaders_path = dir.join("filters.db");
-        let mut cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
+        let cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", cfheaders_path);
                 store::File::open(cfheaders_path, cfheaders_genesis)?

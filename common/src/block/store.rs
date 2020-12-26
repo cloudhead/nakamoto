@@ -59,5 +59,5 @@ pub trait Store {
     /// Check the store integrity.
     fn check(&self) -> Result<(), Error>;
     /// Heal data corruption.
-    fn heal(&mut self) -> Result<(), Error>;
+    fn heal(&self) -> Result<(), Error>;
 }

@@ -95,7 +95,7 @@ impl<H: 'static + Copy + Clone + Genesis> Store for Memory<H> {
     }
 
     /// Heal data corruption.
-    fn heal(&mut self) -> Result<(), Error> {
+    fn heal(&self) -> Result<(), Error> {
         Ok(())
     }
 }

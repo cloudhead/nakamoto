@@ -176,7 +176,7 @@ impl<H: 'static + Copy + Encodable + Decodable> Store for File<H> {
     }
 
     /// Attempt to heal data corruption.
-    fn heal(&mut self) -> Result<(), Error> {
+    fn heal(&self) -> Result<(), Error> {
         let meta = self.file.metadata()?;
         let len = meta.len();
         let size = mem::size_of::<H>();
