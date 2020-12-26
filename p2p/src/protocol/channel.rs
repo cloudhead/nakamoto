@@ -1,5 +1,8 @@
-// TODO
-#![allow(missing_docs)]
+//! A channel for communicating between the main protocol and the sub-protocols.
+//!
+//! Each sub-protocol, eg. the "ping" or "handshake" protocols are given a channel
+//! with specific capabilities, eg. peer disconnection, message sending etc. to
+//! communicate with the main protocol and network.
 use log::*;
 use std::net;
 
@@ -34,7 +37,7 @@ pub struct Channel {
 }
 
 impl Channel {
-    /// Create a new output builder.
+    /// Create a new channel.
     pub fn new(
         network: Network,
         version: u32,
@@ -49,18 +52,18 @@ impl Channel {
         }
     }
 
-    /// Push an output to the queue.
+    /// Push an output to the channel.
     pub fn push(&self, output: Out) {
         self.outbound.send(output).unwrap();
     }
 
-    /// Push a message to the queue.
+    /// Push a message to the channel.
     pub fn message(&self, addr: PeerId, message: NetworkMessage) -> &Self {
         self.push(self.builder.message(addr, message));
         self
     }
 
-    /// Push an event to the queue.
+    /// Push an event to the channel.
     pub fn event(&self, event: Event) {
         self.push(Out::Event(event));
     }
