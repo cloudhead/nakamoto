@@ -156,7 +156,7 @@ impl<R: Reactor> Client<R> {
             }
         };
         if store.check().is_err() {
-            log::warn!("Corruption detected in store, healing..");
+            log::warn!("Corruption detected in header store, healing..");
             store.heal()?; // Rollback store to the last valid header.
         }
         log::info!("Store height = {}", store.height()?);
@@ -172,7 +172,7 @@ impl<R: Reactor> Client<R> {
 
         let cfheaders_genesis = filter::cache::StoredHeader::genesis(self.config.network);
         let cfheaders_path = dir.join("filters.db");
-        let cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
+        let mut cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", cfheaders_path);
                 store::File::open(cfheaders_path, cfheaders_genesis)?
@@ -183,6 +183,10 @@ impl<R: Reactor> Client<R> {
                 store
             }
         };
+        if cfheaders_store.check().is_err() {
+            log::warn!("Corruption detected in filter store, healing..");
+            cfheaders_store.heal()?; // Rollback store to the last valid header.
+        }
         log::info!("Filters height = {}", cfheaders_store.height()?);
         log::info!("Loading filter headers from store..");
 
