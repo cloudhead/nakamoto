@@ -700,13 +700,13 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                         // By rolling back the filter headers, we will trigger
                         // a re-download of the missing headers, which should result
                         // in us having the new headers.
-                        self.spvmgr.rollback(reverted.len()).unwrap()
+                        self.spvmgr.rollback(reverted.len()).unwrap();
+                        self.spvmgr.sync(&self.tree);
                     }
                     Ok(ImportResult::TipChanged(_, _, _)) => {
-                        // Trigger an idle check, since we're going to have to catch up
-                        // on the new block header(s). This is not required, but reduces
-                        // latency.
-                        self.spvmgr.idle(now, &self.tree);
+                        // Trigger a sync, since we're going to have to catch up on the new block
+                        // header(s). This is not required, but reduces latency.
+                        self.spvmgr.sync(&self.tree);
                     }
                     _ => {}
                 }

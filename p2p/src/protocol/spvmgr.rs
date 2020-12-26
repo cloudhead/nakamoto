@@ -505,10 +505,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         None
     }
 
-    ////////////////////////////////////////////////////////////////////////////
-
     /// Attempt to sync the filter header chain.
-    fn sync<T: BlockTree>(&mut self, tree: &T) {
+    pub fn sync<T: BlockTree>(&mut self, tree: &T) {
         let filter_height = self.filters.height();
         let block_height = tree.height();
 
