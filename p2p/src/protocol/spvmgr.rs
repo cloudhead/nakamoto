@@ -599,5 +599,8 @@ mod tests {
         spvmgr
             .received_cfheaders(&([0, 0, 0, 0], 0).into(), msg, &tree)
             .unwrap();
+
+        assert_eq!(spvmgr.filters.height(), 15);
+        spvmgr.filters.verify(network).unwrap();
     }
 }

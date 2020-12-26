@@ -194,7 +194,7 @@ impl<R: Reactor> Client<R> {
 
         log::info!("Verifying filter headers..");
 
-        filters.verify()?; // Verify store integrity.
+        filters.verify(self.config.network)?; // Verify store integrity.
 
         log::info!("{} peer(s) found..", self.config.address_book.len());
         log::debug!("{:?}", self.config.address_book);

@@ -123,7 +123,7 @@ pub fn genesis_hash(network: Network) -> FilterHash {
 
     let genesis = network.genesis_block();
     let filter = BlockFilter::new_script_filter(&genesis, |_| {
-        panic!("FilterHeader::genesis_hash: genesis block should have no inputs")
+        panic!("filter::genesis_hash: genesis block should have no inputs")
     })
     .unwrap();
 

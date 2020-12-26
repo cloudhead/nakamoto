@@ -77,8 +77,12 @@ impl<S: Store<Header = StoredHeader>> FilterCache<S> {
 
 impl<S> FilterCache<S> {
     /// Verify the filter header chain. Returns `true` if the chain is valid.
-    pub fn verify(&self) -> Result<(), store::Error> {
-        let prev_header = FilterHeader::default();
+    pub fn verify(&self, network: Network) -> Result<(), store::Error> {
+        let mut prev_header = FilterHeader::default();
+
+        if self.headers.first().header != FilterHeader::genesis(network) {
+            return Err(store::Error::Integrity);
+        }
 
         for stored_header in self.headers.iter() {
             let expected = FilterHeader::new(stored_header.hash, &prev_header);
@@ -87,6 +91,7 @@ impl<S> FilterCache<S> {
             if actual != expected {
                 return Err(store::Error::Integrity);
             }
+            prev_header = actual;
         }
         Ok(())
     }
