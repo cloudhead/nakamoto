@@ -34,11 +34,19 @@ const MAX_MESSAGE_CFILTERS: usize = 1000;
 #[derive(Error, Debug)]
 pub enum Error {
     /// The request was ignored. This happens if we're not able to fulfill the reuqest.
-    #[error("ignoring `{0}` message from {1}")]
-    Ignored(&'static str, PeerId),
+    #[error("ignoring `{msg}` message from {from}")]
+    Ignored {
+        /// Message that was ignored.
+        msg: &'static str,
+        /// Message sender.
+        from: PeerId,
+    },
     /// Error due to an invalid peer message.
-    #[error("invalid message received from peer")]
-    InvalidMessage(PeerId),
+    #[error("invalid message received from {from}")]
+    InvalidMessage {
+        /// Message sender.
+        from: PeerId,
+    },
     /// Error with the underlying filters datastore.
     #[error("filters error: {0}")]
     Filters(#[from] filter::Error),
@@ -233,40 +241,42 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     /// Handle a `cfheaders` message from a peer.
     pub fn received_cfheaders<T: BlockTree>(
         &mut self,
-        addr: &PeerId,
+        from: &PeerId,
         msg: CFHeaders,
         tree: &T,
     ) -> Result<Height, Error> {
+        let from = *from;
+
         if msg.filter_type != 0x0 {
-            return Err(Error::InvalidMessage(*addr));
+            return Err(Error::InvalidMessage { from });
         }
 
         let prev_header: FilterHeader = msg.previous_filter.into();
         let (_, header) = self.filters.tip();
 
         if header != &prev_header {
-            return Err(Error::InvalidMessage(*addr));
+            return Err(Error::InvalidMessage { from });
         }
 
         let start_height = self.filters.height();
         let stop_height = if let Some((height, _)) = tree.get_block(&msg.stop_hash) {
             height
         } else {
-            return Err(Error::InvalidMessage(*addr));
+            return Err(Error::InvalidMessage { from });
         };
         let hashes = msg.filter_hashes;
         let count = hashes.len();
 
         if start_height > stop_height {
-            return Err(Error::InvalidMessage(*addr));
+            return Err(Error::InvalidMessage { from });
         }
 
         if count > MAX_MESSAGE_CFHEADERS {
-            return Err(Error::InvalidMessage(*addr));
+            return Err(Error::InvalidMessage { from });
         }
 
         if (stop_height - start_height) as usize != count {
-            return Err(Error::InvalidMessage(*addr));
+            return Err(Error::InvalidMessage { from });
         }
 
         // Ok, looks like everything's valid..
@@ -283,7 +293,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             .import_headers(headers)
             .map(|height| {
                 self.upstream.event(Event::FilterHeadersImported {
-                    from: *addr,
+                    from,
                     count,
                     height,
                 });
@@ -302,12 +312,14 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     /// Handle a `getcfheaders` message from a peer.
     pub fn received_getcfheaders<T: BlockTree>(
         &mut self,
-        addr: &PeerId,
+        from: &PeerId,
         msg: GetCFHeaders,
         tree: &T,
     ) -> Result<(), Error> {
+        let from = *from;
+
         if msg.filter_type != 0x0 {
-            return Err(Error::InvalidMessage(*addr));
+            return Err(Error::InvalidMessage { from });
         }
 
         let start_height = msg.start_height as Height;
@@ -315,7 +327,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             height
         } else {
             // Can't handle this message, we don't have the stop block.
-            return Err(Error::Ignored("getcfheaders", *addr));
+            return Err(Error::Ignored {
+                msg: "getcfheaders",
+                from,
+            });
         };
 
         let headers = self.filters.get_headers(start_height..stop_height);
@@ -327,7 +342,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 .expect("SpvManager::received_getcfheaders: all headers up to the tip must exist");
 
             self.upstream.send_cfheaders(
-                *addr,
+                from,
                 CFHeaders {
                     filter_type: msg.filter_type,
                     stop_hash: msg.stop_hash,
@@ -339,25 +354,36 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         }
         // We must be syncing, since we have the block headers requested but
         // not the associated filter headers. Simply ignore the request.
-        Err(Error::Ignored("getcfheaders", *addr))
+        Err(Error::Ignored {
+            msg: "getcfheaders",
+            from,
+        })
     }
 
     /// Handle a `cfilter` message.
     pub fn received_cfilter<T: BlockTree>(
         &mut self,
-        addr: &PeerId,
+        from: &PeerId,
         msg: CFilter,
         tree: &T,
     ) -> Result<(), Error> {
+        let from = *from;
+
         if msg.filter_type != 0x0 {
-            return Err(Error::Ignored("cfilter", *addr));
+            return Err(Error::Ignored {
+                msg: "cfilter",
+                from,
+            });
         }
 
         let height = if let Some((height, _)) = tree.get_block(&msg.block_hash) {
             height
         } else {
             // Can't handle this message, we don't have the block.
-            return Err(Error::Ignored("cfilter", *addr));
+            return Err(Error::Ignored {
+                msg: "cfilter",
+                from,
+            });
         };
 
         // The expected hash for this block filter.
@@ -365,7 +391,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             hash
         } else {
             // Can't handle this message, we don't have the header.
-            return Err(Error::Ignored("cfilter", *addr));
+            return Err(Error::Ignored {
+                msg: "cfilter",
+                from,
+            });
         };
 
         // Note that in case this fails, we have a bug in our implementation, since filter
@@ -377,15 +406,12 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         let filter = BlockFilter::new(&msg.filter);
 
         if filter.filter_id(&prev_header.into()) != hash {
-            return Err(Error::InvalidMessage(*addr));
+            return Err(Error::InvalidMessage { from });
         }
 
         self.filters
             .import_filter(height, filter)
-            .map(|_| {
-                self.upstream
-                    .event(Event::FilterImported { from: *addr, hash })
-            })
+            .map(|_| self.upstream.event(Event::FilterImported { from, hash }))
             .map_err(Error::from)
     }
 
