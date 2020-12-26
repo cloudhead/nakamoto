@@ -1,8 +1,9 @@
 //! Ephemeral storage backend for blocks.
 use nonempty::NonEmpty;
 
-use nakamoto_common::block::store::{Error, Store};
+use nakamoto_common::block::store::{Error, Genesis, Store};
 use nakamoto_common::block::Height;
+use nakamoto_common::network::Network;
 
 /// In-memory block store.
 #[derive(Debug, Clone)]
@@ -21,7 +22,14 @@ impl<H: Default> Default for Memory<H> {
     }
 }
 
-impl<H: 'static + Copy + Clone> Store for Memory<H> {
+impl<H: Genesis> Memory<H> {
+    /// Create a memory store with only the genesis.
+    pub fn genesis(network: Network) -> Self {
+        Self(NonEmpty::new(H::genesis(network)))
+    }
+}
+
+impl<H: 'static + Copy + Clone + Genesis> Store for Memory<H> {
     type Header = H;
 
     /// Get the genesis block.

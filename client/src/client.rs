@@ -16,7 +16,7 @@ use nakamoto_chain::filter;
 use nakamoto_chain::filter::cache::FilterCache;
 
 use nakamoto_common::block::filter::Filters;
-use nakamoto_common::block::store::Store;
+use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction};

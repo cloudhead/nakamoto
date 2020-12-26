@@ -13,7 +13,7 @@ pub use bitcoin::hash_types::FilterHash;
 pub use bitcoin::util::bip158::BlockFilter;
 
 use super::Height;
-use crate::block::store;
+use crate::block::store::{self, Genesis};
 use crate::network::Network;
 
 /// A filter header.
@@ -84,11 +84,14 @@ impl FilterHeader {
             hash: FilterHash::hash(&header_bytes),
         }
     }
+}
 
+impl Genesis for FilterHeader {
     /// Filter header for the genesis block.
     ///
     /// ```
     /// use nakamoto_common::block::filter::{FilterHash, FilterHeader};
+    /// use nakamoto_common::block::store::Genesis as _;
     /// use nakamoto_common::network::Network;
     /// use bitcoin_hashes::hex::FromHex;
     ///
@@ -101,7 +104,7 @@ impl FilterHeader {
     ///     ).unwrap()
     /// );
     /// ```
-    pub fn genesis(network: Network) -> Self {
+    fn genesis(network: Network) -> Self {
         let genesis = network.genesis_block();
         let filter = BlockFilter::new_script_filter(&genesis, |_| {
             panic!("FilterHeader::genesis: genesis block should have no inputs")

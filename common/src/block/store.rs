@@ -2,8 +2,11 @@
 #![allow(clippy::len_without_is_empty)]
 use crate::block::Height;
 
+use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::encode;
 use thiserror::Error;
+
+use crate::network::Network;
 
 /// A block storage error.
 #[derive(Debug, Error)]
@@ -17,6 +20,19 @@ pub enum Error {
     /// A data-corruption error.
     #[error("error: the store data is corrupt")]
     Corruption,
+}
+
+/// Represents an object (such as a header), that has a genesis.
+pub trait Genesis {
+    /// Create a genesis header.
+    fn genesis(network: Network) -> Self;
+}
+
+/// Genesis implementation for `bitcoin`'s header.
+impl Genesis for BlockHeader {
+    fn genesis(network: Network) -> Self {
+        network.genesis()
+    }
 }
 
 /// Represents objects that can store block headers.

@@ -19,7 +19,7 @@ use quickcheck_macros::quickcheck;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_common::block::filter::FilterHeader;
-use nakamoto_common::block::store::Store;
+use nakamoto_common::block::store::{Genesis, Store};
 use nakamoto_common::block::BlockHeader;
 
 use nakamoto_test::block::cache::model;

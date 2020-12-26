@@ -13,6 +13,7 @@ pub use nakamoto_common::block::filter::{
 };
 pub use nakamoto_common::block::store::Store;
 
+use nakamoto_common::block::store::Genesis;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Network;
 
@@ -44,8 +45,8 @@ impl Decodable for StoredHeader {
     }
 }
 
-impl StoredHeader {
-    pub fn genesis(network: Network) -> Self {
+impl Genesis for StoredHeader {
+    fn genesis(network: Network) -> Self {
         Self {
             hash: filter::genesis_hash(network),
             header: FilterHeader::genesis(network),
