@@ -207,23 +207,6 @@ impl FilterCache {
 }
 
 impl Filters for FilterCache {
-    fn get_filters(&self, range: Range<Height>) -> Result<Vec<BlockFilter>, filter::Error> {
-        Ok(self
-            .filters
-            .range(range)
-            .map(|(_, f)| BlockFilter {
-                // Nb. `BlockFilter` currently isn't `Clone`.
-                content: f.content.clone(),
-            })
-            .collect())
-    }
-
-    fn import_filter(&mut self, height: Height, filter: BlockFilter) -> Result<(), filter::Error> {
-        self.filters.insert(height, filter);
-
-        Ok(())
-    }
-
     fn get_header(&self, height: Height) -> Option<(FilterHash, FilterHeader)> {
         self.headers.get(height as usize).copied()
     }

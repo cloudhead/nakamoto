@@ -55,12 +55,16 @@ pub enum Error {
 /// An event originating in the SPV manager.
 #[derive(Debug)]
 pub enum Event {
-    /// Filters were imported successfully.
-    FilterImported {
+    /// Filter was received and validated.
+    FilterReceived {
         /// Peer we received from.
         from: PeerId,
-        /// Filter hash.
-        hash: FilterHash,
+        /// The received filter.
+        filter: BlockFilter,
+        /// Filter height.
+        height: Height,
+        /// Hash of corresponding block.
+        block_hash: BlockHash,
     },
     /// Filter headers were imported successfully.
     FilterHeadersImported {
@@ -92,8 +96,17 @@ impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Event::TimedOut(addr) => write!(fmt, "Peer {} timed out", addr),
-            Event::FilterImported { from, hash } => {
-                write!(fmt, "Filter {} imported from {}", hash, from)
+            Event::FilterReceived {
+                from,
+                height,
+                block_hash,
+                ..
+            } => {
+                write!(
+                    fmt,
+                    "Filter {} received for block {} from {}",
+                    height, block_hash, from
+                )
             }
             Event::FilterHeadersImported {
                 from,
@@ -405,14 +418,19 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             .expect("SpvManager::received_cfilter: all headers up to the tip must exist");
         let filter = BlockFilter::new(&msg.filter);
 
+        // TODO: This is wrong. We should check against the header hash.
         if filter.filter_id(&prev_header.into()) != hash {
             return Err(Error::InvalidMessage { from });
         }
 
-        self.filters
-            .import_filter(height, filter)
-            .map(|_| self.upstream.event(Event::FilterImported { from, hash }))
-            .map_err(Error::from)
+        self.upstream.event(Event::FilterReceived {
+            from,
+            block_hash: msg.block_hash,
+            height,
+            filter,
+        });
+
+        Ok(())
     }
 
     /// Handle `getcfilters` message.

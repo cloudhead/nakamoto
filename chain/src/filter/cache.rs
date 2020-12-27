@@ -99,13 +99,6 @@ impl<S> FilterCache<S> {
 
 #[allow(unused_variables)]
 impl<S: Store<Header = StoredHeader>> Filters for FilterCache<S> {
-    fn get_filters(&self, range: Range<Height>) -> Result<Vec<BlockFilter>, Error> {
-        todo!()
-    }
-    fn import_filter(&mut self, height: Height, filter: BlockFilter) -> Result<(), Error> {
-        todo!()
-    }
-
     fn get_header(&self, height: Height) -> Option<(FilterHash, FilterHeader)> {
         self.headers
             .get(height as usize)

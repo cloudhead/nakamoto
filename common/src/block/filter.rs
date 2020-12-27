@@ -143,10 +143,6 @@ pub enum Error {
 
 /// A trait for types that provide read/write access to compact block filters, and filter headers.
 pub trait Filters {
-    /// Get filters, given a block height range.
-    fn get_filters(&self, range: Range<Height>) -> Result<Vec<BlockFilter>, Error>;
-    /// Import the filter for the given block height.
-    fn import_filter(&mut self, height: Height, filter: BlockFilter) -> Result<(), Error>;
     /// Get filter headers given a block height range.
     fn get_headers(&self, range: Range<Height>) -> Vec<(FilterHash, FilterHeader)>;
     /// Get the filter header at the given height. Includes the hash of the filter itself.
