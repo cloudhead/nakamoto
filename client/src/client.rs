@@ -289,8 +289,8 @@ impl<R: Reactor> ClientHandle<R> {
 }
 
 impl<R: Reactor> Handle for ClientHandle<R> {
-    fn get_tip(&self) -> Result<BlockHeader, handle::Error> {
-        let (transmit, receive) = chan::bounded::<BlockHeader>(1);
+    fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
+        let (transmit, receive) = chan::bounded::<(Height, BlockHeader)>(1);
         self.command(Command::GetTip(transmit))?;
 
         Ok(receive.recv()?)

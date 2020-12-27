@@ -81,7 +81,7 @@ impl Link {
 #[derive(Debug, Clone)]
 pub enum Command {
     /// Get the tip of the active chain.
-    GetTip(chan::Sender<BlockHeader>),
+    GetTip(chan::Sender<(Height, BlockHeader)>),
     /// Get a block from the active chain.
     GetBlock(BlockHash),
     /// Get block filters.
@@ -543,7 +543,12 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                         }
                     }
                 }
-                Command::GetTip(_) => todo!(),
+                Command::GetTip(reply) => {
+                    let (_, header) = self.tree.tip();
+                    let height = self.tree.height();
+
+                    reply.send((height, header)).ok();
+                }
                 Command::GetFilters(range) => {
                     debug!(target: self.target,
                         "Received command: GetFilters({}..{})", range.start, range.end);
