@@ -9,6 +9,7 @@ use nonempty::NonEmpty;
 use bitcoin::consensus::params::Params;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_blockdata::Inventory;
+use bitcoin::Block;
 
 use nakamoto_common::block::store;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
@@ -115,6 +116,8 @@ pub enum Event {
     ReceivedInvalidHeaders(PeerId, Error),
     /// Unsolicited headers received.
     ReceivedUnsolicitedHeaders(PeerId, usize),
+    /// Block received.
+    ReceivedBlock(PeerId, Block, Height),
     /// Headers were imported successfully.
     HeadersImported(ImportResult),
     /// A new block was discovered via a peer.
@@ -132,6 +135,9 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::ReceivedBlock(addr, _, height) => {
+                write!(fmt, "{}: Received block at height {}", addr, height)
+            }
             Event::ReceivedHeaders(addr, count) => {
                 write!(fmt, "{}: Received {} header(s)", addr, count)
             }
@@ -288,6 +294,15 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                 Ok(result)
             }
             Err(err) => Err(err),
+        }
+    }
+
+    pub fn received_block<T: BlockTree>(&mut self, from: &PeerId, block: Block, tree: &T) {
+        let hash = block.block_hash();
+
+        if let Some((height, _)) = tree.get_block(&hash) {
+            self.upstream
+                .event(Event::ReceivedBlock(*from, block, height));
         }
     }
 

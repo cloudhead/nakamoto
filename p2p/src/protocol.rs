@@ -727,6 +727,9 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                     &mut self.tree,
                 );
             }
+            NetworkMessage::Block(block) => {
+                self.syncmgr.received_block(&addr, block, &self.tree);
+            }
             NetworkMessage::Inv(inventory) => {
                 // Receive an `inv` message. This will happen if we are out of sync with a
                 // peer. And blocks are being announced. Otherwise, we expect to receive a
