@@ -111,17 +111,17 @@ pub struct SyncManager<U> {
 #[derive(Debug)]
 pub enum Event {
     /// Headers received from a peer.
-    ReceivedHeaders(PeerId, usize),
+    HeadersReceived(PeerId, usize),
     /// Invalid headers received from a peer.
-    ReceivedInvalidHeaders(PeerId, Error),
+    InvalidHeadersReceived(PeerId, Error),
     /// Unsolicited headers received.
-    ReceivedUnsolicitedHeaders(PeerId, usize),
+    UnsolicitedHeadersReceived(PeerId, usize),
     /// Block received.
-    ReceivedBlock(PeerId, Block, Height),
-    /// Headers were imported successfully.
-    HeadersImported(ImportResult),
+    BlockReceived(PeerId, Block, Height),
     /// A new block was discovered via a peer.
     BlockDiscovered(PeerId, BlockHash),
+    /// Headers were imported successfully.
+    HeadersImported(ImportResult),
     /// Started syncing with a peer.
     Syncing(PeerId),
     /// Finished syncing up to the specified hash and height.
@@ -135,17 +135,17 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Event::ReceivedBlock(addr, _, height) => {
+            Event::BlockReceived(addr, _, height) => {
                 write!(fmt, "{}: Received block at height {}", addr, height)
             }
-            Event::ReceivedHeaders(addr, count) => {
+            Event::HeadersReceived(addr, count) => {
                 write!(fmt, "{}: Received {} header(s)", addr, count)
             }
-            Event::ReceivedInvalidHeaders(addr, error) => {
+            Event::InvalidHeadersReceived(addr, error) => {
                 write!(fmt, "{}: Received invalid headers: {}", addr, error)
             }
             Event::TimedOut(addr) => write!(fmt, "Peer {} timed out", addr),
-            Event::ReceivedUnsolicitedHeaders(from, count) => {
+            Event::UnsolicitedHeadersReceived(from, count) => {
                 write!(fmt, "Received {} unsolicited headers from {}", count, from)
             }
             Event::HeadersImported(import_result) => {
@@ -303,7 +303,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
         if let Some((height, _)) = tree.get_block(&hash) {
             self.upstream
-                .event(Event::ReceivedBlock(*from, block, height));
+                .event(Event::BlockReceived(*from, block, height));
         }
     }
 
@@ -321,7 +321,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             return Ok(ImportResult::TipUnchanged);
         };
         self.upstream
-            .event(Event::ReceivedHeaders(*from, headers.len()));
+            .event(Event::HeadersReceived(*from, headers.len()));
 
         let length = headers.len();
         let best = headers.last().block_hash();
@@ -437,7 +437,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             // this peer for any headers. We choose to ignore it.
             _ => {
                 self.upstream
-                    .event(Event::ReceivedUnsolicitedHeaders(*from, length));
+                    .event(Event::UnsolicitedHeadersReceived(*from, length));
 
                 Ok(ImportResult::TipUnchanged)
             }
@@ -604,7 +604,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             | Error::InvalidBlockTime(_, _) => {
                 self.record_misbehavior(from);
                 self.upstream
-                    .event(Event::ReceivedInvalidHeaders(*from, err));
+                    .event(Event::InvalidHeadersReceived(*from, err));
 
                 Ok(())
             }

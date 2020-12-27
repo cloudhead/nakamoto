@@ -11,7 +11,7 @@ use thiserror::Error;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 
-use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader, Filters};
+use nakamoto_common::block::filter::{self, BlockFilter, FilterHeader, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
@@ -555,6 +555,7 @@ mod tests {
 
     use nakamoto_chain::block::{cache::BlockCache, store};
     use nakamoto_chain::filter::cache::FilterCache;
+    use nakamoto_common::block::filter::FilterHash;
     use nakamoto_common::network::Network;
     use nakamoto_test::BITCOIN_HEADERS;
 
