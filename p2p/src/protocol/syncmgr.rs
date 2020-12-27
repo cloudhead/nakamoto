@@ -297,6 +297,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         }
     }
 
+    /// Called when a block is received from a peer.
     pub fn received_block<T: BlockTree>(&mut self, from: &PeerId, block: Block, tree: &T) {
         let hash = block.block_hash();
 
