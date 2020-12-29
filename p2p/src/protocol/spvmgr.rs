@@ -251,16 +251,19 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     /// *Panics if there are no peers available.*
     ///
     pub fn get_cfilters<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
+        // TODO: Consolidate this code with the `get_cfheaders` code.
         if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
             let ix = self.rng.usize(..peers.len());
             let peer = *peers.get(ix).unwrap(); // Can't fail.
             let start_height = range.start;
+            // TODO: Return an error instead.
             let stop_hash = tree.get_block_by_height(range.end).unwrap().block_hash();
             let timeout = self.config.request_timeout;
 
             self.upstream
                 .get_cfilters(*peer, start_height, stop_hash, timeout);
         } else {
+            // TODO: Return an error instead.
             panic!("SpvManager::get_cfilters: called without any available peers!");
         }
     }
