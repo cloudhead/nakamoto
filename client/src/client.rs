@@ -27,7 +27,7 @@ use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
-use nakamoto_p2p::protocol::{connmgr, syncmgr};
+use nakamoto_p2p::protocol::{connmgr, peermgr, syncmgr};
 
 pub use nakamoto_p2p::address_book::AddressBook;
 pub use nakamoto_p2p::event::Event;
@@ -372,11 +372,10 @@ impl<R: Reactor> Handle for ClientHandle<R> {
         F: Fn(Event) -> Option<T>,
     {
         let start = time::Instant::now();
-        let events = self.events.clone();
 
         loop {
             if let Some(timeout) = self.timeout.checked_sub(start.elapsed()) {
-                match events.recv_timeout(timeout) {
+                match self.events.recv_timeout(timeout) {
                     Ok(event) => {
                         if let Some(t) = f(event) {
                             return Ok(t);
@@ -400,13 +399,13 @@ impl<R: Reactor> Handle for ClientHandle<R> {
         use std::collections::HashSet;
 
         self.wait(|e| {
-            let mut connected = HashSet::new();
+            let mut negotiated = HashSet::new();
 
             match e {
-                Event::ConnManager(connmgr::Event::Connected(addr, _)) => {
-                    connected.insert(addr);
+                Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
+                    negotiated.insert(addr);
 
-                    if connected.len() == count {
+                    if negotiated.len() == count {
                         Some(())
                     } else {
                         None
@@ -425,6 +424,7 @@ impl<R: Reactor> Handle for ClientHandle<R> {
     }
 
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, handle::Error> {
+        // TODO: Should return immediately if we are already at that height.
         self.wait(|e| match e {
             Event::SyncManager(syncmgr::Event::HeadersImported(ImportResult::TipChanged(
                 hash,
@@ -433,6 +433,10 @@ impl<R: Reactor> Handle for ClientHandle<R> {
             ))) if height == h => Some(hash),
             _ => None,
         })
+    }
+
+    fn events(&self) -> &chan::Receiver<Event> {
+        &self.events
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {

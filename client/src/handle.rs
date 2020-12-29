@@ -70,6 +70,8 @@ pub trait Handle {
     /// Wait for the node's active chain to reach a certain height. The hash at that height
     /// is returned.
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;
+    /// Listen on events.
+    fn events(&self) -> &chan::Receiver<Event>;
     /// Shutdown the node process.
     fn shutdown(self) -> Result<(), Error>;
 }
