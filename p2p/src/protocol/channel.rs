@@ -11,7 +11,7 @@ use crossbeam_channel as chan;
 use bitcoin::network::address::Address;
 use bitcoin::network::message::NetworkMessage;
 use bitcoin::network::message_blockdata::GetHeadersMessage;
-use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
+use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 use bitcoin::network::message_network::VersionMessage;
 
 use nakamoto_common::block::time::LocalDuration;
@@ -226,7 +226,14 @@ impl spvmgr::SyncFilters for Channel {
         stop_hash: BlockHash,
         timeout: LocalDuration,
     ) {
-        todo!()
+        self.message(
+            addr,
+            NetworkMessage::GetCFilters(GetCFilters {
+                filter_type: 0x0,
+                start_height: start_height as u32,
+                stop_hash,
+            }),
+        );
     }
 
     fn send_cfilter(&self, addr: PeerId, cfilter: CFilter) {

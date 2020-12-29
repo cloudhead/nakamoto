@@ -247,8 +247,22 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     }
 
     /// Send a `getcfilters` message to a random peer.
-    pub fn get_cfilters<T: BlockTree>(&mut self, _range: Range<Height>, _tree: &T) {
-        todo!()
+    ///
+    /// *Panics if there are no peers available.*
+    ///
+    pub fn get_cfilters<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
+        if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
+            let ix = self.rng.usize(..peers.len());
+            let peer = *peers.get(ix).unwrap(); // Can't fail.
+            let start_height = range.start;
+            let stop_hash = tree.get_block_by_height(range.end).unwrap().block_hash();
+            let timeout = self.config.request_timeout;
+
+            self.upstream
+                .get_cfilters(*peer, start_height, stop_hash, timeout);
+        } else {
+            panic!("SpvManager::get_cfilters: called without any available peers!");
+        }
     }
 
     /// Handle a `cfheaders` message from a peer.
@@ -400,8 +414,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         };
 
         // The expected hash for this block filter.
-        let hash = if let Some((hash, _)) = self.filters.get_header(height) {
-            hash
+        let header = if let Some((_, header)) = self.filters.get_header(height) {
+            header
         } else {
             // Can't handle this message, we don't have the header.
             return Err(Error::Ignored {
@@ -419,7 +433,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         let filter = BlockFilter::new(&msg.filter);
 
         // TODO: This is wrong. We should check against the header hash.
-        if filter.filter_id(&prev_header.into()) != hash {
+        if filter.filter_id(&prev_header.into()) != header.into() {
             return Err(Error::InvalidMessage { from });
         }
 
@@ -564,8 +578,40 @@ mod tests {
 
     use super::*;
 
+    const FILTER_HASHES: [&'static str; 15] = [
+        "9acd599f31639d36b8e531d12afb430bb17e7cdd6e73c993c343e417cda1f299",
+        "0bfdf66fef865ea20f1a3c4d12a9570685aa89cdd8a950755ef7e870520533ad",
+        "155215e98328f097cf085f721edff6f4e9e1072e14012052b86297aa21085dcb",
+        "227a8f6d137745df7445afcc5b1484c5a70bd1edb2f2886943dcb396803d1d85",
+        "fb86fad94ad95c042894083c7dce973406481b0fd674163fde5d4f52a7bc074d",
+        "37a8db7d504b65c63f0d5559ab616e586257b3d0672d574e7fcc7018eb45aa35",
+        "a1a81f3571c98b30ce69ddf2f9e6a014074d73327d0e0d6cdc4d493fe64e3f2a",
+        "a16c3a9a9da80a10999f73e88fbf5cd63a0266115c5f1f683ee1f1c534ad232d",
+        "f52a72367e64fffdbd5239c00f380db0ac77901a8a8faa9c642d592b87b4b7ca",
+        "81c4c5606d54107bfb9dccbaf23b7a2459f8444816623ba23e3de91f16a525da",
+        "1f64677b953cbc851277f95edb29065c7859cae744ef905b5950f8e79ed97c8a",
+        "8cde7d77626801155a891eea0688d7eb5c37ca74d84493254ff4e4c2a886de4a",
+        "3eb61e435e1ed1675b5c1fcc4a89b4dba3695a8b159aabe4c03833ecd7c41704",
+        "802221cd81ad57748b713d8055b5fc6d5f7cef71b9d59d690857ef835704cab8",
+        "503adfa2634006e453900717f070ffc11a639ee1a0416e4e137f396c7706e6b7",
+    ];
+
+    const FILTERS: [&[u8]; 11] = [
+        &[1, 127, 168, 128],
+        &[1, 140, 59, 16],
+        &[1, 140, 120, 216],
+        &[1, 19, 255, 16],
+        &[1, 63, 182, 112],
+        &[1, 56, 58, 48],
+        &[1, 12, 113, 176],
+        &[1, 147, 204, 216],
+        &[1, 117, 5, 160],
+        &[1, 141, 61, 184],
+        &[1, 155, 155, 152],
+    ];
+
     #[test]
-    fn test_receive_cfheaders() {
+    fn test_receive_filters() {
         let rng = fastrand::Rng::new();
         let network = Network::Mainnet;
         let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
@@ -589,35 +635,33 @@ mod tests {
                 "02c2392180d0ce2b5b6f8b08d39a11ffe831c673311a3ecf77b97fc3f0303c9f",
             )
             .unwrap(),
-            filter_hashes: [
-                "9acd599f31639d36b8e531d12afb430bb17e7cdd6e73c993c343e417cda1f299",
-                "0bfdf66fef865ea20f1a3c4d12a9570685aa89cdd8a950755ef7e870520533ad",
-                "155215e98328f097cf085f721edff6f4e9e1072e14012052b86297aa21085dcb",
-                "227a8f6d137745df7445afcc5b1484c5a70bd1edb2f2886943dcb396803d1d85",
-                "fb86fad94ad95c042894083c7dce973406481b0fd674163fde5d4f52a7bc074d",
-                "37a8db7d504b65c63f0d5559ab616e586257b3d0672d574e7fcc7018eb45aa35",
-                "a1a81f3571c98b30ce69ddf2f9e6a014074d73327d0e0d6cdc4d493fe64e3f2a",
-                "a16c3a9a9da80a10999f73e88fbf5cd63a0266115c5f1f683ee1f1c534ad232d",
-                "f52a72367e64fffdbd5239c00f380db0ac77901a8a8faa9c642d592b87b4b7ca",
-                "81c4c5606d54107bfb9dccbaf23b7a2459f8444816623ba23e3de91f16a525da",
-                "1f64677b953cbc851277f95edb29065c7859cae744ef905b5950f8e79ed97c8a",
-                "8cde7d77626801155a891eea0688d7eb5c37ca74d84493254ff4e4c2a886de4a",
-                "3eb61e435e1ed1675b5c1fcc4a89b4dba3695a8b159aabe4c03833ecd7c41704",
-                "802221cd81ad57748b713d8055b5fc6d5f7cef71b9d59d690857ef835704cab8",
-                "503adfa2634006e453900717f070ffc11a639ee1a0416e4e137f396c7706e6b7",
-            ]
-            .iter()
-            .map(|h| FilterHash::from_hex(h).unwrap())
-            .collect(),
+            filter_hashes: FILTER_HASHES
+                .iter()
+                .map(|h| FilterHash::from_hex(h).unwrap())
+                .collect(),
         };
 
         let mut spvmgr = SpvManager::new(Config::default(), rng, cache, upstream);
+        let peer = &([0, 0, 0, 0], 0).into();
 
-        spvmgr
-            .received_cfheaders(&([0, 0, 0, 0], 0).into(), msg, &tree)
-            .unwrap();
+        // Import the headers.
+        spvmgr.received_cfheaders(peer, msg, &tree).unwrap();
 
         assert_eq!(spvmgr.filters.height(), 15);
         spvmgr.filters.verify(network).unwrap();
+
+        let cfilters = FILTERS
+            .iter()
+            .zip(BITCOIN_HEADERS.iter())
+            .map(|(f, h)| CFilter {
+                filter_type: 0x0,
+                block_hash: h.block_hash(),
+                filter: f.to_vec(),
+            });
+
+        // Now import the filters.
+        for msg in cfilters {
+            spvmgr.received_cfilter(peer, msg, &tree).unwrap();
+        }
     }
 }
