@@ -34,7 +34,7 @@ use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use bitcoin::network::message_blockdata::{GetBlocksMessage, GetHeadersMessage};
+use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
@@ -556,11 +556,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                     self.spvmgr.get_cfilters(range, &self.tree);
                 }
                 Command::GetBlock(hash) => {
-                    self.query(NetworkMessage::GetBlocks(GetBlocksMessage {
-                        locator_hashes: vec![],
-                        stop_hash: hash,
-                        version: self.protocol_version,
-                    }));
+                    self.query(NetworkMessage::GetData(vec![Inventory::Block(hash)]));
                 }
                 Command::SubmitTransaction(tx) => {
                     debug!(target: self.target, "Received command: SubmitTransaction(..)");

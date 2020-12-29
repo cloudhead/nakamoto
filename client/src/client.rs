@@ -19,7 +19,7 @@ use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 
 pub use nakamoto_common::network::Network;
 
@@ -296,14 +296,8 @@ impl<R: Reactor> Handle for ClientHandle<R> {
         Ok(receive.recv()?)
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<Block, handle::Error> {
-        self.command(Command::GetBlock(*hash))?;
-        self.wait(|e| match e {
-            Event::Received(_, NetworkMessage::Block(blk)) if &blk.block_hash() == hash => {
-                Some(blk)
-            }
-            _ => None,
-        })
+    fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
+        self.command(Command::GetBlock(*hash))
     }
 
     fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {
