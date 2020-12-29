@@ -421,11 +421,21 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
                         Ok(import_result)
                     }
-                    Ok(import_result) => {
-                        self.upstream
-                            .event(Event::HeadersImported(import_result.clone()));
+                    Ok(ImportResult::TipChanged(tip, height, reverted)) => {
+                        let peer = self.peers.get_mut(from).unwrap();
+                        if height > peer.height {
+                            peer.tip = tip;
+                            peer.height = height;
+                        }
 
-                        Ok(import_result)
+                        self.upstream
+                            .event(Event::HeadersImported(ImportResult::TipChanged(
+                                tip,
+                                height,
+                                reverted.clone(),
+                            )));
+
+                        Ok(ImportResult::TipChanged(tip, height, reverted))
                     }
                     Err(err) => self
                         .handle_error(from, err)
