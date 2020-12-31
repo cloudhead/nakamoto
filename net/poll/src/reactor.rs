@@ -117,10 +117,11 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
     }
 
     /// Run the given protocol with the reactor.
-    fn run<T: BlockTree, F: Filters>(
+    fn run<T: BlockTree, F: Filters, C: Fn(Event)>(
         &mut self,
         builder: protocol::Builder<T, F>,
         listen_addrs: &[net::SocketAddr],
+        callback: C,
     ) -> Result<(), Error> {
         let listener = if listen_addrs.is_empty() {
             None
@@ -145,7 +146,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
 
         protocol.initialize(local_time);
 
-        if let Control::Shutdown = self.process(&rx, local_time)? {
+        if let Control::Shutdown = self.process(&rx, local_time, &callback)? {
             return Ok(());
         }
 
@@ -153,7 +154,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         while let Some(event) = self.inputs.pop_front() {
             protocol.step(event, local_time);
 
-            if let Control::Shutdown = self.process(&rx, local_time)? {
+            if let Control::Shutdown = self.process(&rx, local_time, &callback)? {
                 return Ok(());
             }
         }
@@ -228,7 +229,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
             while let Some(event) = self.inputs.pop_front() {
                 protocol.step(event, local_time);
 
-                if let Control::Shutdown = self.process(&rx, local_time)? {
+                if let Control::Shutdown = self.process(&rx, local_time, &callback)? {
                     return Ok(());
                 }
             }
@@ -250,10 +251,11 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
 
 impl Reactor<net::TcpStream> {
     /// Process protocol state machine outputs.
-    fn process(
+    fn process<C: Fn(Event)>(
         &mut self,
         outputs: &chan::Receiver<Out>,
         local_time: LocalTime,
+        callback: C,
     ) -> Result<Control, Error> {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
@@ -321,6 +323,7 @@ impl Reactor<net::TcpStream> {
                 Out::Event(event) => {
                     trace!("Event: {:?}", event);
 
+                    callback(event.clone());
                     self.subscriber.try_send(event).unwrap(); // FIXME
                 }
                 Out::Shutdown => {

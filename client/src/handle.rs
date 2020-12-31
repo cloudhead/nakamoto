@@ -6,8 +6,9 @@ use std::ops::Range;
 use crossbeam_channel as chan;
 use thiserror::Error;
 
+use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
-use nakamoto_common::block::{self, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 
 /// An error resulting from a handle method.
@@ -41,9 +42,17 @@ pub trait Handle {
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<(Height, BlockHeader), Error>;
     /// Get a full block from the network.
-    fn get_block(&self, hash: &BlockHash) -> Result<(), Error>;
+    fn get_block(
+        &self,
+        hash: &BlockHash,
+        channel: chan::Sender<(Block, Height)>,
+    ) -> Result<(), Error>;
     /// Get compact filters from the network.
-    fn get_filters(&self, range: Range<Height>) -> Result<(), Error>;
+    fn get_filters(
+        &self,
+        range: Range<Height>,
+        channel: chan::Sender<(BlockFilter, BlockHash, Height)>,
+    ) -> Result<(), Error>;
     /// Broadcast a message to all *outbound* peers.
     fn broadcast(&self, msg: NetworkMessage) -> Result<(), Error>;
     /// Send a message to a random *outbound* peer. Return the chosen

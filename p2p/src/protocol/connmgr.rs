@@ -32,7 +32,7 @@ pub trait Events {
 }
 
 /// A connection-related event.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     /// The node is connecting to peers.
     Connecting(usize, usize),

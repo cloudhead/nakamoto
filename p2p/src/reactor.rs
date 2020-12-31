@@ -25,10 +25,11 @@ pub trait Reactor {
         Self: Sized;
 
     /// Run the given protocol with the reactor.
-    fn run<T: BlockTree, F: Filters>(
+    fn run<T: BlockTree, F: Filters, C: Fn(Event)>(
         &mut self,
         builder: protocol::Builder<T, F>,
         listen_addrs: &[net::SocketAddr],
+        callback: C,
     ) -> Result<(), Error>;
 
     /// Used to wake certain types of reactors.

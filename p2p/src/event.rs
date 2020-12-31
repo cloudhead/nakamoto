@@ -7,7 +7,7 @@ use crate::protocol::PeerId;
 use crate::protocol::{addrmgr, connmgr, peermgr, spvmgr, syncmgr};
 
 /// A peer-to-peer event.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     /// The node is now listening for incoming connections.
     Listening(net::SocketAddr),

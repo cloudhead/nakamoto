@@ -41,7 +41,7 @@ impl Events for () {
 }
 
 /// An event emitted by the address manager.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     /// A new peer address was discovered.
     AddressDiscovered(Address, Source),

@@ -42,7 +42,7 @@ const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 type TimeOffset = i64;
 
 /// An event originating in the SPV manager.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     /// The `version` message was received from a peer.
     PeerVersionReceived {

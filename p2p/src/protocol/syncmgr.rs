@@ -2,6 +2,7 @@
 //! Manages header synchronization with peers.
 //!
 #![warn(missing_docs)]
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use nonempty::NonEmpty;
@@ -108,12 +109,12 @@ pub struct SyncManager<U> {
 }
 
 /// An event emitted by the sync manager.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     /// Headers received from a peer.
     HeadersReceived(PeerId, usize),
     /// Invalid headers received from a peer.
-    InvalidHeadersReceived(PeerId, Error),
+    InvalidHeadersReceived(PeerId, Arc<Error>),
     /// Unsolicited headers received.
     UnsolicitedHeadersReceived(PeerId, usize),
     /// Block received.
@@ -614,7 +615,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             | Error::InvalidBlockTime(_, _) => {
                 self.record_misbehavior(from);
                 self.upstream
-                    .event(Event::InvalidHeadersReceived(*from, err));
+                    .event(Event::InvalidHeadersReceived(*from, Arc::new(err)));
 
                 Ok(())
             }

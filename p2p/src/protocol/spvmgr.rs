@@ -53,7 +53,7 @@ pub enum Error {
 }
 
 /// An event originating in the SPV manager.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     /// Filter was received and validated.
     FilterReceived {

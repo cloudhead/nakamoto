@@ -1,11 +1,13 @@
 //! Core nakamoto client functionality. Wraps all the other modules under a unified
 //! interface.
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
 use std::net;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{self, SystemTime};
 
 use crossbeam_channel as chan;
@@ -15,11 +17,11 @@ use nakamoto_chain::block::store;
 use nakamoto_chain::filter;
 use nakamoto_chain::filter::cache::FilterCache;
 
-use nakamoto_common::block::filter::Filters;
+use nakamoto_common::block::filter::{BlockFilter, Filters};
 use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction};
 
 pub use nakamoto_common::network::Network;
 
@@ -27,7 +29,7 @@ use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
-use nakamoto_p2p::protocol::{connmgr, peermgr, syncmgr};
+use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
 
 pub use nakamoto_p2p::address_book::AddressBook;
 pub use nakamoto_p2p::event::Event;
@@ -96,6 +98,65 @@ impl Default for ClientConfig {
     }
 }
 
+struct BlockSubscribers {
+    subs: HashMap<BlockHash, Vec<chan::Sender<(Block, Height)>>>,
+}
+
+impl BlockSubscribers {
+    fn new() -> Self {
+        Self {
+            subs: HashMap::new(),
+        }
+    }
+
+    fn subscribe(&mut self, hash: BlockHash, channel: chan::Sender<(Block, Height)>) {
+        self.subs.entry(hash).or_default().push(channel);
+    }
+
+    fn input(&self, block: Block, height: Height) {
+        let hash = block.block_hash();
+
+        for (h, subs) in self.subs.iter() {
+            if *h == hash {
+                for sub in subs {
+                    // TODO: Can we avoid the extra clone here? Eg. if there's only one sub.
+                    sub.send((block.clone(), height)).unwrap();
+                }
+            }
+        }
+    }
+}
+
+struct FilterSubscribers {
+    subs: HashMap<Range<Height>, Vec<chan::Sender<(BlockFilter, BlockHash, Height)>>>,
+}
+
+impl FilterSubscribers {
+    fn new() -> Self {
+        Self {
+            subs: HashMap::new(),
+        }
+    }
+
+    fn subscribe(
+        &mut self,
+        range: Range<Height>,
+        channel: chan::Sender<(BlockFilter, BlockHash, Height)>,
+    ) {
+        self.subs.entry(range).or_default().push(channel);
+    }
+
+    fn input(&self, filter: BlockFilter, block_hash: BlockHash, height: Height) {
+        for (range, subs) in self.subs.iter() {
+            if range.contains(&height) {
+                for sub in subs {
+                    sub.send((filter.clone(), block_hash, height)).unwrap();
+                }
+            }
+        }
+    }
+}
+
 /// A light-client process.
 pub struct Client<R> {
     /// Client configuration.
@@ -104,6 +165,9 @@ pub struct Client<R> {
     handle: chan::Sender<Command>,
     events: chan::Receiver<Event>,
     reactor: R,
+
+    blocks: Arc<Mutex<BlockSubscribers>>,
+    filters: Arc<Mutex<FilterSubscribers>>,
 }
 
 impl<R: Reactor> Client<R> {
@@ -112,12 +176,16 @@ impl<R: Reactor> Client<R> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (subscriber, events) = chan::unbounded::<Event>();
         let reactor = R::new(subscriber, commands)?;
+        let blocks = Arc::new(Mutex::new(BlockSubscribers::new()));
+        let filters = Arc::new(Mutex::new(FilterSubscribers::new()));
 
         Ok(Self {
             events,
             handle,
             reactor,
             config,
+            blocks,
+            filters,
         })
     }
 
@@ -216,7 +284,12 @@ impl<R: Reactor> Client<R> {
             cfg,
         };
 
-        self.reactor.run(builder, &listen)?;
+        self.reactor.run(builder, &listen, {
+            let blocks = self.blocks;
+            let filters = self.filters;
+
+            move |event| Self::process_event(event, blocks.clone(), filters.clone())
+        })?;
 
         Ok(())
     }
@@ -249,7 +322,12 @@ impl<R: Reactor> Client<R> {
             cfg,
         };
 
-        self.reactor.run(builder, &self.config.listen)?;
+        self.reactor.run(builder, &self.config.listen, {
+            let blocks = self.blocks;
+            let filters = self.filters;
+
+            move |event| Self::process_event(event, blocks.clone(), filters.clone())
+        })?;
 
         Ok(())
     }
@@ -261,6 +339,31 @@ impl<R: Reactor> Client<R> {
             commands: self.handle.clone(),
             events: self.events.clone(),
             timeout: self.config.timeout,
+            blocks: self.blocks.clone(),
+            filters: self.filters.clone(),
+        }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+
+    fn process_event(
+        event: Event,
+        blocks: Arc<Mutex<BlockSubscribers>>,
+        filters: Arc<Mutex<FilterSubscribers>>,
+    ) {
+        match event {
+            Event::SyncManager(syncmgr::Event::BlockReceived(_, block, height)) => {
+                blocks.lock().unwrap().input(block, height);
+            }
+            Event::SpvManager(spvmgr::Event::FilterReceived {
+                filter,
+                block_hash,
+                height,
+                ..
+            }) => {
+                filters.lock().unwrap().input(filter, block_hash, height);
+            }
+            _ => {}
         }
     }
 }
@@ -271,6 +374,9 @@ pub struct ClientHandle<R: Reactor> {
     events: chan::Receiver<Event>,
     waker: R::Waker,
     timeout: time::Duration,
+
+    blocks: Arc<Mutex<BlockSubscribers>>,
+    filters: Arc<Mutex<FilterSubscribers>>,
 }
 
 impl<R: Reactor> ClientHandle<R> {
@@ -296,16 +402,33 @@ impl<R: Reactor> Handle for ClientHandle<R> {
         Ok(receive.recv()?)
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
-        self.command(Command::GetBlock(*hash))
+    fn get_block(
+        &self,
+        hash: &BlockHash,
+        channel: chan::Sender<(Block, Height)>,
+    ) -> Result<(), handle::Error> {
+        self.blocks.lock().unwrap().subscribe(*hash, channel);
+        self.command(Command::GetBlock(*hash))?;
+
+        Ok(())
     }
 
-    fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {
+    fn get_filters(
+        &self,
+        range: Range<Height>,
+        channel: chan::Sender<(BlockFilter, BlockHash, Height)>,
+    ) -> Result<(), handle::Error> {
         assert!(
             !range.is_empty(),
             "ClientHandle::get_filters: range cannot be empty"
         );
-        self.command(Command::GetFilters(range))
+        self.filters
+            .lock()
+            .unwrap()
+            .subscribe(range.clone(), channel);
+        self.command(Command::GetFilters(range))?;
+
+        Ok(())
     }
 
     fn broadcast(&self, msg: NetworkMessage) -> Result<(), handle::Error> {
