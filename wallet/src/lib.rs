@@ -21,15 +21,6 @@ pub struct Rescan {
     genesis: Height,
 }
 
-impl Default for Rescan {
-    fn default() -> Self {
-        Self {
-            // Approximate height at which BIP32 was standardized.
-            genesis: 237500,
-        }
-    }
-}
-
 /// A Bitcoin wallet.
 pub struct Wallet<H> {
     client: H,

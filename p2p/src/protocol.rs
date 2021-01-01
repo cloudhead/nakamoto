@@ -516,7 +516,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                 Command::Query(msg, reply) => {
                     debug!(target: self.target, "Received command: Query({:?})", msg);
 
-                    reply.send(self.query(msg)).ok();
+                    reply.send(self.query(msg, |_| true)).ok();
                 }
                 Command::Broadcast(msg) => {
                     debug!(target: self.target, "Received command: Broadcast({:?})", msg);
@@ -556,12 +556,14 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                     self.spvmgr.get_cfilters(range, &self.tree);
                 }
                 Command::GetBlock(hash) => {
-                    self.query(NetworkMessage::GetData(vec![Inventory::Block(hash)]));
+                    self.query(NetworkMessage::GetData(vec![Inventory::Block(hash)]), |p| {
+                        p.services.has(ServiceFlags::NETWORK)
+                    });
                 }
                 Command::SubmitTransaction(tx) => {
                     debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
-                    self.query(NetworkMessage::Tx(tx));
+                    self.query(NetworkMessage::Tx(tx), |p| p.relay);
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);
@@ -581,8 +583,15 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
     }
 
     /// Send a message to a random peer. Returns the peer id.
-    fn query(&self, msg: NetworkMessage) -> Option<PeerId> {
-        let peers = self.peermgr.outbound().collect::<Vec<_>>();
+    fn query<S>(&self, msg: NetworkMessage, mut f: S) -> Option<PeerId>
+    where
+        S: FnMut(&peermgr::Peer) -> bool,
+    {
+        let peers = self
+            .peermgr
+            .outbound()
+            .filter(|p| f(*p))
+            .collect::<Vec<_>>();
 
         match peers.len() {
             n if n > 0 => {

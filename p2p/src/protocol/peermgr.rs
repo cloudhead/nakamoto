@@ -139,6 +139,8 @@ pub struct Peer {
     /// An offset in seconds, between this peer's clock and ours.
     /// A positive offset means the peer's clock is ahead of ours.
     pub time_offset: TimeOffset,
+    /// Whether this peer relays transactions.
+    pub relay: bool,
 
     /// Peer nonce. Used to detect self-connections.
     nonce: u64,
@@ -269,6 +271,8 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                 nonce,
                 // Our address, as seen by the remote peer.
                 receiver,
+                // Relay node.
+                relay,
                 ..
             } = msg;
 
@@ -346,6 +350,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                     services,
                     user_agent,
                     state: PeerState::AwaitingVerack { since: now },
+                    relay,
                 },
             );
         }
