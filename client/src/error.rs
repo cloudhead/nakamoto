@@ -10,9 +10,12 @@ use nakamoto_p2p as p2p;
 
 use p2p::protocol::Command;
 
-/// A node error.
+/// A client error.
 #[derive(Error, Debug)]
 pub enum Error {
+    /// An error occuring from a client handle.
+    #[error(transparent)]
+    Handle(#[from] crate::handle::Error),
     /// An error coming from the peer-to-peer sub-system.
     #[error(transparent)]
     P2p(#[from] p2p::error::Error),
