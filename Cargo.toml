@@ -17,6 +17,7 @@ members = [
   "node",
   "test",
   "client",
+  "wallet",
   "net/poll",
 ]
 

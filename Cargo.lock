@@ -222,6 +222,7 @@ dependencies = [
  "quickcheck_macros",
  "rand",
  "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -309,6 +310,21 @@ dependencies = [
  "log",
  "nakamoto-common",
  "nonempty",
+]
+
+[[package]]
+name = "nakamoto-wallet"
+version = "0.1.0"
+dependencies = [
+ "argh",
+ "bitcoin",
+ "chrono",
+ "crossbeam-channel",
+ "log",
+ "nakamoto-client",
+ "nakamoto-common",
+ "nakamoto-net-poll",
+ "nakamoto-p2p",
 ]
 
 [[package]]
