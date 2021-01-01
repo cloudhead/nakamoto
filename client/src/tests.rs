@@ -7,17 +7,17 @@ use nakamoto_chain::filter::cache::FilterCache;
 use nakamoto_common::block::Height;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
-use crate::client::{Client, ClientConfig, ClientHandle, Event};
+use crate::client::{self, Client, Config, Event};
 use crate::error;
-use crate::handle::Handle;
+use crate::handle::Handle as _;
 
 type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
 
 fn network(
-    cfgs: &[ClientConfig],
+    cfgs: &[Config],
 ) -> Result<
     Vec<(
-        ClientHandle<Reactor>,
+        client::Handle<Reactor>,
         net::SocketAddr,
         thread::JoinHandle<()>,
     )>,
@@ -70,9 +70,9 @@ fn test_full_sync() {
     logger::init(log::Level::Debug);
 
     let nodes = network(&[
-        ClientConfig::named("olive"),
-        ClientConfig::named("alice"),
-        ClientConfig::named("misha"),
+        Config::named("olive"),
+        Config::named("alice"),
+        Config::named("misha"),
     ])
     .unwrap();
 

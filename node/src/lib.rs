@@ -4,7 +4,7 @@
 use std::net;
 use std::time;
 
-pub use nakamoto_client::client::{AddressBook, Client, ClientConfig, Network};
+pub use nakamoto_client::client::{AddressBook, Client, Config, Network};
 pub use nakamoto_client::error::Error;
 
 pub mod logger;
@@ -34,7 +34,7 @@ pub fn run(
         AddressBook::from(connect)?
     };
 
-    let mut cfg = ClientConfig {
+    let mut cfg = Config {
         network,
         listen: if listen.is_empty() {
             vec![([0, 0, 0, 0], 0).into()]
@@ -43,7 +43,7 @@ pub fn run(
         },
         address_book,
         timeout: time::Duration::from_secs(30),
-        ..ClientConfig::default()
+        ..Config::default()
     };
     if !connect.is_empty() {
         cfg.target_outbound_peers = connect.len();

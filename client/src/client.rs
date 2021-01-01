@@ -36,11 +36,11 @@ pub use nakamoto_p2p::event::Event;
 pub use nakamoto_p2p::reactor::Reactor;
 
 use crate::error::Error;
-use crate::handle::{self, Handle};
+use crate::handle;
 
 /// Client configuration.
 #[derive(Debug, Clone)]
-pub struct ClientConfig {
+pub struct Config {
     /// Client listen addresses.
     pub listen: Vec<net::SocketAddr>,
     /// Bitcoin network.
@@ -60,7 +60,7 @@ pub struct ClientConfig {
 }
 
 #[cfg(test)]
-impl ClientConfig {
+impl Config {
     /// Create a default client configuration with a name.
     pub(crate) fn named(name: &'static str) -> Self {
         Self {
@@ -70,8 +70,8 @@ impl ClientConfig {
     }
 }
 
-impl From<ClientConfig> for p2p::protocol::Config {
-    fn from(cfg: ClientConfig) -> Self {
+impl From<Config> for p2p::protocol::Config {
+    fn from(cfg: Config) -> Self {
         Self {
             network: cfg.network,
             target: cfg.name,
@@ -83,7 +83,7 @@ impl From<ClientConfig> for p2p::protocol::Config {
     }
 }
 
-impl Default for ClientConfig {
+impl Default for Config {
     fn default() -> Self {
         Self {
             listen: vec![([0, 0, 0, 0], 0).into()],
@@ -160,7 +160,7 @@ impl FilterSubscribers {
 /// A light-client process.
 pub struct Client<R> {
     /// Client configuration.
-    pub config: ClientConfig,
+    pub config: Config,
 
     handle: chan::Sender<Command>,
     events: chan::Receiver<Event>,
@@ -172,7 +172,7 @@ pub struct Client<R> {
 
 impl<R: Reactor> Client<R> {
     /// Create a new client.
-    pub fn new(config: ClientConfig) -> Result<Self, Error> {
+    pub fn new(config: Config) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (subscriber, events) = chan::unbounded::<Event>();
         let reactor = R::new(subscriber, commands)?;
@@ -333,8 +333,8 @@ impl<R: Reactor> Client<R> {
     }
 
     /// Create a new handle to communicate with the client.
-    pub fn handle(&self) -> ClientHandle<R> {
-        ClientHandle {
+    pub fn handle(&self) -> Handle<R> {
+        Handle {
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
             events: self.events.clone(),
@@ -368,8 +368,8 @@ impl<R: Reactor> Client<R> {
     }
 }
 
-/// An instance of [`Handle`] for [`Client`].
-pub struct ClientHandle<R: Reactor> {
+/// An instance of [`handle::Handle`] for [`Client`].
+pub struct Handle<R: Reactor> {
     commands: chan::Sender<Command>,
     events: chan::Receiver<Event>,
     waker: R::Waker,
@@ -379,7 +379,7 @@ pub struct ClientHandle<R: Reactor> {
     filters: Arc<Mutex<FilterSubscribers>>,
 }
 
-impl<R: Reactor> ClientHandle<R> {
+impl<R: Reactor> Handle<R> {
     /// Set the timeout for operations that wait on the network.
     pub fn set_timeout(&mut self, timeout: time::Duration) {
         self.timeout = timeout;
@@ -394,7 +394,7 @@ impl<R: Reactor> ClientHandle<R> {
     }
 }
 
-impl<R: Reactor> Handle for ClientHandle<R> {
+impl<R: Reactor> handle::Handle for Handle<R> {
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
         let (transmit, receive) = chan::bounded::<(Height, BlockHeader)>(1);
         self.command(Command::GetTip(transmit))?;
@@ -420,7 +420,7 @@ impl<R: Reactor> Handle for ClientHandle<R> {
     ) -> Result<(), handle::Error> {
         assert!(
             !range.is_empty(),
-            "ClientHandle::get_filters: range cannot be empty"
+            "client::Handle::get_filters: range cannot be empty"
         );
         self.filters
             .lock()

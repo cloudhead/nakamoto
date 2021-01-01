@@ -13,19 +13,19 @@
 //! ```
 //! use std::{net, thread};
 //!
-//! use nakamoto_client::client::{AddressBook, Client, ClientConfig, Network};
+//! use nakamoto_client::client::{AddressBook, Client, Config, Network};
 //! use nakamoto_client::error::Error;
-//! use nakamoto_client::handle::Handle;
+//! use nakamoto_client::handle::Handle as _;
 //!
 //! /// The network reactor we're going to use.
 //! type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
 //!
 //! /// Run the light-client.
 //! fn main() {
-//!     let cfg = ClientConfig {
+//!     let cfg = Config {
 //!         network: Network::Testnet,
 //!         address_book: AddressBook::new(),
-//!         ..ClientConfig::default()
+//!         ..Config::default()
 //!     };
 //!     // Create a client using the above network reactor.
 //!     let client = Client::<Reactor>::new(cfg).unwrap();
