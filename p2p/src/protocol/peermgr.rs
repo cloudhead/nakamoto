@@ -286,14 +286,11 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                     .upstream
                     .disconnect(*addr, DisconnectReason::PeerProtocolVersion(version));
             }
+
             // Peers that don't advertise the `NETWORK` service are not full nodes.
             // It's not so useful for us to connect to them, because they're likely
             // to be less secure.
-            if conn.link.is_outbound()
-                && !services.has(ServiceFlags::NETWORK)
-                && !services.has(ServiceFlags::NETWORK_LIMITED)
-                && !whitelisted
-            {
+            if conn.link.is_outbound() && !services.has(self.required_services()) && !whitelisted {
                 return self
                     .upstream
                     .disconnect(*addr, DisconnectReason::PeerServices(services));
@@ -419,7 +416,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             // Local time.
             timestamp,
             // Receiver address, as perceived by us.
-            receiver: Address::new(&addr, ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS),
+            receiver: Address::new(&addr, self.required_services()),
             // Local address (unreliable) and local services (same as `services` field)
             sender: Address::new(&local_addr, self.config.services),
             // A nonce to detect connections to self.
@@ -431,5 +428,10 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             // Whether we want to receive transaction `inv` messages.
             relay: false,
         }
+    }
+
+    /// Services required from peers.
+    pub fn required_services(&self) -> ServiceFlags {
+        ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS
     }
 }

@@ -356,6 +356,9 @@ fn test_idle() {
     let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
+        configure: |cfg| {
+            cfg.whitelist = setup::CONFIG.whitelist.clone();
+        },
         rng: fastrand::Rng::new(),
         peers: vec![
             PeerConfig {
@@ -445,6 +448,7 @@ fn test_maintain_connections(seed: u64) {
         ],
         configure: |cfg| {
             cfg.target_outbound_peers = TARGET_PEERS;
+            cfg.whitelist = setup::CONFIG.whitelist.clone();
         },
         rng,
         ..Default::default()
@@ -507,6 +511,9 @@ fn test_getheaders_retry(seed: u64) {
             PeerConfig::new("olive", longest.clone()),
             PeerConfig::new("fred", longest),
         ],
+        configure: |cfg| {
+            cfg.whitelist = setup::CONFIG.whitelist.clone();
+        },
         rng,
         initialize: false,
         ..Default::default()
@@ -727,6 +734,7 @@ fn test_getaddr() {
         configure: |cfg| {
             // Each peer only needs to connect to three other peers.
             cfg.target_outbound_peers = 3;
+            cfg.whitelist = setup::CONFIG.whitelist.clone();
         },
         ..Default::default()
     }
@@ -792,6 +800,7 @@ fn test_stale_tip() {
         ],
         configure: |cfg| {
             cfg.target_outbound_peers = 1;
+            cfg.whitelist = setup::CONFIG.whitelist.clone();
         },
         initialize: false,
         ..Default::default()
@@ -881,6 +890,7 @@ fn test_addrs() {
         configure: |cfg| {
             // Each peer only needs to connect to three other peers.
             cfg.target_outbound_peers = 3;
+            cfg.whitelist = setup::CONFIG.whitelist.clone();
         },
         ..Default::default()
     }
