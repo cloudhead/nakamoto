@@ -47,7 +47,7 @@ use nakamoto_common::network::{self, Network};
 /// For now, we only support `70012`, due to lacking `sendcmpct` support.
 pub const PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
-pub const USER_AGENT: &str = "/nakamoto:0.0.0/";
+pub const USER_AGENT: &str = "/nakamoto:0.1.0/";
 
 /// Block locators. Consists of starting hashes and a stop hash.
 type Locators = (Vec<BlockHash>, BlockHash);
