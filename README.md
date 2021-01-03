@@ -17,7 +17,7 @@ to it via a foreign function interface (FFI).
 Nakamoto is split into several crates, each handling a different aspect of the
 light-client protocol. Although these crates are designed to be used in tandem,
 swapping implementations is trivial, due to the explicit boundaries between
-them. From a high-level, we have:
+them, and the use of traits. From a high-level, we have:
 
 * `nakamoto-client`: the core light-client library
 * `nakamoto-p2p`: the protocol state-machine implementation
@@ -25,6 +25,10 @@ them. From a high-level, we have:
 * `nakamoto-net-poll`: the default *poll*-based networking library
 * `nakamoto-common`: common functionality used by all crates
 * `nakamoto-node`: a standalone light-client daemon
+* `nakamoto-wallet`: a very basic watch-only wallet built on the above crates
+
+For an overview of the above, see the [architecture diagram](docs/architecture.svg)
+in the `docs` folder.
 
 ## Status
 
@@ -33,14 +37,17 @@ implemented. Nakamoto is able to discover peers, download and verify the
 longest chain and handle forks, while implementing the full header verification
 protocol.
 
-Client side block filtering (BIP 157/158) is in the works, and is the next
-major milestone.
+Client side block filtering (BIP 157/158) is implemented and working. See
+`nakamoto-wallet` for an example of how to use it.
 
 Once peer-to-peer layer encryption (BIP 151) lands in Core, it will also
 be implemented in Nakamoto.
 
 Finally, a C FFI will be implemented, to make it easy to embed the client
 in mobile applications.
+
+Though wallet functionality will slowly be added, it isn't the primary focus
+of this project, which sits one level below wallets.
 
 ## Projects goals
 
