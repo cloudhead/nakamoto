@@ -63,12 +63,12 @@ of this project, which sits one level below wallets.
   forbid any unsafe code.
 
 * __Efficiency__: blockchain synchronization should be done as efficiently as
-  possible, with low memory and disk overhead. We target resource-constrained
-  environments, such as mobile.
+  possible, with low memory, disk and bandwidth overhead. We target
+  resource-constrained environments, such as mobile.
 
 * __Privacy__: when possible, privacy-preserving techniques should be employed.
-  For example, *Client Side Block Filtering* (BIP 157/158) should be used over
-  bloom filters (BIP 37) to ensure user privacy.
+  *Client Side Block Filtering* (BIP 157/158) should be used over bloom
+  filters (BIP 37) to ensure user privacy and provide censorship resistance.
 
 ## Usage
 
