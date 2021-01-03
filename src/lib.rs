@@ -13,12 +13,12 @@
 //! ```
 //! use std::{net, thread};
 //!
-//! use nakamoto_client::client::{AddressBook, Client, Config, Network};
-//! use nakamoto_client::error::Error;
-//! use nakamoto_client::handle::Handle as _;
+//! use nakamoto::client::{AddressBook, Client, Config, Network};
+//! use nakamoto::client::error::Error;
+//! use nakamoto::client::handle::Handle as _;
 //!
 //! /// The network reactor we're going to use.
-//! type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
+//! type Reactor = nakamoto::net::poll::Reactor<net::TcpStream>;
 //!
 //! /// Run the light-client.
 //! fn main() {
@@ -49,7 +49,14 @@ pub use nakamoto_common as common;
 pub use nakamoto_node as node;
 #[cfg(feature = "nakamoto-p2p")]
 pub use nakamoto_p2p as p2p;
+#[cfg(feature = "nakamoto-wallet")]
+pub use nakamoto_wallet as wallet;
 
 #[cfg(test)]
 #[cfg(feature = "nakamoto-test")]
 pub use nakamoto_test as test;
+
+pub mod net {
+    #[cfg(feature = "nakamoto-net-poll")]
+    pub use nakamoto_net_poll as poll;
+}

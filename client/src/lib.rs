@@ -4,5 +4,7 @@ pub mod client;
 pub mod error;
 pub mod handle;
 
+pub use client::*;
+
 #[cfg(test)]
 mod tests;

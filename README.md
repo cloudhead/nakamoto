@@ -81,6 +81,10 @@ In your *Cargo.toml*:
 
     cargo test --all
 
+## Running the daemon
+
+    cargo run --release -p nakamoto-node -- --testnet
+
 ## Contributing
 
 If you'd like to contribute to the development of Nakamoto, please get in touch!

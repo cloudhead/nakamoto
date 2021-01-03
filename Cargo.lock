@@ -206,6 +206,7 @@ dependencies = [
  "nakamoto-node",
  "nakamoto-p2p",
  "nakamoto-test",
+ "nakamoto-wallet",
 ]
 
 [[package]]

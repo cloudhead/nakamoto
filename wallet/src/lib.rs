@@ -10,10 +10,10 @@ use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::{OutPoint, TxOut};
 use bitcoin::Address;
 
-use nakamoto_client::client::Network;
-use nakamoto_client::client::{AddressBook, Client, Config};
 use nakamoto_client::error::Error;
 use nakamoto_client::handle::Handle;
+use nakamoto_client::Network;
+use nakamoto_client::{AddressBook, Client, Config};
 use nakamoto_common::block::Height;
 
 /// Re-scan parameters.

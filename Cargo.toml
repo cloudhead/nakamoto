@@ -37,4 +37,5 @@ nakamoto-client = { version = "0.1.0", path = "./client", optional = true }
 nakamoto-chain = { version = "0.1.0", path = "./chain", optional = true }
 nakamoto-p2p = { version = "0.1.0", path = "./p2p", optional = true }
 nakamoto-test = { version = "0.1.0", path = "./test", optional = true }
+nakamoto-wallet = { version = "0.1.0", path = "./wallet", optional = true }
 nakamoto-net-poll = { version = "0.1.0", path = "./net/poll", optional = true }
