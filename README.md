@@ -88,6 +88,7 @@ In your *Cargo.toml*:
 ## Contributing
 
 If you'd like to contribute to the development of Nakamoto, please get in touch!
+Otherwise, do read the contribution [guidelines](CONTRIBUTING.md).
 
 ## Donations
 
