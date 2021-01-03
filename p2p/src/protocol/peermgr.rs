@@ -415,8 +415,8 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             services: self.config.services,
             // Local time.
             timestamp,
-            // Receiver address, as perceived by us.
-            receiver: Address::new(&addr, self.required_services()),
+            // Receiver address and services, as perceived by us.
+            receiver: Address::new(&addr, ServiceFlags::NONE),
             // Local address (unreliable) and local services (same as `services` field)
             sender: Address::new(&local_addr, self.config.services),
             // A nonce to detect connections to self.
