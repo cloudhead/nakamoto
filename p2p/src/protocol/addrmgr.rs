@@ -4,6 +4,9 @@
 #![warn(missing_docs)]
 use std::net;
 
+#[cfg(test)]
+use microserde as serde;
+
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 
@@ -75,7 +78,7 @@ impl Default for Source {
 }
 
 /// A known address.
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct KnownAddress {
     /// Network address.
     addr: Address,
@@ -95,6 +98,73 @@ impl KnownAddress {
             last_success: None,
             last_attempt: None,
         }
+    }
+
+    #[cfg(test)]
+    fn to_json(&self) -> serde::json::Value {
+        use serde::json::{Number, Object, Value};
+
+        let ip = &self.addr.address;
+        let port = &self.addr.port;
+        let address = net::SocketAddr::from((*ip, *port)).to_string();
+        let services = self.addr.services.as_u64();
+
+        let mut obj = Object::new();
+
+        obj.insert("address".to_owned(), Value::String(address));
+        obj.insert("services".to_owned(), Value::Number(Number::U64(services)));
+        obj.insert(
+            "last_success".to_owned(),
+            match self.last_success {
+                Some(t) => Value::Number(Number::U64(t.block_time() as u64)),
+                None => Value::Null,
+            },
+        );
+        obj.insert(
+            "last_attempt".to_owned(),
+            match self.last_attempt {
+                Some(t) => Value::Number(Number::U64(t.block_time() as u64)),
+                None => Value::Null,
+            },
+        );
+
+        Value::Object(obj)
+    }
+
+    #[cfg(test)]
+    fn from_json(v: serde::json::Value) -> Result<Self, serde::Error> {
+        use serde::json::{Number, Value};
+
+        let obj = match v {
+            Value::Object(obj) => obj,
+            _ => return Err(serde::Error),
+        };
+
+        let addr = match obj.get("address") {
+            Some(Value::String(addr)) => addr.parse().unwrap(),
+            _ => return Err(serde::Error),
+        };
+        let services = match obj.get("services") {
+            Some(Value::Number(Number::U64(srv))) => ServiceFlags::from(*srv),
+            _ => return Err(serde::Error),
+        };
+        let last_success = match obj.get("last_success") {
+            Some(Value::Null) => None,
+            Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
+            _ => return Err(serde::Error),
+        };
+        let last_attempt = match obj.get("last_attempt") {
+            Some(Value::Null) => None,
+            Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
+            _ => return Err(serde::Error),
+        };
+
+        Ok(Self {
+            addr: Address::new(&addr, services),
+            source: Source::Other,
+            last_success,
+            last_attempt,
+        })
     }
 }
 
@@ -640,5 +710,22 @@ mod tests {
             addr_key(&net::IpAddr::V4(net::Ipv4Addr::new(1, 255, 3, 4))),
             1
         );
+    }
+
+    #[test]
+    fn test_serde() {
+        let sockaddr = net::SocketAddr::from(([1, 2, 3, 4], 8333));
+        let services = ServiceFlags::NETWORK;
+        let ka = KnownAddress {
+            addr: Address::new(&sockaddr, services),
+            source: Source::default(),
+            last_success: Some(LocalTime::from_secs(42)),
+            last_attempt: None,
+        };
+
+        let value = ka.to_json();
+        let deserialized = KnownAddress::from_json(value).unwrap();
+
+        assert_eq!(ka, deserialized);
     }
 }
