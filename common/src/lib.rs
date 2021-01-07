@@ -4,3 +4,4 @@
 pub mod block;
 pub mod collections;
 pub mod network;
+pub mod p2p;

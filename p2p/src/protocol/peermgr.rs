@@ -242,13 +242,13 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
     }
 
     /// Called when a `version` message was received.
-    pub fn received_version<T>(
+    pub fn received_version<S, T>(
         &mut self,
         addr: &PeerId,
         msg: VersionMessage,
         height: Height,
         now: LocalTime,
-        addrs: &mut addrmgr::AddressManager<T>,
+        addrs: &mut addrmgr::AddressManager<S, T>,
     ) {
         if let Some(conn) = self.connections.remove(addr) {
             self.upstream.event(Event::PeerVersionReceived {

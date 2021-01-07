@@ -4,6 +4,7 @@ use std::collections::{HashMap, HashSet};
 use std::net;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::p2p::peer;
 
 use super::addrmgr::{self, AddressManager};
 use super::channel::{Disconnect, SetTimeout};
@@ -113,7 +114,11 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Initialize the connection manager. Must be called once.
-    pub fn initialize(&mut self, time: LocalTime, addrmgr: &mut AddressManager<U>) {
+    pub fn initialize<S: peer::Store>(
+        &mut self,
+        time: LocalTime,
+        addrmgr: &mut AddressManager<S, U>,
+    ) {
         // FIXME: Should be random
         let addrs = addrmgr
             .iter()
@@ -129,10 +134,10 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Connect to a peer.
-    pub fn connect(
+    pub fn connect<S: peer::Store>(
         &mut self,
         addr: &PeerId,
-        addrmgr: &mut AddressManager<U>,
+        addrmgr: &mut AddressManager<S, U>,
         local_time: LocalTime,
     ) {
         if !self.connected.contains_key(&addr) {
@@ -184,7 +189,11 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Call when a peer disconnected.
-    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr, addrmgr: &AddressManager<U>) {
+    pub fn peer_disconnected<S: peer::Store>(
+        &mut self,
+        addr: &net::SocketAddr,
+        addrmgr: &AddressManager<S, U>,
+    ) {
         debug_assert!(self.connected.contains_key(&addr));
         debug_assert!(!self.disconnected.contains(&addr));
 
@@ -202,7 +211,11 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Call when we recevied a timeout.
-    pub fn received_timeout(&mut self, local_time: LocalTime, addrmgr: &AddressManager<U>) {
+    pub fn received_timeout<S: peer::Store>(
+        &mut self,
+        local_time: LocalTime,
+        addrmgr: &AddressManager<S, U>,
+    ) {
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.maintain_connections(addrmgr);
             self.upstream.set_timeout(IDLE_TIMEOUT);
@@ -219,7 +232,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_connections(&mut self, addrmgr: &AddressManager<U>) {
+    fn maintain_connections<S: peer::Store>(&mut self, addrmgr: &AddressManager<S, U>) {
         let current = self.outbound().count();
 
         if current < self.config.target_outbound_peers {

@@ -37,6 +37,7 @@ pub use nakamoto_p2p::reactor::Reactor;
 
 use crate::error::Error;
 use crate::handle;
+use crate::peer;
 
 /// Client configuration.
 #[derive(Debug, Clone)]
@@ -264,6 +265,8 @@ impl<R: Reactor> Client<R> {
 
         filters.verify(self.config.network)?; // Verify store integrity.
 
+        let peers = peer::Cache::open(dir.join("peers.json"))?;
+
         log::info!("{} peer(s) found..", self.config.address_book.len());
         log::debug!("{:?}", self.config.address_book);
 
@@ -280,6 +283,7 @@ impl<R: Reactor> Client<R> {
             cache,
             clock,
             filters,
+            peers,
             rng,
             cfg,
         };
@@ -296,7 +300,12 @@ impl<R: Reactor> Client<R> {
 
     /// Start the client process, supplying the block cache. This function is meant to be run in
     /// its own thread.
-    pub fn run_with<T: BlockTree, F: Filters>(mut self, cache: T, filters: F) -> Result<(), Error> {
+    pub fn run_with<T: BlockTree, F: Filters, P: peer::Store>(
+        mut self,
+        cache: T,
+        filters: F,
+        peers: P,
+    ) -> Result<(), Error> {
         let cfg = p2p::protocol::Config::from(
             self.config.name,
             self.config.network,
@@ -318,6 +327,7 @@ impl<R: Reactor> Client<R> {
             cache,
             clock,
             filters,
+            peers,
             rng,
             cfg,
         };

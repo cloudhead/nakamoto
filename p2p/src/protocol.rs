@@ -42,6 +42,7 @@ use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::Transaction;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::network::{self, Network};
+use nakamoto_common::p2p::peer;
 
 /// Peer-to-peer protocol version.
 /// For now, we only support `70012`, due to lacking `sendcmpct` support.
@@ -225,7 +226,7 @@ mod message {
 /// An instantiation of `Protocol`, for the Bitcoin P2P network. Parametrized over the
 /// block-tree and compact filter store.
 #[derive(Debug)]
-pub struct Protocol<T, F> {
+pub struct Protocol<T, F, P> {
     /// Block tree.
     tree: T,
     /// Bitcoin network we're connecting to.
@@ -237,7 +238,7 @@ pub struct Protocol<T, F> {
     /// Peer whitelist.
     whitelist: Whitelist,
     /// Peer address manager.
-    addrmgr: AddressManager<Upstream>,
+    addrmgr: AddressManager<P, Upstream>,
     /// Blockchain synchronization manager.
     syncmgr: SyncManager<Upstream>,
     /// Peer connection manager.
@@ -262,11 +263,13 @@ pub struct Protocol<T, F> {
 
 /// Protocol builder. Consume to build a new protocol instance.
 #[derive(Clone)]
-pub struct Builder<T, F> {
+pub struct Builder<T, F, P> {
     /// Block cache.
     pub cache: T,
     /// Filter cache.
     pub filters: F,
+    /// Peer cache.
+    pub peers: P,
     /// Clock.
     pub clock: AdjustedTime<PeerId>,
     /// RNG.
@@ -275,12 +278,13 @@ pub struct Builder<T, F> {
     pub cfg: Config,
 }
 
-impl<T: BlockTree, F: Filters> Builder<T, F> {
+impl<T: BlockTree, F: Filters, P: peer::Store> Builder<T, F, P> {
     /// TODO
-    pub fn build(self, upstream: chan::Sender<Out>) -> Protocol<T, F> {
+    pub fn build(self, upstream: chan::Sender<Out>) -> Protocol<T, F, P> {
         Protocol::new(
             self.cache,
             self.filters,
+            self.peers,
             self.clock,
             self.rng,
             self.cfg,
@@ -379,11 +383,12 @@ impl Whitelist {
     }
 }
 
-impl<T: BlockTree, F: Filters> Protocol<T, F> {
+impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     /// Construct a new protocol instance.
     pub fn new(
         tree: T,
         filters: F,
+        peers: P,
         clock: AdjustedTime<PeerId>,
         rng: fastrand::Rng,
         config: Config,
@@ -404,7 +409,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
 
         let upstream = Upstream::new(network, protocol_version, target, upstream);
 
-        let addrmgr = AddressManager::from(address_book, rng.clone(), upstream.clone());
+        let addrmgr = AddressManager::from(address_book, rng.clone(), peers, upstream.clone());
         let syncmgr = SyncManager::new(
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
@@ -583,9 +588,9 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
     }
 
     /// Send a message to a random peer. Returns the peer id.
-    fn query<S>(&self, msg: NetworkMessage, mut f: S) -> Option<PeerId>
+    fn query<Q>(&self, msg: NetworkMessage, mut f: Q) -> Option<PeerId>
     where
-        S: FnMut(&peermgr::Peer) -> bool,
+        Q: FnMut(&peermgr::Peer) -> bool,
     {
         let peers = self
             .peermgr
@@ -766,7 +771,7 @@ impl<T: BlockTree, F: Filters> Protocol<T, F> {
                     return;
                 }
                 self.addrmgr
-                    .insert(addrs.into_iter(), addrmgr::Source::Peer(addr));
+                    .insert(addrs.into_iter(), peer::Source::Peer(addr));
             }
             NetworkMessage::GetAddr => {
                 self.addrmgr.received_getaddr(&addr);

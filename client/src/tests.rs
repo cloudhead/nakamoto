@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net;
 use std::thread;
 
@@ -41,8 +42,9 @@ fn network(
                 let store = store::Memory::new((genesis, vec![]).into());
                 let cache = BlockCache::from(store, params, &checkpoints).unwrap();
                 let filters = FilterCache::from(store::Memory::default()).unwrap();
+                let peers = HashMap::new();
 
-                node.run_with(cache, filters).unwrap();
+                node.run_with(cache, filters, peers).unwrap();
             }
         });
 

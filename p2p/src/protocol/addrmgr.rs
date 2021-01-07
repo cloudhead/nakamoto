@@ -4,21 +4,23 @@
 #![warn(missing_docs)]
 use std::net;
 
-#[cfg(test)]
-use microserde as serde;
-
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::BlockTime;
 use nakamoto_common::collections::{HashMap, HashSet};
+use nakamoto_common::p2p::peer::{KnownAddress, Source, Store};
 
+use super::channel::SetTimeout;
 use super::{Link, PeerId};
 use crate::address_book::AddressBook;
 
 /// Time to wait until a request times out.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
+
+/// Idle timeout. Used to run periodic functions.
+pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(30);
 
 /// Maximum number of addresses to return when receiving a `getaddr` message.
 const MAX_GETADDR_ADDRESSES: usize = 8;
@@ -60,137 +62,32 @@ impl std::fmt::Display for Event {
     }
 }
 
-/// Address source. Specifies where an address originated from.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Source {
-    /// An address that was shared by another peer.
-    Peer(net::SocketAddr),
-    /// An address that was discovered by connecting to a peer.
-    Connected,
-    /// An address from an unspecified source.
-    Other,
-}
-
-impl Default for Source {
-    fn default() -> Self {
-        Self::Other
-    }
-}
-
-/// A known address.
-#[derive(Debug, PartialEq, Eq)]
-struct KnownAddress {
-    /// Network address.
-    addr: Address,
-    /// Address of the peer who sent us this address.
-    source: Source,
-    /// Last time this address was used to successfully connect to a peer.
-    last_success: Option<LocalTime>,
-    /// Last time this address was tried.
-    last_attempt: Option<LocalTime>,
-}
-
-impl KnownAddress {
-    fn new(addr: Address, source: Source) -> Self {
-        Self {
-            addr,
-            source,
-            last_success: None,
-            last_attempt: None,
-        }
-    }
-
-    #[cfg(test)]
-    fn to_json(&self) -> serde::json::Value {
-        use serde::json::{Number, Object, Value};
-
-        let ip = &self.addr.address;
-        let port = &self.addr.port;
-        let address = net::SocketAddr::from((*ip, *port)).to_string();
-        let services = self.addr.services.as_u64();
-
-        let mut obj = Object::new();
-
-        obj.insert("address".to_owned(), Value::String(address));
-        obj.insert("services".to_owned(), Value::Number(Number::U64(services)));
-        obj.insert(
-            "last_success".to_owned(),
-            match self.last_success {
-                Some(t) => Value::Number(Number::U64(t.block_time() as u64)),
-                None => Value::Null,
-            },
-        );
-        obj.insert(
-            "last_attempt".to_owned(),
-            match self.last_attempt {
-                Some(t) => Value::Number(Number::U64(t.block_time() as u64)),
-                None => Value::Null,
-            },
-        );
-
-        Value::Object(obj)
-    }
-
-    #[cfg(test)]
-    fn from_json(v: serde::json::Value) -> Result<Self, serde::Error> {
-        use serde::json::{Number, Value};
-
-        let obj = match v {
-            Value::Object(obj) => obj,
-            _ => return Err(serde::Error),
-        };
-
-        let addr = match obj.get("address") {
-            Some(Value::String(addr)) => addr.parse().unwrap(),
-            _ => return Err(serde::Error),
-        };
-        let services = match obj.get("services") {
-            Some(Value::Number(Number::U64(srv))) => ServiceFlags::from(*srv),
-            _ => return Err(serde::Error),
-        };
-        let last_success = match obj.get("last_success") {
-            Some(Value::Null) => None,
-            Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
-            _ => return Err(serde::Error),
-        };
-        let last_attempt = match obj.get("last_attempt") {
-            Some(Value::Null) => None,
-            Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
-            _ => return Err(serde::Error),
-        };
-
-        Ok(Self {
-            addr: Address::new(&addr, services),
-            source: Source::Other,
-            last_success,
-            last_attempt,
-        })
-    }
-}
-
 /// Manages peer network addresses.
 #[derive(Debug)]
-pub struct AddressManager<U> {
-    addresses: HashMap<net::IpAddr, KnownAddress>,
+pub struct AddressManager<P, U> {
+    /// Peer address store.
+    peers: P,
     address_ranges: HashMap<u8, HashSet<net::IpAddr>>,
     connected: HashSet<net::IpAddr>,
     sources: HashSet<net::SocketAddr>,
     local_addrs: HashSet<net::SocketAddr>,
     /// The last time we asked our peers for new addresses.
     last_request: Option<LocalTime>,
+    /// The last time we idled.
+    last_idle: Option<LocalTime>,
     upstream: U,
     rng: fastrand::Rng,
 }
 
-impl<U> AddressManager<U> {
+impl<P: Store, U> AddressManager<P, U> {
     /// Iterate over all addresses.
     pub fn iter(&self) -> impl Iterator<Item = &Address> {
-        self.addresses.iter().map(|(_, ka)| &ka.addr)
+        self.peers.iter().map(|(_, ka)| &ka.addr)
     }
 
     /// Check whether we have unused addresses.
     pub fn is_exhausted(&self) -> bool {
-        for addr in self.addresses.keys() {
+        for (addr, _) in self.peers.iter() {
             if !self.connected.contains(addr) {
                 return false;
             }
@@ -199,7 +96,7 @@ impl<U> AddressManager<U> {
     }
 }
 
-impl<U: SyncAddresses> AddressManager<U> {
+impl<P: Store, U: SyncAddresses + SetTimeout> AddressManager<P, U> {
     /// Get addresses from peers.
     pub fn get_addresses(&self) {
         for peer in &self.sources {
@@ -230,6 +127,12 @@ impl<U: SyncAddresses> AddressManager<U> {
         {
             self.get_addresses();
             self.last_request = Some(local_time);
+            self.upstream.set_timeout(REQUEST_TIMEOUT);
+        }
+
+        // If it's been a while, save addresses to store.
+        if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
+            self.upstream.set_timeout(IDLE_TIMEOUT);
         }
     }
 
@@ -246,7 +149,7 @@ impl<U: SyncAddresses> AddressManager<U> {
         }
 
         let ka = self
-            .addresses
+            .peers
             .get_mut(&addr.ip())
             .expect("the address must exist");
 
@@ -260,7 +163,7 @@ impl<U: SyncAddresses> AddressManager<U> {
     }
 }
 
-impl<U> AddressManager<U> {
+impl<P, U> AddressManager<P, U> {
     /// Record an address of ours as seen by a remote peer.
     /// This helps avoid self-connections.
     pub fn record_local_addr(&mut self, addr: net::SocketAddr) {
@@ -268,24 +171,25 @@ impl<U> AddressManager<U> {
     }
 }
 
-impl<U: Events> AddressManager<U> {
+impl<P: Store, U: Events> AddressManager<P, U> {
     /// Create a new, empty address manager.
-    pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
+    pub fn new(rng: fastrand::Rng, peers: P, upstream: U) -> Self {
         Self {
-            addresses: HashMap::with_hasher(rng.clone().into()),
+            peers,
             address_ranges: HashMap::with_hasher(rng.clone().into()),
             connected: HashSet::with_hasher(rng.clone().into()),
             sources: HashSet::with_hasher(rng.clone().into()),
             local_addrs: HashSet::with_hasher(rng.clone().into()),
             last_request: None,
+            last_idle: None,
             upstream,
             rng,
         }
     }
 
     /// Create a new address manager from an address book.
-    pub fn from(book: AddressBook, rng: fastrand::Rng, upstream: U) -> Self {
-        let mut addrmgr = Self::new(rng, upstream);
+    pub fn from(book: AddressBook, rng: fastrand::Rng, peers: P, upstream: U) -> Self {
+        let mut addrmgr = Self::new(rng, peers, upstream);
 
         for addr in book.iter() {
             addrmgr.insert_sockaddr(std::iter::once(*addr), Source::Other);
@@ -293,19 +197,19 @@ impl<U: Events> AddressManager<U> {
         addrmgr
     }
 
-    /// The number of addresses known.
+    /// The number of peers known.
     pub fn len(&self) -> usize {
-        self.addresses.len()
+        self.peers.len()
     }
 
-    /// Whether there are any addresses known to the address manager.
+    /// Whether there are any peers known to the address manager.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// Clear the address manager of all addresses.
+    /// Clear the address manager of all peers.
     pub fn clear(&mut self) {
-        self.addresses.clear();
+        self.peers.clear();
         self.address_ranges.clear();
     }
 
@@ -324,7 +228,7 @@ impl<U: Events> AddressManager<U> {
 
     /// Called when a peer connection timed out while attempting to connect.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr, time: LocalTime) {
-        if let Some(ka) = self.addresses.get_mut(&addr.ip()) {
+        if let Some(ka) = self.peers.get_mut(&addr.ip()) {
             ka.last_attempt = Some(time);
         }
     }
@@ -358,13 +262,16 @@ impl<U: Events> AddressManager<U> {
     /// sent by peers on the network.
     ///
     /// ```
+    /// use std::collections::HashMap;
+    ///
     /// use bitcoin::network::address::Address;
     /// use bitcoin::network::constants::ServiceFlags;
     ///
-    /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Source};
+    /// use nakamoto_p2p::protocol::addrmgr::AddressManager;
+    /// use nakamoto_common::p2p::peer::Source;
     /// use nakamoto_common::block::BlockTime;
     ///
-    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), ());
+    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), HashMap::new(), ());
     ///
     /// addrmgr.insert(vec![
     ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
@@ -423,7 +330,7 @@ impl<U: Events> AddressManager<U> {
             }
 
             if self
-                .addresses
+                .peers
                 .insert(ip, KnownAddress::new(addr.clone(), source.clone()))
                 .is_some()
             {
@@ -453,7 +360,7 @@ impl<U: Events> AddressManager<U> {
                     .expect("the range is not empty");
 
                 range.remove(&addr);
-                self.addresses.remove(&addr);
+                self.peers.remove(&addr);
             }
             range.insert(ip);
         }
@@ -469,13 +376,16 @@ impl<U: Events> AddressManager<U> {
     /// This works under the assumption that adversaries are *localized*.
     ///
     /// ```
+    /// use std::collections::HashMap;
+    ///
     /// use bitcoin::network::address::Address;
     /// use bitcoin::network::constants::ServiceFlags;
     ///
-    /// use nakamoto_p2p::protocol::addrmgr::{Source, AddressManager};
+    /// use nakamoto_p2p::protocol::addrmgr::AddressManager;
+    /// use nakamoto_common::p2p::peer::Source;
     /// use nakamoto_common::block::BlockTime;
     ///
-    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), ());
+    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), HashMap::new(), ());
     ///
     /// // Addresses controlled by an adversary.
     /// let adversary_addrs = vec![
@@ -534,7 +444,7 @@ impl<U: Events> AddressManager<U> {
         // loop forever.
         let mut visited = HashSet::with_hasher(self.rng.clone().into());
 
-        while visited.len() < self.addresses.len() {
+        while visited.len() < self.peers.len() {
             // First select a random address range.
             let ix = self.rng.usize(..self.address_ranges.len());
             let range = self.address_ranges.values().nth(ix)?;
@@ -544,7 +454,7 @@ impl<U: Events> AddressManager<U> {
             // Then select a random address in that range.
             let ix = self.rng.usize(..range.len());
             let ip = range.iter().nth(ix)?;
-            let ka = self.addresses.get(&ip).expect("address must exist");
+            let ka = self.peers.get(&ip).expect("address must exist");
 
             visited.insert(ip);
 
@@ -569,7 +479,7 @@ impl<U: Events> AddressManager<U> {
         // be trying to reconnect to a peer that disconnected. However in the future
         // we should probably keep it around, or decide based on the reason for
         // disconnection.
-        let ka = self.addresses.remove(addr);
+        let ka = self.peers.remove(addr);
         let co = self.connected.remove(addr);
 
         let key = self::addr_key(addr);
@@ -660,18 +570,19 @@ fn ipv6_is_routable(_addr: &net::Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use std::iter;
 
     #[test]
     fn test_sample_empty() {
-        let addrmgr = AddressManager::new(fastrand::Rng::new(), ());
+        let addrmgr = AddressManager::new(fastrand::Rng::new(), HashMap::new(), ());
 
         assert!(addrmgr.sample().is_none());
     }
 
     #[test]
     fn test_max_range_size() {
-        let mut addrmgr = AddressManager::new(fastrand::Rng::new(), ());
+        let mut addrmgr = AddressManager::new(fastrand::Rng::new(), HashMap::new(), ());
 
         for i in 0..MAX_RANGE_SIZE + 1 {
             addrmgr.insert_sockaddr(
@@ -710,22 +621,5 @@ mod tests {
             addr_key(&net::IpAddr::V4(net::Ipv4Addr::new(1, 255, 3, 4))),
             1
         );
-    }
-
-    #[test]
-    fn test_serde() {
-        let sockaddr = net::SocketAddr::from(([1, 2, 3, 4], 8333));
-        let services = ServiceFlags::NETWORK;
-        let ka = KnownAddress {
-            addr: Address::new(&sockaddr, services),
-            source: Source::default(),
-            last_success: Some(LocalTime::from_secs(42)),
-            last_attempt: None,
-        };
-
-        let value = ka.to_json();
-        let deserialized = KnownAddress::from_json(value).unwrap();
-
-        assert_eq!(ka, deserialized);
     }
 }

@@ -10,7 +10,7 @@ use bitcoin::network::message_blockdata::Inventory;
 use bitcoin::network::Address;
 use bitcoin_hashes::hex::FromHex;
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::SystemTime;
 
 use nonempty::NonEmpty;
@@ -21,6 +21,7 @@ use nakamoto_chain::block::store;
 use nakamoto_common::block::filter::FilterHeader;
 use nakamoto_common::block::store::{Genesis, Store};
 use nakamoto_common::block::BlockHeader;
+use nakamoto_common::p2p::peer::KnownAddress;
 
 use nakamoto_test::block::cache::model;
 use nakamoto_test::logger;
@@ -63,13 +64,14 @@ mod setup {
     pub fn singleton(
         network: Network,
     ) -> (
-        Protocol<model::Cache, model::FilterCache>,
+        Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
         chan::Receiver<Out>,
         LocalTime,
     ) {
         let genesis = network.genesis();
         let cache = model::Cache::new(genesis);
         let filters = model::FilterCache::new(FilterHeader::genesis(network));
+        let peers = HashMap::new();
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
         let (tx, rx) = chan::unbounded();
@@ -79,6 +81,7 @@ mod setup {
                 cache,
                 clock,
                 filters,
+                peers,
                 rng: fastrand::Rng::new(),
                 cfg: CONFIG.clone(),
             }
@@ -92,12 +95,12 @@ mod setup {
         network: Network,
     ) -> (
         (
-            Protocol<model::Cache, model::FilterCache>,
+            Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
             PeerId,
             chan::Receiver<Out>,
         ),
         (
-            Protocol<model::Cache, model::FilterCache>,
+            Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
             PeerId,
             chan::Receiver<Out>,
         ),
@@ -108,6 +111,7 @@ mod setup {
         let genesis = constants::genesis_block(network.into()).header;
         let cache = model::Cache::new(genesis);
         let filters = model::FilterCache::new(FilterHeader::genesis(network));
+        let peers = HashMap::new();
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
 
@@ -115,6 +119,7 @@ mod setup {
             cache,
             clock,
             filters,
+            peers,
             rng: fastrand::Rng::new(),
             cfg: CONFIG.clone(),
         };
@@ -147,7 +152,10 @@ mod setup {
         mut cfgs: Vec<PeerConfig>,
         configure: fn(&mut Config),
     ) -> (
-        Vec<(PeerId, Builder<model::Cache, model::FilterCache>)>,
+        Vec<(
+            PeerId,
+            Builder<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
+        )>,
         LocalTime,
     ) {
         use bitcoin::blockdata::constants;
@@ -177,7 +185,7 @@ mod setup {
             addrs.push(addr);
         }
 
-        let mut peers = Vec::with_capacity(size);
+        let mut nodes = Vec::with_capacity(size);
         for ((i, addr), peer_cfg) in addrs.iter().enumerate().zip(cfgs.drain(..)) {
             let mut address_book = AddressBook::new();
 
@@ -198,18 +206,20 @@ mod setup {
 
             let chain = peer_cfg.chain;
             let tree = model::Cache::from(chain);
+            let peers = HashMap::new();
             let peer = Builder {
                 cache: tree.clone(),
                 clock: clock.clone(),
                 filters: filters.clone(),
+                peers: peers.clone(),
                 rng: rng.clone(),
                 cfg,
             };
             info!("(sim) {} = {}", peer_cfg.name, addr);
 
-            peers.push((*addr, peer));
+            nodes.push((*addr, peer));
         }
-        (peers, time)
+        (nodes, time)
     }
 }
 
@@ -224,6 +234,7 @@ fn test_handshake() {
         bits: 0,
     };
     let tree = model::Cache::new(genesis);
+    let peers = HashMap::new();
     let clock = AdjustedTime::default();
     let local_time = LocalTime::from(SystemTime::now());
     let filters = model::FilterCache::new(FilterHeader::default());
@@ -235,6 +246,7 @@ fn test_handshake() {
         cache: tree,
         clock,
         filters,
+        peers,
         rng: fastrand::Rng::new(),
         cfg: setup::CONFIG.clone(),
     };
@@ -290,6 +302,7 @@ fn test_initial_sync() {
     let network = bitcoin::Network::Bitcoin;
     let params = Params::new(network);
     let filters = model::FilterCache::new(FilterHeader::genesis(Network::Mainnet));
+    let peers = HashMap::new();
 
     let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
     let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
@@ -316,6 +329,7 @@ fn test_initial_sync() {
     let mut alice = Protocol::new(
         alice_tree,
         filters.clone(),
+        peers.clone(),
         clock.clone(),
         Rng::new(),
         config,
@@ -327,6 +341,7 @@ fn test_initial_sync() {
         let mut bob = Protocol::new(
             bob_tree,
             filters,
+            peers,
             clock,
             Rng::new(),
             setup::CONFIG.clone(),

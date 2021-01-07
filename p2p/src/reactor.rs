@@ -5,6 +5,7 @@ use crossbeam_channel as chan;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::tree::BlockTree;
+use nakamoto_common::p2p::peer;
 
 use crate::error::Error;
 use crate::event::Event;
@@ -25,9 +26,9 @@ pub trait Reactor {
         Self: Sized;
 
     /// Run the given protocol with the reactor.
-    fn run<T: BlockTree, F: Filters, C: Fn(Event)>(
+    fn run<T: BlockTree, F: Filters, P: peer::Store, C: Fn(Event)>(
         &mut self,
-        builder: protocol::Builder<T, F>,
+        builder: protocol::Builder<T, F, P>,
         listen_addrs: &[net::SocketAddr],
         callback: C,
     ) -> Result<(), Error>;

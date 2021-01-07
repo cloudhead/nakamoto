@@ -7,6 +7,7 @@ use crossbeam_channel as chan;
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
+use nakamoto_common::p2p::peer;
 
 use nakamoto_p2p;
 use nakamoto_p2p::error::Error;
@@ -117,9 +118,9 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
     }
 
     /// Run the given protocol with the reactor.
-    fn run<T: BlockTree, F: Filters, C: Fn(Event)>(
+    fn run<T: BlockTree, F: Filters, P: peer::Store, C: Fn(Event)>(
         &mut self,
-        builder: protocol::Builder<T, F>,
+        builder: protocol::Builder<T, F, P>,
         listen_addrs: &[net::SocketAddr],
         callback: C,
     ) -> Result<(), Error> {

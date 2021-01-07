@@ -253,6 +253,7 @@ dependencies = [
  "crossbeam-channel",
  "fastrand",
  "log",
+ "microserde",
  "nakamoto-chain",
  "nakamoto-common",
  "nakamoto-net-poll",
@@ -269,6 +270,7 @@ dependencies = [
  "bitcoin_hashes",
  "fastrand",
  "log",
+ "microserde",
  "nonempty",
  "thiserror",
 ]

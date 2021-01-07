@@ -146,7 +146,11 @@ impl InputResult {
 pub struct Peer {
     pub id: PeerId,
     pub name: &'static str,
-    pub protocol: Protocol<model::Cache, model::FilterCache>,
+    pub protocol: Protocol<
+        model::Cache,
+        model::FilterCache,
+        std::collections::HashMap<net::IpAddr, KnownAddress>,
+    >,
     pub outbound: chan::Receiver<Out>,
 
     events: Vec<Event>,
@@ -177,7 +181,14 @@ pub struct Sim {
 
 impl Sim {
     fn new(
-        peers: Vec<(PeerId, Builder<model::Cache, model::FilterCache>)>,
+        peers: Vec<(
+            PeerId,
+            Builder<
+                model::Cache,
+                model::FilterCache,
+                std::collections::HashMap<net::IpAddr, KnownAddress>,
+            >,
+        )>,
         time: LocalTime,
         rng: fastrand::Rng,
     ) -> Self {
@@ -373,11 +384,11 @@ impl Sim {
     }
 }
 
-pub fn handshake<T: BlockTree, F: Filters>(
-    alice: &mut Protocol<T, F>,
+pub fn handshake<T: BlockTree, F: Filters, P: peer::Store>(
+    alice: &mut Protocol<T, F, P>,
     alice_addr: net::SocketAddr,
     alice_rx: chan::Receiver<Out>,
-    bob: &mut Protocol<T, F>,
+    bob: &mut Protocol<T, F, P>,
     bob_addr: net::SocketAddr,
     bob_rx: chan::Receiver<Out>,
     local_time: LocalTime,
@@ -403,12 +414,12 @@ pub fn handshake<T: BlockTree, F: Filters>(
     assert!(bob.peermgr.peers().all(|p| p.is_negotiated()));
 }
 
-pub fn run<T: BlockTree, F: Filters>(
-    peers: Vec<(PeerId, &mut Protocol<T, F>, chan::Receiver<Out>)>,
+pub fn run<T: BlockTree, F: Filters, P: peer::Store>(
+    peers: Vec<(PeerId, &mut Protocol<T, F, P>, chan::Receiver<Out>)>,
     inputs: Vec<Vec<Input>>,
     local_time: LocalTime,
 ) {
-    let mut sim: HashMap<PeerId, (&mut Protocol<T, F>, VecDeque<Input>, chan::Receiver<Out>)> =
+    let mut sim: HashMap<PeerId, (&mut Protocol<T, F, P>, VecDeque<Input>, chan::Receiver<Out>)> =
         HashMap::with_hasher(fastrand::Rng::new().into());
     let mut events = VecDeque::new();
     let mut tmp = Vec::new();
