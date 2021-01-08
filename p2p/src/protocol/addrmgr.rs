@@ -50,6 +50,8 @@ impl Events for () {
 pub enum Event {
     /// A new peer address was discovered.
     AddressDiscovered(Address, Source),
+    /// An error was encountered.
+    Error(String),
 }
 
 impl std::fmt::Display for Event {
@@ -57,6 +59,9 @@ impl std::fmt::Display for Event {
         match self {
             Event::AddressDiscovered(addr, source) => {
                 write!(fmt, "{:?} discovered from source `{:?}`", addr, source)
+            }
+            Event::Error(msg) => {
+                write!(fmt, "error: {}", msg)
             }
         }
     }
@@ -96,7 +101,7 @@ impl<P: Store, U> AddressManager<P, U> {
     }
 }
 
-impl<P: Store, U: SyncAddresses + SetTimeout> AddressManager<P, U> {
+impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
     /// Get addresses from peers.
     pub fn get_addresses(&self) {
         for peer in &self.sources {
@@ -132,6 +137,10 @@ impl<P: Store, U: SyncAddresses + SetTimeout> AddressManager<P, U> {
 
         // If it's been a while, save addresses to store.
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
+            if let Err(err) = self.peers.flush() {
+                self.upstream
+                    .event(Event::Error(format!("flush to disk failed: {}", err)));
+            }
             self.upstream.set_timeout(IDLE_TIMEOUT);
         }
     }

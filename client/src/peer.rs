@@ -62,26 +62,6 @@ impl Cache {
 
         Ok(Self { file, addrs })
     }
-
-    /// Flush data to disk.
-    pub fn flush<'a>(&mut self) -> io::Result<()> {
-        use io::{Seek, Write};
-        use microserde::json::Value;
-
-        let peers: microserde::json::Object = self
-            .addrs
-            .iter()
-            .map(|(ip, ka)| (ip.to_string(), ka.to_json()))
-            .collect();
-        let s = microserde::json::to_string(&Value::Object(peers));
-
-        self.file.set_len(0)?;
-        self.file.seek(io::SeekFrom::Start(0))?;
-        self.file.write_all(s.as_bytes())?;
-        self.file.sync_data()?;
-
-        Ok(())
-    }
 }
 
 impl Store for Cache {
@@ -111,6 +91,25 @@ impl Store for Cache {
 
     fn len(&self) -> usize {
         self.addrs.len()
+    }
+
+    fn flush<'a>(&mut self) -> io::Result<()> {
+        use io::{Seek, Write};
+        use microserde::json::Value;
+
+        let peers: microserde::json::Object = self
+            .addrs
+            .iter()
+            .map(|(ip, ka)| (ip.to_string(), ka.to_json()))
+            .collect();
+        let s = microserde::json::to_string(&Value::Object(peers));
+
+        self.file.set_len(0)?;
+        self.file.seek(io::SeekFrom::Start(0))?;
+        self.file.write_all(s.as_bytes())?;
+        self.file.sync_data()?;
+
+        Ok(())
     }
 }
 

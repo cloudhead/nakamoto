@@ -120,7 +120,10 @@ impl connmgr::Events for Channel {
 
 impl addrmgr::Events for Channel {
     fn event(&self, event: addrmgr::Event) {
-        debug!(target: self.target, "[addr] {}", &event);
+        match &event {
+            addrmgr::Event::Error(msg) => error!(target: self.target, "[addr] {}", msg),
+            e => debug!(target: self.target, "[addr] {}", &e),
+        }
         self.event(Event::AddrManager(event));
     }
 }

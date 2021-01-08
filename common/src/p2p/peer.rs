@@ -33,6 +33,9 @@ pub trait Store {
 
     /// Clears the store of all addresses.
     fn clear(&mut self);
+
+    /// Flush data to permanent storage.
+    fn flush(&mut self) -> std::io::Result<()>;
 }
 
 /// Implementation of [`Store`] for [`std::collections::HashMap`].
@@ -63,6 +66,10 @@ impl Store for std::collections::HashMap<net::IpAddr, KnownAddress> {
 
     fn len(&self) -> usize {
         self.len()
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 
