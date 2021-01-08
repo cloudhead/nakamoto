@@ -250,6 +250,7 @@ dependencies = [
 name = "nakamoto-client"
 version = "0.1.0"
 dependencies = [
+ "bitcoin",
  "crossbeam-channel",
  "fastrand",
  "log",
@@ -259,6 +260,7 @@ dependencies = [
  "nakamoto-net-poll",
  "nakamoto-p2p",
  "nakamoto-test",
+ "tempfile",
  "thiserror",
 ]
 

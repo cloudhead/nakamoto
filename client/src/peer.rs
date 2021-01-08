@@ -17,6 +17,7 @@ impl Cache {
         fs::OpenOptions::new()
             .create(true)
             .read(true)
+            .write(true)
             .open(path)
             .and_then(|file| Self::from(file))
     }
@@ -35,6 +36,7 @@ impl Cache {
     pub fn from(mut file: fs::File) -> io::Result<Self> {
         use io::Read;
         use microserde::json::Value;
+        use std::str::FromStr;
 
         let mut s = String::new();
         let mut addrs = HashMap::new();
@@ -43,12 +45,14 @@ impl Cache {
 
         let val = microserde::json::from_str(&s)
             .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+
         match val {
-            Value::Array(ary) => {
-                for v in ary.into_iter() {
+            Value::Object(ary) => {
+                for (k, v) in ary.into_iter() {
                     let ka = KnownAddress::from_json(v)
                         .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-                    let ip = net::IpAddr::from(ka.addr.address);
+                    let ip = net::IpAddr::from_str(k.as_str())
+                        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
 
                     addrs.insert(ip, ka);
                 }
@@ -60,13 +64,16 @@ impl Cache {
     }
 
     /// Flush data to disk.
-    #[allow(dead_code)]
-    fn flush<'a>(&mut self) -> io::Result<()> {
+    pub fn flush<'a>(&mut self) -> io::Result<()> {
         use io::{Seek, Write};
         use microserde::json::Value;
 
-        let list: microserde::json::Array = self.addrs.values().map(|a| a.to_json()).collect();
-        let s = microserde::json::to_string(&Value::Array(list));
+        let peers: microserde::json::Object = self
+            .addrs
+            .iter()
+            .map(|(ip, ka)| (ip.to_string(), ka.to_json()))
+            .collect();
+        let s = microserde::json::to_string(&Value::Object(peers));
 
         self.file.set_len(0)?;
         self.file.seek(io::SeekFrom::Start(0))?;
@@ -104,5 +111,55 @@ impl Store for Cache {
 
     fn len(&self) -> usize {
         self.addrs.len()
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use bitcoin::network::address::Address;
+    use bitcoin::network::constants::ServiceFlags;
+    use nakamoto_common::block::time::LocalTime;
+
+    #[test]
+    fn test_save_and_load() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cache");
+        let mut expected = Vec::new();
+
+        {
+            let mut cache = Cache::create(&path).unwrap();
+
+            for i in 32..48 {
+                let ip = net::IpAddr::from([127, 0, 0, i]);
+                let sockaddr = net::SocketAddr::from((ip, 8333));
+                let services = ServiceFlags::NETWORK;
+                let ka = KnownAddress {
+                    addr: Address::new(&sockaddr, services),
+                    source: Source::default(),
+                    last_success: Some(LocalTime::from_secs(i as u64)),
+                    last_attempt: None,
+                };
+                cache.insert(ip, ka);
+            }
+            cache.flush().unwrap();
+
+            for (ip, ka) in cache.iter() {
+                expected.push((ip.clone(), ka.clone()));
+            }
+        }
+
+        {
+            let cache = Cache::open(&path).unwrap();
+            let mut actual = cache
+                .iter()
+                .map(|(i, ka)| (i.clone(), ka.clone()))
+                .collect::<Vec<_>>();
+
+            actual.sort_by_key(|(i, _)| *i);
+            expected.sort_by_key(|(i, _)| *i);
+
+            assert_eq!(actual, expected);
+        }
     }
 }
