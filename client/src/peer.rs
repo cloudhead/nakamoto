@@ -15,7 +15,6 @@ impl Cache {
     /// Open an existing cache.
     pub fn open<P: AsRef<Path>>(path: P) -> io::Result<Self> {
         fs::OpenOptions::new()
-            .create(true)
             .read(true)
             .write(true)
             .open(path)

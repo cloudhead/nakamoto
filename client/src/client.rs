@@ -265,8 +265,19 @@ impl<R: Reactor> Client<R> {
 
         filters.verify(self.config.network)?; // Verify store integrity.
 
-        let peers = peer::Cache::open(dir.join("peers.json"))?;
+        log::info!("Loading peer addresses..");
 
+        let peers_path = dir.join("peers.json");
+        let peers = match peer::Cache::create(&peers_path) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => peer::Cache::open(&peers_path)?,
+            Err(err) => panic!(err.to_string()), // TODO
+            Ok(cache) => {
+                log::info!("Initializing new peer address cache {:?}", peers_path);
+                cache
+            }
+        };
+
+        // TODO: This should include the cached peers.
         log::info!("{} peer(s) found..", self.config.address_book.len());
         log::debug!("{:?}", self.config.address_book);
 
