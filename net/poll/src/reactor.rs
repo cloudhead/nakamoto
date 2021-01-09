@@ -158,6 +158,12 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         let mut timeouts = Vec::with_capacity(32);
 
         loop {
+            trace!(
+                "Polling {} sources and {} timeouts..",
+                self.sources.len(),
+                self.timeouts.len()
+            );
+
             let timeout = self.timeouts.next().unwrap_or(WAIT_TIMEOUT).into();
             let result = self.sources.wait_timeout(&mut events, timeout); // Blocking.
             let local_time = SystemTime::now().into();
@@ -169,6 +175,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
                             Source::Peer(addr) => {
                                 if ev.errored || ev.invalid || ev.hangup {
                                     // Let the subsequent read fail.
+                                    trace!("{}: Socket error triggered: {:?}", addr, ev);
                                 }
                                 if ev.writable {
                                     self.handle_writable(&addr, source)?;
@@ -334,6 +341,8 @@ impl Reactor<net::TcpStream> {
     fn handle_readable(&mut self, addr: &net::SocketAddr) {
         let socket = self.peers.get_mut(&addr).unwrap();
 
+        trace!("{}: Socket is readable", addr);
+
         // Nb. Normally, since `poll`, which `popol` is based on, is
         // level-triggered, we would be notified again if there was
         // still data to be read on the socket. However, since our
@@ -348,7 +357,12 @@ impl Reactor<net::TcpStream> {
                     break;
                 }
                 Err(err) => {
-                    error!("{}: Read error: {}", addr, err.to_string());
+                    match err {
+                        encode::Error::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                            debug!("{}: Remote peer closed the connection", addr)
+                        }
+                        _ => error!("{}: Read error: {}", addr, err.to_string()),
+                    }
 
                     socket.disconnect().ok();
                     self.unregister_peer(*addr);
@@ -362,6 +376,8 @@ impl Reactor<net::TcpStream> {
     fn handle_writable(&mut self, addr: &net::SocketAddr, source: &Source) -> io::Result<()> {
         let src = self.sources.get_mut(source).unwrap();
         let socket = self.peers.get_mut(&addr).unwrap();
+
+        trace!("{}: Socket is writable", addr);
 
         if self.connecting.remove(addr) {
             let local_addr = socket.local_address()?;

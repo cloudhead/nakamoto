@@ -115,7 +115,7 @@ impl std::fmt::Display for Event {
             } => {
                 write!(
                     fmt,
-                    "Imported {} filter headers from {}, height = {}",
+                    "Imported {} filter header(s) from {}, height = {}",
                     count, from, height
                 )
             }
