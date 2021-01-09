@@ -16,7 +16,7 @@ use nakamoto_p2p::protocol::{self, Command, Input, Link, Out};
 
 use log::*;
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fmt::Debug;
 use std::io;
 use std::io::prelude::*;
@@ -54,6 +54,7 @@ enum Source {
 /// A single-threaded non-blocking reactor.
 pub struct Reactor<R: Write + Read> {
     peers: HashMap<net::SocketAddr, Socket<R, RawNetworkMessage>>,
+    connecting: HashSet<net::SocketAddr>,
     inputs: VecDeque<Input>,
     subscriber: chan::Sender<Event>,
     commands: chan::Receiver<Command>,
@@ -65,26 +66,15 @@ pub struct Reactor<R: Write + Read> {
 /// The `R` parameter represents the underlying stream type, eg. `net::TcpStream`.
 impl<R: Write + Read + AsRawFd> Reactor<R> {
     /// Register a peer with the reactor.
-    fn register_peer(
-        &mut self,
-        addr: net::SocketAddr,
-        local_addr: net::SocketAddr,
-        stream: R,
-        link: Link,
-    ) {
-        self.inputs.push_back(Input::Connected {
-            addr,
-            local_addr,
-            link,
-        });
+    fn register_peer(&mut self, addr: net::SocketAddr, stream: R, link: Link) {
         self.sources
             .register(Source::Peer(addr), &stream, popol::interest::ALL);
-        self.peers
-            .insert(addr, Socket::from(stream, local_addr, addr));
+        self.peers.insert(addr, Socket::from(stream, addr, link));
     }
 
     /// Unregister a peer from the reactor.
     fn unregister_peer(&mut self, addr: net::SocketAddr) {
+        self.connecting.remove(&addr);
         self.inputs.push_back(Input::Disconnected(addr));
         self.sources.unregister(&Source::Peer(addr));
         self.peers.remove(&addr);
@@ -105,9 +95,11 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
         let timeouts = TimeoutManager::new();
+        let connecting = HashSet::new();
 
         Ok(Self {
             peers,
+            connecting,
             sources,
             inputs,
             subscriber,
@@ -179,7 +171,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
                                     // Let the subsequent read fail.
                                 }
                                 if ev.writable {
-                                    self.handle_writable(&addr, source);
+                                    self.handle_writable(&addr, source)?;
                                 }
                                 if ev.readable {
                                     self.handle_readable(&addr);
@@ -199,12 +191,15 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
                                     };
                                     conn.set_nonblocking(true)?;
 
-                                    self.register_peer(
+                                    let local_addr = conn.local_addr()?;
+                                    let link = Link::Inbound;
+
+                                    self.inputs.push_back(Input::Connected {
                                         addr,
-                                        conn.local_addr()?,
-                                        conn,
-                                        Link::Inbound,
-                                    );
+                                        local_addr,
+                                        link,
+                                    });
+                                    self.register_peer(addr, conn, link);
                                 }
                             },
                             Source::Waker => {
@@ -286,17 +281,16 @@ impl Reactor<net::TcpStream> {
                         }
                     }
                 }
-                Out::Connect(addr, timeout) => {
+                // TODO: Use connection timeout, or handle timeouts in connection manager.
+                Out::Connect(addr, _timeout) => {
                     debug!("Connecting to {}...", &addr);
 
-                    match self::dial(&addr, timeout.into()) {
+                    match self::dial(&addr) {
                         Ok(stream) => {
-                            let local_addr = stream.local_addr()?;
-                            let addr = stream.peer_addr()?;
-
                             trace!("{:#?}", stream);
 
-                            self.register_peer(addr, local_addr, stream, Link::Outbound);
+                            self.register_peer(addr, stream, Link::Outbound);
+                            self.connecting.insert(addr);
                         }
                         Err(err) => {
                             self.inputs.push_back(Input::Timeout);
@@ -365,9 +359,19 @@ impl Reactor<net::TcpStream> {
         }
     }
 
-    fn handle_writable(&mut self, addr: &net::SocketAddr, source: &Source) {
+    fn handle_writable(&mut self, addr: &net::SocketAddr, source: &Source) -> io::Result<()> {
         let src = self.sources.get_mut(source).unwrap();
         let socket = self.peers.get_mut(&addr).unwrap();
+
+        if self.connecting.remove(addr) {
+            let local_addr = socket.local_address()?;
+
+            self.inputs.push_back(Input::Connected {
+                addr: socket.address,
+                local_addr,
+                link: socket.link,
+            });
+        }
 
         if let Err(err) = socket.drain(&mut self.inputs, src) {
             error!("{}: Write error: {}", addr, err.to_string());
@@ -375,22 +379,28 @@ impl Reactor<net::TcpStream> {
             socket.disconnect().ok();
             self.unregister_peer(*addr);
         }
+        Ok(())
     }
 }
 
 /// Connect to a peer given a remote address.
-fn dial(addr: &net::SocketAddr, timeout: time::Duration) -> Result<net::TcpStream, Error> {
+fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
+    use socket2::{Domain, Socket, Type};
     fallible! { Error::Io(io::ErrorKind::Other.into()) };
 
-    let sock = net::TcpStream::connect_timeout(addr, timeout)?;
+    let sock = Socket::new(Domain::ipv4(), Type::stream(), None)?;
 
-    // TODO: We probably don't want the same timeouts for read and write.
-    // For _write_, we want something much shorter.
     sock.set_read_timeout(Some(READ_TIMEOUT))?;
     sock.set_write_timeout(Some(WRITE_TIMEOUT))?;
     sock.set_nonblocking(true)?;
 
-    Ok(sock)
+    match sock.connect(&(*addr).into()) {
+        Ok(()) => {}
+        Err(e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+        Err(e) => return Err(e.into()),
+    }
+    Ok(sock.into_tcp_stream())
 }
 
 // Listen for connections on the given address.

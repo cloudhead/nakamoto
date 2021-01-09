@@ -10,7 +10,7 @@ use bitcoin::network::stream_reader::StreamReader;
 
 use log::*;
 
-use nakamoto_p2p::protocol::Input;
+use nakamoto_p2p::protocol::{Input, Link};
 
 use crate::fallible;
 
@@ -20,15 +20,20 @@ const MAX_MESSAGE_SIZE: usize = 1024 * 1024;
 /// Peer-to-peer socket abstraction.
 #[derive(Debug)]
 pub struct Socket<R: Read + Write, M> {
+    pub address: net::SocketAddr,
+    pub link: Link,
+
     raw: StreamReader<R>,
-    address: net::SocketAddr,
-    local_address: net::SocketAddr,
     queue: VecDeque<M>,
 }
 
 impl<M> Socket<net::TcpStream, M> {
     pub fn queue(&mut self, msg: M) {
         self.queue.push_back(msg);
+    }
+
+    pub fn local_address(&self) -> io::Result<net::SocketAddr> {
+        self.raw.stream.local_addr()
     }
 }
 
@@ -40,13 +45,13 @@ impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
 
 impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     /// Create a new socket from a `io::Read` and an address pair.
-    pub fn from(r: R, local_address: net::SocketAddr, address: net::SocketAddr) -> Self {
+    pub fn from(r: R, address: net::SocketAddr, link: Link) -> Self {
         let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
         let queue = VecDeque::new();
 
         Self {
             raw,
-            local_address,
+            link,
             address,
             queue,
         }

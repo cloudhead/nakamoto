@@ -246,7 +246,7 @@ impl<R: Reactor> Client<R> {
                 log::info!("Found existing store {:?}", cfheaders_path);
                 store::File::open(cfheaders_path, cfheaders_genesis)?
             }
-            Err(err) => panic!(err.to_string()),
+            Err(err) => panic!(err.to_string()), // TODO
             Ok(store) => {
                 log::info!("Initializing new filter header store {:?}", cfheaders_path);
                 store
