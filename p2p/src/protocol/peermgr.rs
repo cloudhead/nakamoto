@@ -363,8 +363,10 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
 
                 return Some(peer);
             } else {
-                self.upstream
-                    .disconnect(*addr, DisconnectReason::PeerMisbehaving);
+                self.upstream.disconnect(
+                    *addr,
+                    DisconnectReason::PeerMisbehaving("unexpected `verack` message received"),
+                );
             }
         }
         None

@@ -42,10 +42,12 @@ pub enum Error {
         from: PeerId,
     },
     /// Error due to an invalid peer message.
-    #[error("invalid message received from {from}")]
+    #[error("invalid message received from {from}: {reason}")]
     InvalidMessage {
         /// Message sender.
         from: PeerId,
+        /// Reason why the message is invalid.
+        reason: &'static str,
     },
     /// Error with the underlying filters datastore.
     #[error("filters error: {0}")]
@@ -278,35 +280,53 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         let from = *from;
 
         if msg.filter_type != 0x0 {
-            return Err(Error::InvalidMessage { from });
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfheaders: invalid filter type",
+            });
         }
 
         let prev_header: FilterHeader = msg.previous_filter.into();
         let (_, header) = self.filters.tip();
 
         if header != &prev_header {
-            return Err(Error::InvalidMessage { from });
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfheaders: unexpected previous header",
+            });
         }
 
         let start_height = self.filters.height();
         let stop_height = if let Some((height, _)) = tree.get_block(&msg.stop_hash) {
             height
         } else {
-            return Err(Error::InvalidMessage { from });
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfheaders: unknown stop hash",
+            });
         };
         let hashes = msg.filter_hashes;
         let count = hashes.len();
 
         if start_height > stop_height {
-            return Err(Error::InvalidMessage { from });
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfheaders: start height is greater than stop height",
+            });
         }
 
         if count > MAX_MESSAGE_CFHEADERS {
-            return Err(Error::InvalidMessage { from });
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfheaders: header count exceeds maximum",
+            });
         }
 
         if (stop_height - start_height) as usize != count {
-            return Err(Error::InvalidMessage { from });
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfheaders: header count does not match height range",
+            });
         }
 
         // Ok, looks like everything's valid..
@@ -349,7 +369,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         let from = *from;
 
         if msg.filter_type != 0x0 {
-            return Err(Error::InvalidMessage { from });
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "getcfheaders: invalid filter type",
+            });
         }
 
         let start_height = msg.start_height as Height;
@@ -435,9 +458,11 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             .expect("SpvManager::received_cfilter: all headers up to the tip must exist");
         let filter = BlockFilter::new(&msg.filter);
 
-        // TODO: This is wrong. We should check against the header hash.
         if filter.filter_id(&prev_header.into()) != header.into() {
-            return Err(Error::InvalidMessage { from });
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfilter: filter hash doesn't match header",
+            });
         }
 
         self.upstream.event(Event::FilterReceived {

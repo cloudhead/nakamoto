@@ -158,7 +158,7 @@ impl From<Event> for Out {
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum DisconnectReason {
     /// Peer is misbehaving.
-    PeerMisbehaving,
+    PeerMisbehaving(&'static str),
     /// Peer protocol version is too old or too recent.
     PeerProtocolVersion(u32),
     /// Peer doesn't have the required services.
@@ -180,7 +180,7 @@ pub enum DisconnectReason {
 impl fmt::Display for DisconnectReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::PeerMisbehaving => write!(f, "peer misbehaving"),
+            Self::PeerMisbehaving(reason) => write!(f, "peer misbehaving: {}", reason),
             Self::PeerProtocolVersion(_) => write!(f, "peer protocol version mismatch"),
             Self::PeerServices(_) => write!(f, "peer doesn't have the required services"),
             Self::PeerHeight(_) => write!(f, "peer is too far behind"),
@@ -748,19 +748,28 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .received_inv(addr, inventory, &self.clock, &self.tree);
             }
             NetworkMessage::CFHeaders(msg) => {
-                self.spvmgr
-                    .received_cfheaders(&addr, msg, &self.tree)
-                    .unwrap();
+                match self.spvmgr.received_cfheaders(&addr, msg, &self.tree) {
+                    Err(spvmgr::Error::InvalidMessage { reason, .. }) => {
+                        self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
+                    }
+                    _ => {}
+                }
             }
             NetworkMessage::GetCFHeaders(msg) => {
-                self.spvmgr
-                    .received_getcfheaders(&addr, msg, &self.tree)
-                    .unwrap();
+                match self.spvmgr.received_getcfheaders(&addr, msg, &self.tree) {
+                    Err(spvmgr::Error::InvalidMessage { reason, .. }) => {
+                        self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
+                    }
+                    _ => {}
+                }
             }
             NetworkMessage::CFilter(msg) => {
-                self.spvmgr
-                    .received_cfilter(&addr, msg, &self.tree)
-                    .unwrap();
+                match self.spvmgr.received_cfilter(&addr, msg, &self.tree) {
+                    Err(spvmgr::Error::InvalidMessage { reason, .. }) => {
+                        self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
+                    }
+                    _ => {}
+                }
             }
             NetworkMessage::GetCFilters(msg) => {
                 self.spvmgr.received_getcfilters(&addr, msg, &self.tree);
@@ -783,7 +792,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     }
 
     fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
-        debug!(target: self.target, "{}: Peer disconnecting..", addr);
+        debug!(target: self.target, "{}: Disconnecting peer: {}", addr, reason);
 
         // TODO: Trigger disconnection everywhere, as if peer disconnected. This
         // avoids being in a state where we know a peer is about to get disconnected,
