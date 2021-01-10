@@ -10,10 +10,10 @@
 //! The [`client`] crate is intended to be the entry point for most users of the
 //! library, and is a good place to start, to see how everything fits together.
 //!
-//! ```
+//! ```no_run
 //! use std::{net, thread};
 //!
-//! use nakamoto::client::{AddressBook, Client, Config, Network};
+//! use nakamoto::client::{Client, Config, Network};
 //! use nakamoto::client::error::Error;
 //! use nakamoto::client::handle::Handle as _;
 //!
@@ -24,7 +24,6 @@
 //! fn main() {
 //!     let cfg = Config {
 //!         network: Network::Testnet,
-//!         address_book: AddressBook::new(),
 //!         ..Config::default()
 //!     };
 //!     // Create a client using the above network reactor.
@@ -32,7 +31,7 @@
 //!     let handle = client.handle();
 //!
 //!     // Run the client on a different thread, to not block the main thread.
-//!     thread::spawn(|| client.run());
+//!     thread::spawn(|| client.run().unwrap());
 //!
 //!     // Ask the client to terminate.
 //!     handle.shutdown().unwrap()

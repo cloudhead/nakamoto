@@ -22,7 +22,6 @@ use pingmgr::PingManager;
 use spvmgr::SpvManager;
 use syncmgr::SyncManager;
 
-use crate::address_book::AddressBook;
 use crate::event::Event;
 
 use std::collections::HashSet;
@@ -298,10 +297,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Builder<T, F, P> {
 pub struct Config {
     /// Bitcoin network we are connected to.
     pub network: network::Network,
-    /// Addresses of peers to connect to.
-    pub address_book: AddressBook,
+    /// Peers to connect to.
+    pub connect: Vec<net::SocketAddr>,
     /// Services offered by our peer.
     pub services: ServiceFlags,
+    /// Required peer services.
+    pub required_services: ServiceFlags,
     /// Peer whitelist. Peers in this list are trusted by default.
     pub whitelist: Whitelist,
     /// Consensus parameters.
@@ -323,8 +324,9 @@ impl Default for Config {
         Self {
             network: network::Network::Mainnet,
             params: Params::new(network::Network::Mainnet.into()),
-            address_book: AddressBook::default(),
+            connect: Vec::new(),
             services: ServiceFlags::NONE,
+            required_services: ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
             whitelist: Whitelist::default(),
             protocol_version: PROTOCOL_VERSION,
             target_outbound_peers: connmgr::TARGET_OUTBOUND_PEERS,
@@ -340,13 +342,13 @@ impl Config {
     pub fn from(
         target: &'static str,
         network: network::Network,
-        address_book: AddressBook,
+        connect: Vec<net::SocketAddr>,
     ) -> Self {
         let params = Params::new(network.into());
 
         Self {
             network,
-            address_book,
+            connect,
             target,
             params,
             ..Self::default()
@@ -396,20 +398,20 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     ) -> Self {
         let Config {
             network,
-            address_book,
+            connect,
             services,
             whitelist,
             protocol_version,
             target_outbound_peers,
             max_inbound_peers,
             user_agent,
+            required_services,
             target,
             params,
         } = config;
 
         let upstream = Upstream::new(network, protocol_version, target, upstream);
 
-        let addrmgr = AddressManager::from(address_book, rng.clone(), peers, upstream.clone());
         let syncmgr = SyncManager::new(
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
@@ -424,6 +426,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             connmgr::Config {
                 target_outbound_peers,
                 max_inbound_peers,
+                retry: connect,
             },
         );
         let pingmgr = PingManager::new(rng.clone(), upstream.clone());
@@ -437,10 +440,17 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             peermgr::Config {
                 protocol_version: PROTOCOL_VERSION,
                 whitelist: whitelist.clone(),
+                required_services,
                 services,
                 user_agent,
             },
             rng.clone(),
+            upstream.clone(),
+        );
+        let addrmgr = AddressManager::new(
+            addrmgr::Config { required_services },
+            rng.clone(),
+            peers,
             upstream.clone(),
         );
 
@@ -468,7 +478,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     pub fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.syncmgr.initialize(time, &self.tree);
-        self.connmgr.initialize(time, &mut self.addrmgr);
+        self.connmgr
+            .initialize::<P, AddressManager<P, Channel>>(time, &mut self.addrmgr);
         self.spvmgr.initialize(time, &self.tree);
     }
 
@@ -496,7 +507,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr);
-                self.connmgr.peer_disconnected(&addr, &self.addrmgr);
+                self.connmgr
+                    .peer_disconnected::<P, AddressManager<P, Channel>>(&addr, &self.addrmgr);
                 self.pingmgr.peer_disconnected(&addr);
                 self.peermgr.peer_disconnected(&addr);
             }
@@ -511,7 +523,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     debug!(target: self.target, "Received command: Connect({})", addr);
 
                     self.whitelist.addr.insert(addr.ip());
-                    self.connmgr.connect(&addr, &mut self.addrmgr, local_time);
+                    self.connmgr.connect::<P, AddressManager<P, Channel>>(&addr);
                 }
                 Command::Disconnect(addr) => {
                     debug!(target: self.target, "Received command: Disconnect({})", addr);
@@ -577,7 +589,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             Input::Timeout => {
                 trace!(target: self.target, "Received timeout");
 
-                self.connmgr.received_timeout(local_time, &self.addrmgr);
+                self.connmgr
+                    .received_timeout::<P, AddressManager<P, Channel>>(local_time, &self.addrmgr);
                 self.syncmgr.received_timeout(local_time, &self.tree);
                 self.pingmgr.received_timeout(local_time);
                 self.addrmgr.received_timeout(local_time);

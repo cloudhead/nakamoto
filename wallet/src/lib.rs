@@ -13,7 +13,7 @@ use bitcoin::Address;
 use nakamoto_client::error::Error;
 use nakamoto_client::handle::Handle;
 use nakamoto_client::Network;
-use nakamoto_client::{AddressBook, Client, Config};
+use nakamoto_client::{Client, Config};
 use nakamoto_common::block::Height;
 
 /// Re-scan parameters.
@@ -168,17 +168,16 @@ pub fn run<S: net::ToSocketAddrs + fmt::Debug>(
     addresses: Vec<Address>,
     genesis: Height,
 ) -> Result<(), Error> {
-    let address_book = AddressBook::from(&[seed])?;
-    let address_count = address_book.len();
-    let cfg = Config {
+    let mut cfg = Config {
         listen: vec![], // Don't listen for incoming connections.
-        address_book,
         network: Network::Mainnet,
-        // TODO: This shouldn't have to be specified manually. We should have a "discovery mode"
-        // that can be static or dynamic.
-        target_outbound_peers: address_count.min(8),
         ..Config::default()
     };
+    cfg.seed(&[seed])?;
+    // TODO: This shouldn't have to be specified manually. We should have a "discovery mode"
+    // that can be static or dynamic.
+    cfg.target_outbound_peers = cfg.connect.len().min(8);
+
     // Create a new client using `Reactor` for networking.
     let client = Client::<Reactor>::new(cfg)?;
     let handle = client.handle();

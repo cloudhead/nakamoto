@@ -22,6 +22,7 @@ use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::p2p::peer::{Source, Store as _};
 
 pub use nakamoto_common::network::Network;
 
@@ -31,7 +32,6 @@ use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
 
-pub use nakamoto_p2p::address_book::AddressBook;
 pub use nakamoto_p2p::event::Event;
 pub use nakamoto_p2p::reactor::Reactor;
 
@@ -46,8 +46,8 @@ pub struct Config {
     pub listen: Vec<net::SocketAddr>,
     /// Bitcoin network.
     pub network: Network,
-    /// Initial address book.
-    pub address_book: AddressBook,
+    /// Peers to connect to.
+    pub connect: Vec<net::SocketAddr>,
     /// Target number of outbound peers to connect to.
     pub target_outbound_peers: usize,
     /// Maximum number of inbound peers supported.
@@ -60,9 +60,24 @@ pub struct Config {
     pub name: &'static str,
 }
 
-#[cfg(test)]
 impl Config {
+    /// Add seeds to connect to.
+    pub fn seed<T: net::ToSocketAddrs + std::fmt::Debug>(&mut self, seeds: &[T]) -> io::Result<()> {
+        let connect = seeds
+            .iter()
+            .flat_map(|seed| match seed.to_socket_addrs() {
+                Ok(addrs) => addrs.map(Ok).collect(),
+                Err(err) => vec![Err(err)],
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+
+        self.connect.extend(connect);
+
+        Ok(())
+    }
+
     /// Create a default client configuration with a name.
+    #[cfg(test)]
     pub(crate) fn named(name: &'static str) -> Self {
         Self {
             name,
@@ -76,7 +91,7 @@ impl From<Config> for p2p::protocol::Config {
         Self {
             network: cfg.network,
             target: cfg.name,
-            address_book: cfg.address_book,
+            connect: cfg.connect,
             target_outbound_peers: cfg.target_outbound_peers,
             max_inbound_peers: cfg.max_inbound_peers,
             ..Self::default()
@@ -89,7 +104,7 @@ impl Default for Config {
         Self {
             listen: vec![([0, 0, 0, 0], 0).into()],
             network: Network::default(),
-            address_book: AddressBook::default(),
+            connect: Vec::new(),
             timeout: time::Duration::from_secs(60),
             home: PathBuf::from(env::var("HOME").unwrap_or_default()),
             target_outbound_peers: p2p::protocol::connmgr::TARGET_OUTBOUND_PEERS,
@@ -192,7 +207,11 @@ impl<R: Reactor> Client<R> {
 
     /// Seed the client's address book with peer addresses.
     pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> Result<(), Error> {
-        self.config.address_book.seed(seeds).map_err(Error::from)
+        for seed in seeds.into_iter() {
+            let addrs = seed.to_socket_addrs()?;
+            self.config.connect.extend(addrs);
+        }
+        Ok(())
     }
 
     /// Start the client process. This function is meant to be run in its own thread.
@@ -268,8 +287,13 @@ impl<R: Reactor> Client<R> {
         log::info!("Loading peer addresses..");
 
         let peers_path = dir.join("peers.json");
-        let peers = match peer::Cache::create(&peers_path) {
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => peer::Cache::open(&peers_path)?,
+        let mut peers = match peer::Cache::create(&peers_path) {
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
+                let cache = peer::Cache::open(&peers_path)?;
+                log::info!("{} peer(s) found..", cache.len());
+
+                cache
+            }
             Err(err) => panic!(err.to_string()), // TODO
             Ok(cache) => {
                 log::info!("Initializing new peer address cache {:?}", peers_path);
@@ -277,15 +301,28 @@ impl<R: Reactor> Client<R> {
             }
         };
 
-        // TODO: This should include the cached peers.
-        log::info!("{} peer(s) found..", self.config.address_book.len());
-        log::debug!("{:?}", self.config.address_book);
+        log::debug!("{:?}", peers);
+
+        if self.config.connect.is_empty() && peers.is_empty() {
+            log::info!("Address book is empty. Trying DNS seeds..");
+            peers.seed(
+                self.config
+                    .network
+                    .seeds()
+                    .iter()
+                    .map(|s| (*s, self.config.network.port())),
+                Source::Dns,
+            )?;
+            peers.flush()?;
+
+            log::info!("{} seeds added to address book", peers.len());
+        }
 
         let cfg = p2p::protocol::Config {
             network: self.config.network,
             params: self.config.network.params(),
             target: self.config.name,
-            address_book: self.config.address_book,
+            connect: self.config.connect,
             target_outbound_peers: self.config.target_outbound_peers,
             max_inbound_peers: self.config.max_inbound_peers,
             ..p2p::protocol::Config::default()
@@ -317,11 +354,8 @@ impl<R: Reactor> Client<R> {
         filters: F,
         peers: P,
     ) -> Result<(), Error> {
-        let cfg = p2p::protocol::Config::from(
-            self.config.name,
-            self.config.network,
-            self.config.address_book,
-        );
+        let cfg =
+            p2p::protocol::Config::from(self.config.name, self.config.network, self.config.connect);
 
         log::info!("Initializing client ({:?})..", cfg.network);
         log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
@@ -331,8 +365,7 @@ impl<R: Reactor> Client<R> {
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
 
-        log::info!("{} peer(s) found..", cfg.address_book.len());
-        log::debug!("{:?}", cfg.address_book);
+        log::info!("{} peer(s) found..", peers.len());
 
         let builder = p2p::protocol::Builder {
             cache,

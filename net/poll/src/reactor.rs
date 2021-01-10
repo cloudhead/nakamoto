@@ -173,10 +173,20 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
                     for (source, ev) in events.iter() {
                         match source {
                             Source::Peer(addr) => {
-                                if ev.errored || ev.invalid || ev.hangup {
+                                if ev.errored || ev.hangup {
                                     // Let the subsequent read fail.
                                     trace!("{}: Socket error triggered: {:?}", addr, ev);
                                 }
+                                if ev.invalid {
+                                    // File descriptor was closed and is invalid.
+                                    // Nb. This shouldn't happen. It means the source wasn't
+                                    // properly unregistered, or there is a duplicate source.
+                                    error!("{}: Socket is invalid, removing", addr);
+
+                                    self.sources.unregister(&Source::Peer(*addr));
+                                    continue;
+                                }
+
                                 if ev.writable {
                                     self.handle_writable(&addr, source)?;
                                 }
@@ -308,7 +318,7 @@ impl Reactor<net::TcpStream> {
                 }
                 Out::Disconnect(addr, reason) => {
                     if let Some(peer) = self.peers.get(&addr) {
-                        debug!("{}: Disconnecting.. ({})", addr, reason);
+                        debug!("{}: Disconnecting: {}", addr, reason);
 
                         // Shutdown the connection, ignoring any potential errors.
                         // If the socket was already disconnected, this will yield
@@ -374,10 +384,10 @@ impl Reactor<net::TcpStream> {
     }
 
     fn handle_writable(&mut self, addr: &net::SocketAddr, source: &Source) -> io::Result<()> {
+        trace!("{}: Socket is writable", addr);
+
         let src = self.sources.get_mut(source).unwrap();
         let socket = self.peers.get_mut(&addr).unwrap();
-
-        trace!("{}: Socket is writable", addr);
 
         if self.connecting.remove(addr) {
             let local_addr = socket.local_address()?;
@@ -404,7 +414,12 @@ fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
     use socket2::{Domain, Socket, Type};
     fallible! { Error::Io(io::ErrorKind::Other.into()) };
 
-    let sock = Socket::new(Domain::ipv4(), Type::stream(), None)?;
+    let domain = if addr.is_ipv4() {
+        Domain::ipv4()
+    } else {
+        Domain::ipv6()
+    };
+    let sock = Socket::new(domain, Type::stream(), None)?;
 
     sock.set_read_timeout(Some(READ_TIMEOUT))?;
     sock.set_write_timeout(Some(WRITE_TIMEOUT))?;

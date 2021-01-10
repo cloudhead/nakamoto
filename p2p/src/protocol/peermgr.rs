@@ -94,6 +94,8 @@ pub struct Config {
     pub whitelist: Whitelist,
     /// Services offered by this implementation.
     pub services: ServiceFlags,
+    /// Services required by peers.
+    pub required_services: ServiceFlags,
     /// Our user agent.
     pub user_agent: &'static str,
 }
@@ -290,7 +292,10 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             // Peers that don't advertise the `NETWORK` service are not full nodes.
             // It's not so useful for us to connect to them, because they're likely
             // to be less secure.
-            if conn.link.is_outbound() && !services.has(self.required_services()) && !whitelisted {
+            if conn.link.is_outbound()
+                && !services.has(self.config.required_services)
+                && !whitelisted
+            {
                 return self
                     .upstream
                     .disconnect(*addr, DisconnectReason::PeerServices(services));
@@ -430,10 +435,5 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             // Whether we want to receive transaction `inv` messages.
             relay: false,
         }
-    }
-
-    /// Services required from peers.
-    pub fn required_services(&self) -> ServiceFlags {
-        ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS
     }
 }

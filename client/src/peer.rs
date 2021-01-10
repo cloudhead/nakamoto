@@ -6,6 +6,7 @@ use std::{fs, io, net};
 pub use nakamoto_common::p2p::peer::*;
 
 /// A file-backed implementation of [`Store`].
+#[derive(Debug)]
 pub struct Cache {
     addrs: HashMap<net::IpAddr, KnownAddress>,
     file: fs::File,

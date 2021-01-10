@@ -4,7 +4,7 @@
 use std::net;
 use std::time;
 
-pub use nakamoto_client::client::{AddressBook, Client, Config, Network};
+pub use nakamoto_client::client::{Client, Config, Network};
 pub use nakamoto_client::error::Error;
 
 pub mod logger;
@@ -19,21 +19,6 @@ pub fn run(
     listen: &[net::SocketAddr],
     network: Network,
 ) -> Result<(), Error> {
-    let address_book = if connect.is_empty() {
-        match AddressBook::load("peers") {
-            Ok(peers) if peers.is_empty() => {
-                log::info!("Address book is empty. Trying DNS seeds..");
-                AddressBook::bootstrap(network.seeds(), network.port())?
-            }
-            Ok(peers) => peers,
-            Err(err) => {
-                return Err(Error::AddressBook(err));
-            }
-        }
-    } else {
-        AddressBook::from(connect)?
-    };
-
     let mut cfg = Config {
         network,
         listen: if listen.is_empty() {
@@ -41,7 +26,7 @@ pub fn run(
         } else {
             listen.to_vec()
         },
-        address_book,
+        connect: connect.to_vec(),
         timeout: time::Duration::from_secs(30),
         ..Config::default()
     };

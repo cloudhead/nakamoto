@@ -31,6 +31,28 @@ pub trait Store {
     /// Returns the number of addresses.
     fn len(&self) -> usize;
 
+    /// Returns true if there are no addresses.
+    fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Seed the peer store with addresses.
+    fn seed<S: net::ToSocketAddrs>(
+        &mut self,
+        seeds: impl Iterator<Item = S>,
+        source: Source,
+    ) -> std::io::Result<()> {
+        for seed in seeds {
+            for addr in seed.to_socket_addrs()? {
+                self.insert(
+                    addr.ip(),
+                    KnownAddress::new(Address::new(&addr, ServiceFlags::NONE), source),
+                );
+            }
+        }
+        Ok(())
+    }
+
     /// Clears the store of all addresses.
     fn clear(&mut self);
 
@@ -74,12 +96,14 @@ impl Store for std::collections::HashMap<net::IpAddr, KnownAddress> {
 }
 
 /// Address source. Specifies where an address originated from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Source {
     /// An address that was shared by another peer.
     Peer(net::SocketAddr),
-    /// An address that was discovered by connecting to a peer.
-    Connected,
+    /// An address that was discovered by connecting to a peer at a certain time.
+    Connected(LocalTime),
+    /// An address that came from a DNS seed.
+    Dns,
     /// An address from an unspecified source.
     Other,
 }
@@ -87,6 +111,17 @@ pub enum Source {
 impl Default for Source {
     fn default() -> Self {
         Self::Other
+    }
+}
+
+impl std::fmt::Display for Source {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Peer(addr) => write!(f, "{}", addr),
+            Self::Connected(t) => write!(f, "connection @{}", t),
+            Self::Dns => write!(f, "DNS"),
+            Self::Other => write!(f, "other"),
+        }
     }
 }
 
@@ -109,7 +144,10 @@ impl KnownAddress {
         Self {
             addr,
             source,
-            last_success: None,
+            last_success: match source {
+                Source::Connected(t) => Some(t),
+                _ => None,
+            },
             last_attempt: None,
         }
     }
@@ -180,6 +218,12 @@ impl KnownAddress {
             last_attempt,
         })
     }
+}
+
+/// Source of peer addresses.
+pub trait AddressSource {
+    /// Sample a random peer address. Returns `None` if there are no addresses left.
+    fn sample(&self) -> Option<(&Address, Source)>;
 }
 
 #[cfg(test)]

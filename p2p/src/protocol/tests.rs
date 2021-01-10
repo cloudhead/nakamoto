@@ -45,10 +45,11 @@ mod setup {
         pub static ref CONFIG: Config = Config {
             network: network::Network::Mainnet,
             params: Params::new(network::Network::Mainnet.into()),
-            address_book: AddressBook::new(),
+            connect: vec![],
             // Pretend that we're a full-node, to fool connections
             // between instances of this protocol in tests.
-            services: ServiceFlags::NETWORK,
+            services: ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
+            required_services: ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
             protocol_version: PROTOCOL_VERSION,
             target_outbound_peers: 8,
             max_inbound_peers: 8,
@@ -187,18 +188,18 @@ mod setup {
 
         let mut nodes = Vec::with_capacity(size);
         for ((i, addr), peer_cfg) in addrs.iter().enumerate().zip(cfgs.drain(..)) {
-            let mut address_book = AddressBook::new();
+            let mut connect = Vec::new();
 
             for other in addrs.iter().skip(i + 1) {
-                address_book.push(*other);
+                connect.push(*other);
             }
 
             let mut cfg = Config {
                 network,
-                address_book,
+                connect,
                 // Pretend that we're a full-node, to fool connections
                 // between instances of this protocol in tests.
-                services: ServiceFlags::NETWORK,
+                services: ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
                 target: peer_cfg.name,
                 ..Config::default()
             };
@@ -788,7 +789,7 @@ fn test_getaddr() {
             peer,
             msg.raw(NetworkMessage::Addr(vec![(
                 0,
-                Address::new(&toto, ServiceFlags::NETWORK),
+                Address::new(&toto, setup::CONFIG.required_services),
             )])),
         ),
     );
@@ -929,9 +930,9 @@ fn test_addrs() {
         Input::Received(
             bob,
             msg.raw(NetworkMessage::Addr(vec![
-                (0, Address::new(&jak, ServiceFlags::NETWORK)),
-                (0, Address::new(&jim, ServiceFlags::NETWORK)),
-                (0, Address::new(&jon, ServiceFlags::NETWORK)),
+                (0, Address::new(&jak, setup::CONFIG.required_services)),
+                (0, Address::new(&jim, setup::CONFIG.required_services)),
+                (0, Address::new(&jon, setup::CONFIG.required_services)),
             ])),
         ),
     );
@@ -971,9 +972,9 @@ fn prop_connect_timeout(seed: u64) {
         configure: |cfg| {
             cfg.target_outbound_peers = 2;
 
-            cfg.address_book.push(([88, 13, 16, 59], 8333).into());
-            cfg.address_book.push(([99, 45, 180, 58], 8333).into());
-            cfg.address_book.push(([14, 48, 141, 57], 8333).into());
+            cfg.connect.push(([88, 13, 16, 59], 8333).into());
+            cfg.connect.push(([99, 45, 180, 58], 8333).into());
+            cfg.connect.push(([14, 48, 141, 57], 8333).into());
         },
         rng: rng.clone(),
         initialize: false,

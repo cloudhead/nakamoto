@@ -21,7 +21,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 use crate::protocol::{DisconnectReason, Event, Out, PeerId};
 
 use super::network::Network;
-use super::{addrmgr, connmgr, message, peermgr, pingmgr, spvmgr, syncmgr, Locators};
+use super::{addrmgr, connmgr, message, peermgr, pingmgr, spvmgr, syncmgr, Link, Locators};
 
 /// Used to construct a protocol output.
 #[derive(Debug, Clone)]
@@ -113,7 +113,14 @@ impl connmgr::Connect for Channel {
 
 impl connmgr::Events for Channel {
     fn event(&self, event: connmgr::Event) {
-        debug!(target: self.target, "[conn] {}", &event);
+        match event {
+            connmgr::Event::Connected(_, Link::Outbound) => {
+                info!(target: self.target, "{}", &event)
+            }
+            _ => {
+                debug!(target: self.target, "[conn] {}", &event);
+            }
+        }
         self.event(Event::ConnManager(event));
     }
 }

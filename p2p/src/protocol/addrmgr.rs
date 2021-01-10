@@ -10,11 +10,10 @@ use bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::BlockTime;
 use nakamoto_common::collections::{HashMap, HashSet};
-use nakamoto_common::p2p::peer::{KnownAddress, Source, Store};
+use nakamoto_common::p2p::peer::{AddressSource, KnownAddress, Source, Store};
 
 use super::channel::SetTimeout;
 use super::{Link, PeerId};
-use crate::address_book::AddressBook;
 
 /// Time to wait until a request times out.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -58,11 +57,26 @@ impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Event::AddressDiscovered(addr, source) => {
-                write!(fmt, "{:?} discovered from source `{:?}`", addr, source)
+                write!(fmt, "{:?} discovered from source `{}`", addr, source)
             }
             Event::Error(msg) => {
                 write!(fmt, "error: {}", msg)
             }
+        }
+    }
+}
+
+/// Address manager configuration.
+#[derive(Debug)]
+pub struct Config {
+    /// Services required from peers.
+    pub required_services: ServiceFlags,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            required_services: ServiceFlags::NONE,
         }
     }
 }
@@ -80,6 +94,7 @@ pub struct AddressManager<P, U> {
     last_request: Option<LocalTime>,
     /// The last time we idled.
     last_idle: Option<LocalTime>,
+    cfg: Config,
     upstream: U,
     rng: fastrand::Rng,
 }
@@ -157,13 +172,12 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
             return;
         }
 
-        let ka = self
-            .peers
-            .get_mut(&addr.ip())
-            .expect("the address must exist");
+        let address = Address::new(addr, services);
 
-        ka.last_success = Some(time);
-        ka.addr.services = services;
+        self.insert(
+            std::iter::once((time.block_time(), address)),
+            Source::Connected(time),
+        );
 
         if link.is_outbound() {
             self.sources.insert(*addr);
@@ -182,8 +196,10 @@ impl<P, U> AddressManager<P, U> {
 
 impl<P: Store, U: Events> AddressManager<P, U> {
     /// Create a new, empty address manager.
-    pub fn new(rng: fastrand::Rng, peers: P, upstream: U) -> Self {
-        Self {
+    pub fn new(cfg: Config, rng: fastrand::Rng, peers: P, upstream: U) -> Self {
+        let ips = peers.iter().map(|(ip, _)| *ip).collect::<Vec<_>>();
+        let mut addrmgr = Self {
+            cfg,
             peers,
             address_ranges: HashMap::with_hasher(rng.clone().into()),
             connected: HashSet::with_hasher(rng.clone().into()),
@@ -193,15 +209,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             last_idle: None,
             upstream,
             rng,
-        }
-    }
+        };
 
-    /// Create a new address manager from an address book.
-    pub fn from(book: AddressBook, rng: fastrand::Rng, peers: P, upstream: U) -> Self {
-        let mut addrmgr = Self::new(rng, peers, upstream);
-
-        for addr in book.iter() {
-            addrmgr.insert_sockaddr(std::iter::once(*addr), Source::Other);
+        for ip in ips.iter() {
+            addrmgr.populate_address_ranges(ip);
         }
         addrmgr
     }
@@ -222,20 +233,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         self.address_ranges.clear();
     }
 
-    /// Same as `insert`, but supports adding bare socket addresses to the address manager.
-    /// This is useful when adding addresses manually, or from sources other than the network.
-    pub fn insert_sockaddr(
-        &mut self,
-        addrs: impl Iterator<Item = net::SocketAddr>,
-        source: Source,
-    ) -> bool {
-        self.insert(
-            addrs.map(|a| (BlockTime::default(), Address::new(&a, ServiceFlags::NONE))),
-            source,
-        )
-    }
-
-    /// Called when a peer connection timed out while attempting to connect.
+    /// Called when a peer connection is attempted.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr, time: LocalTime) {
         if let Some(ka) = self.peers.get_mut(&addr.ip()) {
             ka.last_attempt = Some(time);
@@ -259,12 +257,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
             return;
         }
-
         self.connected.insert(addr.ip());
-        self.insert(
-            std::iter::once((BlockTime::default(), Address::new(addr, ServiceFlags::NONE))),
-            Source::Connected,
-        );
     }
 
     /// Add addresses to the address manager. The input matches that of the `addr` message
@@ -276,11 +269,12 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// use bitcoin::network::address::Address;
     /// use bitcoin::network::constants::ServiceFlags;
     ///
-    /// use nakamoto_p2p::protocol::addrmgr::AddressManager;
+    /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
     /// use nakamoto_common::p2p::peer::Source;
     /// use nakamoto_common::block::BlockTime;
     ///
-    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), HashMap::new(), ());
+    /// let cfg = Config::default();
+    /// let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
     ///
     /// addrmgr.insert(vec![
     ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
@@ -313,6 +307,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
         // TODO: Store timestamp.
         for (_, addr) in addrs {
+            if !addr.services.has(self.cfg.required_services) {
+                continue;
+            }
+
             let net_addr = match addr.socket_addr() {
                 Ok(a) => a,
                 Err(_) => continue,
@@ -348,30 +346,9 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             }
             okay = true; // As soon as one address was inserted, consider it a success.
 
+            self.populate_address_ranges(&net_addr.ip());
             self.upstream
                 .event(Event::AddressDiscovered(addr, source.clone()));
-
-            let key = self::addr_key(&net_addr.ip());
-            let range = self.address_ranges.entry(key).or_insert_with({
-                let rng = self.rng.clone();
-
-                || HashSet::with_hasher(rng.into())
-            });
-
-            // If the address range is already full, remove a random address
-            // before inserting this new one.
-            if range.len() == MAX_RANGE_SIZE {
-                let ix = self.rng.usize(..range.len());
-                let addr = range
-                    .iter()
-                    .cloned()
-                    .nth(ix)
-                    .expect("the range is not empty");
-
-                range.remove(&addr);
-                self.peers.remove(&addr);
-            }
-            range.insert(ip);
         }
         okay
     }
@@ -390,11 +367,12 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// use bitcoin::network::address::Address;
     /// use bitcoin::network::constants::ServiceFlags;
     ///
-    /// use nakamoto_p2p::protocol::addrmgr::AddressManager;
+    /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
     /// use nakamoto_common::p2p::peer::Source;
     /// use nakamoto_common::block::BlockTime;
     ///
-    /// let mut addrmgr = AddressManager::new(fastrand::Rng::new(), HashMap::new(), ());
+    /// let cfg = Config::default();
+    /// let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
     ///
     /// // Addresses controlled by an adversary.
     /// let adversary_addrs = vec![
@@ -423,7 +401,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// let mut safe = 0;
     ///
     /// for _ in 0..99 {
-    ///     let addr = addrmgr.sample().unwrap();
+    ///     let (addr, _) = addrmgr.sample().unwrap();
     ///
     ///     if adversary_addrs.contains(&addr) {
     ///         adversary += 1;
@@ -439,15 +417,11 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// ```
     /// TODO: Should return an iterator.
     ///
-    pub fn sample(&self) -> Option<&Address> {
-        assert!(self.connected.len() <= self.len());
-
+    pub fn sample(&self) -> Option<(&Address, Source)> {
         if self.is_empty() {
             return None;
         }
-        if self.connected.len() == self.len() {
-            return None;
-        }
+        assert!(!self.address_ranges.is_empty());
 
         // Keep track of the addresses we've visited, to make sure we don't
         // loop forever.
@@ -473,7 +447,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             }
 
             if !self.connected.contains(&ip) {
-                return Some(&ka.addr);
+                return Some((&ka.addr, ka.source));
             }
         }
 
@@ -481,6 +455,34 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     }
 
     ////////////////////////////////////////////////////////////////////////////
+
+    /// Populate address ranges with an IP. This may remove an existing IP if
+    /// its range is full. Returns the range key that was used.
+    fn populate_address_ranges(&mut self, ip: &net::IpAddr) -> u8 {
+        let key = self::addr_key(ip);
+        let range = self.address_ranges.entry(key).or_insert_with({
+            let rng = self.rng.clone();
+
+            || HashSet::with_hasher(rng.into())
+        });
+
+        // If the address range is already full, remove a random address
+        // before inserting this new one.
+        if range.len() == MAX_RANGE_SIZE {
+            let ix = self.rng.usize(..range.len());
+            let addr = range
+                .iter()
+                .cloned()
+                .nth(ix)
+                .expect("the range is not empty");
+
+            range.remove(&addr);
+            self.peers.remove(&addr);
+        }
+        range.insert(*ip);
+
+        key
+    }
 
     /// Remove an address permanently.
     fn remove_address(&mut self, addr: &net::IpAddr) -> (Option<KnownAddress>, bool) {
@@ -502,6 +504,12 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         }
 
         (ka, co)
+    }
+}
+
+impl<P: Store, U: Events> AddressSource for AddressManager<P, U> {
+    fn sample(&self) -> Option<(&Address, Source)> {
+        AddressManager::sample(&self)
     }
 }
 
@@ -584,18 +592,29 @@ mod tests {
 
     #[test]
     fn test_sample_empty() {
-        let addrmgr = AddressManager::new(fastrand::Rng::new(), HashMap::new(), ());
+        let addrmgr =
+            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
 
         assert!(addrmgr.sample().is_none());
     }
 
     #[test]
     fn test_max_range_size() {
-        let mut addrmgr = AddressManager::new(fastrand::Rng::new(), HashMap::new(), ());
+        let services = ServiceFlags::NONE;
+        let time = BlockTime::default();
+
+        let mut addrmgr =
+            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
 
         for i in 0..MAX_RANGE_SIZE + 1 {
-            addrmgr.insert_sockaddr(
-                iter::once(([111, 111, (i / u8::MAX as usize) as u8, i as u8], 8333).into()),
+            addrmgr.insert(
+                iter::once((
+                    time,
+                    Address::new(
+                        &([111, 111, (i / u8::MAX as usize) as u8, i as u8], 8333).into(),
+                        services,
+                    ),
+                )),
                 Source::default(),
             );
         }
@@ -605,8 +624,11 @@ mod tests {
             "we can't insert more than a certain amount of addresses in the same range"
         );
 
-        addrmgr.insert_sockaddr(
-            iter::once(([129, 44, 12, 2], 8333).into()),
+        addrmgr.insert(
+            iter::once((
+                time,
+                Address::new(&([129, 44, 12, 2], 8333).into(), services),
+            )),
             Source::default(),
         );
         assert_eq!(

@@ -35,7 +35,6 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::comparison_chain)]
 #![deny(missing_docs, unsafe_code)]
-pub mod address_book;
 pub mod error;
 pub mod event;
 pub mod protocol;

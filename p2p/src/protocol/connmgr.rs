@@ -4,9 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::net;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
-use nakamoto_common::p2p::peer;
+use nakamoto_common::p2p::peer::{self, AddressSource, Source};
 
-use super::addrmgr::{self, AddressManager};
 use super::channel::{Disconnect, SetTimeout};
 use crate::protocol::{DisconnectReason, Link, PeerId, Timeout};
 
@@ -35,8 +34,8 @@ pub trait Events {
 /// A connection-related event.
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// The node is connecting to peers.
-    Connecting(usize, usize),
+    /// Connecting to a peer found from the specified source.
+    Connecting(PeerId, Source),
     /// A new peer has connected and is ready to accept messages.
     /// This event is triggered *after* the peer handshake
     /// has successfully completed.
@@ -50,11 +49,9 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Event::Connecting(current, target) => write!(
-                fmt,
-                "Peer outbound connections ({}) below target ({})",
-                current, target,
-            ),
+            Event::Connecting(addr, source) => {
+                write!(fmt, "Connecting to peer {} from source `{}`", addr, source)
+            }
             Event::Connected(addr, link) => write!(fmt, "{}: Peer connected ({:?})", &addr, link),
             Event::Disconnected(addr) => write!(fmt, "Disconnected from {}", &addr),
             Event::AddressBookExhausted => {
@@ -71,6 +68,8 @@ pub struct Config {
     pub target_outbound_peers: usize,
     /// Maximum number of inbound peer connections.
     pub max_inbound_peers: usize,
+    /// Peer addresses that should always be retried.
+    pub retry: Vec<net::SocketAddr>,
 }
 
 /// A connected peer.
@@ -91,6 +90,8 @@ struct Peer {
 pub struct ConnectionManager<U> {
     /// Configuration.
     pub config: Config,
+    /// Set of peers being connected to.
+    connecting: HashSet<PeerId>,
     /// Set of all connected peers.
     connected: HashMap<PeerId, Peer>,
     /// Set of disconnected peers.
@@ -101,10 +102,11 @@ pub struct ConnectionManager<U> {
     upstream: U,
 }
 
-impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> ConnectionManager<U> {
+impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
     /// Create a new connection manager.
     pub fn new(upstream: U, config: Config) -> Self {
         Self {
+            connecting: HashSet::new(),
             connected: HashMap::new(),
             disconnected: HashSet::new(),
             last_idle: None,
@@ -114,36 +116,35 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Initialize the connection manager. Must be called once.
-    pub fn initialize<S: peer::Store>(
+    pub fn initialize<S: peer::Store, A: AddressSource>(
         &mut self,
-        time: LocalTime,
-        addrmgr: &mut AddressManager<S, U>,
+        _time: LocalTime,
+        addrs: &mut A,
     ) {
-        // FIXME: Should be random
-        let addrs = addrmgr
+        let retry = self
+            .config
+            .retry
             .iter()
             .take(self.config.target_outbound_peers)
-            .map(|a| a.socket_addr().ok())
-            .flatten()
+            .cloned()
             .collect::<Vec<_>>();
 
-        for addr in addrs {
-            self.connect(&addr, addrmgr, time);
+        for addr in retry {
+            self.connect::<S, A>(&addr);
         }
         self.upstream.set_timeout(IDLE_TIMEOUT);
+        self.maintain_connections::<S, A>(addrs);
     }
 
     /// Connect to a peer.
-    pub fn connect<S: peer::Store>(
-        &mut self,
-        addr: &PeerId,
-        addrmgr: &mut AddressManager<S, U>,
-        local_time: LocalTime,
-    ) {
-        if !self.connected.contains_key(&addr) {
-            self.upstream.connect(*addr, CONNECTION_TIMEOUT);
-            addrmgr.peer_attempted(&addr, local_time);
+    pub fn connect<S: peer::Store, A: AddressSource>(&mut self, addr: &PeerId) -> bool {
+        if self.connected.contains_key(&addr) || self.connecting.contains(addr) {
+            return false;
         }
+        self.connecting.insert(*addr);
+        self.upstream.connect(*addr, CONNECTION_TIMEOUT);
+
+        true
     }
 
     /// Disconnect from a peer.
@@ -175,6 +176,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
             }
             _ => {
                 self.disconnected.remove(&address);
+                self.connecting.remove(&address);
                 self.connected.insert(
                     address,
                     Peer {
@@ -189,10 +191,10 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Call when a peer disconnected.
-    pub fn peer_disconnected<S: peer::Store>(
+    pub fn peer_disconnected<S: peer::Store, A: AddressSource>(
         &mut self,
         addr: &net::SocketAddr,
-        addrmgr: &AddressManager<S, U>,
+        addrs: &A,
     ) {
         debug_assert!(self.connected.contains_key(&addr));
         debug_assert!(!self.disconnected.contains(&addr));
@@ -205,19 +207,21 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
             // If an outbound peer disconnected, we should make sure to maintain
             // our target outbound connection count.
             if peer.link.is_outbound() {
-                self.maintain_connections(addrmgr);
+                self.maintain_connections::<S, A>(addrs);
             }
+        } else {
+            self.connecting.remove(&addr);
         }
     }
 
     /// Call when we recevied a timeout.
-    pub fn received_timeout<S: peer::Store>(
+    pub fn received_timeout<S: peer::Store, A: AddressSource>(
         &mut self,
         local_time: LocalTime,
-        addrmgr: &AddressManager<S, U>,
+        addrs: &A,
     ) {
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.maintain_connections(addrmgr);
+            self.maintain_connections::<S, A>(addrs);
             self.upstream.set_timeout(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
@@ -232,30 +236,25 @@ impl<U: Connect + Disconnect + Events + SetTimeout + addrmgr::Events> Connection
     }
 
     /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_connections<S: peer::Store>(&mut self, addrmgr: &AddressManager<S, U>) {
-        let current = self.outbound().count();
-
-        if current < self.config.target_outbound_peers {
-            Events::event(
-                &self.upstream,
-                Event::Connecting(current, self.config.target_outbound_peers),
-            );
-
-            if let Some(addr) = addrmgr.sample() {
+    fn maintain_connections<S: peer::Store, A: AddressSource>(&mut self, addrs: &A) {
+        while self.outbound().count() + self.connecting.len() < self.config.target_outbound_peers {
+            if let Some((addr, source)) = addrs.sample() {
+                // TODO: Support Tor?
                 if let Ok(sockaddr) = addr.socket_addr() {
+                    // TODO: Remove this assertion once address manager no longer cares about
+                    // connections.
                     debug_assert!(!self.connected.contains_key(&sockaddr));
 
-                    self.upstream.connect(sockaddr, CONNECTION_TIMEOUT);
-                } else {
-                    // TODO: Perhaps the address manager should just return addresses
-                    // that can be converted to socket addresses?
-                    // The only ones that cannot are Tor addresses.
-                    todo!();
+                    if self.connect::<S, A>(&sockaddr) {
+                        self.upstream.event(Event::Connecting(sockaddr, source));
+                        break;
+                    }
                 }
             } else {
                 // We're out of addresses. We don't need to do anything here, the address manager
                 // will eventually find new addresses.
                 Events::event(&self.upstream, Event::AddressBookExhausted);
+                break;
             }
         }
     }
