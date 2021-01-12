@@ -9,7 +9,7 @@ nakamoto-common = { version = "0.1.0", path = "../../common" }
 nakamoto-p2p = { version = "0.1.0", path = "../../p2p" }
 crossbeam-channel = { version = "0.4" }
 bitcoin = "0.25.1"
-popol = "0.3"
+popol = "0.4"
 socket2 = "0.3"
 libc = "0.2.71"
 log = "0.4"
