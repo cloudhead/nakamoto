@@ -109,9 +109,6 @@ impl Store for std::collections::HashMap<net::IpAddr, KnownAddress> {
 pub enum Source {
     /// An address that was shared by another peer.
     Peer(net::SocketAddr),
-    /// An address of a successful peer connection at a point in time.
-    /// TODO: Remove this
-    Connection(LocalTime),
     /// An address that came from a DNS seed.
     Dns,
     /// An address from an unspecified source.
@@ -129,7 +126,6 @@ impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Peer(addr) => write!(f, "{}", addr),
-            Self::Connection(t) => write!(f, "connection @{}", t),
             Self::Dns => write!(f, "DNS"),
             Self::Other => write!(f, "other"),
         }
@@ -151,20 +147,12 @@ pub struct KnownAddress {
 
 impl KnownAddress {
     /// Create a new known address.
-    ///
-    /// If the [`Source`] parameter is `Source::Connection`, this will be recorded
-    /// as the first successful connection.
     pub fn new(addr: Address, source: Source) -> Self {
-        let last_success = match source {
-            Source::Connection(t) => Some(t),
-            _ => None,
-        };
-
         Self {
             addr,
             source,
-            last_success,
-            last_attempt: last_success,
+            last_success: None,
+            last_attempt: None,
         }
     }
 

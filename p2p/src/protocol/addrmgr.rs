@@ -187,22 +187,21 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         if !self.connected.contains(&addr.ip()) {
             return;
         }
-        let address = Address::new(addr, services);
+        if link.is_outbound() {
+            self.sources.insert(*addr);
+        }
 
-        // If we know this address, we want to keep track of when we last succeeded
-        // connecting to it. Otherwise, we want to add it to our store.
+        // We're only interested in peers we already know, eg. from DNS or peer
+        // exchange. Peers should only be added to our address book if they are DNS seeds
+        // or are discovered via a DNS seed.
         if let Some(ka) = self.peers.get_mut(&addr.ip()) {
-            ka.last_success = Some(time);
-        // TODO: When will this code path ever be executed?
-        // All negotiated peers here should already be known?
-        } else if self.insert(
-            std::iter::once((time.block_time(), address)),
-            Source::Connection(time),
-        ) {
-            if link.is_outbound() {
-                self.sources.insert(*addr);
+            // Only ask for addresses when connecting for the first time.
+            if ka.last_success.is_none() {
                 self.upstream.get_addresses(*addr);
             }
+            // Keep track of when the last successful handshake was.
+            ka.last_success = Some(time);
+            ka.addr.services = services;
         }
     }
 

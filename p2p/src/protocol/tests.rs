@@ -21,7 +21,7 @@ use nakamoto_chain::block::store;
 use nakamoto_common::block::filter::FilterHeader;
 use nakamoto_common::block::store::{Genesis, Store};
 use nakamoto_common::block::BlockHeader;
-use nakamoto_common::p2p::peer::KnownAddress;
+use nakamoto_common::p2p::peer::{KnownAddress, Source};
 
 use nakamoto_test::block::cache::model;
 use nakamoto_test::logger;
@@ -165,7 +165,9 @@ mod setup {
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
         let filters = model::FilterCache::new(FilterHeader::genesis(network));
+        let peers = HashMap::new();
         let size = cfgs.len();
+        let config = Config::default();
 
         assert!(size > 0);
 
@@ -199,15 +201,14 @@ mod setup {
                 connect,
                 // Pretend that we're a full-node, to fool connections
                 // between instances of this protocol in tests.
-                services: ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
+                services: config.required_services,
                 target: peer_cfg.name,
-                ..Config::default()
+                ..config.clone()
             };
             configure(&mut cfg);
 
             let chain = peer_cfg.chain;
             let tree = model::Cache::from(chain);
-            let peers = HashMap::new();
             let peer = Builder {
                 cache: tree.clone(),
                 clock: clock.clone(),
@@ -474,6 +475,23 @@ fn test_maintain_connections(seed: u64) {
     // The first peer always has the outbound connections.
     let alice = sim.get("alice");
 
+    {
+        // Give alice some addresses for her address book.
+        let olive = sim.get("olive");
+        let john = sim.get("john");
+        let misha = sim.get("misha");
+
+        sim.peer("alice").protocol.addrmgr.insert(
+            vec![
+                (0, Address::new(&olive, setup::CONFIG.required_services)),
+                (0, Address::new(&john, setup::CONFIG.required_services)),
+                (0, Address::new(&misha, setup::CONFIG.required_services)),
+            ]
+            .into_iter(),
+            Source::Dns,
+        );
+    }
+
     // Run the simulation until no messages are exchanged.
     sim.step();
 
@@ -666,8 +684,17 @@ fn test_handshake_initial_messages() {
     let network = Network::Mainnet;
     let (mut instance, rx, time) = setup::singleton(network);
 
-    let remote = ([131, 31, 11, 33], 11111).into();
+    let remote: net::SocketAddr = ([131, 31, 11, 33], 11111).into();
     let local = ([0, 0, 0, 0], 0).into();
+
+    // Make sure the address manager trusts this remote address.
+    instance.addrmgr.insert(
+        std::iter::once((
+            Default::default(),
+            Address::new(&remote, setup::CONFIG.required_services),
+        )),
+        Source::Dns,
+    );
 
     instance.step(
         Input::Connected {
