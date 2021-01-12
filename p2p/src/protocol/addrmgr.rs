@@ -282,20 +282,20 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([211, 48, 99, 4], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([241, 44, 12, 5], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (BlockTime::default(), a)), Source::default());
+    /// ].into_iter().map(|a| (BlockTime::default(), a)), Source::Dns);
     ///
     /// assert_eq!(addrmgr.len(), 3);
     ///
     /// addrmgr.insert(std::iter::once(
     ///     (BlockTime::default(), Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE))
-    /// ), Source::default());
+    /// ), Source::Dns);
     ///
     /// assert_eq!(addrmgr.len(), 3, "already known addresses are ignored");
     ///
     /// addrmgr.clear();
     /// addrmgr.insert(vec![
     ///     Address::new(&([255, 255, 255, 255], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (BlockTime::default(), a)), Source::default());
+    /// ].into_iter().map(|a| (BlockTime::default(), a)), Source::Dns);
     ///
     /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
     /// ```
@@ -309,6 +309,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
         // TODO: Store timestamp.
         for (_, addr) in addrs {
+            // Ignore addresses that don't have the required services.
             if !addr.services.has(self.cfg.required_services) {
                 continue;
             }
@@ -325,17 +326,13 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             }
 
             // Ignore non-routable addresses if they come from a peer.
-            // Allow local addresses when the source is `Other`.
-            //
-            // Nb. This is perhaps still not quite correct. A local peer may want to share
-            // another local address.
-            //
-            // FIXME: Local addresses don't really work because they have the same IP, so they
-            // overwrite each other.
-            match source {
-                Source::Peer(_) if !self::is_routable(&ip) => continue,
-                Source::Other if !self::is_routable(&ip) && !self::is_local(&ip) => continue,
-                _ => {}
+            if !self::is_routable(&ip) {
+                continue;
+            }
+
+            // Ignore local addresses.
+            if self::is_local(&ip) {
+                continue;
             }
 
             if !self
@@ -385,7 +382,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///     Address::new(&([111, 8, 161, 73], 8333).into(), ServiceFlags::NONE),
     /// ];
     /// addrmgr.insert(
-    ///     adversary_addrs.iter().cloned().map(|a| (BlockTime::default(), a)), Source::default());
+    ///     adversary_addrs.iter().cloned().map(|a| (BlockTime::default(), a)), Source::Dns);
     ///
     /// // Safe addresses, controlled by non-adversarial peers.
     /// let safe_addrs = vec![
@@ -395,7 +392,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///     Address::new(&([99, 129, 2, 15], 8333).into(), ServiceFlags::NONE),
     /// ];
     /// addrmgr.insert(
-    ///     safe_addrs.iter().cloned().map(|a| (BlockTime::default(), a)), Source::default());
+    ///     safe_addrs.iter().cloned().map(|a| (BlockTime::default(), a)), Source::Dns);
     ///
     /// // Keep track of how many times we pick a safe vs. an adversary-controlled address.
     /// let mut adversary = 0;
@@ -616,7 +613,7 @@ mod tests {
                         services,
                     ),
                 )),
-                Source::default(),
+                Source::Dns,
             );
         }
         assert_eq!(
@@ -630,7 +627,7 @@ mod tests {
                 time,
                 Address::new(&([129, 44, 12, 2], 8333).into(), services),
             )),
-            Source::default(),
+            Source::Dns,
         );
         assert_eq!(
             addrmgr.len(),

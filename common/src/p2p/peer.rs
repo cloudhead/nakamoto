@@ -111,15 +111,6 @@ pub enum Source {
     Peer(net::SocketAddr),
     /// An address that came from a DNS seed.
     Dns,
-    /// An address from an unspecified source.
-    /// TODO: Remove this
-    Other,
-}
-
-impl Default for Source {
-    fn default() -> Self {
-        Self::Other
-    }
 }
 
 impl std::fmt::Display for Source {
@@ -127,7 +118,6 @@ impl std::fmt::Display for Source {
         match self {
             Self::Peer(addr) => write!(f, "{}", addr),
             Self::Dns => write!(f, "DNS"),
-            Self::Other => write!(f, "other"),
         }
     }
 }
@@ -183,6 +173,13 @@ impl KnownAddress {
                 None => Value::Null,
             },
         );
+        obj.insert(
+            "source".to_owned(),
+            match self.source {
+                Source::Dns => Value::String("dns".to_owned()),
+                Source::Peer(addr) => Value::String(addr.to_string()),
+            },
+        );
 
         Value::Object(obj)
     }
@@ -214,10 +211,23 @@ impl KnownAddress {
             Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
             _ => return Err(serde::Error),
         };
+        let source = match obj.get("source") {
+            Some(Value::String(s)) => {
+                if s == "dns" {
+                    Source::Dns
+                } else {
+                    match s.parse() {
+                        Ok(addr) => Source::Peer(addr),
+                        Err(_) => return Err(serde::Error),
+                    }
+                }
+            }
+            _ => return Err(serde::Error),
+        };
 
         Ok(Self {
             addr: Address::new(&addr, services),
-            source: Source::Other,
+            source,
             last_success,
             last_attempt,
         })
@@ -240,7 +250,7 @@ mod tests {
         let services = ServiceFlags::NETWORK;
         let ka = KnownAddress {
             addr: Address::new(&sockaddr, services),
-            source: Source::default(),
+            source: Source::Peer(net::SocketAddr::from(([4, 5, 6, 7], 8333))),
             last_success: Some(LocalTime::from_secs(42)),
             last_attempt: None,
         };

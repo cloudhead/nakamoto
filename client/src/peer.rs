@@ -139,7 +139,7 @@ mod test {
                 let services = ServiceFlags::NETWORK;
                 let ka = KnownAddress {
                     addr: Address::new(&sockaddr, services),
-                    source: Source::default(),
+                    source: Source::Dns,
                     last_success: Some(LocalTime::from_secs(i as u64)),
                     last_attempt: None,
                 };
