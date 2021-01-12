@@ -189,14 +189,20 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         }
         let address = Address::new(addr, services);
 
-        self.insert(
+        // If we know this address, we want to keep track of when we last succeeded
+        // connecting to it. Otherwise, we want to add it to our store.
+        if let Some(ka) = self.peers.get_mut(&addr.ip()) {
+            ka.last_success = Some(time);
+        // TODO: When will this code path ever be executed?
+        // All negotiated peers here should already be known?
+        } else if self.insert(
             std::iter::once((time.block_time(), address)),
-            Source::Connected(time),
-        );
-
-        if link.is_outbound() {
-            self.sources.insert(*addr);
-            self.upstream.get_addresses(*addr);
+            Source::Connection(time),
+        ) {
+            if link.is_outbound() {
+                self.sources.insert(*addr);
+                self.upstream.get_addresses(*addr);
+            }
         }
     }
 
@@ -333,10 +339,9 @@ impl<P: Store, U: Events> AddressManager<P, U> {
                 _ => {}
             }
 
-            if self
+            if !self
                 .peers
                 .insert(ip, KnownAddress::new(addr.clone(), source.clone()))
-                .is_some()
             {
                 // Ignore addresses we already know.
                 continue;

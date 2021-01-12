@@ -19,8 +19,9 @@ pub trait Store {
     /// Get a known peer address mutably.
     fn get_mut(&mut self, ip: &net::IpAddr) -> Option<&mut KnownAddress>;
 
-    /// Insert an address into the store.
-    fn insert(&mut self, ip: net::IpAddr, ka: KnownAddress) -> Option<KnownAddress>;
+    /// Insert a *new* address into the store. Returns `true` if the address was inserted,
+    /// or `false` if it was already known.
+    fn insert(&mut self, ip: net::IpAddr, ka: KnownAddress) -> bool;
 
     /// Remove an address from the store.
     fn remove(&mut self, ip: &net::IpAddr) -> Option<KnownAddress>;
@@ -74,8 +75,16 @@ impl Store for std::collections::HashMap<net::IpAddr, KnownAddress> {
         self.remove(ip)
     }
 
-    fn insert(&mut self, ip: net::IpAddr, ka: KnownAddress) -> Option<KnownAddress> {
-        self.insert(ip, ka)
+    fn insert(&mut self, ip: net::IpAddr, ka: KnownAddress) -> bool {
+        use ::std::collections::hash_map::Entry;
+
+        match self.entry(ip) {
+            Entry::Vacant(v) => {
+                v.insert(ka);
+            }
+            Entry::Occupied(_) => return false,
+        }
+        true
     }
 
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = (&net::IpAddr, &KnownAddress)> + 'a> {
@@ -100,11 +109,13 @@ impl Store for std::collections::HashMap<net::IpAddr, KnownAddress> {
 pub enum Source {
     /// An address that was shared by another peer.
     Peer(net::SocketAddr),
-    /// An address that was discovered by connecting to a peer at a certain time.
-    Connected(LocalTime),
+    /// An address of a successful peer connection at a point in time.
+    /// TODO: Remove this
+    Connection(LocalTime),
     /// An address that came from a DNS seed.
     Dns,
     /// An address from an unspecified source.
+    /// TODO: Remove this
     Other,
 }
 
@@ -118,7 +129,7 @@ impl std::fmt::Display for Source {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::Peer(addr) => write!(f, "{}", addr),
-            Self::Connected(t) => write!(f, "connection @{}", t),
+            Self::Connection(t) => write!(f, "connection @{}", t),
             Self::Dns => write!(f, "DNS"),
             Self::Other => write!(f, "other"),
         }
@@ -140,15 +151,20 @@ pub struct KnownAddress {
 
 impl KnownAddress {
     /// Create a new known address.
+    ///
+    /// If the [`Source`] parameter is `Source::Connection`, this will be recorded
+    /// as the first successful connection.
     pub fn new(addr: Address, source: Source) -> Self {
+        let last_success = match source {
+            Source::Connection(t) => Some(t),
+            _ => None,
+        };
+
         Self {
             addr,
             source,
-            last_success: match source {
-                Source::Connected(t) => Some(t),
-                _ => None,
-            },
-            last_attempt: None,
+            last_success,
+            last_attempt: last_success,
         }
     }
 
