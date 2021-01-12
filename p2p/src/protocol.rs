@@ -109,6 +109,11 @@ pub enum Command {
 /// These are input events generated outside of the protocol.
 #[derive(Debug, Clone)]
 pub enum Input {
+    /// Connection attempt underway.
+    Connecting {
+        /// Remote peer address.
+        addr: net::SocketAddr,
+    },
     /// New connection with a peer.
     Connected {
         /// Remote peer id.
@@ -488,6 +493,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         self.tick(local_time);
 
         match input {
+            Input::Connecting { addr } => {
+                self.addrmgr.peer_attempted(&addr, local_time);
+            }
             Input::Connected {
                 addr,
                 local_addr,

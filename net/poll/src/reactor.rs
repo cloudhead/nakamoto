@@ -308,6 +308,7 @@ impl Reactor<net::TcpStream> {
 
                             self.register_peer(addr, stream, Link::Outbound);
                             self.connecting.insert(addr);
+                            self.inputs.push_back(Input::Connecting { addr });
                         }
                         Err(err) => {
                             self.inputs.push_back(Input::Timeout);

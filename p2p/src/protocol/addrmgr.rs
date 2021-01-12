@@ -160,6 +160,22 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         }
     }
 
+    /// Called when a peer connection is attempted.
+    pub fn peer_attempted(&mut self, addr: &net::SocketAddr, time: LocalTime) {
+        // We're only interested in connection attempts for addresses we keep track of.
+        if let Some(ka) = self.peers.get_mut(&addr.ip()) {
+            ka.last_attempt = Some(time);
+        }
+    }
+
+    /// Called when a peer has connected.
+    pub fn peer_connected(&mut self, addr: &net::SocketAddr, _local_time: LocalTime) {
+        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
+            return;
+        }
+        self.connected.insert(addr.ip());
+    }
+
     /// Called when a peer has handshaked.
     pub fn peer_negotiated(
         &mut self,
@@ -168,10 +184,9 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         link: Link,
         time: LocalTime,
     ) {
-        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
+        if !self.connected.contains(&addr.ip()) {
             return;
         }
-
         let address = Address::new(addr, services);
 
         self.insert(
@@ -182,6 +197,15 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         if link.is_outbound() {
             self.sources.insert(*addr);
             self.upstream.get_addresses(*addr);
+        }
+    }
+
+    /// Called when a peer disconnected.
+    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr) {
+        if self.connected.contains(&addr.ip()) {
+            // TODO: We shouldn't remove. We should keep for later.
+            self.remove_address(&addr.ip());
+            self.sources.remove(&addr);
         }
     }
 }
@@ -231,33 +255,6 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     pub fn clear(&mut self) {
         self.peers.clear();
         self.address_ranges.clear();
-    }
-
-    /// Called when a peer connection is attempted.
-    pub fn peer_attempted(&mut self, addr: &net::SocketAddr, time: LocalTime) {
-        if let Some(ka) = self.peers.get_mut(&addr.ip()) {
-            ka.last_attempt = Some(time);
-        }
-    }
-
-    /// Called when a peer disconnected.
-    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr) {
-        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
-            return;
-        }
-        debug_assert!(self.connected.contains(&addr.ip()));
-
-        // TODO: We shouldn't remove. We should keep for later.
-        self.remove_address(&addr.ip());
-        self.sources.remove(&addr);
-    }
-
-    /// Called when a peer has connected.
-    pub fn peer_connected(&mut self, addr: &net::SocketAddr, _local_time: LocalTime) {
-        if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
-            return;
-        }
-        self.connected.insert(addr.ip());
     }
 
     /// Add addresses to the address manager. The input matches that of the `addr` message
@@ -507,7 +504,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     }
 }
 
-impl<P: Store, U: Events> AddressSource for AddressManager<P, U> {
+impl<P: Store, U: Events + SyncAddresses> AddressSource for AddressManager<P, U> {
     fn sample(&self) -> Option<(&Address, Source)> {
         AddressManager::sample(&self)
     }
