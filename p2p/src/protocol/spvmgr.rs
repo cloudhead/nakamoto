@@ -27,7 +27,6 @@ pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 const MAX_MESSAGE_CFHEADERS: usize = 2000;
 
 /// Maximum filters to be expected in a message.
-#[allow(dead_code)]
 const MAX_MESSAGE_CFILTERS: usize = 1000;
 
 /// An error originating in the SPV manager.
@@ -255,15 +254,22 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     pub fn get_cfilters<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
         // TODO: Consolidate this code with the `get_cfheaders` code.
         if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
-            let ix = self.rng.usize(..peers.len());
-            let peer = *peers.get(ix).unwrap(); // Can't fail.
-            let start_height = range.start;
-            // TODO: Return an error instead.
-            let stop_hash = tree.get_block_by_height(range.end).unwrap().block_hash();
-            let timeout = self.config.request_timeout;
+            let iter = HeightIterator {
+                start: range.start,
+                stop: range.end,
+                step: MAX_MESSAGE_CFILTERS as Height,
+            };
+            for r in iter {
+                let ix = self.rng.usize(..peers.len());
+                let peer = *peers.get(ix).unwrap(); // Can't fail.
 
-            self.upstream
-                .get_cfilters(*peer, start_height, stop_hash, timeout);
+                // TODO: Return an error instead.
+                let stop_hash = tree.get_block_by_height(r.end).unwrap().block_hash();
+                let timeout = self.config.request_timeout;
+
+                self.upstream
+                    .get_cfilters(*peer, r.start, stop_hash, timeout);
+            }
         } else {
             // TODO: Return an error instead.
             panic!("SpvManager::get_cfilters: called without any available peers!");
@@ -590,6 +596,30 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     }
 }
 
+/// Iterator over height ranges.
+struct HeightIterator {
+    start: Height,
+    stop: Height,
+    step: Height,
+}
+
+impl Iterator for HeightIterator {
+    type Item = Range<Height>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.start < self.stop {
+            let start = self.start;
+            let stop = self.stop.min(start + self.step - 1);
+
+            self.start = stop + 1;
+
+            Some(start..stop)
+        } else {
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use bitcoin_hashes::hex::FromHex;
@@ -691,5 +721,19 @@ mod tests {
         for msg in cfilters {
             spvmgr.received_cfilter(peer, msg, &tree).unwrap();
         }
+    }
+
+    #[test]
+    fn test_height_iterator() {
+        let mut it = super::HeightIterator {
+            start: 3,
+            stop: 19,
+            step: 5,
+        };
+        assert_eq!(it.next(), Some(3..7));
+        assert_eq!(it.next(), Some(8..12));
+        assert_eq!(it.next(), Some(13..17));
+        assert_eq!(it.next(), Some(18..19));
+        assert_eq!(it.next(), None);
     }
 }
