@@ -75,6 +75,11 @@ impl Link {
     pub fn is_outbound(&self) -> bool {
         *self == Link::Outbound
     }
+
+    /// Check whether the link is inbound.
+    pub fn is_inbound(&self) -> bool {
+        *self == Link::Inbound
+    }
 }
 
 /// A command or request that can be sent to the protocol.
@@ -331,7 +336,7 @@ impl Default for Config {
             params: Params::new(network::Network::Mainnet.into()),
             connect: Vec::new(),
             services: ServiceFlags::NONE,
-            required_services: ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
+            required_services: ServiceFlags::NETWORK,
             whitelist: Whitelist::default(),
             protocol_version: PROTOCOL_VERSION,
             target_outbound_peers: connmgr::TARGET_OUTBOUND_PEERS,
@@ -432,6 +437,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 target_outbound_peers,
                 max_inbound_peers,
                 retry: connect,
+                required_services,
+                // Include services required by all sub-protocols.
+                preferred_services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
             },
         );
         let pingmgr = PingManager::new(rng.clone(), upstream.clone());
@@ -702,6 +710,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     self.addrmgr
                         .peer_negotiated(&addr, peer.services, peer.conn.link, now);
                     self.pingmgr.peer_negotiated(peer.address(), now);
+                    self.connmgr.peer_negotiated(peer.address(), peer.services);
                     self.spvmgr.peer_negotiated(
                         peer.address(),
                         peer.height,
@@ -796,12 +805,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.spvmgr.received_getcfilters(&addr, msg, &self.tree);
             }
             NetworkMessage::Addr(addrs) => {
-                if addrs.is_empty() {
-                    // Peer misbehaving, got empty message.
-                    return;
-                }
-                self.addrmgr
-                    .insert(addrs.into_iter(), peer::Source::Peer(addr));
+                self.addrmgr.received_addr(addr, addrs);
             }
             NetworkMessage::GetAddr => {
                 self.addrmgr.received_getaddr(&addr);

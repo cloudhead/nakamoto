@@ -3,6 +3,8 @@
 use std::collections::{HashMap, HashSet};
 use std::net;
 
+use bitcoin::network::constants::ServiceFlags;
+
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::p2p::peer::{self, AddressSource, Source};
 
@@ -70,6 +72,11 @@ pub struct Config {
     pub max_inbound_peers: usize,
     /// Peer addresses that should always be retried.
     pub retry: Vec<net::SocketAddr>,
+    /// Peer services required.
+    pub required_services: ServiceFlags,
+    /// Peer services preferred. We try to maintain as many
+    /// connections to peers with these services.
+    pub preferred_services: ServiceFlags,
 }
 
 /// A connected peer.
@@ -81,6 +88,8 @@ struct Peer {
     local_address: net::SocketAddr,
     /// Whether this is an inbound or outbound peer connection.
     link: Link,
+    /// Services offered.
+    services: ServiceFlags,
     /// Time connected.
     time: LocalTime,
 }
@@ -90,7 +99,7 @@ struct Peer {
 pub struct ConnectionManager<U> {
     /// Configuration.
     pub config: Config,
-    /// Set of peers being connected to.
+    /// Set of outbound peers being connected to.
     connecting: HashSet<PeerId>,
     /// Set of all connected peers.
     connected: HashMap<PeerId, Peer>,
@@ -169,7 +178,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
         Events::event(&self.upstream, Event::Connected(address, link));
 
         match link {
-            Link::Inbound if self.connected.len() >= self.config.max_inbound_peers => {
+            Link::Inbound if self.inbound_peers().count() >= self.config.max_inbound_peers => {
                 // Don't allow inbound connections beyond the configured limit.
                 self.upstream
                     .disconnect(address, DisconnectReason::ConnectionLimit);
@@ -182,12 +191,21 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
                     Peer {
                         address,
                         local_address,
+                        services: ServiceFlags::NONE,
                         link,
                         time,
                     },
                 );
             }
         }
+    }
+
+    /// Call when a peer negotiated.
+    pub fn peer_negotiated(&mut self, address: net::SocketAddr, services: ServiceFlags) {
+        let peer = self.connected.get_mut(&address).expect(
+            "ConnectionManager::peer_negotiated: negotiated peers should be connected first",
+        );
+        peer.services = services;
     }
 
     /// Call when a peer disconnected.
@@ -235,10 +253,23 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
             .map(|(addr, _)| addr)
     }
 
+    /// Returns inbound peer addresses.
+    pub fn inbound_peers(&self) -> impl Iterator<Item = &PeerId> {
+        self.connected
+            .iter()
+            .filter(|(_, p)| p.link.is_inbound())
+            .map(|(addr, _)| addr)
+    }
+
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections<S: peer::Store, A: AddressSource>(&mut self, addrs: &A) {
         while self.outbound().count() + self.connecting.len() < self.config.target_outbound_peers {
-            if let Some((addr, source)) = addrs.sample() {
+            // Prefer addresses with the preferred services.
+            let result = addrs
+                .sample(self.config.preferred_services)
+                .or_else(|| addrs.sample(self.config.required_services));
+
+            if let Some((addr, source)) = result {
                 // TODO: Support Tor?
                 if let Ok(sockaddr) = addr.socket_addr() {
                     // TODO: Remove this assertion once address manager no longer cares about

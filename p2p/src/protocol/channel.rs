@@ -129,7 +129,12 @@ impl addrmgr::Events for Channel {
     fn event(&self, event: addrmgr::Event) {
         match &event {
             addrmgr::Event::Error(msg) => error!(target: self.target, "[addr] {}", msg),
-            e => debug!(target: self.target, "[addr] {}", &e),
+            event @ addrmgr::Event::AddressDiscovered(_, _) => {
+                trace!(target: self.target, "[addr] {}", &event);
+            }
+            event => {
+                debug!(target: self.target, "[addr] {}", &event);
+            }
         }
         self.event(Event::AddrManager(event));
     }

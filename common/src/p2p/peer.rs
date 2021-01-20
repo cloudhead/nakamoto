@@ -237,7 +237,7 @@ impl KnownAddress {
 /// Source of peer addresses.
 pub trait AddressSource {
     /// Sample a random peer address. Returns `None` if there are no addresses left.
-    fn sample(&self) -> Option<(&Address, Source)>;
+    fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)>;
 }
 
 #[cfg(test)]

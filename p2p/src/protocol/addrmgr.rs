@@ -47,6 +47,13 @@ impl Events for () {
 /// An event emitted by the address manager.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// Peer addresses have been received.
+    AddressesReceived {
+        /// Number of addresses received.
+        count: usize,
+        /// Source of addresses received.
+        source: Source,
+    },
     /// A new peer address was discovered.
     AddressDiscovered(Address, Source),
     /// An error was encountered.
@@ -56,6 +63,13 @@ pub enum Event {
 impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Event::AddressesReceived { count, source } => {
+                write!(
+                    fmt,
+                    "received {} addresse(s) from source `{}`",
+                    count, source
+                )
+            }
             Event::AddressDiscovered(addr, source) => {
                 write!(fmt, "{:?} discovered from source `{}`", addr, source)
             }
@@ -262,6 +276,21 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         self.address_ranges.clear();
     }
 
+    /// Called when we received an `addr` message from a peer.
+    pub fn received_addr(&mut self, peer: net::SocketAddr, addrs: Vec<(BlockTime, Address)>) {
+        if addrs.is_empty() {
+            // Peer misbehaving, got empty message.
+            return;
+        }
+        let source = Source::Peer(peer);
+
+        self.upstream.event(Event::AddressesReceived {
+            count: addrs.len(),
+            source,
+        });
+        self.insert(addrs.into_iter(), source);
+    }
+
     /// Add addresses to the address manager. The input matches that of the `addr` message
     /// sent by peers on the network.
     ///
@@ -399,7 +428,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// let mut safe = 0;
     ///
     /// for _ in 0..99 {
-    ///     let (addr, _) = addrmgr.sample().unwrap();
+    ///     let (addr, _) = addrmgr.sample(ServiceFlags::NONE).unwrap();
     ///
     ///     if adversary_addrs.contains(&addr) {
     ///         adversary += 1;
@@ -415,7 +444,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// ```
     /// TODO: Should return an iterator.
     ///
-    pub fn sample(&self) -> Option<(&Address, Source)> {
+    pub fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)> {
         if self.is_empty() {
             return None;
         }
@@ -442,6 +471,24 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             // FIXME
             if ka.last_attempt.is_some() {
                 continue;
+            }
+            if !ka.addr.services.has(services) {
+                match ka.source {
+                    Source::Dns => {
+                        // If we've negotiated with this peer and it hasn't signaled the
+                        // required services, we know not to return it.
+                        // The reason we check this is that DNS-sourced addresses don't include
+                        // service information, so we can only know once negotiated.
+                        if ka.last_success.is_some() {
+                            continue;
+                        }
+                    }
+                    Source::Peer(_) => {
+                        // Peer-sourced addresses come with service information. It's safe to
+                        // skip this address if it doesn't have the required services.
+                        continue;
+                    }
+                }
             }
 
             if !self.connected.contains(&ip) {
@@ -506,8 +553,8 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 }
 
 impl<P: Store, U: Events + SyncAddresses> AddressSource for AddressManager<P, U> {
-    fn sample(&self) -> Option<(&Address, Source)> {
-        AddressManager::sample(&self)
+    fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)> {
+        AddressManager::sample(&self, services)
     }
 }
 
@@ -593,7 +640,7 @@ mod tests {
         let addrmgr =
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
 
-        assert!(addrmgr.sample().is_none());
+        assert!(addrmgr.sample(ServiceFlags::NONE).is_none());
     }
 
     #[test]

@@ -23,6 +23,9 @@ use super::{Link, PeerId, Timeout};
 /// Idle timeout.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 
+/// Services required from peers for SPV functionality.
+pub const REQUIRED_SERVICES: ServiceFlags = ServiceFlags::COMPACT_FILTERS;
+
 /// Maximum filter headers to be expected in a message.
 const MAX_MESSAGE_CFHEADERS: usize = 2000;
 
@@ -512,7 +515,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         if !link.is_outbound() {
             return;
         }
-        if !services.has(ServiceFlags::COMPACT_FILTERS) {
+        if !services.has(REQUIRED_SERVICES) {
             return;
         }
 
