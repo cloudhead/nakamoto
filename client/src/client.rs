@@ -284,19 +284,22 @@ impl<R: Reactor> Client<R> {
         let peers_path = dir.join("peers.json");
         let mut peers = match peer::Cache::create(&peers_path) {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                let cache = peer::Cache::open(&peers_path)?;
+                log::info!("Found existing peer cache {:?}", peers_path);
+                let cache = peer::Cache::open(&peers_path).map_err(Error::PeerStore)?;
                 log::info!("{} peer(s) found..", cache.len());
 
                 cache
             }
-            Err(err) => panic!(err.to_string()), // TODO
+            Err(err) => {
+                return Err(Error::PeerStore(err));
+            }
             Ok(cache) => {
                 log::info!("Initializing new peer address cache {:?}", peers_path);
                 cache
             }
         };
 
-        log::debug!("{:?}", peers);
+        log::trace!("{:#?}", peers);
 
         if self.config.connect.is_empty() && peers.is_empty() {
             log::info!("Address book is empty. Trying DNS seeds..");

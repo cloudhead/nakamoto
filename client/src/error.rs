@@ -25,15 +25,15 @@ pub enum Error {
     /// An I/O error.
     #[error(transparent)]
     Io(#[from] io::Error),
-    /// An address-book error.
-    #[error("Error loading address book: {0}")]
-    AddressBook(io::Error),
     /// An error coming from the block store.
     #[error(transparent)]
     BlockStore(#[from] common::block::store::Error),
     /// An error coming from the filter store.
     #[error(transparent)]
     FilterStore(#[from] chain::filter::store::Error),
+    /// An error coming from the peer store.
+    #[error("error loading peers: {0}")]
+    PeerStore(io::Error),
     /// A communication channel error.
     #[error("command channel disconnected")]
     Channel,

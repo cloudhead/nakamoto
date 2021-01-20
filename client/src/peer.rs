@@ -24,7 +24,10 @@ impl Cache {
 
     /// Create a new cache.
     pub fn create<P: AsRef<Path>>(path: P) -> io::Result<Self> {
-        let file = fs::File::create(path)?;
+        let file = fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(path)?;
 
         Ok(Self {
             file,
@@ -43,21 +46,23 @@ impl Cache {
 
         file.read_to_string(&mut s)?;
 
-        let val = microserde::json::from_str(&s)
-            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+        if !s.is_empty() {
+            let val = microserde::json::from_str(&s)
+                .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
 
-        match val {
-            Value::Object(ary) => {
-                for (k, v) in ary.into_iter() {
-                    let ka = KnownAddress::from_json(v)
-                        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-                    let ip = net::IpAddr::from_str(k.as_str())
-                        .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+            match val {
+                Value::Object(ary) => {
+                    for (k, v) in ary.into_iter() {
+                        let ka = KnownAddress::from_json(v)
+                            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+                        let ip = net::IpAddr::from_str(k.as_str())
+                            .map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
 
-                    addrs.insert(ip, ka);
+                        addrs.insert(ip, ka);
+                    }
                 }
+                _ => return Err(io::ErrorKind::InvalidData.into()),
             }
-            _ => return Err(io::ErrorKind::InvalidData.into()),
         }
 
         Ok(Self { file, addrs })
@@ -123,6 +128,17 @@ mod test {
     use bitcoin::network::address::Address;
     use bitcoin::network::constants::ServiceFlags;
     use nakamoto_common::block::time::LocalTime;
+
+    #[test]
+    fn test_empty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("cache");
+
+        Cache::create(&path).unwrap();
+        let cache = Cache::open(&path).unwrap();
+
+        assert!(cache.is_empty());
+    }
 
     #[test]
     fn test_save_and_load() {
