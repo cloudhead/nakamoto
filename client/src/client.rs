@@ -27,6 +27,7 @@ use nakamoto_common::p2p::peer::{Source, Store as _};
 pub use nakamoto_common::network::Network;
 
 use nakamoto_p2p as p2p;
+use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
@@ -58,6 +59,8 @@ pub struct Config {
     pub home: PathBuf,
     /// Client name. Used for logging only.
     pub name: &'static str,
+    /// Services offered by this node.
+    pub services: ServiceFlags,
 }
 
 impl Config {
@@ -74,15 +77,6 @@ impl Config {
         self.connect.extend(connect);
 
         Ok(())
-    }
-
-    /// Create a default client configuration with a name.
-    #[cfg(test)]
-    pub(crate) fn named(name: &'static str) -> Self {
-        Self {
-            name,
-            ..Self::default()
-        }
     }
 }
 
@@ -109,6 +103,7 @@ impl Default for Config {
             home: PathBuf::from(env::var("HOME").unwrap_or_default()),
             target_outbound_peers: p2p::protocol::connmgr::TARGET_OUTBOUND_PEERS,
             max_inbound_peers: p2p::protocol::connmgr::MAX_INBOUND_PEERS,
+            services: ServiceFlags::NONE,
             name: "self",
         }
     }
@@ -325,6 +320,7 @@ impl<R: Reactor> Client<R> {
             connect: self.config.connect,
             target_outbound_peers: self.config.target_outbound_peers,
             max_inbound_peers: self.config.max_inbound_peers,
+            services: self.config.services,
             ..p2p::protocol::Config::default()
         };
         let builder = p2p::protocol::Builder {
@@ -354,8 +350,14 @@ impl<R: Reactor> Client<R> {
         filters: F,
         peers: P,
     ) -> Result<(), Error> {
-        let cfg =
-            p2p::protocol::Config::from(self.config.name, self.config.network, self.config.connect);
+        let cfg = p2p::protocol::Config {
+            services: self.config.services,
+            ..p2p::protocol::Config::from(
+                self.config.name,
+                self.config.network,
+                self.config.connect,
+            )
+        };
 
         log::info!("Initializing client ({:?})..", cfg.network);
         log::info!("Genesis block hash is {}", cfg.network.genesis_hash());

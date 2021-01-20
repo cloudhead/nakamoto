@@ -30,6 +30,8 @@ pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
 pub const MAX_MESSAGE_HEADERS: usize = 2000;
 /// Idle timeout.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
+/// Services required from peers for header sync.
+pub const REQUIRED_SERVICES: ServiceFlags = ServiceFlags::NETWORK;
 
 /// Maximum headers announced in a `headers` message, when unsolicited.
 const MAX_HEADERS_ANNOUNCED: usize = 8;
@@ -63,17 +65,9 @@ struct PeerState {
     id: PeerId,
     height: Height,
     tip: BlockHash,
-    services: ServiceFlags,
     link: Link,
     last_active: Option<LocalTime>,
     last_asked: Option<Locators>,
-}
-
-impl PeerState {
-    /// Whether this is an outbound peer.
-    fn is_outbound(&self) -> bool {
-        self.link == Link::Outbound
-    }
 }
 
 /// Sync manager configuration.
@@ -242,7 +236,10 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         clock: &impl Clock,
         tree: &T,
     ) {
-        self.register(id, height, services, link);
+        if link.is_outbound() && !services.has(REQUIRED_SERVICES) {
+            return;
+        }
+        self.register(id, height, link);
         self.upstream.negotiate(id);
         self.sync(clock.local_time(), tree);
     }
@@ -321,14 +318,17 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         } else {
             return Ok(ImportResult::TipUnchanged);
         };
-        self.upstream
-            .event(Event::HeadersReceived(*from, headers.len()));
 
         let length = headers.len();
         let best = headers.last().block_hash();
-        let peer = self.peers.get_mut(from).unwrap();
 
-        peer.last_active = Some(clock.local_time());
+        if let Some(peer) = self.peers.get_mut(from) {
+            peer.last_active = Some(clock.local_time());
+        } else {
+            return Ok(ImportResult::TipUnchanged);
+        }
+        self.upstream
+            .event(Event::HeadersReceived(*from, headers.len()));
 
         if tree.contains(&best) {
             return Ok(ImportResult::TipUnchanged);
@@ -525,6 +525,9 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     ) where
         C: Clock,
     {
+        if !self.peers.contains_key(&addr) {
+            return;
+        }
         let mut best_block = None;
 
         for i in &inv {
@@ -662,7 +665,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     }
 
     /// Register a new peer.
-    fn register(&mut self, id: PeerId, height: Height, services: ServiceFlags, link: Link) {
+    fn register(&mut self, id: PeerId, height: Height, link: Link) {
         let last_active = None;
         let last_asked = None;
         let tip = BlockHash::default();
@@ -673,7 +676,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                 id,
                 height,
                 tip,
-                services,
                 link,
                 last_active,
                 last_asked,
@@ -713,7 +715,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         locators: &[BlockHash],
         tree: &T,
     ) -> bool {
-        peer.is_outbound()
+        peer.link.is_outbound()
             && peer.height > tree.height()
             && !self.inflight.contains_key(&peer.id)
             && peer.last_asked.as_ref().map_or(true, |l| l.0 != locators)
@@ -792,7 +794,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             for (addr, peer) in &self.peers {
                 // TODO: Don't broadcast to peer that is currently syncing?
                 if peer.link == Link::Inbound && height > peer.height {
-                    // addrs.push(*addr);
                     self.upstream.send_headers(*addr, vec![*best]);
                 }
             }

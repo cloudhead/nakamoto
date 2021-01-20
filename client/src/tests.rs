@@ -6,6 +6,7 @@ use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_chain::filter::cache::FilterCache;
 use nakamoto_common::block::Height;
+use nakamoto_p2p::protocol::syncmgr;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
 use crate::client::{self, Client, Config, Event};
@@ -71,13 +72,15 @@ fn network(
 fn test_full_sync() {
     logger::init(log::Level::Debug);
 
-    let nodes = network(&[
-        Config::named("olive"),
-        Config::named("alice"),
-        Config::named("misha"),
-    ])
-    .unwrap();
+    fn config(name: &'static str) -> Config {
+        Config {
+            name,
+            services: syncmgr::REQUIRED_SERVICES,
+            ..Config::default()
+        }
+    }
 
+    let nodes = network(&[config("olive"), config("alice"), config("misha")]).unwrap();
     let (handle, _, _) = nodes.last().unwrap();
     let headers = BITCOIN_HEADERS.tail.clone();
     let height = headers.len() as Height;
