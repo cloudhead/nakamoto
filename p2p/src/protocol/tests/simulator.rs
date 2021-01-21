@@ -321,8 +321,8 @@ impl Sim {
             Out::Disconnect(remote, reason) => {
                 info!("(sim) {} =/= {} ({})", peer, remote, reason);
 
-                inbox.push_back((remote, Input::Disconnected(peer)));
-                inbox.push_back((peer, Input::Disconnected(remote)));
+                inbox.push_back((remote, Input::Disconnected(peer, reason.clone())));
+                inbox.push_back((peer, Input::Disconnected(remote, reason)));
             }
             Out::Event(event) => {
                 events.push(event);

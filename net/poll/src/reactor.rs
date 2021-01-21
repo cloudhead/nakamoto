@@ -12,7 +12,7 @@ use nakamoto_common::p2p::peer;
 use nakamoto_p2p;
 use nakamoto_p2p::error::Error;
 use nakamoto_p2p::event::Event;
-use nakamoto_p2p::protocol::{self, Command, Input, Link, Out};
+use nakamoto_p2p::protocol::{self, Command, DisconnectReason, Input, Link, Out};
 
 use log::*;
 
@@ -73,9 +73,9 @@ impl<R: Write + Read + AsRawFd> Reactor<R> {
     }
 
     /// Unregister a peer from the reactor.
-    fn unregister_peer(&mut self, addr: net::SocketAddr) {
+    fn unregister_peer(&mut self, addr: net::SocketAddr, reason: DisconnectReason) {
         self.connecting.remove(&addr);
-        self.inputs.push_back(Input::Disconnected(addr));
+        self.inputs.push_back(Input::Disconnected(addr, reason));
         self.sources.unregister(&Source::Peer(addr));
         self.peers.remove(&addr);
     }
@@ -294,7 +294,10 @@ impl Reactor<net::TcpStream> {
                             error!("{}: Write error: {}", addr, err.to_string());
 
                             peer.disconnect().ok();
-                            self.unregister_peer(addr);
+                            self.unregister_peer(
+                                addr,
+                                DisconnectReason::ConnectionError(err.to_string()),
+                            );
                         }
                     }
                 }
@@ -327,7 +330,7 @@ impl Reactor<net::TcpStream> {
                         // possible errors relate to an invalid file descriptor.
                         peer.disconnect().ok();
 
-                        self.unregister_peer(addr);
+                        self.unregister_peer(addr, reason);
                     }
                 }
                 Out::SetTimeout(timeout) => {
@@ -369,14 +372,16 @@ impl Reactor<net::TcpStream> {
                 }
                 Err(err) => {
                     match err {
-                        encode::Error::Io(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                        encode::Error::Io(ref err)
+                            if err.kind() == io::ErrorKind::UnexpectedEof =>
+                        {
                             debug!("{}: Remote peer closed the connection", addr)
                         }
                         _ => error!("{}: Read error: {}", addr, err.to_string()),
                     }
 
                     socket.disconnect().ok();
-                    self.unregister_peer(*addr);
+                    self.unregister_peer(*addr, DisconnectReason::ConnectionError(err.to_string()));
 
                     break;
                 }
@@ -404,7 +409,7 @@ impl Reactor<net::TcpStream> {
             error!("{}: Write error: {}", addr, err.to_string());
 
             socket.disconnect().ok();
-            self.unregister_peer(*addr);
+            self.unregister_peer(*addr, DisconnectReason::ConnectionError(err.to_string()));
         }
         Ok(())
     }

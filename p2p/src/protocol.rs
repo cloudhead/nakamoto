@@ -129,7 +129,7 @@ pub enum Input {
         link: Link,
     },
     /// Disconnected from peer.
-    Disconnected(PeerId),
+    Disconnected(PeerId, DisconnectReason),
     /// Received a message from a remote peer.
     Received(PeerId, RawNetworkMessage),
     /// Sent a message to a remote peer, of the given size.
@@ -164,7 +164,7 @@ impl From<Event> for Out {
 }
 
 /// Disconnect reason.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub enum DisconnectReason {
     /// Peer is misbehaving.
     PeerMisbehaving(&'static str),
@@ -182,8 +182,21 @@ pub enum DisconnectReason {
     SelfConnection,
     /// Inbound connection limit reached.
     ConnectionLimit,
+    /// Error with the underlying connection.
+    ConnectionError(String),
     /// Peer was forced to disconnect by external command.
     Command,
+}
+
+impl DisconnectReason {
+    /// Check whether the disconnect reason is transient, ie. may no longer be applicable
+    /// after some time.
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::ConnectionLimit | Self::PeerTimeout | Self::PeerHeight(_) => true,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for DisconnectReason {
@@ -197,6 +210,7 @@ impl fmt::Display for DisconnectReason {
             Self::PeerTimeout => write!(f, "peer timed out"),
             Self::SelfConnection => write!(f, "detected self-connection"),
             Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
+            Self::ConnectionError(err) => write!(f, "connection error: {}", err),
             Self::Command => write!(f, "received external command"),
         }
     }
@@ -519,10 +533,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.peermgr
                     .peer_connected(addr, local_addr, link, height, local_time);
             }
-            Input::Disconnected(addr) => {
+            Input::Disconnected(addr, reason) => {
                 self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
-                self.addrmgr.peer_disconnected(&addr);
+                self.addrmgr.peer_disconnected(&addr, reason);
                 self.connmgr
                     .peer_disconnected::<P, AddressManager<P, Channel>>(&addr, &self.addrmgr);
                 self.pingmgr.peer_disconnected(&addr);

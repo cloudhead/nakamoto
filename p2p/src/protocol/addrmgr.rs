@@ -13,7 +13,7 @@ use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::p2p::peer::{AddressSource, KnownAddress, Source, Store};
 
 use super::channel::SetTimeout;
-use super::{Link, PeerId};
+use super::{DisconnectReason, Link, PeerId};
 
 /// Time to wait until a request times out.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -220,11 +220,16 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
     }
 
     /// Called when a peer disconnected.
-    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr) {
+    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
         if self.connected.contains(&addr.ip()) {
-            // TODO: We shouldn't remove. We should keep for later.
-            self.remove_address(&addr.ip());
+            // Disconnected peers cannot be used as a source for new addresses.
             self.sources.remove(&addr);
+
+            // If the reason for disconnecting the peer suggests that we shouldn't try to
+            // connect to this peer again, then remove the peer from the address book.
+            if !reason.is_transient() {
+                self.discard(&addr.ip());
+            }
         }
     }
 }
@@ -530,7 +535,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     }
 
     /// Remove an address permanently.
-    fn remove_address(&mut self, addr: &net::IpAddr) -> (Option<KnownAddress>, bool) {
+    fn discard(&mut self, addr: &net::IpAddr) -> (Option<KnownAddress>, bool) {
         // TODO: For now, it's enough to remove the address, since we shouldn't
         // be trying to reconnect to a peer that disconnected. However in the future
         // we should probably keep it around, or decide based on the reason for

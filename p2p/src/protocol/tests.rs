@@ -363,7 +363,10 @@ fn test_initial_sync() {
         assert_eq!(alice.tree.height(), height);
         assert_eq!(bob.tree.height(), height);
     }
-    alice.step(Input::Disconnected(bob_addr), local_time);
+    alice.step(
+        Input::Disconnected(bob_addr, DisconnectReason::PeerTimeout),
+        local_time,
+    );
 }
 
 /// Test what happens when a peer is idle for too long.
@@ -509,7 +512,10 @@ fn test_maintain_connections(seed: u64) {
     assert_eq!(connected.len(), TARGET_PEERS);
 
     let other = connected.pop().unwrap();
-    let result = sim.input(&alice, Input::Disconnected(other));
+    let result = sim.input(
+        &alice,
+        Input::Disconnected(other, DisconnectReason::PeerTimeout),
+    );
 
     let addr = result
         .find(|o| match o {
@@ -630,7 +636,10 @@ fn test_handshake_version_timeout() {
             |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout) if a == remote)
         ));
 
-        instance.step(Input::Disconnected(remote), time);
+        instance.step(
+            Input::Disconnected(remote, DisconnectReason::PeerTimeout),
+            time,
+        );
     }
 }
 
@@ -675,7 +684,10 @@ fn test_handshake_verack_timeout() {
             |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout) if a == remote)
         ));
 
-        instance.step(Input::Disconnected(remote), time);
+        instance.step(
+            Input::Disconnected(remote, DisconnectReason::PeerTimeout),
+            time,
+        );
     }
 }
 
@@ -798,7 +810,10 @@ fn test_getaddr() {
         .find(|p| p.is_negotiated())
         .unwrap()
         .address();
-    let result = sim.input(&alice, Input::Disconnected(peer));
+    let result = sim.input(
+        &alice,
+        Input::Disconnected(peer, DisconnectReason::PeerTimeout),
+    );
 
     // We are unable to connect to a new peer because our address book is exhausted.
     result.event(|e| matches!(e, Event::ConnManager(connmgr::Event::AddressBookExhausted)));
