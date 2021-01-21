@@ -59,6 +59,8 @@ impl Channel {
 
     /// Push a message to the channel.
     pub fn message(&self, addr: PeerId, message: NetworkMessage) -> &Self {
+        debug!("{}: Sending {:?}", addr, message.cmd());
+
         self.push(self.builder.message(addr, message));
         self
     }
@@ -106,7 +108,6 @@ impl addrmgr::SyncAddresses for Channel {
 
 impl connmgr::Connect for Channel {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
-        debug!(target: self.target, "[conn] Connecting to {}..", addr);
         self.push(Out::Connect(addr, timeout));
     }
 }

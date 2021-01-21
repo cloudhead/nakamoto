@@ -285,7 +285,7 @@ impl Reactor<net::TcpStream> {
                                 s.truncate(96);
                                 s.push_str("...");
                             }
-                            debug!("{}: Sending: {}", addr, s);
+                            trace!("{}: Sending: {}", addr, s);
                         }
 
                         peer.queue(msg);
@@ -303,7 +303,7 @@ impl Reactor<net::TcpStream> {
                 }
                 // TODO: Use connection timeout, or handle timeouts in connection manager.
                 Out::Connect(addr, _timeout) => {
-                    debug!("Connecting to {}...", &addr);
+                    trace!("Connecting to {}...", &addr);
 
                     match self::dial(&addr) {
                         Ok(stream) => {
@@ -375,9 +375,9 @@ impl Reactor<net::TcpStream> {
                         encode::Error::Io(ref err)
                             if err.kind() == io::ErrorKind::UnexpectedEof =>
                         {
-                            debug!("{}: Remote peer closed the connection", addr)
+                            trace!("{}: Remote peer closed the connection", addr)
                         }
-                        _ => error!("{}: Read error: {}", addr, err.to_string()),
+                        _ => trace!("{}: Read error: {}", addr, err.to_string()),
                     }
 
                     socket.disconnect().ok();

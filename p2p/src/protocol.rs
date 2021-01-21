@@ -534,6 +534,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .peer_connected(addr, local_addr, link, height, local_time);
             }
             Input::Disconnected(addr, reason) => {
+                debug!(target: self.target, "{}: Disconnected: {}", addr, reason);
+
                 self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr, reason);
@@ -677,6 +679,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             // TODO: Add protocol state(s)
             // TODO: Trim block hash
             // TODO: Add average headers/s or bandwidth
+            // TODO: Add address book size
+            // TODO: Add "connecting" peers
+            // TODO: Add inbound peer count
 
             log::info!(
                 "tip = {tip}, height = {height}/{best} ({sync:.1}%), outbound = {peers}/{target}",
