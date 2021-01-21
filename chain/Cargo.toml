@@ -1,15 +1,16 @@
 [package]
 name = "nakamoto-chain"
 description = "Chain storage and fork selection used by the nakamoto crate."
+homepage = "https://cloudhead.io/nakamoto/"
 documentation = "https://docs.rs/nakamoto-chain"
 repository = "https://github.com/cloudhead/nakamoto"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.1.0", path = "../common", features = ["log"] }
+nakamoto-common = { version = "0.2.0", path = "../common", features = ["log"] }
 bitcoin = "0.25.1"
 bitcoin_hashes = "0.9.0"
 nonempty = "0.5.0"

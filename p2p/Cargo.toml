@@ -1,13 +1,16 @@
 [package]
 name = "nakamoto-p2p"
 description = "Peer-to-peer protocol state machine for the nakamoto crate"
-version = "0.1.0"
+homepage = "https://cloudhead.io/nakamoto/"
+documentation = "https://docs.rs/nakamoto-p2p"
+repository = "https://github.com/cloudhead/nakamoto"
+version = "0.2.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.1.0", path = "../common" }
+nakamoto-common = { version = "0.2.0", path = "../common" }
 bitcoin = "0.25.1"
 log = "0.4"
 thiserror = "1.0"

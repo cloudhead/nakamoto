@@ -1,14 +1,16 @@
 [package]
 name = "nakamoto-net-poll"
 description = "Poll-based networking for nakamoto"
-version = "0.1.0"
+homepage = "https://cloudhead.io/nakamoto/"
+repository = "https://github.com/cloudhead/nakamoto"
+version = "0.2.0"
 authors = ["Alexis Sellier <alexis@cloudhead.io>"]
 edition = "2018"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.1.0", path = "../../common" }
-nakamoto-p2p = { version = "0.1.0", path = "../../p2p" }
+nakamoto-common = { version = "0.2.0", path = "../../common" }
+nakamoto-p2p = { version = "0.2.0", path = "../../p2p" }
 crossbeam-channel = { version = "0.4" }
 bitcoin = "0.25.1"
 popol = "0.4"

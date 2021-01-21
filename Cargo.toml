@@ -2,10 +2,11 @@
 name = "nakamoto"
 description = "A high-assurance Bitcoin light-client"
 documentation = "https://docs.rs/nakamoto"
+homepage = "https://cloudhead.io/nakamoto/"
 repository = "https://github.com/cloudhead/nakamoto"
 readme = "README.md"
 license = "MIT"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
 
@@ -31,11 +32,11 @@ default = [
 ]
 
 [dependencies]
-nakamoto-common = { version = "0.1.0", path = "./common", optional = true }
-nakamoto-node = { version = "0.1.0", path = "./node", optional = true }
-nakamoto-client = { version = "0.1.0", path = "./client", optional = true }
-nakamoto-chain = { version = "0.1.0", path = "./chain", optional = true }
-nakamoto-p2p = { version = "0.1.0", path = "./p2p", optional = true }
-nakamoto-test = { version = "0.1.0", path = "./test", optional = true }
-nakamoto-wallet = { version = "0.1.0", path = "./wallet", optional = true }
-nakamoto-net-poll = { version = "0.1.0", path = "./net/poll", optional = true }
+nakamoto-common = { version = "0.2.0", path = "./common", optional = true }
+nakamoto-node = { version = "0.2.0", path = "./node", optional = true }
+nakamoto-client = { version = "0.2.0", path = "./client", optional = true }
+nakamoto-chain = { version = "0.2.0", path = "./chain", optional = true }
+nakamoto-p2p = { version = "0.2.0", path = "./p2p", optional = true }
+nakamoto-test = { version = "0.2.0", path = "./test", optional = true }
+nakamoto-wallet = { version = "0.2.0", path = "./wallet", optional = true }
+nakamoto-net-poll = { version = "0.2.0", path = "./net/poll", optional = true }

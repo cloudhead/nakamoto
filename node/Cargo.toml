@@ -1,14 +1,17 @@
 [package]
 name = "nakamoto-node"
 description = "Bitcoin light-client node using nakamoto crates"
-version = "0.1.0"
+homepage = "https://cloudhead.io/nakamoto/"
+documentation = "https://docs.rs/nakamoto-node"
+repository = "https://github.com/cloudhead/nakamoto"
+version = "0.2.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
 license = "MIT"
 
 [dependencies]
-nakamoto-client = { version = "0.1.0", path = "../client" }
-nakamoto-net-poll = { version = "0.1.0", path = "../net/poll" }
+nakamoto-client = { version = "0.2.0", path = "../client" }
+nakamoto-net-poll = { version = "0.2.0", path = "../net/poll" }
 argh = "0.1.3"
 colored = "1.9"
 atty = { version = "0.2" }

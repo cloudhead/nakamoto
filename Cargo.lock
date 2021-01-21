@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "nakamoto-chain",
  "nakamoto-client",
@@ -237,7 +237,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-chain"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitcoin",
  "bitcoin_hashes",
@@ -254,7 +254,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitcoin",
  "crossbeam-channel",
@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-common"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitcoin",
  "bitcoin_hashes",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-net-poll"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitcoin",
  "crossbeam-channel",
@@ -301,7 +301,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-node"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argh",
  "atty",
@@ -315,7 +315,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-p2p"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitcoin",
  "bitcoin_hashes",
@@ -336,7 +336,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-test"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "bitcoin",
  "chrono",
@@ -348,7 +348,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-wallet"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "argh",
  "bitcoin",

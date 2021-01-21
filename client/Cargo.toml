@@ -1,15 +1,18 @@
 [package]
 name = "nakamoto-client"
 description = "Bitcoin light-client library used by nakamoto crate"
-version = "0.1.0"
+homepage = "https://cloudhead.io/nakamoto/"
+documentation = "https://docs.rs/nakamoto-client"
+repository = "https://github.com/cloudhead/nakamoto"
+version = "0.2.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2018"
 license = "MIT"
 
 [dependencies]
-nakamoto-p2p = { version = "0.1.0", path = "../p2p" }
-nakamoto-chain = { version = "0.1.0", path = "../chain" }
-nakamoto-common = { version = "0.1.0", path = "../common" }
+nakamoto-p2p = { version = "0.2.0", path = "../p2p" }
+nakamoto-chain = { version = "0.2.0", path = "../chain" }
+nakamoto-common = { version = "0.2.0", path = "../common" }
 crossbeam-channel = { version = "0.4" }
 thiserror = "1.0"
 log = "0.4"
@@ -17,7 +20,7 @@ fastrand = "1.3.5"
 microserde = "0.1"
 
 [dev-dependencies]
-nakamoto-test = { version = "0.1.0", path = "../test" }
-nakamoto-net-poll = { version = "0.1.0", path = "../net/poll" }
+nakamoto-test = { version = "0.2.0", path = "../test" }
+nakamoto-net-poll = { version = "0.2.0", path = "../net/poll" }
 bitcoin = "0.25.1"
 tempfile = "3"
