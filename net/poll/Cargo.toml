@@ -1,8 +1,10 @@
 [package]
 name = "nakamoto-net-poll"
+description = "Poll-based networking for nakamoto"
 version = "0.1.0"
 authors = ["Alexis Sellier <alexis@cloudhead.io>"]
 edition = "2018"
+license = "MIT"
 
 [dependencies]
 nakamoto-common = { version = "0.1.0", path = "../../common" }
