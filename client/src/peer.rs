@@ -116,6 +116,7 @@ impl Store for Cache {
         self.file.set_len(0)?;
         self.file.seek(io::SeekFrom::Start(0))?;
         self.file.write_all(s.as_bytes())?;
+        self.file.write(&['\n' as u8])?;
         self.file.sync_data()?;
 
         Ok(())
