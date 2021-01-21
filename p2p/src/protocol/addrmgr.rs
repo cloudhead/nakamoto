@@ -333,14 +333,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///
     /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
     /// ```
-    pub fn insert(
-        &mut self,
-        addrs: impl Iterator<Item = (BlockTime, Address)>,
-        source: Source,
-    ) -> bool {
-        // True if at least one address was added into the map.
-        let mut okay = false;
-
+    pub fn insert(&mut self, addrs: impl Iterator<Item = (BlockTime, Address)>, source: Source) {
         // TODO: Store timestamp.
         for (_, addr) in addrs {
             // Ignore addresses that don't have the required services.
@@ -376,13 +369,11 @@ impl<P: Store, U: Events> AddressManager<P, U> {
                 // Ignore addresses we already know.
                 continue;
             }
-            okay = true; // As soon as one address was inserted, consider it a success.
 
             self.populate_address_ranges(&net_addr.ip());
             self.upstream
                 .event(Event::AddressDiscovered(addr, source.clone()));
         }
-        okay
     }
 
     /// Pick an address at random from the set of known addresses.
