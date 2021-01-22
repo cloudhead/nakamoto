@@ -21,20 +21,25 @@
 //! type Reactor = nakamoto::net::poll::Reactor<net::TcpStream>;
 //!
 //! /// Run the light-client.
-//! fn main() {
+//! fn main() -> Result<(), Error> {
 //!     let cfg = Config {
 //!         network: Network::Testnet,
 //!         ..Config::default()
 //!     };
 //!     // Create a client using the above network reactor.
-//!     let client = Client::<Reactor>::new(cfg).unwrap();
+//!     let client = Client::<Reactor>::new(cfg)?;
 //!     let handle = client.handle();
 //!
 //!     // Run the client on a different thread, to not block the main thread.
 //!     thread::spawn(|| client.run().unwrap());
 //!
+//!     // Wait for the client to be in-sync with the blockchain.
+//!     handle.wait_for_ready()?;
+//!
 //!     // Ask the client to terminate.
-//!     handle.shutdown().unwrap()
+//!     handle.shutdown()?;
+//!
+//!     Ok(())
 //! }
 //! ```
 
