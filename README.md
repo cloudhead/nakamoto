@@ -12,6 +12,13 @@ dependencies. The implementation language, Rust, opens up the possibility for
 programs written in other languages (eg. Swift, Python, Java), to bind directly
 to it via a foreign function interface (FFI).
 
+---
+
+    [dependencies]
+    nakamoto = "0.2.0"
+
+Requires `rustc 1.47` or greater.
+
 ## Design
 
 Nakamoto is split into several crates, each handling a different aspect of the
@@ -69,13 +76,6 @@ of this project, which sits one level below wallets.
 * __Privacy__: when possible, privacy-preserving techniques should be employed.
   *Client Side Block Filtering* (BIP 157/158) should be used over bloom
   filters (BIP 37) to ensure user privacy and provide censorship resistance.
-
-## Usage
-
-In your *Cargo.toml*:
-
-    [dependencies]
-    nakamoto = "0.1.0"
 
 ## Running the tests
 
