@@ -35,7 +35,7 @@ const MAX_MESSAGE_CFILTERS: usize = 1000;
 /// An error originating in the SPV manager.
 #[derive(Error, Debug)]
 pub enum Error {
-    /// The request was ignored. This happens if we're not able to fulfill the reuqest.
+    /// The request was ignored. This happens if we're not able to fulfill the request.
     #[error("ignoring `{msg}` message from {from}")]
     Ignored {
         /// Message that was ignored.
@@ -256,6 +256,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     ///
     pub fn get_cfilters<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
         // TODO: Consolidate this code with the `get_cfheaders` code.
+        // TODO: Should buffer the request for when new peers connect.
         if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
             let iter = HeightIterator {
                 start: range.start,
@@ -558,6 +559,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             hash
         };
 
+        // TODO: We should select peers that are caught up to the requested height.
         if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
             let ix = self.rng.usize(..peers.len());
             let peer = *peers.get(ix).unwrap(); // Can't fail.
@@ -673,11 +675,8 @@ mod tests {
 
     #[test]
     fn test_receive_filters() {
-        let rng = fastrand::Rng::new();
         let network = Network::Mainnet;
-        let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
-        let (sender, _receiver) = chan::unbounded();
-        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let peer = &([0, 0, 0, 0], 0).into();
         let tree = {
             let genesis = network.genesis();
             let params = network.params();
@@ -686,27 +685,35 @@ mod tests {
 
             BlockCache::from(store::Memory::new(BITCOIN_HEADERS.clone()), params, &[]).unwrap()
         };
-        let msg = CFHeaders {
-            filter_type: 0,
-            stop_hash: BlockHash::from_hex(
-                "00000000b3322c8c3ef7d2cf6da009a776e6a99ee65ec5a32f3f345712238473",
-            )
-            .unwrap(),
-            previous_filter: FilterHash::from_hex(
-                "02c2392180d0ce2b5b6f8b08d39a11ffe831c673311a3ecf77b97fc3f0303c9f",
-            )
-            .unwrap(),
-            filter_hashes: FILTER_HASHES
-                .iter()
-                .map(|h| FilterHash::from_hex(h).unwrap())
-                .collect(),
+        let (sender, _receiver) = chan::unbounded();
+
+        let mut spvmgr = {
+            let rng = fastrand::Rng::new();
+            let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
+            let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+
+            SpvManager::new(Config::default(), rng, cache, upstream)
         };
 
-        let mut spvmgr = SpvManager::new(Config::default(), rng, cache, upstream);
-        let peer = &([0, 0, 0, 0], 0).into();
-
         // Import the headers.
-        spvmgr.received_cfheaders(peer, msg, &tree).unwrap();
+        {
+            let msg = CFHeaders {
+                filter_type: 0,
+                stop_hash: BlockHash::from_hex(
+                    "00000000b3322c8c3ef7d2cf6da009a776e6a99ee65ec5a32f3f345712238473",
+                )
+                .unwrap(),
+                previous_filter: FilterHash::from_hex(
+                    "02c2392180d0ce2b5b6f8b08d39a11ffe831c673311a3ecf77b97fc3f0303c9f",
+                )
+                .unwrap(),
+                filter_hashes: FILTER_HASHES
+                    .iter()
+                    .map(|h| FilterHash::from_hex(h).unwrap())
+                    .collect(),
+            };
+            spvmgr.received_cfheaders(peer, msg, &tree).unwrap();
+        }
 
         assert_eq!(spvmgr.filters.height(), 15);
         spvmgr.filters.verify(network).unwrap();
