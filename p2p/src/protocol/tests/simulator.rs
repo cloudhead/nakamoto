@@ -1,16 +1,30 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 use super::*;
 
+use nakamoto_common::block::filter::{FilterHash, FilterHeader};
 use nakamoto_common::collections::HashMap;
 
 pub struct PeerConfig {
     pub name: &'static str,
-    pub chain: NonEmpty<BlockHeader>,
+    pub chain: Vec<BlockHeader>,
+    pub cfheaders: Vec<(FilterHash, FilterHeader)>,
 }
 
 impl PeerConfig {
-    pub fn new(name: &'static str, chain: NonEmpty<BlockHeader>) -> Self {
-        Self { name, chain }
+    pub fn new(
+        name: &'static str,
+        chain: Vec<BlockHeader>,
+        cfheaders: Vec<(FilterHash, FilterHeader)>,
+    ) -> Self {
+        Self {
+            name,
+            chain,
+            cfheaders,
+        }
+    }
+
+    pub fn genesis(name: &'static str) -> Self {
+        Self::new(name, vec![], vec![])
     }
 }
 
