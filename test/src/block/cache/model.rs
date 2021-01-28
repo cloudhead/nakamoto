@@ -5,10 +5,8 @@ use std::ops::Range;
 
 use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader, Filters};
 use nakamoto_common::block::iter::Iter;
-use nakamoto_common::block::store::Genesis as _;
 use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::Height;
-use nakamoto_common::network::Network;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
@@ -207,12 +205,9 @@ impl FilterCache {
         }
     }
 
-    pub fn from(network: Network, headers: Vec<(FilterHash, FilterHeader)>) -> Self {
+    pub fn from(headers: NonEmpty<(FilterHash, FilterHeader)>) -> Self {
         Self {
-            headers: NonEmpty::from((
-                (FilterHash::default(), FilterHeader::genesis(network)),
-                headers,
-            )),
+            headers,
             filters: BTreeMap::new(),
         }
     }

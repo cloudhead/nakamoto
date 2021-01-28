@@ -6,25 +6,29 @@ use nakamoto_common::collections::HashMap;
 
 pub struct PeerConfig {
     pub name: &'static str,
-    pub chain: Vec<BlockHeader>,
-    pub cfheaders: Vec<(FilterHash, FilterHeader)>,
+    pub chain: Option<NonEmpty<BlockHeader>>,
+    pub cfheaders: Option<NonEmpty<(FilterHash, FilterHeader)>>,
 }
 
 impl PeerConfig {
     pub fn new(
         name: &'static str,
-        chain: Vec<BlockHeader>,
-        cfheaders: Vec<(FilterHash, FilterHeader)>,
+        chain: NonEmpty<BlockHeader>,
+        cfheaders: NonEmpty<(FilterHash, FilterHeader)>,
     ) -> Self {
         Self {
             name,
-            chain,
-            cfheaders,
+            chain: Some(chain),
+            cfheaders: Some(cfheaders),
         }
     }
 
     pub fn genesis(name: &'static str) -> Self {
-        Self::new(name, vec![], vec![])
+        Self {
+            name,
+            chain: None,
+            cfheaders: None,
+        }
     }
 }
 

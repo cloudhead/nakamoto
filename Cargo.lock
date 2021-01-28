@@ -339,7 +339,9 @@ name = "nakamoto-test"
 version = "0.2.0"
 dependencies = [
  "bitcoin",
+ "bitcoin_hashes",
  "chrono",
+ "fastrand",
  "lazy_static",
  "log",
  "nakamoto-common",

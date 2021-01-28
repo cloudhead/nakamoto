@@ -18,7 +18,7 @@ use quickcheck_macros::quickcheck;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
-use nakamoto_common::block::filter::FilterHeader;
+use nakamoto_common::block::filter::{self, FilterHeader};
 use nakamoto_common::block::store::{Genesis, Store};
 use nakamoto_common::block::BlockHeader;
 use nakamoto_common::p2p::peer::{KnownAddress, Source};
@@ -206,10 +206,17 @@ mod setup {
             };
             configure(&mut cfg);
 
-            let chain = NonEmpty::from((network.genesis(), peer_cfg.chain));
-            let cfheaders = peer_cfg.cfheaders;
+            let chain = peer_cfg
+                .chain
+                .unwrap_or_else(|| NonEmpty::new(network.genesis()));
+            let cfheaders = peer_cfg.cfheaders.unwrap_or_else(|| {
+                NonEmpty::new((
+                    filter::genesis_hash(network),
+                    FilterHeader::genesis(network),
+                ))
+            });
             let tree = model::Cache::from(chain);
-            let filters = model::FilterCache::from(network, cfheaders);
+            let filters = model::FilterCache::from(cfheaders);
             let peer = Builder {
                 cache: tree,
                 clock: clock.clone(),
@@ -374,7 +381,6 @@ fn test_initial_sync() {
 #[test]
 fn test_idle() {
     let network = Network::Mainnet;
-    let chain = NonEmpty::new(network.genesis());
     let mut sim = simulator::Net {
         network,
         configure: |cfg| {
@@ -534,21 +540,21 @@ fn test_getheaders_retry(seed: u64) {
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
 
-    let shortest = vec![];
-    let longest = BITCOIN_HEADERS
-        .iter()
-        .skip(1) // Skip genesis.
-        .take(8)
-        .cloned()
-        .collect::<Vec<_>>();
+    let headers = &*BITCOIN_HEADERS;
+    let longest = NonEmpty {
+        head: headers.head,
+        tail: headers.tail[..8].to_vec(),
+    };
+    let shortest = NonEmpty::new(longest.head);
+    let cfheaders = NonEmpty::new(Default::default());
 
     let mut sim = simulator::Net {
         network,
         peers: vec![
-            PeerConfig::new("alice", shortest, vec![]),
-            PeerConfig::new("bob", longest.clone(), vec![]),
-            PeerConfig::new("olive", longest.clone(), vec![]),
-            PeerConfig::new("fred", longest, vec![]),
+            PeerConfig::new("alice", shortest, cfheaders.clone()),
+            PeerConfig::new("bob", longest.clone(), cfheaders.clone()),
+            PeerConfig::new("olive", longest.clone(), cfheaders.clone()),
+            PeerConfig::new("fred", longest, cfheaders),
         ],
         configure: |cfg| {
             cfg.whitelist = setup::CONFIG.whitelist.clone();
