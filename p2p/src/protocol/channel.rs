@@ -79,6 +79,7 @@ pub trait Disconnect {
 
 impl Disconnect for Channel {
     fn disconnect(&self, addr: net::SocketAddr, reason: DisconnectReason) {
+        info!("{}: Disconnecting: {}", addr, reason);
         self.push(Out::Disconnect(addr, reason));
     }
 }
@@ -143,7 +144,7 @@ impl addrmgr::Events for Channel {
 
 impl peermgr::Events for Channel {
     fn event(&self, event: peermgr::Event) {
-        debug!(target: self.target, "[peer] {}", &event);
+        info!(target: self.target, "[peer] {}", &event);
         self.event(Event::PeerManager(event));
     }
 }
@@ -188,10 +189,8 @@ impl syncmgr::SyncHeaders for Channel {
 
         match &event {
             syncmgr::Event::HeadersImported(import_result) => {
-                debug!(target: self.target, "Import result: {:?}", &import_result);
-
                 if let ImportResult::TipChanged(tip, height, _) = import_result {
-                    info!(target: self.target, "Chain height = {}, tip = {}", height, tip);
+                    info!(target: self.target, "Block height = {}, tip = {}", height, tip);
                 }
             }
             _ => {}
@@ -260,6 +259,13 @@ impl spvmgr::SyncFilters for Channel {
 impl spvmgr::Events for Channel {
     fn event(&self, event: spvmgr::Event) {
         debug!(target: self.target, "[spv] {}", &event);
+
+        match event {
+            spvmgr::Event::FilterHeadersImported { height, .. } => {
+                info!(target: self.target, "Filter height = {}", height);
+            }
+            _ => {}
+        }
 
         self.event(Event::SpvManager(event));
     }

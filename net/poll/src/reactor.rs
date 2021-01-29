@@ -322,7 +322,7 @@ impl Reactor<net::TcpStream> {
                 }
                 Out::Disconnect(addr, reason) => {
                     if let Some(peer) = self.peers.get(&addr) {
-                        info!("{}: Disconnecting: {}", addr, reason);
+                        trace!("{}: Disconnecting: {}", addr, reason);
 
                         // Shutdown the connection, ignoring any potential errors.
                         // If the socket was already disconnected, this will yield

@@ -72,10 +72,6 @@ pub enum Event {
     },
     /// Filter headers were imported successfully.
     FilterHeadersImported {
-        /// Peer we received from.
-        from: PeerId,
-        /// Number of headers.
-        count: usize,
         /// New filter header chain height.
         height: Height,
     },
@@ -112,16 +108,8 @@ impl std::fmt::Display for Event {
                     height, block_hash, from
                 )
             }
-            Event::FilterHeadersImported {
-                from,
-                count,
-                height,
-            } => {
-                write!(
-                    fmt,
-                    "Imported {} filter header(s) from {}, height = {}",
-                    count, from, height
-                )
+            Event::FilterHeadersImported { height } => {
+                write!(fmt, "Imported filter header(s) up to height = {}", height,)
             }
             Event::Synced(height) => {
                 write!(fmt, "Filter headers synced up to height = {}", height)
@@ -352,11 +340,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         self.filters
             .import_headers(headers)
             .map(|height| {
-                self.upstream.event(Event::FilterHeadersImported {
-                    from,
-                    count,
-                    height,
-                });
+                self.upstream.event(Event::FilterHeadersImported { height });
                 assert!(height <= tree.height());
 
                 if height == tree.height() {

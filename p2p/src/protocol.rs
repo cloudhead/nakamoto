@@ -836,8 +836,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     }
 
     fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
-        debug!(target: self.target, "{}: Disconnecting peer: {}", addr, reason);
-
         // TODO: Trigger disconnection everywhere, as if peer disconnected. This
         // avoids being in a state where we know a peer is about to get disconnected,
         // but we still process messages from it as normal.
