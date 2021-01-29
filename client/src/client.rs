@@ -56,7 +56,7 @@ pub struct Config {
     /// Timeout duration for client commands.
     pub timeout: time::Duration,
     /// Client home path, where runtime data is stored, eg. block headers and filters.
-    pub home: PathBuf,
+    pub root: PathBuf,
     /// Client name. Used for logging only.
     pub name: &'static str,
     /// Services offered by this node.
@@ -100,7 +100,7 @@ impl Default for Config {
             network: Network::default(),
             connect: Vec::new(),
             timeout: time::Duration::from_secs(60),
-            home: PathBuf::from(env::var("HOME").unwrap_or_default()),
+            root: PathBuf::from(env::var("HOME").unwrap_or_default()),
             target_outbound_peers: p2p::protocol::connmgr::TARGET_OUTBOUND_PEERS,
             max_inbound_peers: p2p::protocol::connmgr::MAX_INBOUND_PEERS,
             services: ServiceFlags::NONE,
@@ -211,7 +211,7 @@ impl<R: Reactor> Client<R> {
 
     /// Start the client process. This function is meant to be run in its own thread.
     pub fn run(mut self) -> Result<(), Error> {
-        let home = self.config.home.join(".nakamoto");
+        let home = self.config.root.join(".nakamoto");
         let dir = home.join(self.config.network.as_str());
         let listen = self.config.listen.clone();
 

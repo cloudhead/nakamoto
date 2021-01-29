@@ -1,4 +1,5 @@
 use std::net;
+use std::path::PathBuf;
 
 use argh::FromArgs;
 
@@ -23,6 +24,10 @@ pub struct Options {
     /// log level (default: info)
     #[argh(option, default = "log::Level::Info")]
     pub log: log::Level,
+
+    /// root directory for nakamoto files (default: ~)
+    #[argh(option)]
+    pub root: Option<PathBuf>,
 }
 
 impl Options {
@@ -42,7 +47,7 @@ fn main() {
         Network::Mainnet
     };
 
-    if let Err(err) = nakamoto_node::run(&opts.connect, &opts.listen, network) {
+    if let Err(err) = nakamoto_node::run(&opts.connect, &opts.listen, opts.root, network) {
         log::error!("Exiting: {}", err);
         std::process::exit(1);
     }
