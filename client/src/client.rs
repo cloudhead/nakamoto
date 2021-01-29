@@ -230,7 +230,16 @@ impl<R: Reactor> Client<R> {
         let store = match store::File::create(&path, genesis) {
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", path);
-                store::File::open(path, genesis)?
+                let store = store::File::open(path, genesis)?;
+
+                if store.check().is_err() {
+                    log::warn!("Corruption detected in header store, healing..");
+                    store.heal()?; // Rollback store to the last valid header.
+                }
+                log::info!("Store height = {}", store.height()?);
+                log::info!("Loading block headers from store..");
+
+                store
             }
             Err(err) => panic!(err.to_string()),
             Ok(store) => {
@@ -238,12 +247,6 @@ impl<R: Reactor> Client<R> {
                 store
             }
         };
-        if store.check().is_err() {
-            log::warn!("Corruption detected in header store, healing..");
-            store.heal()?; // Rollback store to the last valid header.
-        }
-        log::info!("Store height = {}", store.height()?);
-        log::info!("Loading block headers from store..");
 
         let local_time = SystemTime::now().into();
         let checkpoints = self.config.network.checkpoints().collect::<Vec<_>>();
@@ -258,7 +261,16 @@ impl<R: Reactor> Client<R> {
         let cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", cfheaders_path);
-                store::File::open(cfheaders_path, cfheaders_genesis)?
+                let store = store::File::open(cfheaders_path, cfheaders_genesis)?;
+
+                if store.check().is_err() {
+                    log::warn!("Corruption detected in filter store, healing..");
+                    store.heal()?; // Rollback store to the last valid header.
+                }
+                log::info!("Filters height = {}", store.height()?);
+                log::info!("Loading filter headers from store..");
+
+                store
             }
             Err(err) => panic!(err.to_string()), // TODO
             Ok(store) => {
@@ -266,17 +278,9 @@ impl<R: Reactor> Client<R> {
                 store
             }
         };
-        if cfheaders_store.check().is_err() {
-            log::warn!("Corruption detected in filter store, healing..");
-            cfheaders_store.heal()?; // Rollback store to the last valid header.
-        }
-        log::info!("Filters height = {}", cfheaders_store.height()?);
-        log::info!("Loading filter headers from store..");
 
         let filters = FilterCache::from(cfheaders_store)?;
-
         log::info!("Verifying filter headers..");
-
         filters.verify(self.config.network)?; // Verify store integrity.
 
         log::info!("Loading peer addresses..");
