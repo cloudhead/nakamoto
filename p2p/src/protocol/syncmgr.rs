@@ -602,6 +602,11 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         self.peers.iter().map(|(_, p)| p.height).max()
     }
 
+    /// Are we currently syncing?
+    pub fn is_syncing(&self) -> bool {
+        !self.inflight.is_empty()
+    }
+
     ///////////////////////////////////////////////////////////////////////////
 
     fn handle_error(&mut self, from: &PeerId, err: Error) -> Result<(), store::Error> {
@@ -659,11 +664,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         None
     }
 
-    /// Are we currently syncing?
-    fn is_syncing(&self) -> bool {
-        !self.inflight.is_empty()
-    }
-
     /// Register a new peer.
     fn register(&mut self, id: PeerId, height: Height, link: Link) {
         let last_active = None;
@@ -685,6 +685,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
     /// Unregister a peer.
     fn unregister(&mut self, id: &PeerId) {
+        self.inflight.remove(id);
         self.peers.remove(id);
     }
 

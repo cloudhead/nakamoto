@@ -765,12 +765,15 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         // a re-download of the missing headers, which should result
                         // in us having the new headers.
                         self.spvmgr.rollback(reverted.len()).unwrap();
-                        self.spvmgr.sync(&self.tree);
+                        self.spvmgr.sync(&self.tree, now);
                     }
                     Ok(ImportResult::TipChanged(_, _, _)) => {
-                        // Trigger a sync, since we're going to have to catch up on the new block
-                        // header(s). This is not required, but reduces latency.
-                        self.spvmgr.sync(&self.tree);
+                        if !self.syncmgr.is_syncing() {
+                            // Trigger a filter sync, since we're going to have to catch up on the
+                            // new block header(s). This is not required, but reduces latency.
+                            // We only do this at the tip of the header chain.
+                            self.spvmgr.sync(&self.tree, now);
+                        }
                     }
                     _ => {}
                 }
@@ -797,7 +800,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .received_inv(addr, inventory, &self.clock, &self.tree);
             }
             NetworkMessage::CFHeaders(msg) => {
-                match self.spvmgr.received_cfheaders(&addr, msg, &self.tree) {
+                match self.spvmgr.received_cfheaders(&addr, msg, &self.tree, now) {
                     Err(spvmgr::Error::InvalidMessage { reason, .. }) => {
                         self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
                     }

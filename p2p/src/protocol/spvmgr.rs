@@ -196,6 +196,8 @@ pub struct SpvManager<F, U> {
     upstream: U,
     /// Last time we idled.
     last_idle: Option<LocalTime>,
+    /// Inflight requests.
+    inflight: HashMap<BlockHash, LocalTime>,
     rng: fastrand::Rng,
 }
 
@@ -209,6 +211,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             peers,
             upstream,
             filters,
+            inflight: HashMap::with_hasher(rng.clone().into()),
             last_idle: None,
             rng,
         }
@@ -222,9 +225,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     /// Called periodically. Triggers syncing if necessary.
     pub fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.sync(tree);
+            self.sync(tree, now);
             self.last_idle = Some(now);
             self.upstream.set_timeout(IDLE_TIMEOUT);
+            self.inflight.clear();
         }
     }
 
@@ -274,6 +278,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         from: &PeerId,
         msg: CFHeaders,
         tree: &T,
+        time: LocalTime,
     ) -> Result<Height, Error> {
         let from = *from;
 
@@ -285,13 +290,12 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         }
 
         let prev_header: FilterHeader = msg.previous_filter.into();
-        let (_, header) = self.filters.tip();
+        let (_, tip) = self.filters.tip();
 
-        if header != &prev_header {
-            return Err(Error::InvalidMessage {
-                from,
-                reason: "cfheaders: unexpected previous header",
-            });
+        // If the previous header doesn't match our tip, this could be a stale
+        // message arriving too late. Ignore it.
+        if tip != &prev_header {
+            return Ok(self.filters.height());
         }
 
         let start_height = self.filters.height();
@@ -303,6 +307,14 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 reason: "cfheaders: unknown stop hash",
             });
         };
+
+        if self.inflight.remove(&msg.stop_hash).is_none() {
+            return Err(Error::Ignored {
+                from,
+                msg: "cfheaders: unsolicited message",
+            });
+        }
+
         let hashes = msg.filter_hashes;
         let count = hashes.len();
 
@@ -346,7 +358,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 if height == tree.height() {
                     self.upstream.event(Event::Synced(height));
                 } else {
-                    self.sync(tree);
+                    self.sync(tree, time);
                 }
                 height
             })
@@ -503,15 +515,16 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         if !services.has(REQUIRED_SERVICES) {
             return;
         }
+        let time = clock.local_time();
 
         self.peers.insert(
             id,
             Peer {
-                last_active: clock.local_time(),
+                last_active: time,
                 height,
             },
         );
-        self.sync(tree);
+        self.sync(tree, time);
     }
 
     /// Send a `getcfheaders` message to a random peer.
@@ -519,6 +532,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         &mut self,
         range: Range<Height>,
         tree: &T,
+        time: LocalTime,
     ) -> Option<(PeerId, Height, BlockHash)> {
         let count = range.end as usize - range.start as usize;
 
@@ -528,6 +542,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         if range.is_empty() {
             return None;
         }
+        let start_height = range.start;
 
         // Cap request to `MAX_MESSAGE_CFHEADERS`.
         let stop_hash = if count > MAX_MESSAGE_CFHEADERS {
@@ -542,12 +557,15 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
 
             hash
         };
+        if self.inflight.contains_key(&stop_hash) {
+            // Don't request the same thing twice.
+            return None;
+        }
 
         // TODO: We should select peers that are caught up to the requested height.
         if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
             let ix = self.rng.usize(..peers.len());
             let peer = *peers.get(ix).unwrap(); // Can't fail.
-            let start_height = range.start;
 
             self.upstream.get_cfheaders(
                 *peer,
@@ -555,13 +573,15 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 stop_hash,
                 self.config.request_timeout,
             );
+            self.inflight.insert(stop_hash, time);
+
             return Some((*peer, start_height, stop_hash));
         }
         None
     }
 
     /// Attempt to sync the filter header chain.
-    pub fn sync<T: BlockTree>(&mut self, tree: &T) {
+    pub fn sync<T: BlockTree>(&mut self, tree: &T, time: LocalTime) {
         let filter_height = self.filters.height();
         let block_height = tree.height();
 
@@ -571,7 +591,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             let stop_height = tree.height();
 
             if let Some((peer, start_height, stop_hash)) =
-                self.send_getcfheaders(start_height..stop_height + 1, tree)
+                self.send_getcfheaders(start_height..stop_height + 1, tree, time)
             {
                 self.upstream.event(Event::Syncing {
                     peer,
@@ -661,6 +681,7 @@ mod tests {
     fn test_receive_filters() {
         let network = Network::Mainnet;
         let peer = &([0, 0, 0, 0], 0).into();
+        let time = LocalTime::now();
         let tree = {
             let genesis = network.genesis();
             let params = network.params();
@@ -696,7 +717,8 @@ mod tests {
                     .map(|h| FilterHash::from_hex(h).unwrap())
                     .collect(),
             };
-            spvmgr.received_cfheaders(peer, msg, &tree).unwrap();
+            spvmgr.inflight.insert(msg.stop_hash, time);
+            spvmgr.received_cfheaders(peer, msg, &tree, time).unwrap();
         }
 
         assert_eq!(spvmgr.filters.height(), 15);
