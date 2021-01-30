@@ -228,12 +228,13 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
                     }
                 }
                 Err(err) if err.kind() == io::ErrorKind::TimedOut => {
+                    // Nb. The way this is currently used basically ignores which keys have
+                    // timed out. So as long as *something* timed out, we wake the protocol.
                     self.timeouts.wake(local_time, &mut timeouts);
 
                     if !timeouts.is_empty() {
-                        for _ in timeouts.drain(..) {
-                            self.inputs.push_back(Input::Timeout);
-                        }
+                        timeouts.clear();
+                        self.inputs.push_back(Input::Timeout);
                     }
                 }
                 Err(err) => return Err(err.into()),
