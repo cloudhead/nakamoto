@@ -100,7 +100,7 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
                     // from them.
                     if now - since >= PING_TIMEOUT {
                         self.upstream
-                            .disconnect(peer.address, DisconnectReason::PeerTimeout);
+                            .disconnect(peer.address, DisconnectReason::PeerTimeout("ping"));
                     }
                 }
                 State::Idle { since } => {

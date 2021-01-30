@@ -372,7 +372,7 @@ fn test_initial_sync() {
         assert_eq!(bob.tree.height(), height);
     }
     alice.step(
-        Input::Disconnected(bob_addr, DisconnectReason::PeerTimeout),
+        Input::Disconnected(bob_addr, DisconnectReason::PeerTimeout("test")),
         local_time,
     );
 }
@@ -417,7 +417,7 @@ fn test_idle() {
 
     // Alice now decides to disconnect Bob.
     sim.input(&alice, Input::Timeout)
-        .any(|o| matches!(o, Out::Disconnect(addr, DisconnectReason::PeerTimeout) if addr == &bob))
+        .any(|o| matches!(o, Out::Disconnect(addr, DisconnectReason::PeerTimeout("ping")) if addr == &bob))
         .expect("Alice disconnects Bob");
 }
 
@@ -514,7 +514,7 @@ fn test_maintain_connections(seed: u64) {
     let other = connected.pop().unwrap();
     let result = sim.input(
         &alice,
-        Input::Disconnected(other, DisconnectReason::PeerTimeout),
+        Input::Disconnected(other, DisconnectReason::PeerTimeout("test")),
     );
 
     let addr = result
@@ -638,11 +638,11 @@ fn test_handshake_version_timeout() {
 
         instance.step(Input::Timeout, time + peermgr::HANDSHAKE_TIMEOUT);
         assert!(rx.iter().any(
-            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout) if a == remote)
+            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if a == remote)
         ));
 
         instance.step(
-            Input::Disconnected(remote, DisconnectReason::PeerTimeout),
+            Input::Disconnected(remote, DisconnectReason::PeerTimeout("test")),
             time,
         );
     }
@@ -686,11 +686,11 @@ fn test_handshake_verack_timeout() {
 
         instance.step(Input::Timeout, time);
         assert!(rx.iter().any(
-            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout) if a == remote)
+            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if a == remote)
         ));
 
         instance.step(
-            Input::Disconnected(remote, DisconnectReason::PeerTimeout),
+            Input::Disconnected(remote, DisconnectReason::PeerTimeout("test")),
             time,
         );
     }
@@ -816,7 +816,7 @@ fn test_getaddr() {
         .address();
     let result = sim.input(
         &alice,
-        Input::Disconnected(peer, DisconnectReason::PeerTimeout),
+        Input::Disconnected(peer, DisconnectReason::PeerTimeout("test")),
     );
 
     // We are unable to connect to a new peer because our address book is exhausted.

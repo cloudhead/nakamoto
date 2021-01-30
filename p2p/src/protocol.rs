@@ -177,7 +177,7 @@ pub enum DisconnectReason {
     /// Peer magic is invalid.
     PeerMagic(u32),
     /// Peer timed out.
-    PeerTimeout,
+    PeerTimeout(&'static str),
     /// Connection to self was detected.
     SelfConnection,
     /// Inbound connection limit reached.
@@ -193,7 +193,7 @@ impl DisconnectReason {
     /// after some time.
     pub fn is_transient(&self) -> bool {
         match self {
-            Self::ConnectionLimit | Self::PeerTimeout | Self::PeerHeight(_) => true,
+            Self::ConnectionLimit | Self::PeerTimeout(_) | Self::PeerHeight(_) => true,
             _ => false,
         }
     }
@@ -207,7 +207,7 @@ impl fmt::Display for DisconnectReason {
             Self::PeerServices(_) => write!(f, "peer doesn't have the required services"),
             Self::PeerHeight(_) => write!(f, "peer is too far behind"),
             Self::PeerMagic(magic) => write!(f, "received message with invalid magic: {}", magic),
-            Self::PeerTimeout => write!(f, "peer timed out"),
+            Self::PeerTimeout(s) => write!(f, "peer timed out: {:?}", s),
             Self::SelfConnection => write!(f, "detected self-connection"),
             Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
             Self::ConnectionError(err) => write!(f, "connection error: {}", err),

@@ -580,7 +580,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                 OnTimeout::Disconnect => {
                     self.unregister(&peer);
                     self.upstream
-                        .disconnect(*peer, DisconnectReason::PeerTimeout);
+                        .disconnect(*peer, DisconnectReason::PeerTimeout("sync"));
                 }
                 OnTimeout::Ignore => {
                     // It's likely that the peer just didn't have the requested header.

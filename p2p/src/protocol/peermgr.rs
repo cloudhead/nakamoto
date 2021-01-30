@@ -399,7 +399,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
 
         for addr in timed_out {
             self.upstream
-                .disconnect(addr, DisconnectReason::PeerTimeout);
+                .disconnect(addr, DisconnectReason::PeerTimeout("handshake"));
         }
     }
 
