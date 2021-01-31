@@ -59,7 +59,7 @@ impl Channel {
 
     /// Push a message to the channel.
     pub fn message(&self, addr: PeerId, message: NetworkMessage) -> &Self {
-        debug!("{}: Sending {:?}", addr, message.cmd());
+        debug!(target: self.target, "{}: Sending {:?}", addr, message.cmd());
 
         self.push(self.builder.message(addr, message));
         self
@@ -79,7 +79,7 @@ pub trait Disconnect {
 
 impl Disconnect for Channel {
     fn disconnect(&self, addr: net::SocketAddr, reason: DisconnectReason) {
-        info!("{}: Disconnecting: {}", addr, reason);
+        info!(target: self.target, "{}: Disconnecting: {}", addr, reason);
         self.push(Out::Disconnect(addr, reason));
     }
 }
@@ -109,6 +109,7 @@ impl addrmgr::SyncAddresses for Channel {
 
 impl connmgr::Connect for Channel {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
+        debug!(target: self.target, "[conn] {}: Connecting..", addr);
         self.push(Out::Connect(addr, timeout));
     }
 }

@@ -296,7 +296,7 @@ impl Sim {
 
     /// Let some time pass.
     pub fn elapse(&mut self, duration: LocalDuration) {
-        log::info!("(sim) Elapsing {} seconds", duration.as_secs());
+        log::info!(target: "sim", "Elapsing {} seconds", duration.as_secs());
 
         self.time = self.time + duration;
     }
