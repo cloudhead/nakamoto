@@ -105,6 +105,8 @@ pub struct ConnectionManager<U> {
     connected: HashMap<PeerId, Peer>,
     /// Set of disconnected peers.
     disconnected: HashSet<PeerId>,
+    /// Set of peers being disconnected.
+    disconnecting: HashSet<PeerId>,
     /// Last time we were idle.
     last_idle: Option<LocalTime>,
     /// Channel to the network.
@@ -118,6 +120,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
             connecting: HashSet::new(),
             connected: HashMap::new(),
             disconnected: HashSet::new(),
+            disconnecting: HashSet::new(),
             last_idle: None,
             config,
             upstream,
@@ -145,6 +148,11 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
         self.maintain_connections::<S, A>(addrs);
     }
 
+    /// Check whether a peer is connected.
+    pub fn is_connected(&self, addr: &PeerId) -> bool {
+        self.connected.contains_key(addr) && !self.disconnecting.contains(addr)
+    }
+
     /// Connect to a peer.
     pub fn connect<S: peer::Store, A: AddressSource>(&mut self, addr: &PeerId) -> bool {
         if self.connected.contains_key(&addr) || self.connecting.contains(addr) {
@@ -158,10 +166,9 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
 
     /// Disconnect from a peer.
     pub fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
-        if self.connected.contains_key(&addr) {
+        if self.is_connected(&addr) {
             debug_assert!(!self.disconnected.contains(&addr));
-
-            self.upstream.disconnect(addr, reason);
+            self._disconnect(addr, reason);
         }
     }
 
@@ -180,8 +187,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
         match link {
             Link::Inbound if self.inbound_peers().count() >= self.config.max_inbound_peers => {
                 // Don't allow inbound connections beyond the configured limit.
-                self.upstream
-                    .disconnect(address, DisconnectReason::ConnectionLimit);
+                self._disconnect(address, DisconnectReason::ConnectionLimit);
             }
             _ => {
                 self.disconnected.remove(&address);
@@ -219,6 +225,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
 
         Events::event(&self.upstream, Event::Disconnected(*addr));
 
+        self.disconnecting.remove(addr);
         self.disconnected.insert(*addr);
 
         if let Some(peer) = self.connected.remove(&addr) {
@@ -293,5 +300,11 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
     /// Get outbound peers.
     fn outbound(&self) -> impl Iterator<Item = &Peer> + Clone {
         self.connected.values().filter(|p| p.link.is_outbound())
+    }
+
+    /// Disconnect a peer (internal).
+    fn _disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
+        self.disconnecting.insert(addr);
+        self.upstream.disconnect(addr, reason);
     }
 }

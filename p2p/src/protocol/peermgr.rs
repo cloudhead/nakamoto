@@ -187,11 +187,6 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
         }
     }
 
-    /// Check whether the given peer is connected.
-    pub fn is_connected(&self, addr: &PeerId) -> bool {
-        self.connections.contains_key(addr) || self.peers.contains_key(addr)
-    }
-
     /// Iterator over outbound, negotiated peers.
     pub fn outbound(&self) -> impl Iterator<Item = &Peer> + Clone {
         self.peers

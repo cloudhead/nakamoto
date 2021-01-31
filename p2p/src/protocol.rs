@@ -706,7 +706,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             return self.disconnect(addr, DisconnectReason::PeerMagic(msg.magic));
         }
 
-        if !self.peermgr.is_connected(&addr) {
+        if !self.connmgr.is_connected(&addr) {
             debug!(target: self.target, "Received {:?} from unknown peer {}", cmd, addr);
             return;
         };
