@@ -90,6 +90,13 @@ impl LocalTime {
                 .expect("supplied time is later than self"),
         )
     }
+
+    /// Elapse time.
+    ///
+    /// Adds the given duration to the time.
+    pub fn elapse(&mut self, duration: LocalDuration) {
+        self.millis += duration.as_millis()
+    }
 }
 
 /// Convert a `SystemTime` into a local time.

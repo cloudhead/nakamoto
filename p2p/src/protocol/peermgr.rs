@@ -165,7 +165,9 @@ impl Peer {
 /// Manages peers and peer negotiation.
 #[derive(Debug)]
 pub struct PeerManager<U> {
-    config: Config,
+    /// Peer manager configuration.
+    pub config: Config,
+
     connections: HashMap<net::SocketAddr, Connection>,
     peers: HashMap<PeerId, Peer>,
     upstream: U,

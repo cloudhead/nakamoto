@@ -1,177 +1,46 @@
 #![cfg(test)]
+pub mod peer;
 pub mod simulator;
 
 use super::*;
+use peer::Peer;
+use simulator::Simulation;
 
-use simulator::PeerConfig;
-
-use bitcoin::consensus::params::Params;
 use bitcoin::network::message_blockdata::Inventory;
 use bitcoin::network::Address;
 use bitcoin_hashes::hex::FromHex;
 
-use std::collections::{HashMap, VecDeque};
-use std::time::SystemTime;
-
-use nonempty::NonEmpty;
 use quickcheck_macros::quickcheck;
 
-use nakamoto_chain::block::cache::BlockCache;
-use nakamoto_chain::block::store;
-use nakamoto_common::block::filter::{self, FilterHeader};
-use nakamoto_common::block::store::{Genesis, Store};
-use nakamoto_common::block::BlockHeader;
-use nakamoto_common::p2p::peer::{KnownAddress, Source};
+use nakamoto_common::p2p::peer::Source;
 
-use nakamoto_test::block::cache::model;
+#[allow(unused_imports)]
 use nakamoto_test::logger;
 use nakamoto_test::BITCOIN_HEADERS;
 
-use crate::protocol::{connmgr, pingmgr, Builder, Protocol};
+use crate::protocol::{connmgr, pingmgr};
 
-fn payload(o: &Out) -> Option<(net::SocketAddr, &NetworkMessage)> {
+fn payload(o: Out) -> Option<(net::SocketAddr, NetworkMessage)> {
     match o {
-        Out::Message(a, m) => Some((*a, &m.payload)),
+        Out::Message(a, m) => Some((a, m.payload)),
+        _ => None,
+    }
+}
+
+fn event(o: Out) -> Option<Event> {
+    match o {
+        Out::Event(e) => Some(e),
         _ => None,
     }
 }
 
 mod setup {
     use super::*;
-    use nakamoto_common::block::filter::FilterHeader;
 
-    lazy_static! {
-        /// Test protocol config.
-        pub static ref CONFIG: Config = Config {
-            network: network::Network::Mainnet,
-            params: Params::new(network::Network::Mainnet.into()),
-            connect: vec![],
-            // Pretend that we're a full-node, to fool connections
-            // between instances of this protocol in tests.
-            services: ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
-            required_services: ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS,
-            protocol_version: PROTOCOL_VERSION,
-            target_outbound_peers: 8,
-            max_inbound_peers: 8,
-            user_agent: USER_AGENT,
-            whitelist: Whitelist {
-                addr: HashSet::new(),
-                user_agent: vec![USER_AGENT.to_owned()].into_iter().collect(),
-            },
-            target: "self",
-        };
-    }
-
-    pub fn singleton(
-        network: Network,
-    ) -> (
-        Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
-        chan::Receiver<Out>,
-        LocalTime,
-    ) {
-        let genesis = network.genesis();
-        let cache = model::Cache::new(genesis);
-        let filters = model::FilterCache::new(FilterHeader::genesis(network));
-        let peers = HashMap::new();
-        let time = LocalTime::from_secs(genesis.time as u64);
-        let clock = AdjustedTime::new(time);
-        let (tx, rx) = chan::unbounded();
-
-        (
-            Builder {
-                cache,
-                clock,
-                filters,
-                peers,
-                rng: fastrand::Rng::new(),
-                cfg: CONFIG.clone(),
-            }
-            .build(tx),
-            rx,
-            time,
-        )
-    }
-
-    pub fn pair(
-        network: Network,
-    ) -> (
-        (
-            Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
-            PeerId,
-            chan::Receiver<Out>,
-        ),
-        (
-            Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
-            PeerId,
-            chan::Receiver<Out>,
-        ),
-        LocalTime,
-    ) {
-        use bitcoin::blockdata::constants;
-
-        let genesis = constants::genesis_block(network.into()).header;
-        let cache = model::Cache::new(genesis);
-        let filters = model::FilterCache::new(FilterHeader::genesis(network));
-        let peers = HashMap::new();
-        let time = LocalTime::from_secs(genesis.time as u64);
-        let clock = AdjustedTime::new(time);
-
-        let builder = Builder {
-            cache,
-            clock,
-            filters,
-            peers,
-            rng: fastrand::Rng::new(),
-            cfg: CONFIG.clone(),
-        };
-
-        let (alice_tx, alice_rx) = chan::unbounded();
-        let (bob_tx, bob_rx) = chan::unbounded();
-
-        let mut alice = builder.clone().build(alice_tx);
-        let mut bob = builder.build(bob_tx);
-
-        let alice_addr = ([152, 168, 3, 33], 3333).into();
-        let bob_addr = ([152, 168, 7, 77], 7777).into();
-
-        simulator::handshake(
-            &mut alice,
-            alice_addr,
-            alice_rx.clone(),
-            &mut bob,
-            bob_addr,
-            bob_rx.clone(),
-            time,
-        );
-
-        ((alice, alice_addr, alice_rx), (bob, bob_addr, bob_rx), time)
-    }
-
-    pub fn network(
-        network: Network,
-        rng: fastrand::Rng,
-        mut cfgs: Vec<PeerConfig>,
-        configure: fn(&mut Config),
-    ) -> (
-        Vec<(
-            PeerId,
-            Builder<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
-        )>,
-        LocalTime,
-    ) {
-        use bitcoin::blockdata::constants;
-
-        let genesis = constants::genesis_block(network.into()).header;
-        let time = LocalTime::from_secs(genesis.time as u64);
-        let clock = AdjustedTime::new(time);
-        let peers = HashMap::new();
-        let size = cfgs.len();
-        let config = Config::default();
-
-        assert!(size > 0);
-
-        let mut addrs = Vec::with_capacity(size);
-        while addrs.len() < size {
+    #[allow(dead_code)]
+    pub fn addresses(count: usize, rng: fastrand::Rng) -> Vec<net::SocketAddr> {
+        let mut addrs = Vec::with_capacity(count);
+        while addrs.len() < count {
             let addr: net::SocketAddr = (
                 [rng.u8(..), rng.u8(..), rng.u8(..), rng.u8(..)],
                 rng.u16(1024..),
@@ -186,422 +55,236 @@ mod setup {
             }
             addrs.push(addr);
         }
-
-        let mut nodes = Vec::with_capacity(size);
-        for ((i, addr), peer_cfg) in addrs.iter().enumerate().zip(cfgs.drain(..)) {
-            let mut connect = Vec::new();
-
-            for other in addrs.iter().skip(i + 1) {
-                connect.push(*other);
-            }
-
-            let mut cfg = Config {
-                network,
-                connect,
-                // Pretend that we're a full-node, to fool connections
-                // between instances of this protocol in tests.
-                services: config.required_services,
-                target: peer_cfg.name,
-                ..config.clone()
-            };
-            configure(&mut cfg);
-
-            let chain = peer_cfg
-                .chain
-                .unwrap_or_else(|| NonEmpty::new(network.genesis()));
-            let cfheaders = peer_cfg.cfheaders.unwrap_or_else(|| {
-                NonEmpty::new((
-                    filter::genesis_hash(network),
-                    FilterHeader::genesis(network),
-                ))
-            });
-            let tree = model::Cache::from(chain);
-            let filters = model::FilterCache::from(cfheaders);
-            let peer = Builder {
-                cache: tree,
-                clock: clock.clone(),
-                filters: filters.clone(),
-                peers: peers.clone(),
-                rng: rng.clone(),
-                cfg,
-            };
-            info!("(sim) {} = {}", peer_cfg.name, addr);
-
-            nodes.push((*addr, peer));
-        }
-        (nodes, time)
+        addrs
     }
 }
 
 #[test]
 fn test_handshake() {
-    let genesis = BlockHeader {
-        version: 1,
-        prev_blockhash: Default::default(),
-        merkle_root: Default::default(),
-        nonce: 0,
-        time: 0,
-        bits: 0,
-    };
-    let tree = model::Cache::new(genesis);
-    let peers = HashMap::new();
-    let clock = AdjustedTime::default();
-    let local_time = LocalTime::from(SystemTime::now());
-    let filters = model::FilterCache::new(FilterHeader::default());
+    let rng = fastrand::Rng::new();
+    let network = Network::Mainnet;
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let outbound = ([241, 19, 44, 19], 8333).into();
+    let inbound = ([241, 19, 44, 18], 8333).into();
 
-    let alice_addr = ([127, 0, 0, 1], 8333).into();
-    let bob_addr = ([127, 0, 0, 2], 8333).into();
-
-    let builder = Builder {
-        cache: tree,
-        clock,
-        filters,
-        peers,
-        rng: fastrand::Rng::new(),
-        cfg: setup::CONFIG.clone(),
-    };
-
-    let (alice_tx, alice_rx) = chan::unbounded();
-    let (bob_tx, bob_rx) = chan::unbounded();
-
-    let mut alice = builder.clone().build(alice_tx);
-    let mut bob = builder.build(bob_tx);
-
-    simulator::run(
-        vec![
-            (alice_addr, &mut alice, alice_rx),
-            (bob_addr, &mut bob, bob_rx),
-        ],
-        vec![
-            vec![Input::Connected {
-                addr: bob_addr,
-                local_addr: alice_addr,
-                link: Link::Outbound,
-            }],
-            vec![Input::Connected {
-                addr: alice_addr,
-                local_addr: bob_addr,
-                link: Link::Inbound,
-            }],
-        ],
-        local_time,
-    );
-
-    assert!(
-        alice.peermgr.peers().all(|p| p.is_negotiated()),
-        "alice: {:#?}",
-        alice.peermgr.peers().collect::<Vec<_>>()
-    );
-
-    assert!(
-        bob.peermgr.peers().all(|p| p.is_negotiated()),
-        "bob: {:#?}",
-        bob.peermgr.peers().collect::<Vec<_>>()
-    );
+    peer.connect(&inbound, Link::Inbound);
+    peer.connect(&outbound, Link::Outbound);
 }
 
+// TODO: We need to test this with a chain that is longer than 2000.
 #[test]
-#[allow(clippy::redundant_clone)]
 fn test_initial_sync() {
-    use fastrand::Rng;
-
-    let clock = AdjustedTime::default();
-    let local_time = LocalTime::from(SystemTime::now());
-    let config = setup::CONFIG.clone();
-    let store = store::Memory::new(BITCOIN_HEADERS.clone());
-    let network = bitcoin::Network::Bitcoin;
-    let params = Params::new(network);
-    let filters = model::FilterCache::new(FilterHeader::genesis(Network::Mainnet));
-    let peers = HashMap::new();
-
-    let alice_addr: PeerId = ([127, 0, 0, 1], 8333).into();
-    let bob_addr: PeerId = ([127, 0, 0, 2], 8333).into();
-    let (alice_tx, alice_rx) = chan::unbounded();
-    let (bob_tx, bob_rx) = chan::unbounded();
-
+    let rng = fastrand::Rng::new();
     // Blockchain height we're going to be working with. Making it larger
     // than the threshold ensures a sync happens.
     let height = 144;
+    let network = Network::Mainnet;
+    let headers = BITCOIN_HEADERS.tail[0..height].to_vec();
+    let time = LocalTime::from_block_time(headers.last().unwrap().time);
 
-    // Truncate Alice's chain to test height.
-    let mut alice_store = store;
-    alice_store.rollback(height).unwrap();
+    assert!(headers.len() >= height);
 
-    // Let's test Bob trying to sync with Alice from genesis.
-    let alice_tree = BlockCache::from(alice_store, params.clone(), &[]).unwrap();
-    let bob_tree = BlockCache::from(
-        store::Memory::new(NonEmpty::new(*alice_tree.genesis())),
-        params,
-        &[],
-    )
-    .unwrap();
-
-    let mut alice = Protocol::new(
-        alice_tree,
-        filters.clone(),
-        peers.clone(),
-        clock.clone(),
-        Rng::new(),
-        config,
-        alice_tx,
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut bob = Peer::new(
+        "bob",
+        [97, 97, 97, 97],
+        network,
+        headers,
+        vec![],
+        rng.clone(),
     );
+    assert_eq!(bob.protocol.tree.height(), height as Height);
 
-    // Bob connects to Alice.
-    {
-        let mut bob = Protocol::new(
-            bob_tree,
-            filters,
-            peers,
-            clock,
-            Rng::new(),
-            setup::CONFIG.clone(),
-            bob_tx,
-        );
+    let mut simulator = Simulation::new(time, rng);
 
-        simulator::handshake(
-            &mut bob,
-            bob_addr,
-            bob_rx.clone(),
-            &mut alice,
-            alice_addr,
-            alice_rx.clone(),
-            local_time,
-        );
+    simulator.connect(&mut alice, &mut bob);
+    simulator.run([&mut alice, &mut bob]);
 
-        assert_eq!(alice.tree.height(), height);
-        assert_eq!(bob.tree.height(), height);
-    }
-    alice.step(
-        Input::Disconnected(bob_addr, DisconnectReason::PeerTimeout("test")),
-        local_time,
-    );
+    assert_eq!(alice.protocol.tree.height(), height as Height);
 }
 
 /// Test what happens when a peer is idle for too long.
 #[test]
-fn test_idle() {
+fn test_idle_disconnect() {
+    let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut sim = simulator::Net {
-        network,
-        configure: |cfg| {
-            cfg.whitelist = setup::CONFIG.whitelist.clone();
-        },
-        rng: fastrand::Rng::new(),
-        peers: vec![PeerConfig::genesis("alice"), PeerConfig::genesis("bob")],
-        ..simulator::Net::default()
-    }
-    .into();
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let remote = ([241, 19, 44, 18], 8333).into();
 
-    // Connect all peers.
-    sim.step();
+    peer.connect(&remote, Link::Outbound);
 
     // Let a certain amount of time pass.
-    sim.elapse(pingmgr::PING_INTERVAL);
+    peer.time.elapse(pingmgr::PING_INTERVAL);
 
-    let bob = sim.get("bob");
-    let alice = sim.get("alice");
-
-    sim.input(&alice, Input::Timeout)
-        .any(|o| {
+    peer.step(Input::Timeout);
+    peer.upstream
+        .try_iter()
+        .find(|o| {
             matches!(o, Out::Message(
                 addr,
                 RawNetworkMessage {
                     payload: NetworkMessage::Ping(_), ..
                 },
-            ) if addr == &bob)
+            ) if addr == &remote)
         })
-        .expect("Alice pings Bob");
+        .expect("`ping` is sent");
 
-    // More time passes, and Bob doesn't `pong` back.
-    sim.elapse(pingmgr::PING_TIMEOUT);
+    // More time passes, and the remote doesn't `pong` back.
+    peer.time.elapse(pingmgr::PING_TIMEOUT);
 
-    // Alice now decides to disconnect Bob.
-    sim.input(&alice, Input::Timeout)
-        .any(|o| matches!(o, Out::Disconnect(addr, DisconnectReason::PeerTimeout("ping")) if addr == &bob))
-        .expect("Alice disconnects Bob");
+    // Peer now decides to disconnect remote.
+    peer.step(Input::Timeout);
+    peer.upstream
+        .try_iter()
+        .find(|o| {
+            matches!(o, Out::Disconnect(
+                addr,
+                DisconnectReason::PeerTimeout("ping")
+            ) if addr == &remote)
+        })
+        .expect("peer disconnects remote");
 }
 
 #[test]
-fn test_getheaders_timeout() {
+fn test_inv_getheaders() {
+    let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    // TODO: Protocol should try different peers if it can't get the headers from the first
-    // peer. It should keep trying until it succeeds.
-    let ((mut local, _, rx), (_, remote_addr, _), local_time) = setup::pair(network);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let remote: PeerId = ([241, 19, 44, 18], 8333).into();
+
     // Some hash for a nonexistent block.
     let hash =
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
-    local.step(
-        Input::Received(
-            remote_addr,
-            msg.raw(NetworkMessage::Inv(vec![Inventory::Block(hash)])),
-        ),
-        local_time,
-    );
+    peer.connect(&remote, Link::Outbound);
+    peer.step(Input::Received(
+        remote,
+        msg.raw(NetworkMessage::Inv(vec![Inventory::Block(hash)])),
+    ));
 
-    let out = rx.try_iter().collect::<Vec<_>>();
-
-    out.iter()
-        .find(|o| matches!(payload(o), Some((_, NetworkMessage::GetHeaders(_)))))
+    peer.upstream
+        .try_iter()
+        .filter_map(payload)
+        .find(|o| matches!(o, (_, NetworkMessage::GetHeaders(_))))
         .expect("a `getheaders` message should be returned");
-    out.iter()
+    peer.upstream
+        .try_iter()
         .find(|o| matches!(o, Out::SetTimeout(_)))
         .expect("a timer should be returned");
 }
 
-#[quickcheck]
-fn test_maintain_connections(seed: u64) {
-    const TARGET_PEERS: usize = 2;
-
-    let rng = fastrand::Rng::with_seed(seed);
+#[test]
+fn test_maintain_connections() {
+    let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut sim = simulator::Net {
-        network,
-        peers: vec![
-            PeerConfig::genesis("alice"),
-            PeerConfig::genesis("bob"),
-            PeerConfig::genesis("olive"),
-            PeerConfig::genesis("john"),
-            PeerConfig::genesis("misha"),
-        ],
-        configure: |cfg| {
-            cfg.target_outbound_peers = TARGET_PEERS;
-            cfg.whitelist = setup::CONFIG.whitelist.clone();
-        },
-        rng,
-        ..Default::default()
-    }
-    .into();
+    let port = network.port();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
 
-    // The first peer always has the outbound connections.
-    let alice = sim.get("alice");
-
-    {
-        // Give alice some addresses for her address book.
-        let olive = sim.get("olive");
-        let john = sim.get("john");
-        let misha = sim.get("misha");
-
-        sim.peer("alice").protocol.addrmgr.insert(
-            vec![
-                (0, Address::new(&olive, setup::CONFIG.required_services)),
-                (0, Address::new(&john, setup::CONFIG.required_services)),
-                (0, Address::new(&misha, setup::CONFIG.required_services)),
-            ]
-            .into_iter(),
-            Source::Dns,
-        );
-    }
-
-    // Run the simulation until no messages are exchanged.
-    sim.step();
+    let peers: Vec<PeerId> = vec![
+        ([88, 88, 88, 1], 8333).into(),
+        ([88, 88, 88, 2], 8333).into(),
+        ([88, 88, 88, 3], 8333).into(),
+    ];
+    let mut addrs: HashSet<_> = vec![
+        ([77, 77, 77, 77], port).into(),
+        ([78, 78, 78, 78], port).into(),
+        ([79, 79, 79, 79], port).into(),
+    ]
+    .into_iter()
+    .collect();
 
     // Keep track of who Alice is connected to.
-    let mut connected = Vec::new();
-
-    for e in sim.events(&alice) {
-        match e {
-            Event::ConnManager(connmgr::Event::Connected(addr, link)) if link == Link::Outbound => {
-                connected.push(addr)
-            }
-            _ => {}
-        }
+    for peer in peers.iter() {
+        alice.connect(peer, Link::Outbound);
+        alice.protocol.connmgr.is_connected(peer);
     }
-    assert_eq!(connected.len(), TARGET_PEERS);
 
-    let other = connected.pop().unwrap();
-    let result = sim.input(
-        &alice,
-        Input::Disconnected(other, DisconnectReason::PeerTimeout("test")),
-    );
+    // Give alice some addresses for her address book.
+    for addr in addrs.iter() {
+        let addr = Address::new(addr, alice.protocol.peermgr.config.required_services);
+        alice
+            .protocol
+            .addrmgr
+            .insert(vec![(0, addr)].into_iter(), Source::Dns);
+    }
 
-    let addr = result
-        .find(|o| match o {
-            Out::Connect(addr, _) => Some(*addr),
-            _ => None,
-        })
-        .expect("Alice connects to a peer");
+    // Disconnect peers and expect connections to peers from address book.
+    for peer in peers.iter() {
+        alice.step(Input::Disconnected(
+            *peer,
+            DisconnectReason::PeerTimeout("timeout"),
+        ));
 
-    assert!(addr != other);
-    assert!(!connected.contains(&addr));
+        let addr = alice
+            .upstream
+            .try_iter()
+            .find_map(|o| match o {
+                Out::Connect(addr, _) => Some(addr),
+                _ => None,
+            })
+            .expect("Alice connects to a new peer");
+
+        assert!(addr != *peer);
+        assert!(addrs.remove(&addr));
+    }
+    assert!(addrs.is_empty());
 }
 
-#[quickcheck]
-fn test_getheaders_retry(seed: u64) {
-    logger::init(log::Level::Info);
+#[test]
+fn test_getheaders_retry() {
+    let rng = fastrand::Rng::new();
+    let network = Network::Mainnet;
+    let msg = message::Builder::new(network);
 
-    let rng = fastrand::Rng::with_seed(seed);
     // Some hash for a nonexistent block.
     let hash =
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
-    let network = Network::Mainnet;
-    let msg = message::Builder::new(network);
 
-    let headers = &*BITCOIN_HEADERS;
-    let longest = NonEmpty {
-        head: headers.head,
-        tail: headers.tail[..8].to_vec(),
-    };
-    let shortest = NonEmpty::new(longest.head);
-    let cfheaders = NonEmpty::new(Default::default());
-
-    let mut sim = simulator::Net {
-        network,
-        peers: vec![
-            PeerConfig::new("alice", shortest, cfheaders.clone()),
-            PeerConfig::new("bob", longest.clone(), cfheaders.clone()),
-            PeerConfig::new("olive", longest.clone(), cfheaders.clone()),
-            PeerConfig::new("fred", longest, cfheaders),
-        ],
-        configure: |cfg| {
-            cfg.whitelist = setup::CONFIG.whitelist.clone();
-        },
-        rng,
-        initialize: false,
-        ..Default::default()
+    let mut alice = Peer::genesis("alice", [49, 40, 43, 40], network, rng);
+    let peers = [
+        ([55, 55, 55, 55], network.port()).into(),
+        ([66, 66, 66, 66], network.port()).into(),
+        ([77, 77, 77, 77], network.port()).into(),
+    ];
+    for peer in peers.iter() {
+        alice.connect(peer, Link::Outbound);
     }
-    .into();
-
-    let bob = sim.get("bob");
-    let alice = sim.get("alice");
-    let olive = sim.get("olive");
-    let fred = sim.get("fred");
-
-    sim.connect(&alice, &[bob, olive, fred]);
-    sim.set_filter(|_, _, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
-    sim.step(); // Run the simulation until no messages are exchanged.
-    sim.clear_filter();
-
-    let ask = sim.peers.len() - 1;
+    assert!(alice.protocol.syncmgr.best_height().unwrap() > alice.protocol.tree.height());
 
     // Peers that have been asked.
     let mut asked = HashSet::new();
 
     // Trigger a `getheaders` by sending an inventory message to Alice.
-    let result = sim.input(
-        &alice,
-        Input::Received(
-            bob,
-            msg.raw(NetworkMessage::Inv(vec![Inventory::Block(hash)])),
-        ),
-    );
+    alice.step(Input::Received(
+        peers[0],
+        msg.raw(NetworkMessage::Inv(vec![Inventory::Block(hash)])),
+    ));
 
     // The first time we ask for headers, we ask the peer who sent us the `inv` message.
-    let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
-    assert_eq!(addr, bob);
+    let (addr, _) = alice
+        .upstream
+        .try_iter()
+        .filter_map(payload)
+        .find(|(_, m)| matches!(m, NetworkMessage::GetHeaders(_)))
+        .expect("Alice asks the first peer for headers");
+    assert_eq!(addr, peers[0]);
 
     asked.insert(addr);
-    result.schedule(&mut sim);
 
     // While there's still peers to ask...
-    while asked.len() < ask {
-        sim.elapse(syncmgr::REQUEST_TIMEOUT);
+    while asked.len() < peers.len() {
+        alice.time.elapse(syncmgr::REQUEST_TIMEOUT);
+        alice.step(Input::Timeout);
 
-        let result = sim.input(&alice, Input::Timeout);
-        let (addr, _) = result.message(|_, m| matches!(m, NetworkMessage::GetHeaders(_)));
+        let (addr, _) = alice
+            .upstream
+            .try_iter()
+            .filter_map(payload)
+            .find(|(_, m)| matches!(m, NetworkMessage::GetHeaders(_)))
+            .expect("Alice asks the next peer for headers");
 
         assert!(
             !asked.contains(&addr),
@@ -609,422 +292,317 @@ fn test_getheaders_retry(seed: u64) {
         );
 
         asked.insert(addr);
-        result.schedule(&mut sim);
     }
 }
 
 #[test]
 fn test_handshake_version_timeout() {
-    logger::init(Level::Debug);
-
     let network = Network::Mainnet;
-    let (mut instance, rx, time) = setup::singleton(network);
-
+    let rng = fastrand::Rng::new();
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let remote = ([131, 31, 11, 33], 11111).into();
-    let local = ([0, 0, 0, 0], 0).into();
 
     for link in &[Link::Outbound, Link::Inbound] {
-        instance.step(
-            Input::Connected {
-                addr: remote,
-                local_addr: local,
-                link: *link,
-            },
-            time,
-        );
-        rx.try_iter()
+        peer.step(Input::Connected {
+            addr: remote,
+            local_addr: peer.addr,
+            link: *link,
+        });
+        peer.upstream
+            .try_iter()
             .find(|o| matches!(o, Out::SetTimeout(_)))
             .expect("a timer should be returned");
 
-        instance.step(Input::Timeout, time + peermgr::HANDSHAKE_TIMEOUT);
-        assert!(rx.iter().any(
-            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if a == remote)
-        ));
+        peer.time.elapse(peermgr::HANDSHAKE_TIMEOUT);
+        peer.step(Input::Timeout);
+        peer.upstream.try_iter().find(
+            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote)
+        ).expect("peer should disconnect when no `version` is received");
 
-        instance.step(
-            Input::Disconnected(remote, DisconnectReason::PeerTimeout("test")),
-            time,
-        );
+        peer.step(Input::Disconnected(
+            remote,
+            DisconnectReason::PeerTimeout("test"),
+        ));
     }
 }
 
 #[test]
 fn test_handshake_verack_timeout() {
     let network = Network::Mainnet;
-    let (mut instance, rx, mut time) = setup::singleton(network);
-
+    let rng = fastrand::Rng::new();
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let remote = ([131, 31, 11, 33], 11111).into();
-    let local = ([0, 0, 0, 0], 0).into();
 
     for link in &[Link::Outbound, Link::Inbound] {
-        instance.step(
-            Input::Connected {
-                addr: remote,
-                local_addr: local,
-                link: *link,
-            },
-            time,
-        );
+        peer.step(Input::Connected {
+            addr: remote,
+            local_addr: peer.addr,
+            link: *link,
+        });
 
-        instance.step(
-            Input::Received(
-                remote,
-                RawNetworkMessage {
-                    magic: network.magic(),
-                    payload: NetworkMessage::Version(
-                        instance.peermgr.version(local, remote, 0, 0, time),
-                    ),
-                },
-            ),
-            time,
-        );
-        rx.try_iter()
+        peer.step(Input::Received(
+            remote,
+            RawNetworkMessage {
+                magic: network.magic(),
+                payload: NetworkMessage::Version(peer.version(peer.addr, remote, 0)),
+            },
+        ));
+        peer.upstream
+            .try_iter()
             .find(|o| matches!(o, Out::SetTimeout(_)))
             .expect("a timer should be returned");
 
-        time = time + LocalDuration::from_secs(60);
+        peer.time.elapse(LocalDuration::from_secs(60));
+        peer.step(Input::Timeout);
+        peer.upstream.try_iter().find(
+            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote)
+        ).expect("peer should disconnect if no `verack` is received");
 
-        instance.step(Input::Timeout, time);
-        assert!(rx.iter().any(
-            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if a == remote)
+        peer.step(Input::Disconnected(
+            remote,
+            DisconnectReason::PeerTimeout("verack"),
         ));
-
-        instance.step(
-            Input::Disconnected(remote, DisconnectReason::PeerTimeout("test")),
-            time,
-        );
     }
 }
 
 #[test]
 fn test_handshake_initial_messages() {
+    let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let (mut instance, rx, time) = setup::singleton(network);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
 
     let remote: net::SocketAddr = ([131, 31, 11, 33], 11111).into();
     let local = ([0, 0, 0, 0], 0).into();
 
     // Make sure the address manager trusts this remote address.
-    instance.addrmgr.insert(
+    peer.protocol.addrmgr.insert(
         std::iter::once((
             Default::default(),
-            Address::new(&remote, setup::CONFIG.required_services),
+            Address::new(&remote, ServiceFlags::NETWORK),
         )),
         Source::Dns,
     );
 
-    instance.step(
-        Input::Connected {
-            addr: remote,
-            local_addr: local,
-            link: Link::Outbound,
+    // Handshake
+    peer.step(Input::Connected {
+        addr: remote,
+        local_addr: local,
+        link: Link::Outbound,
+    });
+    peer.step(Input::Received(
+        remote,
+        RawNetworkMessage {
+            magic: network.magic(),
+            payload: NetworkMessage::Version(peer.version(local, remote, 0)),
         },
-        time,
-    );
+    ));
+    peer.step(Input::Received(
+        remote,
+        RawNetworkMessage {
+            magic: network.magic(),
+            payload: NetworkMessage::Verack,
+        },
+    ));
 
-    instance.step(
-        Input::Received(
-            remote,
-            RawNetworkMessage {
-                magic: network.magic(),
-                payload: NetworkMessage::Version(
-                    instance.peermgr.version(local, remote, 0, 0, time),
-                ),
-            },
-        ),
-        time,
-    );
-    instance.step(
-        Input::Received(
-            remote,
-            RawNetworkMessage {
-                magic: network.magic(),
-                payload: NetworkMessage::Verack,
-            },
-        ),
-        time,
-    );
+    let msgs = peer
+        .upstream
+        .try_iter()
+        .filter_map(payload)
+        .collect::<Vec<_>>();
 
-    let outs = rx.try_iter().collect::<Vec<_>>();
-
-    outs.iter()
-        .find(|o| {
-            matches!(
-                o,
-                Out::Message(
-                    addr,
-                    RawNetworkMessage {
-                        payload: NetworkMessage::SendHeaders,
-                        ..
-                    },
-                ) if addr == &remote
-            )
-        })
-        .expect("the `sendheaders` message should be sent");
-
-    outs.iter()
-        .find(|o| {
-            matches!(
-                o,
-                Out::Message(
-                    addr,
-                    RawNetworkMessage {
-                        payload: NetworkMessage::GetAddr,
-                        ..
-                    },
-                ) if addr == &remote
-            )
-        })
-        .expect("the `getaddr` message should be sent");
+    assert!(msgs.contains(&(remote, NetworkMessage::SendHeaders)));
+    assert!(msgs.contains(&(remote, NetworkMessage::GetAddr)));
+    assert!(msgs
+        .iter()
+        .any(|msg| matches!(msg, (addr, NetworkMessage::Ping(_)) if addr == &remote)));
 }
 
 #[test]
 fn test_getaddr() {
+    let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    let mut sim = simulator::Net {
-        network,
-        peers: vec![
-            PeerConfig::genesis("alice"),
-            PeerConfig::genesis("bob"),
-            PeerConfig::genesis("olive"),
-            PeerConfig::genesis("john"),
-        ],
-        configure: |cfg| {
-            // Each peer only needs to connect to three other peers.
-            cfg.target_outbound_peers = 3;
-            cfg.whitelist = setup::CONFIG.whitelist.clone();
-        },
-        ..Default::default()
-    }
-    .into();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let bob: PeerId = ([241, 19, 44, 18], 8333).into();
+    let eve: PeerId = ([241, 19, 44, 19], 8333).into();
 
-    // Run the simulation until no messages are exchanged.
-    sim.step();
-
-    // Pick a peer to test.
-    let alice = sim.get("alice");
+    alice.connect(&bob, Link::Outbound);
+    alice.connect(&eve, Link::Outbound);
 
     // Disconnect a peer.
-    let peer = sim
-        .peer("alice")
-        .protocol
-        .peermgr
-        .peers()
-        .find(|p| p.is_negotiated())
-        .unwrap()
-        .address();
-    let result = sim.input(
-        &alice,
-        Input::Disconnected(peer, DisconnectReason::PeerTimeout("test")),
-    );
+    alice.step(Input::Disconnected(bob, DisconnectReason::Command));
 
     // We are unable to connect to a new peer because our address book is exhausted.
-    result.event(|e| matches!(e, Event::ConnManager(connmgr::Event::AddressBookExhausted)));
+    alice
+        .upstream
+        .try_iter()
+        .filter_map(event)
+        .find(|e| matches!(e, Event::ConnManager(connmgr::Event::AddressBookExhausted)))
+        .expect("Alice should emit `AddressBookExhausted`");
 
     // When we receive a timeout, we fetch new addresses, since our addresses have been exhausted.
-    let (peer, _) = sim
-        .input(&alice, Input::Timeout)
-        .message(|_, msg| matches!(msg, NetworkMessage::GetAddr));
+    alice.step(Input::Timeout);
+    alice
+        .upstream
+        .try_iter()
+        .filter_map(payload)
+        .find(|msg| matches!(msg, (_, NetworkMessage::GetAddr)))
+        .expect("Alice should send `getaddr`");
 
     // We respond to the `getaddr` with a new peer address, Toto.
     let toto: net::SocketAddr = ([14, 45, 16, 57], 8333).into();
-    sim.input(
-        &alice,
-        Input::Received(
-            peer,
-            msg.raw(NetworkMessage::Addr(vec![(
-                0,
-                Address::new(&toto, setup::CONFIG.required_services),
-            )])),
-        ),
-    );
+    alice.step(Input::Received(
+        eve,
+        msg.raw(NetworkMessage::Addr(vec![(
+            0,
+            Address::new(&toto, ServiceFlags::NETWORK),
+        )])),
+    ));
 
     // After some time, Alice tries to connect to the new address.
-    sim.elapse(connmgr::IDLE_TIMEOUT);
-    sim.input(&alice, Input::Timeout)
-        .any(|o| matches!(o, Out::Connect(addr, _) if addr == &toto))
+    alice.time.elapse(connmgr::IDLE_TIMEOUT);
+    alice.step(Input::Timeout);
+
+    alice
+        .upstream
+        .try_iter()
+        .find(|o| matches!(o, Out::Connect(addr, _) if addr == &toto))
         .expect("Alice tries to connect to Toto");
 }
 
 #[test]
 fn test_stale_tip() {
-    logger::init(Level::Debug);
-
+    let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    let mut sim = simulator::Net {
-        network,
-        peers: vec![PeerConfig::genesis("alice"), PeerConfig::genesis("bob")],
-        configure: |cfg| {
-            cfg.target_outbound_peers = 1;
-            cfg.whitelist = setup::CONFIG.whitelist.clone();
-        },
-        initialize: false,
-        ..Default::default()
-    }
-    .into();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let remote: PeerId = ([33, 33, 33, 33], network.port()).into();
+    let headers = &BITCOIN_HEADERS;
 
-    let time = sim.time;
-    let alice = sim.get("alice");
-    let bob = sim.get("bob");
-
-    // Pretend `Bob` has a chain of height 144.
-    let version = sim
-        .peer("bob")
-        .protocol
-        .peermgr
-        .version(alice, bob, 1, 144, time);
-
-    // Handshake.
-    sim.input(
-        &alice,
-        Input::Connected {
-            addr: bob,
-            local_addr: alice,
-            link: Link::Outbound,
-        },
-    );
-    sim.input(
-        &alice,
-        Input::Received(bob, msg.raw(NetworkMessage::Version(version))),
-    );
-    sim.input(
-        &alice,
-        Input::Received(bob, msg.raw(NetworkMessage::Verack)),
-    );
-    sim.input(
-        &alice,
-        Input::Received(
-            bob,
-            msg.raw(NetworkMessage::Headers(vec![*BITCOIN_HEADERS
-                .get(1)
-                .unwrap()])),
-        ),
-    )
-    .message(|_, msg| matches!(msg, NetworkMessage::GetHeaders(_)));
+    alice.connect(&remote, Link::Outbound);
+    alice.step(Input::Received(
+        remote,
+        // Receive an unsolicited header announcement for the latest.
+        msg.raw(NetworkMessage::Headers(vec![*headers
+            .get(alice.protocol.tree.height() as usize + 1)
+            .unwrap()])),
+    ));
+    alice
+        .upstream
+        .try_iter()
+        .filter_map(payload)
+        .find(|(_, msg)| matches!(msg, NetworkMessage::GetHeaders(_)))
+        .expect("Alice sends a `getheaders` message");
 
     // Timeout the request.
-    sim.elapse(syncmgr::REQUEST_TIMEOUT);
-    sim.input(&alice, Input::Timeout);
+    alice.time.elapse(syncmgr::REQUEST_TIMEOUT);
+    alice.step(Input::Timeout);
 
     // Some time has passed. The tip timestamp should be considered stale now.
-    sim.elapse(syncmgr::TIP_STALE_DURATION);
-    sim.input(&alice, Input::Timeout)
-        .event(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))));
+    alice.time.elapse(syncmgr::TIP_STALE_DURATION);
+    alice.step(Input::Timeout);
+    alice
+        .upstream
+        .try_iter()
+        .filter_map(event)
+        .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))))
+        .expect("Alice emits a `StaleTipDetected` event");
 
-    // Timeout the request.
-    sim.elapse(syncmgr::REQUEST_TIMEOUT);
-    sim.input(&alice, Input::Timeout);
+    // Timeout the `getheaders` request.
+    alice.time.elapse(syncmgr::REQUEST_TIMEOUT);
+    alice.step(Input::Timeout);
 
     // Now send another header and wait until the chain update is stale.
-    sim.input(
-        &alice,
-        Input::Received(
-            bob,
-            msg.raw(NetworkMessage::Headers(vec![*BITCOIN_HEADERS
-                .get(2)
-                .unwrap()])),
-        ),
-    );
+    alice.step(Input::Received(
+        remote,
+        msg.raw(NetworkMessage::Headers(vec![*headers
+            .get(alice.protocol.tree.height() as usize + 1)
+            .unwrap()])),
+    ));
 
     // Some more time has passed.
+    alice.time.elapse(syncmgr::TIP_STALE_DURATION);
+    alice.step(Input::Timeout);
     // Chain update should be stale this time.
-    sim.elapse(syncmgr::TIP_STALE_DURATION);
-    sim.input(&alice, Input::Timeout)
-        .event(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))));
+    alice
+        .upstream
+        .try_iter()
+        .filter_map(event)
+        .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))))
+        .expect("Alice emits a `StaleTipDetected` event");
 }
 
 #[test]
 fn test_addrs() {
+    let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut sim = simulator::Net {
-        network,
-        peers: vec![PeerConfig::genesis("alice"), PeerConfig::genesis("bob")],
-        configure: |cfg| {
-            // Each peer only needs to connect to three other peers.
-            cfg.target_outbound_peers = 3;
-            cfg.whitelist = setup::CONFIG.whitelist.clone();
-        },
-        ..Default::default()
-    }
-    .into();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let bob: PeerId = ([241, 19, 44, 18], 8333).into();
 
-    // Run handshake.
-    sim.step();
+    alice.connect(&bob, Link::Outbound);
 
-    let alice = sim.get("alice");
-    let bob = sim.get("bob");
-
-    let jak: net::SocketAddr = ([88, 13, 16, 59], 8333).into();
-    let jim: net::SocketAddr = ([99, 45, 180, 58], 8333).into();
-    let jon: net::SocketAddr = ([14, 48, 141, 57], 8333).into();
+    let jak: PeerId = ([88, 13, 16, 59], 8333).into();
+    let jim: PeerId = ([99, 45, 180, 58], 8333).into();
+    let jon: PeerId = ([14, 48, 141, 57], 8333).into();
 
     let msg = message::Builder::new(network);
 
     // Let alice know about these amazing peers.
-    sim.input(
-        &alice,
-        Input::Received(
-            bob,
-            msg.raw(NetworkMessage::Addr(vec![
-                (0, Address::new(&jak, setup::CONFIG.required_services)),
-                (0, Address::new(&jim, setup::CONFIG.required_services)),
-                (0, Address::new(&jon, setup::CONFIG.required_services)),
-            ])),
-        ),
-    );
+    alice.step(Input::Received(
+        bob,
+        msg.raw(NetworkMessage::Addr(vec![
+            (0, Address::new(&jak, ServiceFlags::NETWORK)),
+            (0, Address::new(&jim, ServiceFlags::NETWORK)),
+            (0, Address::new(&jon, ServiceFlags::NETWORK)),
+        ])),
+    ));
 
-    // Let's make sure Alice has these addresses.
-    let result = sim.input(
-        &alice,
-        Input::Received(bob, msg.raw(NetworkMessage::GetAddr)),
-    );
-    let (_, msg) = result.message(|_, msg| matches!(msg, NetworkMessage::Addr(_)));
+    // Let's query Alice to see if she has these addresses.
+    alice.step(Input::Received(bob, msg.raw(NetworkMessage::GetAddr)));
+    let (_, msg) = alice
+        .upstream
+        .try_iter()
+        .filter_map(payload)
+        .find(|o| matches!(o, (_, NetworkMessage::Addr(_))))
+        .expect("peer should respond with `addr`");
 
-    match msg {
-        NetworkMessage::Addr(addrs) => {
-            let addrs: HashSet<net::SocketAddr> = addrs
-                .iter()
-                .map(|(_, a)| a.socket_addr().unwrap())
-                .collect();
-
-            assert!(addrs.contains(&jak));
-            assert!(addrs.contains(&jim));
-            assert!(addrs.contains(&jon));
-
-            assert_eq!(addrs.len(), 3);
-        }
+    let addrs = match msg {
+        NetworkMessage::Addr(addrs) => addrs,
         _ => unreachable!(),
-    }
+    };
+    let addrs: HashSet<net::SocketAddr> = addrs
+        .iter()
+        .map(|(_, a)| a.socket_addr().unwrap())
+        .collect();
+
+    assert!(addrs.contains(&jak));
+    assert!(addrs.contains(&jim));
+    assert!(addrs.contains(&jon));
+
+    assert_eq!(addrs.len(), 3);
 }
 
 #[quickcheck]
 fn prop_connect_timeout(seed: u64) {
     let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
-    let mut sim = simulator::Net {
+    let config = Config {
+        target: "alice",
+        target_outbound_peers: 3,
+        connect: vec![
+            ([77, 77, 77, 77], network.port()).into(),
+            ([88, 88, 88, 88], network.port()).into(),
+            ([99, 99, 88, 99], network.port()).into(),
+        ],
         network,
-        peers: vec![PeerConfig::genesis("alice")],
-        configure: |cfg| {
-            cfg.target_outbound_peers = 2;
+        ..Config::default()
+    };
+    let mut alice = Peer::config([48, 48, 48, 48], vec![], vec![], config, rng.clone());
 
-            cfg.connect.push(([88, 13, 16, 59], 8333).into());
-            cfg.connect.push(([99, 45, 180, 58], 8333).into());
-            cfg.connect.push(([14, 48, 141, 57], 8333).into());
-        },
-        rng: rng.clone(),
-        initialize: false,
-    }
-    .into();
-
-    let time = sim.time;
-    let alice = sim.peer("alice");
-
-    alice.initialize(time);
+    alice.protocol.initialize(alice.time);
 
     let result = alice
-        .outbound
+        .upstream
         .try_iter()
         .filter(|o| matches!(o, Out::Connect(_, _)))
         .collect::<Vec<_>>();
@@ -1046,16 +624,13 @@ fn prop_connect_timeout(seed: u64) {
 
     // ... after a while, the connections time out.
 
-    let alice = alice.id;
     attempted.pop().unwrap();
 
-    sim.elapse(connmgr::IDLE_TIMEOUT);
-    let result = sim.input(&alice, Input::Timeout);
+    alice.time.elapse(connmgr::IDLE_TIMEOUT);
+    alice.step(Input::Timeout);
 
-    result
-        .all(|o| match o {
-            Out::Connect(addr, _) => !attempted.contains(&addr),
-            _ => true,
-        })
-        .expect("Alice tries to connect to another peer");
+    assert!(alice.upstream.try_iter().all(|o| match o {
+        Out::Connect(addr, _) => !attempted.contains(&addr),
+        _ => true,
+    }));
 }

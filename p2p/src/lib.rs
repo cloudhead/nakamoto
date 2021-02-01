@@ -42,7 +42,3 @@ pub mod reactor;
 pub use bitcoin;
 
 pub use protocol::PeerId;
-
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;

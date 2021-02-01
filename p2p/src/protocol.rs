@@ -660,6 +660,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         // The local time is set from outside the protocol.
         self.clock.set_local_time(local_time);
 
+        #[cfg(not(test))]
         if local_time - self.last_tick >= LocalDuration::from_secs(30) {
             let (tip, _) = self.tree.tip();
             let height = self.tree.height();

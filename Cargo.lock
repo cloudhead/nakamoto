@@ -321,7 +321,6 @@ dependencies = [
  "bitcoin_hashes",
  "crossbeam-channel",
  "fastrand",
- "lazy_static",
  "log",
  "microserde",
  "nakamoto-chain",
