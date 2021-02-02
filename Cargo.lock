@@ -340,6 +340,7 @@ dependencies = [
  "bitcoin",
  "bitcoin_hashes",
  "chrono",
+ "colored",
  "fastrand",
  "lazy_static",
  "log",

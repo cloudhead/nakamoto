@@ -5,6 +5,7 @@ use nakamoto_common::collections::HashMap;
 
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct Scheduled {
@@ -12,6 +13,58 @@ pub struct Scheduled {
     peer: PeerId,
     input: Input,
     time: LocalTime,
+}
+
+impl fmt::Display for Scheduled {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.input {
+            Input::Sent(to, msg) => write!(f, "{}: {} -> {}: {:?}", self.time, self.peer, to, msg),
+            Input::Received(from, msg) => {
+                let s = match &msg.payload {
+                    NetworkMessage::Headers(vec) => {
+                        format!("Headers({})", vec.len())
+                    }
+                    NetworkMessage::Verack
+                    | NetworkMessage::SendHeaders
+                    | NetworkMessage::GetAddr => {
+                        format!("")
+                    }
+                    msg => {
+                        format!("{:?}", msg)
+                    }
+                };
+                write!(
+                    f,
+                    "{}: {} <- {}: `{}` {}",
+                    self.time,
+                    self.peer,
+                    from,
+                    msg.cmd(),
+                    s
+                )
+            }
+            Input::Connected {
+                addr,
+                link: Link::Inbound,
+                ..
+            } => write!(f, "{}: {} <== {}: Connected", self.time, self.peer, addr),
+            Input::Connected {
+                addr,
+                link: Link::Outbound,
+                ..
+            } => write!(f, "{}: {} ==> {}: Connected", self.time, self.peer, addr),
+            Input::Disconnected(addr, reason) => {
+                write!(
+                    f,
+                    "{}: {} =/= {}: Disconnected: {}",
+                    self.time, self.peer, addr, reason
+                )
+            }
+            _ => {
+                write!(f, "")
+            }
+        }
+    }
 }
 
 impl PartialEq for Scheduled {
@@ -89,6 +142,8 @@ impl Simulation {
     /// Run the simulation until there are no events left to schedule.
     pub fn step(&mut self, peers: &mut HashMap<PeerId, &mut super::Peer>) {
         while let Some(next) = self.inbox.iter().cloned().next() {
+            info!(target: "sim", "{}", next);
+
             self.inbox.remove(&next);
 
             let Scheduled {
@@ -125,6 +180,8 @@ impl Simulation {
                     .get(&(peer, receiver))
                     .cloned()
                     .unwrap_or_else(|| LocalDuration::from_secs(0));
+
+                info!(target: "sim", "{}: {} -> {}: `{}`", local_time, peer, receiver, msg.cmd());
 
                 inbox.insert(Scheduled {
                     remote: peer,

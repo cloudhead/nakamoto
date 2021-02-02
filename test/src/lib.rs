@@ -50,14 +50,24 @@ pub mod logger {
         }
 
         fn log(&self, record: &Record) {
-            if self.enabled(record.metadata()) {
-                println!(
-                    "test> ({}) [{}:{}] {}",
-                    record.target(),
-                    record.file().unwrap(),
-                    record.line().unwrap(),
-                    record.args()
-                )
+            use colored::Colorize;
+
+            match record.target() {
+                "sim" => {
+                    println!("<sim>    {}", record.args().to_string().bold())
+                }
+                target => {
+                    if self.enabled(record.metadata()) {
+                        let s = format!(
+                            "{:<8} [{}:{}] {}",
+                            format!("<{}>", target),
+                            record.file().unwrap(),
+                            record.line().unwrap(),
+                            record.args()
+                        );
+                        println!("{}", s.dimmed());
+                    }
+                }
             }
         }
 
