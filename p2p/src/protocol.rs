@@ -246,6 +246,14 @@ mod message {
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
+/// A generic state machine. The peer-to-peer protocol implements this trait.
+pub trait Machine {
+    /// Initialize the state machine. Called once before any event is sent to the state machine.
+    fn initialize(&mut self, time: LocalTime);
+    /// Process the next input and advance the state machine by one step.
+    fn step(&mut self, input: Input, local_time: LocalTime);
+}
+
 /// An instantiation of `Protocol`, for the Bitcoin P2P network. Parametrized over the
 /// block-tree and compact filter store.
 #[derive(Debug)]
@@ -282,38 +290,6 @@ pub struct Protocol<T, F, P> {
     rng: fastrand::Rng,
     /// Outbound channel. Used to communicate protocol events with a reactor.
     upstream: Upstream,
-}
-
-/// Protocol builder. Consume to build a new protocol instance.
-#[derive(Clone)]
-pub struct Builder<T, F, P> {
-    /// Block cache.
-    pub cache: T,
-    /// Filter cache.
-    pub filters: F,
-    /// Peer cache.
-    pub peers: P,
-    /// Clock.
-    pub clock: AdjustedTime<PeerId>,
-    /// RNG.
-    pub rng: fastrand::Rng,
-    /// Configuration.
-    pub cfg: Config,
-}
-
-impl<T: BlockTree, F: Filters, P: peer::Store> Builder<T, F, P> {
-    /// TODO
-    pub fn build(self, upstream: chan::Sender<Out>) -> Protocol<T, F, P> {
-        Protocol::new(
-            self.cache,
-            self.filters,
-            self.peers,
-            self.clock,
-            self.rng,
-            self.cfg,
-            upstream,
-        )
-    }
 }
 
 /// Protocol configuration.
@@ -503,135 +479,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             rng,
             upstream,
         }
-    }
-
-    /// Initialize the protocol. Called once before any event is sent to the state machine.
-    pub fn initialize(&mut self, time: LocalTime) {
-        self.clock.set_local_time(time);
-        self.syncmgr.initialize(time, &self.tree);
-        self.connmgr.initialize::<P>(time, &mut self.addrmgr);
-        self.spvmgr.initialize(time, &self.tree);
-    }
-
-    /// Process the next input and advance the state machine by one step.
-    pub fn step(&mut self, input: Input, local_time: LocalTime) {
-        self.tick(local_time);
-
-        match input {
-            Input::Connecting { addr } => {
-                self.addrmgr.peer_attempted(&addr, local_time);
-            }
-            Input::Connected {
-                addr,
-                local_addr,
-                link,
-            } => {
-                let height = self.tree.height();
-                // This is usually not that useful, except when our local address is actually the
-                // address our peers see.
-                self.addrmgr.record_local_addr(local_addr);
-                self.addrmgr.peer_connected(&addr, local_time);
-                self.connmgr
-                    .peer_connected(addr, local_addr, link, local_time);
-                self.peermgr
-                    .peer_connected(addr, local_addr, link, height, local_time);
-            }
-            Input::Disconnected(addr, reason) => {
-                info!(target: self.target, "{}: Disconnected: {}", addr, reason);
-
-                self.spvmgr.peer_disconnected(&addr);
-                self.syncmgr.peer_disconnected(&addr);
-                self.addrmgr.peer_disconnected(&addr, reason);
-                self.connmgr.peer_disconnected::<P>(&addr, &self.addrmgr);
-                self.pingmgr.peer_disconnected(&addr);
-                self.peermgr.peer_disconnected(&addr);
-            }
-            Input::Received(addr, msg) => {
-                self.upstream
-                    .event(Event::Received(addr, msg.payload.clone()));
-                self.receive(addr, msg);
-            }
-            Input::Sent(_addr, _msg) => {}
-            Input::Command(cmd) => match cmd {
-                Command::Connect(addr) => {
-                    debug!(target: self.target, "Received command: Connect({})", addr);
-
-                    self.whitelist.addr.insert(addr.ip());
-                    self.connmgr.connect::<P>(&addr);
-                }
-                Command::Disconnect(addr) => {
-                    debug!(target: self.target, "Received command: Disconnect({})", addr);
-
-                    self.disconnect(addr, DisconnectReason::Command);
-                }
-                Command::Query(msg, reply) => {
-                    debug!(target: self.target, "Received command: Query({:?})", msg);
-
-                    reply.send(self.query(msg, |_| true)).ok();
-                }
-                Command::Broadcast(msg) => {
-                    debug!(target: self.target, "Received command: Broadcast({:?})", msg);
-
-                    for peer in self.peermgr.outbound() {
-                        self.upstream.message(peer.address(), msg.clone());
-                    }
-                }
-                Command::ImportHeaders(headers, reply) => {
-                    debug!(target: self.target, "Received command: ImportHeaders(..)");
-
-                    let result = self.syncmgr.import_blocks(
-                        headers.into_iter(),
-                        &self.clock,
-                        &mut self.tree,
-                    );
-
-                    match result {
-                        Ok(import_result) => {
-                            reply.send(Ok(import_result.clone())).ok();
-                        }
-                        Err(err) => {
-                            reply.send(Err(err)).ok();
-                        }
-                    }
-                }
-                Command::GetTip(reply) => {
-                    let (_, header) = self.tree.tip();
-                    let height = self.tree.height();
-
-                    reply.send((height, header)).ok();
-                }
-                Command::GetFilters(range) => {
-                    debug!(target: self.target,
-                        "Received command: GetFilters({}..{})", range.start, range.end);
-
-                    self.spvmgr.get_cfilters(range, &self.tree);
-                }
-                Command::GetBlock(hash) => {
-                    self.query(NetworkMessage::GetData(vec![Inventory::Block(hash)]), |p| {
-                        p.services.has(ServiceFlags::NETWORK)
-                    });
-                }
-                Command::SubmitTransaction(tx) => {
-                    debug!(target: self.target, "Received command: SubmitTransaction(..)");
-
-                    self.query(NetworkMessage::Tx(tx), |p| p.relay);
-                }
-                Command::Shutdown => {
-                    self.upstream.push(Out::Shutdown);
-                }
-            },
-            Input::Timeout => {
-                trace!(target: self.target, "Received timeout");
-
-                self.connmgr
-                    .received_timeout::<P>(local_time, &self.addrmgr);
-                self.syncmgr.received_timeout(local_time, &self.tree);
-                self.pingmgr.received_timeout(local_time);
-                self.addrmgr.received_timeout(local_time);
-                self.peermgr.received_timeout(local_time);
-                self.spvmgr.received_timeout(local_time, &self.tree);
-            }
-        };
     }
 
     /// Send a message to a random peer. Returns the peer id.
@@ -847,5 +694,136 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         // but we still process messages from it as normal.
 
         self.connmgr.disconnect(addr, reason);
+    }
+}
+
+impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
+    /// Initialize the protocol. Called once before any event is sent to the state machine.
+    fn initialize(&mut self, time: LocalTime) {
+        self.clock.set_local_time(time);
+        self.syncmgr.initialize(time, &self.tree);
+        self.connmgr.initialize::<P>(time, &mut self.addrmgr);
+        self.spvmgr.initialize(time, &self.tree);
+    }
+
+    /// Process the next input and advance the state machine by one step.
+    fn step(&mut self, input: Input, local_time: LocalTime) {
+        self.tick(local_time);
+
+        match input {
+            Input::Connecting { addr } => {
+                self.addrmgr.peer_attempted(&addr, local_time);
+            }
+            Input::Connected {
+                addr,
+                local_addr,
+                link,
+            } => {
+                let height = self.tree.height();
+                // This is usually not that useful, except when our local address is actually the
+                // address our peers see.
+                self.addrmgr.record_local_addr(local_addr);
+                self.addrmgr.peer_connected(&addr, local_time);
+                self.connmgr
+                    .peer_connected(addr, local_addr, link, local_time);
+                self.peermgr
+                    .peer_connected(addr, local_addr, link, height, local_time);
+            }
+            Input::Disconnected(addr, reason) => {
+                info!(target: self.target, "{}: Disconnected: {}", addr, reason);
+
+                self.spvmgr.peer_disconnected(&addr);
+                self.syncmgr.peer_disconnected(&addr);
+                self.addrmgr.peer_disconnected(&addr, reason);
+                self.connmgr.peer_disconnected::<P>(&addr, &self.addrmgr);
+                self.pingmgr.peer_disconnected(&addr);
+                self.peermgr.peer_disconnected(&addr);
+            }
+            Input::Received(addr, msg) => {
+                self.upstream
+                    .event(Event::Received(addr, msg.payload.clone()));
+                self.receive(addr, msg);
+            }
+            Input::Sent(_addr, _msg) => {}
+            Input::Command(cmd) => match cmd {
+                Command::Connect(addr) => {
+                    debug!(target: self.target, "Received command: Connect({})", addr);
+
+                    self.whitelist.addr.insert(addr.ip());
+                    self.connmgr.connect::<P>(&addr);
+                }
+                Command::Disconnect(addr) => {
+                    debug!(target: self.target, "Received command: Disconnect({})", addr);
+
+                    self.disconnect(addr, DisconnectReason::Command);
+                }
+                Command::Query(msg, reply) => {
+                    debug!(target: self.target, "Received command: Query({:?})", msg);
+
+                    reply.send(self.query(msg, |_| true)).ok();
+                }
+                Command::Broadcast(msg) => {
+                    debug!(target: self.target, "Received command: Broadcast({:?})", msg);
+
+                    for peer in self.peermgr.outbound() {
+                        self.upstream.message(peer.address(), msg.clone());
+                    }
+                }
+                Command::ImportHeaders(headers, reply) => {
+                    debug!(target: self.target, "Received command: ImportHeaders(..)");
+
+                    let result = self.syncmgr.import_blocks(
+                        headers.into_iter(),
+                        &self.clock,
+                        &mut self.tree,
+                    );
+
+                    match result {
+                        Ok(import_result) => {
+                            reply.send(Ok(import_result.clone())).ok();
+                        }
+                        Err(err) => {
+                            reply.send(Err(err)).ok();
+                        }
+                    }
+                }
+                Command::GetTip(reply) => {
+                    let (_, header) = self.tree.tip();
+                    let height = self.tree.height();
+
+                    reply.send((height, header)).ok();
+                }
+                Command::GetFilters(range) => {
+                    debug!(target: self.target,
+                        "Received command: GetFilters({}..{})", range.start, range.end);
+
+                    self.spvmgr.get_cfilters(range, &self.tree);
+                }
+                Command::GetBlock(hash) => {
+                    self.query(NetworkMessage::GetData(vec![Inventory::Block(hash)]), |p| {
+                        p.services.has(ServiceFlags::NETWORK)
+                    });
+                }
+                Command::SubmitTransaction(tx) => {
+                    debug!(target: self.target, "Received command: SubmitTransaction(..)");
+
+                    self.query(NetworkMessage::Tx(tx), |p| p.relay);
+                }
+                Command::Shutdown => {
+                    self.upstream.push(Out::Shutdown);
+                }
+            },
+            Input::Timeout => {
+                trace!(target: self.target, "Received timeout");
+
+                self.connmgr
+                    .received_timeout::<P>(local_time, &self.addrmgr);
+                self.syncmgr.received_timeout(local_time, &self.tree);
+                self.pingmgr.received_timeout(local_time);
+                self.addrmgr.received_timeout(local_time);
+                self.peermgr.received_timeout(local_time);
+                self.spvmgr.received_timeout(local_time, &self.tree);
+            }
+        };
     }
 }

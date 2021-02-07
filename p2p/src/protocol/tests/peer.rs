@@ -9,14 +9,14 @@ use nonempty::NonEmpty;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
-use nakamoto_common::block::filter::{self, FilterHash, FilterHeader};
+use nakamoto_common::block::filter::{FilterHash, FilterHeader};
 use nakamoto_common::block::store::Genesis;
 use nakamoto_common::block::BlockHeader;
 use nakamoto_common::p2p::peer::KnownAddress;
 
 use nakamoto_test::block::cache::model;
 
-use crate::protocol::{Builder, Protocol};
+use crate::protocol::Protocol;
 
 pub struct PeerDummy {
     pub addr: PeerId,
@@ -126,19 +126,12 @@ impl Peer {
         let tree = BlockCache::from(store, cfg.params.clone(), &[]).unwrap();
         let filters = model::FilterCache::from(cfheaders);
 
-        let peer = Builder {
-            cache: tree,
-            clock,
-            filters,
-            peers,
-            rng,
-            cfg: cfg.clone(),
-        };
         let (tx, rx) = chan::unbounded();
         let addr = (ip.into(), network.port()).into();
+        let protocol = Protocol::new(tree, filters, peers, clock, rng, cfg.clone(), tx);
 
         Self {
-            protocol: peer.build(tx),
+            protocol,
             upstream: rx,
             time,
             addr,
@@ -150,16 +143,6 @@ impl Peer {
     pub fn step(&mut self, input: Input) {
         self.initialize();
         self.protocol.step(input, self.time)
-    }
-
-    pub fn receive(&mut self, from: &PeerId, payload: NetworkMessage) {
-        self.step(Input::Received(
-            *from,
-            RawNetworkMessage {
-                magic: self.cfg.network.magic(),
-                payload,
-            },
-        ))
     }
 
     pub fn initialize(&mut self) {

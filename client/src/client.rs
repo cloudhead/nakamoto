@@ -29,9 +29,9 @@ pub use nakamoto_common::network::Network;
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
-use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
+use nakamoto_p2p::protocol::{Command, Protocol};
 
 pub use nakamoto_p2p::event::Event;
 pub use nakamoto_p2p::reactor::Reactor;
@@ -330,21 +330,17 @@ impl<R: Reactor> Client<R> {
             services: self.config.services,
             ..p2p::protocol::Config::default()
         };
-        let builder = p2p::protocol::Builder {
-            cache,
-            clock,
-            filters,
-            peers,
-            rng,
-            cfg,
-        };
 
-        self.reactor.run(builder, &listen, {
-            let blocks = self.blocks;
-            let filters = self.filters;
+        self.reactor.run(
+            move |upstream| Protocol::new(cache, filters, peers, clock, rng, cfg, upstream),
+            &listen,
+            {
+                let blocks = self.blocks;
+                let filters = self.filters;
 
-            move |event| Self::process_event(event, blocks.clone(), filters.clone())
-        })?;
+                move |event| Self::process_event(event, blocks.clone(), filters.clone())
+            },
+        )?;
 
         Ok(())
     }
@@ -376,21 +372,16 @@ impl<R: Reactor> Client<R> {
 
         log::info!("{} peer(s) found..", peers.len());
 
-        let builder = p2p::protocol::Builder {
-            cache,
-            clock,
-            filters,
-            peers,
-            rng,
-            cfg,
-        };
+        self.reactor.run(
+            |upstream| Protocol::new(cache, filters, peers, clock, rng, cfg, upstream),
+            &self.config.listen,
+            {
+                let blocks = self.blocks;
+                let filters = self.filters;
 
-        self.reactor.run(builder, &self.config.listen, {
-            let blocks = self.blocks;
-            let filters = self.filters;
-
-            move |event| Self::process_event(event, blocks.clone(), filters.clone())
-        })?;
+                move |event| Self::process_event(event, blocks.clone(), filters.clone())
+            },
+        )?;
 
         Ok(())
     }

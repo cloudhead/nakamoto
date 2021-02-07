@@ -3,13 +3,9 @@ use std::{io, net};
 
 use crossbeam_channel as chan;
 
-use nakamoto_common::block::filter::Filters;
-use nakamoto_common::block::tree::BlockTree;
-use nakamoto_common::p2p::peer;
-
 use crate::error::Error;
 use crate::event::Event;
-use crate::protocol::{self, Command};
+use crate::protocol::{Command, Machine, Out};
 
 /// Any network reactor that can drive the light-client protocol.
 pub trait Reactor {
@@ -26,12 +22,16 @@ pub trait Reactor {
         Self: Sized;
 
     /// Run the given protocol with the reactor.
-    fn run<T: BlockTree, F: Filters, P: peer::Store, C: Fn(Event)>(
+    fn run<C, M, B>(
         &mut self,
-        builder: protocol::Builder<T, F, P>,
+        builder: B,
         listen_addrs: &[net::SocketAddr],
         callback: C,
-    ) -> Result<(), Error>;
+    ) -> Result<(), Error>
+    where
+        C: Fn(Event),
+        M: Machine,
+        B: FnOnce(chan::Sender<Out>) -> M;
 
     /// Used to wake certain types of reactors.
     fn wake(waker: &Self::Waker) -> io::Result<()>;
