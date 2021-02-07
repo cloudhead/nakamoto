@@ -117,19 +117,6 @@ impl Genesis for FilterHeader {
     }
 }
 
-/// Get the genesis filter hash for the given network.
-pub fn genesis_hash(network: Network) -> FilterHash {
-    use bitcoin::hashes::Hash;
-
-    let genesis = network.genesis_block();
-    let filter = BlockFilter::new_script_filter(&genesis, |_| {
-        panic!("filter::genesis_hash: genesis block should have no inputs")
-    })
-    .unwrap();
-
-    FilterHash::hash(&filter.content)
-}
-
 /// An error related to the filters access.
 #[derive(Debug, Error)]
 pub enum Error {

@@ -48,7 +48,7 @@ impl Decodable for StoredHeader {
 impl Genesis for StoredHeader {
     fn genesis(network: Network) -> Self {
         Self {
-            hash: filter::genesis_hash(network),
+            hash: FilterHash::genesis(network),
             header: FilterHeader::genesis(network),
         }
     }

@@ -117,10 +117,7 @@ impl Peer {
         let peers = HashMap::new();
         let headers = NonEmpty::from((network.genesis(), headers));
         let cfheaders = NonEmpty::from((
-            (
-                filter::genesis_hash(network),
-                FilterHeader::genesis(network),
-            ),
+            (FilterHash::genesis(network), FilterHeader::genesis(network)),
             cfheaders,
         ));
 
