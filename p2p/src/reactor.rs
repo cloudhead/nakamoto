@@ -21,17 +21,17 @@ pub trait Reactor {
     where
         Self: Sized;
 
-    /// Run the given protocol with the reactor.
-    fn run<C, M, B>(
+    /// Run the given protocol state machine with the reactor.
+    fn run<F, M, C>(
         &mut self,
-        builder: B,
         listen_addrs: &[net::SocketAddr],
+        machine: F,
         callback: C,
     ) -> Result<(), Error>
     where
-        C: Fn(Event),
+        F: FnOnce(chan::Sender<Out>) -> M,
         M: Machine,
-        B: FnOnce(chan::Sender<Out>) -> M;
+        C: Fn(Event);
 
     /// Used to wake certain types of reactors.
     fn wake(waker: &Self::Waker) -> io::Result<()>;

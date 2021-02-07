@@ -332,8 +332,8 @@ impl<R: Reactor> Client<R> {
         };
 
         self.reactor.run(
-            move |upstream| Protocol::new(cache, filters, peers, clock, rng, cfg, upstream),
             &listen,
+            move |upstream| Protocol::new(cache, filters, peers, clock, rng, cfg, upstream),
             {
                 let blocks = self.blocks;
                 let filters = self.filters;
@@ -373,8 +373,8 @@ impl<R: Reactor> Client<R> {
         log::info!("{} peer(s) found..", peers.len());
 
         self.reactor.run(
-            |upstream| Protocol::new(cache, filters, peers, clock, rng, cfg, upstream),
             &self.config.listen,
+            |upstream| Protocol::new(cache, filters, peers, clock, rng, cfg, upstream),
             {
                 let blocks = self.blocks;
                 let filters = self.filters;

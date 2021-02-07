@@ -108,16 +108,16 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
     }
 
     /// Run the given protocol with the reactor.
-    fn run<C, M, B>(
+    fn run<F, M, C>(
         &mut self,
-        builder: B,
         listen_addrs: &[net::SocketAddr],
+        machine: F,
         callback: C,
     ) -> Result<(), Error>
     where
-        C: Fn(Event),
+        F: FnOnce(chan::Sender<Out>) -> M,
         M: Machine,
-        B: FnOnce(chan::Sender<Out>) -> M,
+        C: Fn(Event),
     {
         let listener = if listen_addrs.is_empty() {
             None
@@ -137,7 +137,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         info!("Initializing protocol..");
 
         let (tx, rx) = chan::unbounded();
-        let mut protocol = builder(tx);
+        let mut protocol = machine(tx);
         let local_time = SystemTime::now().into();
 
         protocol.initialize(local_time);
