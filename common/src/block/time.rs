@@ -147,6 +147,9 @@ impl LocalDuration {
     /// The time interval between blocks. The "block time".
     pub const BLOCK_INTERVAL: LocalDuration = Self::from_mins(10);
 
+    /// Maximum duration.
+    pub const MAX: LocalDuration = LocalDuration(u128::MAX);
+
     /// Create a new duration from whole seconds.
     pub const fn from_secs(secs: u64) -> Self {
         Self(secs as u128 * 1000)

@@ -339,6 +339,8 @@ pub struct Config {
     pub target_outbound_peers: usize,
     /// Maximum inbound peer connections.
     pub max_inbound_peers: usize,
+    /// Ping timeout, after which remotes are disconnected.
+    pub ping_timeout: LocalDuration,
     /// Log target.
     pub target: &'static str,
 }
@@ -355,6 +357,7 @@ impl Default for Config {
             protocol_version: PROTOCOL_VERSION,
             target_outbound_peers: connmgr::TARGET_OUTBOUND_PEERS,
             max_inbound_peers: connmgr::MAX_INBOUND_PEERS,
+            ping_timeout: pingmgr::PING_TIMEOUT,
             user_agent: USER_AGENT,
             target: "self",
         }
@@ -428,6 +431,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             protocol_version,
             target_outbound_peers,
             max_inbound_peers,
+            ping_timeout,
             user_agent,
             required_services,
             target,
@@ -456,7 +460,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 preferred_services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
             },
         );
-        let pingmgr = PingManager::new(rng.clone(), upstream.clone());
+        let pingmgr = PingManager::new(ping_timeout, rng.clone(), upstream.clone());
         let spvmgr = SpvManager::new(
             spvmgr::Config::default(),
             rng.clone(),

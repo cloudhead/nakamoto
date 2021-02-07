@@ -57,17 +57,19 @@ impl Peer {
 #[derive(Debug)]
 pub struct PingManager<U> {
     peers: HashMap<PeerId, Peer>,
+    ping_timeout: LocalDuration,
     /// Random number generator.
     rng: fastrand::Rng,
     upstream: U,
 }
 
 impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
-    pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
+    pub fn new(ping_timeout: LocalDuration, rng: fastrand::Rng, upstream: U) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
 
         Self {
             peers,
+            ping_timeout,
             rng,
             upstream,
         }
@@ -98,7 +100,7 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
                     // A ping was sent and we're waiting for a `pong`. If too much
                     // time has passed, we consider this peer dead, and disconnect
                     // from them.
-                    if now - since >= PING_TIMEOUT {
+                    if now - since >= self.ping_timeout {
                         self.upstream
                             .disconnect(peer.address, DisconnectReason::PeerTimeout("ping"));
                     }
@@ -111,7 +113,7 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
 
                         self.upstream
                             .ping(peer.address, nonce)
-                            .set_timeout(PING_TIMEOUT)
+                            .set_timeout(self.ping_timeout)
                             .set_timeout(PING_INTERVAL);
 
                         peer.state = State::AwaitingPong { nonce, since: now };
