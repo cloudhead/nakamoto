@@ -232,7 +232,7 @@ impl spvmgr::SyncFilters for Channel {
     }
 
     fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders) {
-        todo!()
+        self.message(addr, NetworkMessage::CFHeaders(headers));
     }
 
     fn get_cfilters(
