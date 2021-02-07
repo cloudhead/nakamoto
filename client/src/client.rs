@@ -331,16 +331,15 @@ impl<R: Reactor> Client<R> {
             ..p2p::protocol::Config::default()
         };
 
-        self.reactor.run(
-            &listen,
-            move |upstream| Protocol::new(cache, filters, peers, clock, rng, cfg, upstream),
-            {
-                let blocks = self.blocks;
-                let filters = self.filters;
+        self.reactor.subscribe({
+            let blocks = self.blocks;
+            let filters = self.filters;
 
-                move |event| Self::process_event(event, blocks.clone(), filters.clone())
-            },
-        )?;
+            move |event| Self::process_event(event, blocks.clone(), filters.clone())
+        });
+        self.reactor.run(&listen, move |upstream| {
+            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
+        })?;
 
         Ok(())
     }
@@ -372,16 +371,15 @@ impl<R: Reactor> Client<R> {
 
         log::info!("{} peer(s) found..", peers.len());
 
-        self.reactor.run(
-            &self.config.listen,
-            |upstream| Protocol::new(cache, filters, peers, clock, rng, cfg, upstream),
-            {
-                let blocks = self.blocks;
-                let filters = self.filters;
+        self.reactor.subscribe({
+            let blocks = self.blocks;
+            let filters = self.filters;
 
-                move |event| Self::process_event(event, blocks.clone(), filters.clone())
-            },
-        )?;
+            move |event| Self::process_event(event, blocks.clone(), filters.clone())
+        });
+        self.reactor.run(&self.config.listen, |upstream| {
+            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
+        })?;
 
         Ok(())
     }

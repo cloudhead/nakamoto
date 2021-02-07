@@ -54,7 +54,8 @@ pub struct Reactor<R: Write + Read> {
     peers: HashMap<net::SocketAddr, Socket<R, RawNetworkMessage>>,
     connecting: HashSet<net::SocketAddr>,
     inputs: VecDeque<Input>,
-    subscriber: chan::Sender<Event>,
+    subscriber: chan::Sender<Event>, // TODO: Reconcile with 'subscribers'
+    subscribers: Vec<Box<dyn Fn(Event) + Send + Sync + 'static>>,
     commands: chan::Receiver<Command>,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
@@ -94,6 +95,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
         let timeouts = TimeoutManager::new();
         let connecting = HashSet::new();
+        let subscribers = Vec::new();
 
         Ok(Self {
             peers,
@@ -104,20 +106,15 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
             commands,
             waker,
             timeouts,
+            subscribers,
         })
     }
 
     /// Run the given protocol with the reactor.
-    fn run<F, M, C>(
-        &mut self,
-        listen_addrs: &[net::SocketAddr],
-        machine: F,
-        callback: C,
-    ) -> Result<(), Error>
+    fn run<F, M>(&mut self, listen_addrs: &[net::SocketAddr], machine: F) -> Result<(), Error>
     where
         F: FnOnce(chan::Sender<Out>) -> M,
         M: Machine,
-        C: Fn(Event),
     {
         let listener = if listen_addrs.is_empty() {
             None
@@ -142,7 +139,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
 
         protocol.initialize(local_time);
 
-        if let Control::Shutdown = self.process(&rx, local_time, &callback)? {
+        if let Control::Shutdown = self.process(&rx, local_time)? {
             return Ok(());
         }
 
@@ -150,7 +147,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         while let Some(event) = self.inputs.pop_front() {
             protocol.step(event, local_time);
 
-            if let Control::Shutdown = self.process(&rx, local_time, &callback)? {
+            if let Control::Shutdown = self.process(&rx, local_time)? {
                 return Ok(());
             }
         }
@@ -246,11 +243,18 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
             while let Some(event) = self.inputs.pop_front() {
                 protocol.step(event, local_time);
 
-                if let Control::Shutdown = self.process(&rx, local_time, &callback)? {
+                if let Control::Shutdown = self.process(&rx, local_time)? {
                     return Ok(());
                 }
             }
         }
+    }
+
+    fn subscribe<F>(&mut self, callback: F)
+    where
+        F: Fn(Event) + Send + Sync + 'static,
+    {
+        self.subscribers.push(Box::new(callback));
     }
 
     /// Wake the waker.
@@ -268,11 +272,10 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
 
 impl Reactor<net::TcpStream> {
     /// Process protocol state machine outputs.
-    fn process<C: Fn(Event)>(
+    fn process(
         &mut self,
         outputs: &chan::Receiver<Out>,
         local_time: LocalTime,
-        callback: C,
     ) -> Result<Control, Error> {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
@@ -343,7 +346,9 @@ impl Reactor<net::TcpStream> {
                 Out::Event(event) => {
                     trace!("Event: {:?}", event);
 
-                    callback(event.clone());
+                    for callback in self.subscribers.iter() {
+                        callback(event.clone());
+                    }
                     self.subscriber.try_send(event).unwrap(); // FIXME
                 }
                 Out::Shutdown => {
