@@ -250,7 +250,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         }
     }
 
-    fn subscribe<F>(&mut self, callback: F)
+    fn on_event<F>(&mut self, callback: F)
     where
         F: Fn(Event) + Send + Sync + 'static,
     {

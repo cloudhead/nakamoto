@@ -27,8 +27,10 @@ pub trait Reactor {
         F: FnOnce(chan::Sender<Out>) -> M,
         M: Machine;
 
-    /// Subscribe to events.
-    fn subscribe<F>(&mut self, callback: F)
+    /// Run the given function when an event is received from the underlying protocol.
+    ///
+    /// *The function is run in the same thread as the reactor.*
+    fn on_event<F>(&mut self, callback: F)
     where
         F: Fn(Event) + Send + Sync + 'static;
 

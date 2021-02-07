@@ -331,7 +331,7 @@ impl<R: Reactor> Client<R> {
             ..p2p::protocol::Config::default()
         };
 
-        self.reactor.subscribe({
+        self.reactor.on_event({
             let blocks = self.blocks;
             let filters = self.filters;
 
@@ -371,7 +371,7 @@ impl<R: Reactor> Client<R> {
 
         log::info!("{} peer(s) found..", peers.len());
 
-        self.reactor.subscribe({
+        self.reactor.on_event({
             let blocks = self.blocks;
             let filters = self.filters;
 
