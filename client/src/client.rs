@@ -138,8 +138,10 @@ impl BlockSubscribers {
     }
 }
 
+type FilterSubscriber = chan::Sender<(BlockFilter, BlockHash, Height)>;
+
 struct FilterSubscribers {
-    subs: HashMap<Range<Height>, Vec<chan::Sender<(BlockFilter, BlockHash, Height)>>>,
+    subs: HashMap<Range<Height>, Vec<FilterSubscriber>>,
 }
 
 impl FilterSubscribers {
@@ -149,11 +151,7 @@ impl FilterSubscribers {
         }
     }
 
-    fn subscribe(
-        &mut self,
-        range: Range<Height>,
-        channel: chan::Sender<(BlockFilter, BlockHash, Height)>,
-    ) {
+    fn subscribe(&mut self, range: Range<Height>, channel: FilterSubscriber) {
         self.subs.entry(range).or_default().push(channel);
     }
 
@@ -468,7 +466,7 @@ impl<R: Reactor> handle::Handle for Handle<R> {
     fn get_filters(
         &self,
         range: Range<Height>,
-        channel: chan::Sender<(BlockFilter, BlockHash, Height)>,
+        channel: FilterSubscriber,
     ) -> Result<(), handle::Error> {
         assert!(
             !range.is_empty(),

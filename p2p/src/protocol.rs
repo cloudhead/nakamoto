@@ -192,10 +192,10 @@ impl DisconnectReason {
     /// Check whether the disconnect reason is transient, ie. may no longer be applicable
     /// after some time.
     pub fn is_transient(&self) -> bool {
-        match self {
-            Self::ConnectionLimit | Self::PeerTimeout(_) | Self::PeerHeight(_) => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Self::ConnectionLimit | Self::PeerTimeout(_) | Self::PeerHeight(_)
+        )
     }
 }
 
@@ -633,11 +633,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 stop_hash,
                 ..
             }) => {
-                self.syncmgr.received_getheaders(
-                    &addr,
-                    (locator_hashes, stop_hash),
-                    &mut self.tree,
-                );
+                self.syncmgr
+                    .received_getheaders(&addr, (locator_hashes, stop_hash), &self.tree);
             }
             NetworkMessage::Block(block) => {
                 self.syncmgr.received_block(&addr, block, &self.tree);
@@ -780,7 +777,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
 
                     match result {
                         Ok(import_result) => {
-                            reply.send(Ok(import_result.clone())).ok();
+                            reply.send(Ok(import_result)).ok();
                         }
                         Err(err) => {
                             reply.send(Err(err)).ok();

@@ -24,6 +24,7 @@
 //! Though simplified, the above steps provide a good mental model of how the
 //! reactor and protocol interplay to handle network events.
 //!
+#![allow(clippy::new_without_default)]
 
 #[cfg(unix)]
 pub mod reactor;

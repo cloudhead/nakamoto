@@ -364,15 +364,14 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
             if !self
                 .peers
-                .insert(ip, KnownAddress::new(addr.clone(), source.clone()))
+                .insert(ip, KnownAddress::new(addr.clone(), source))
             {
                 // Ignore addresses we already know.
                 continue;
             }
 
             self.populate_address_ranges(&net_addr.ip());
-            self.upstream
-                .event(Event::AddressDiscovered(addr, source.clone()));
+            self.upstream.event(Event::AddressDiscovered(addr, source));
         }
     }
 

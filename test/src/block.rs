@@ -172,7 +172,7 @@ pub mod gen {
 
         for _ in 0..height {
             let block = block(&prev_header, rng);
-            prev_header = block.header.clone();
+            prev_header = block.header;
 
             chain.push(block);
         }
@@ -184,7 +184,7 @@ pub mod gen {
         let mut txmap = HashMap::new();
         for tx in block.txdata.iter().skip(1) {
             for input in tx.input.iter() {
-                txmap.insert(input.previous_output.clone(), input.script_sig.clone());
+                txmap.insert(input.previous_output, input.script_sig.clone());
             }
         }
 
@@ -192,7 +192,7 @@ pub mod gen {
             if let Some(s) = txmap.get(out) {
                 Ok(s.clone())
             } else {
-                Err(bip158::Error::UtxoMissing(out.clone()))
+                Err(bip158::Error::UtxoMissing(*out))
             }
         })
         .unwrap()

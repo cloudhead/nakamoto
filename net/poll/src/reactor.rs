@@ -6,7 +6,6 @@ use crossbeam_channel as chan;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
-use nakamoto_p2p;
 use nakamoto_p2p::error::Error;
 use nakamoto_p2p::event::Event;
 use nakamoto_p2p::protocol::Machine;
