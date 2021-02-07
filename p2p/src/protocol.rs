@@ -265,7 +265,7 @@ pub struct Protocol<T, F, P> {
     /// Blockchain synchronization manager.
     syncmgr: SyncManager<Upstream>,
     /// Peer connection manager.
-    connmgr: ConnectionManager<Upstream>,
+    connmgr: ConnectionManager<Upstream, AddressManager<P, Upstream>>,
     /// Ping manager.
     pingmgr: PingManager<Upstream>,
     /// SPV (Simply Payment Verification) manager.
@@ -509,8 +509,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     pub fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.syncmgr.initialize(time, &self.tree);
-        self.connmgr
-            .initialize::<P, AddressManager<P, Channel>>(time, &mut self.addrmgr);
+        self.connmgr.initialize::<P>(time, &mut self.addrmgr);
         self.spvmgr.initialize(time, &self.tree);
     }
 
@@ -543,8 +542,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr, reason);
-                self.connmgr
-                    .peer_disconnected::<P, AddressManager<P, Channel>>(&addr, &self.addrmgr);
+                self.connmgr.peer_disconnected::<P>(&addr, &self.addrmgr);
                 self.pingmgr.peer_disconnected(&addr);
                 self.peermgr.peer_disconnected(&addr);
             }
@@ -559,7 +557,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     debug!(target: self.target, "Received command: Connect({})", addr);
 
                     self.whitelist.addr.insert(addr.ip());
-                    self.connmgr.connect::<P, AddressManager<P, Channel>>(&addr);
+                    self.connmgr.connect::<P>(&addr);
                 }
                 Command::Disconnect(addr) => {
                     debug!(target: self.target, "Received command: Disconnect({})", addr);
@@ -626,7 +624,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 trace!(target: self.target, "Received timeout");
 
                 self.connmgr
-                    .received_timeout::<P, AddressManager<P, Channel>>(local_time, &self.addrmgr);
+                    .received_timeout::<P>(local_time, &self.addrmgr);
                 self.syncmgr.received_timeout(local_time, &self.tree);
                 self.pingmgr.received_timeout(local_time);
                 self.addrmgr.received_timeout(local_time);

@@ -1,6 +1,7 @@
 //! Peer connection manager.
 
 use std::collections::{HashMap, HashSet};
+use std::marker::PhantomData;
 use std::net;
 
 use bitcoin::network::constants::ServiceFlags;
@@ -96,7 +97,7 @@ struct Peer {
 
 /// Manages peer connections.
 #[derive(Debug)]
-pub struct ConnectionManager<U> {
+pub struct ConnectionManager<U, A> {
     /// Configuration.
     pub config: Config,
     /// Set of outbound peers being connected to.
@@ -111,9 +112,11 @@ pub struct ConnectionManager<U> {
     last_idle: Option<LocalTime>,
     /// Channel to the network.
     upstream: U,
+    /// Type witness for address source.
+    addresses: PhantomData<A>,
 }
 
-impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
+impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> ConnectionManager<U, A> {
     /// Create a new connection manager.
     pub fn new(upstream: U, config: Config) -> Self {
         Self {
@@ -124,15 +127,12 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
             last_idle: None,
             config,
             upstream,
+            addresses: PhantomData,
         }
     }
 
     /// Initialize the connection manager. Must be called once.
-    pub fn initialize<S: peer::Store, A: AddressSource>(
-        &mut self,
-        _time: LocalTime,
-        addrs: &mut A,
-    ) {
+    pub fn initialize<S: peer::Store>(&mut self, _time: LocalTime, addrs: &mut A) {
         let retry = self
             .config
             .retry
@@ -142,10 +142,10 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
             .collect::<Vec<_>>();
 
         for addr in retry {
-            self.connect::<S, A>(&addr);
+            self.connect::<S>(&addr);
         }
         self.upstream.set_timeout(IDLE_TIMEOUT);
-        self.maintain_connections::<S, A>(addrs);
+        self.maintain_connections::<S>(addrs);
     }
 
     /// Check whether a peer is connected.
@@ -154,7 +154,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
     }
 
     /// Connect to a peer.
-    pub fn connect<S: peer::Store, A: AddressSource>(&mut self, addr: &PeerId) -> bool {
+    pub fn connect<S: peer::Store>(&mut self, addr: &PeerId) -> bool {
         if self.connected.contains_key(&addr) || self.connecting.contains(addr) {
             return false;
         }
@@ -215,11 +215,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
     }
 
     /// Call when a peer disconnected.
-    pub fn peer_disconnected<S: peer::Store, A: AddressSource>(
-        &mut self,
-        addr: &net::SocketAddr,
-        addrs: &A,
-    ) {
+    pub fn peer_disconnected<S: peer::Store>(&mut self, addr: &net::SocketAddr, addrs: &A) {
         debug_assert!(self.connected.contains_key(&addr));
         debug_assert!(!self.disconnected.contains(&addr));
 
@@ -232,7 +228,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
             // If an outbound peer disconnected, we should make sure to maintain
             // our target outbound connection count.
             if peer.link.is_outbound() {
-                self.maintain_connections::<S, A>(addrs);
+                self.maintain_connections::<S>(addrs);
             }
         } else {
             self.connecting.remove(&addr);
@@ -240,13 +236,9 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
     }
 
     /// Call when we recevied a timeout.
-    pub fn received_timeout<S: peer::Store, A: AddressSource>(
-        &mut self,
-        local_time: LocalTime,
-        addrs: &A,
-    ) {
+    pub fn received_timeout<S: peer::Store>(&mut self, local_time: LocalTime, addrs: &A) {
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.maintain_connections::<S, A>(addrs);
+            self.maintain_connections::<S>(addrs);
             self.upstream.set_timeout(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
@@ -269,7 +261,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
     }
 
     /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_connections<S: peer::Store, A: AddressSource>(&mut self, addrs: &A) {
+    fn maintain_connections<S: peer::Store>(&mut self, addrs: &A) {
         while self.outbound().count() + self.connecting.len() < self.config.target_outbound_peers {
             // Prefer addresses with the preferred services.
             let result = addrs
@@ -283,7 +275,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout> ConnectionManager<U> {
                     // connections.
                     debug_assert!(!self.connected.contains_key(&sockaddr));
 
-                    if self.connect::<S, A>(&sockaddr) {
+                    if self.connect::<S>(&sockaddr) {
                         self.upstream.event(Event::Connecting(sockaddr, source));
                         break;
                     }
