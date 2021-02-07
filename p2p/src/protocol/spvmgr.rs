@@ -84,6 +84,11 @@ pub enum Event {
         /// The stop hash.
         stop_hash: BlockHash,
     },
+    /// Request canceled.
+    RequestCanceled {
+        /// Reason for cancellation.
+        reason: &'static str,
+    },
     /// Finished syncing filters up to the specified height.
     Synced(Height),
     /// A peer has timed out responding to a filter request.
@@ -123,6 +128,9 @@ impl std::fmt::Display for Event {
                 "Syncing filter headers with {}, start = {}, stop = {}",
                 peer, start_height, stop_hash
             ),
+            Event::RequestCanceled { reason } => {
+                write!(fmt, "Request canceled: {}", reason)
+            }
             Event::RollbackDetected(height) => {
                 write!(
                     fmt,
@@ -576,6 +584,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             self.inflight.insert(stop_hash, time);
 
             return Some((*peer, start_height, stop_hash));
+        } else {
+            self.upstream.event(Event::RequestCanceled {
+                reason: "no peers with required services",
+            });
         }
         None
     }
