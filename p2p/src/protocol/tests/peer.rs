@@ -162,7 +162,7 @@ impl Peer {
 
     pub fn connect_addr(&mut self, addr: &PeerId, link: Link) {
         self.connect(
-            PeerDummy {
+            &PeerDummy {
                 addr: *addr,
                 height: 144,
                 protocol_version: self.protocol.protocol_version,
@@ -173,7 +173,7 @@ impl Peer {
         );
     }
 
-    pub fn connect(&mut self, remote: PeerDummy, link: Link) {
+    pub fn connect(&mut self, remote: &PeerDummy, link: Link) {
         self.initialize();
 
         let local = self.addr;
