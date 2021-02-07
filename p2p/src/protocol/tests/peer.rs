@@ -70,6 +70,7 @@ pub struct Peer {
     pub upstream: chan::Receiver<Out>,
     pub time: LocalTime,
     pub addr: PeerId,
+    pub cfg: Config,
 
     initialized: bool,
 }
@@ -131,7 +132,7 @@ impl Peer {
             filters,
             peers,
             rng,
-            cfg,
+            cfg: cfg.clone(),
         };
         let (tx, rx) = chan::unbounded();
         let addr = (ip.into(), network.port()).into();
@@ -142,12 +143,23 @@ impl Peer {
             time,
             addr,
             initialized: false,
+            cfg,
         }
     }
 
     pub fn step(&mut self, input: Input) {
         self.initialize();
         self.protocol.step(input, self.time)
+    }
+
+    pub fn receive(&mut self, from: &PeerId, payload: NetworkMessage) {
+        self.step(Input::Received(
+            *from,
+            RawNetworkMessage {
+                magic: self.cfg.network.magic(),
+                payload,
+            },
+        ))
     }
 
     pub fn initialize(&mut self) {
