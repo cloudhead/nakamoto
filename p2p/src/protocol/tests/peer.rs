@@ -18,6 +18,49 @@ use nakamoto_test::block::cache::model;
 
 use crate::protocol::{Builder, Protocol};
 
+pub struct PeerDummy {
+    pub addr: PeerId,
+    pub height: Height,
+    pub services: ServiceFlags,
+    pub protocol_version: u32,
+    pub time: LocalTime,
+}
+
+impl PeerDummy {
+    pub fn new(
+        ip: impl Into<net::IpAddr>,
+        network: Network,
+        height: Height,
+        services: ServiceFlags,
+    ) -> Self {
+        let addr = (ip.into(), network.port()).into();
+        let time = LocalTime::from_secs(network.genesis().time as u64)
+            + LocalDuration::BLOCK_INTERVAL * height;
+
+        Self {
+            addr,
+            height,
+            services,
+            protocol_version: PROTOCOL_VERSION,
+            time,
+        }
+    }
+
+    pub fn version(&self, remote: PeerId, nonce: u64) -> VersionMessage {
+        VersionMessage {
+            version: self.protocol_version,
+            services: self.services,
+            timestamp: self.time.block_time() as i64,
+            receiver: Address::new(&remote, ServiceFlags::NONE),
+            sender: Address::new(&self.addr, ServiceFlags::NONE),
+            nonce,
+            user_agent: USER_AGENT.to_owned(),
+            start_height: self.height as i32,
+            relay: false,
+        }
+    }
+}
+
 pub struct Peer {
     pub protocol: Protocol<
         BlockCache<store::Memory<BlockHeader>>,
@@ -117,21 +160,20 @@ impl Peer {
         }
     }
 
-    pub fn version(&self, local: PeerId, remote: PeerId, nonce: u64) -> VersionMessage {
-        VersionMessage {
-            version: self.protocol.protocol_version,
-            services: self.protocol.peermgr.config.required_services,
-            timestamp: self.time.block_time() as i64,
-            receiver: Address::new(&remote, ServiceFlags::NONE),
-            sender: Address::new(&local, ServiceFlags::NONE),
-            nonce,
-            user_agent: USER_AGENT.to_owned(),
-            start_height: 144,
-            relay: false,
-        }
+    pub fn connect_addr(&mut self, addr: &PeerId, link: Link) {
+        self.connect(
+            PeerDummy {
+                addr: *addr,
+                height: 144,
+                protocol_version: self.protocol.protocol_version,
+                services: self.protocol.peermgr.config.required_services,
+                time: self.time,
+            },
+            link,
+        );
     }
 
-    pub fn connect(&mut self, remote: &PeerId, link: Link) {
+    pub fn connect(&mut self, remote: PeerDummy, link: Link) {
         self.initialize();
 
         let local = self.addr;
@@ -142,27 +184,23 @@ impl Peer {
         // Initiate connection.
         self.protocol.step(
             Input::Connected {
-                addr: *remote,
+                addr: remote.addr,
                 local_addr: local,
                 link,
             },
             time,
         );
 
-        // Send `version`.
+        // Receive `version`.
         self.protocol.step(
             Input::Received(
-                *remote,
-                msg.raw(NetworkMessage::Version(self.version(
-                    local,
-                    *remote,
-                    rng.u64(..),
-                ))),
+                remote.addr,
+                msg.raw(NetworkMessage::Version(remote.version(local, rng.u64(..)))),
             ),
             time,
         );
 
-        // Expect `version`.
+        // Expect `version` to be sent in response.
         self.upstream
             .try_iter()
             .find(|o| {
@@ -174,7 +212,7 @@ impl Peer {
                             payload: NetworkMessage::Version(_),
                             ..
                         },
-                    ) if addr == remote
+                    ) if addr == &remote.addr
                 )
             })
             .expect("`version` should be sent");
@@ -191,14 +229,14 @@ impl Peer {
                             payload: NetworkMessage::Verack,
                             ..
                         },
-                    ) if addr == remote
+                    ) if addr == &remote.addr
                 )
             })
             .expect("`verack` should be sent");
 
-        // Send `verack`.
+        // Receive `verack`.
         self.protocol.step(
-            Input::Received(*remote, msg.raw(NetworkMessage::Verack)),
+            Input::Received(remote.addr, msg.raw(NetworkMessage::Verack)),
             time,
         );
 
@@ -210,7 +248,7 @@ impl Peer {
                     o,
                     Out::Event(
                         Event::PeerManager(peermgr::Event::PeerNegotiated { addr })
-                    ) if addr == remote
+                    ) if addr == &remote.addr
                 )
             })
             .expect("peer handshake is successful");

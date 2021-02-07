@@ -165,11 +165,9 @@ pub mod gen {
     }
 
     /// Generate a random blockchain.
-    pub fn blockchain(rng: &mut fastrand::Rng) -> NonEmpty<Block> {
-        let genesis = genesis(rng);
+    pub fn blockchain(genesis: Block, rng: &mut fastrand::Rng) -> NonEmpty<Block> {
         let height = rng.usize(0..64);
-
-        let mut prev_header = genesis.header.clone();
+        let mut prev_header = genesis.header;
         let mut chain = NonEmpty::new(genesis);
 
         for _ in 0..height {

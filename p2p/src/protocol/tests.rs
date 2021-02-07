@@ -3,7 +3,7 @@ pub mod peer;
 pub mod simulator;
 
 use super::*;
-use peer::Peer;
+use peer::{Peer, PeerDummy};
 use simulator::Simulation;
 
 use bitcoin::network::message_blockdata::Inventory;
@@ -67,8 +67,8 @@ fn test_handshake() {
     let outbound = ([241, 19, 44, 19], 8333).into();
     let inbound = ([241, 19, 44, 18], 8333).into();
 
-    peer.connect(&inbound, Link::Inbound);
-    peer.connect(&outbound, Link::Outbound);
+    peer.connect_addr(&inbound, Link::Inbound);
+    peer.connect_addr(&outbound, Link::Outbound);
 }
 
 // TODO: We need to test this with a chain that is longer than 2000.
@@ -111,7 +111,7 @@ fn test_idle_disconnect() {
     let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
     let remote = ([241, 19, 44, 18], 8333).into();
 
-    peer.connect(&remote, Link::Outbound);
+    peer.connect_addr(&remote, Link::Outbound);
 
     // Let a certain amount of time pass.
     peer.time.elapse(pingmgr::PING_INTERVAL);
@@ -158,7 +158,7 @@ fn test_inv_getheaders() {
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
-    peer.connect(&remote, Link::Outbound);
+    peer.connect_addr(&remote, Link::Outbound);
     peer.step(Input::Received(
         remote,
         msg.raw(NetworkMessage::Inv(vec![Inventory::Block(hash)])),
@@ -197,7 +197,7 @@ fn test_maintain_connections() {
 
     // Keep track of who Alice is connected to.
     for peer in peers.iter() {
-        alice.connect(peer, Link::Outbound);
+        alice.connect_addr(peer, Link::Outbound);
         alice.protocol.connmgr.is_connected(peer);
     }
 
@@ -250,7 +250,7 @@ fn test_getheaders_retry() {
         ([77, 77, 77, 77], network.port()).into(),
     ];
     for peer in peers.iter() {
-        alice.connect(peer, Link::Outbound);
+        alice.connect_addr(peer, Link::Outbound);
     }
     assert!(alice.protocol.syncmgr.best_height().unwrap() > alice.protocol.tree.height());
 
@@ -331,20 +331,20 @@ fn test_handshake_verack_timeout() {
     let network = Network::Mainnet;
     let rng = fastrand::Rng::new();
     let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
-    let remote = ([131, 31, 11, 33], 11111).into();
+    let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
 
     for link in &[Link::Outbound, Link::Inbound] {
         peer.step(Input::Connected {
-            addr: remote,
+            addr: remote.addr,
             local_addr: peer.addr,
             link: *link,
         });
 
         peer.step(Input::Received(
-            remote,
+            remote.addr,
             RawNetworkMessage {
                 magic: network.magic(),
-                payload: NetworkMessage::Version(peer.version(peer.addr, remote, 0)),
+                payload: NetworkMessage::Version(remote.version(peer.addr, 0)),
             },
         ));
         peer.upstream
@@ -355,11 +355,11 @@ fn test_handshake_verack_timeout() {
         peer.time.elapse(LocalDuration::from_secs(60));
         peer.step(Input::Timeout);
         peer.upstream.try_iter().find(
-            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote)
+            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote.addr)
         ).expect("peer should disconnect if no `verack` is received");
 
         peer.step(Input::Disconnected(
-            remote,
+            remote.addr,
             DisconnectReason::PeerTimeout("verack"),
         ));
     }
@@ -371,33 +371,33 @@ fn test_handshake_initial_messages() {
     let network = Network::Mainnet;
     let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
 
-    let remote: net::SocketAddr = ([131, 31, 11, 33], 11111).into();
+    let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
     let local = ([0, 0, 0, 0], 0).into();
 
     // Make sure the address manager trusts this remote address.
     peer.protocol.addrmgr.insert(
         std::iter::once((
             Default::default(),
-            Address::new(&remote, ServiceFlags::NETWORK),
+            Address::new(&remote.addr, ServiceFlags::NETWORK),
         )),
         Source::Dns,
     );
 
     // Handshake
     peer.step(Input::Connected {
-        addr: remote,
+        addr: remote.addr,
         local_addr: local,
         link: Link::Outbound,
     });
     peer.step(Input::Received(
-        remote,
+        remote.addr,
         RawNetworkMessage {
             magic: network.magic(),
-            payload: NetworkMessage::Version(peer.version(local, remote, 0)),
+            payload: NetworkMessage::Version(remote.version(local, 0)),
         },
     ));
     peer.step(Input::Received(
-        remote,
+        remote.addr,
         RawNetworkMessage {
             magic: network.magic(),
             payload: NetworkMessage::Verack,
@@ -410,11 +410,11 @@ fn test_handshake_initial_messages() {
         .filter_map(payload)
         .collect::<Vec<_>>();
 
-    assert!(msgs.contains(&(remote, NetworkMessage::SendHeaders)));
-    assert!(msgs.contains(&(remote, NetworkMessage::GetAddr)));
+    assert!(msgs.contains(&(remote.addr, NetworkMessage::SendHeaders)));
+    assert!(msgs.contains(&(remote.addr, NetworkMessage::GetAddr)));
     assert!(msgs
         .iter()
-        .any(|msg| matches!(msg, (addr, NetworkMessage::Ping(_)) if addr == &remote)));
+        .any(|msg| matches!(msg, (addr, NetworkMessage::Ping(_)) if addr == &remote.addr)));
 }
 
 #[test]
@@ -426,8 +426,8 @@ fn test_getaddr() {
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
     let eve: PeerId = ([241, 19, 44, 19], 8333).into();
 
-    alice.connect(&bob, Link::Outbound);
-    alice.connect(&eve, Link::Outbound);
+    alice.connect_addr(&bob, Link::Outbound);
+    alice.connect_addr(&eve, Link::Outbound);
 
     // Disconnect a peer.
     alice.step(Input::Disconnected(bob, DisconnectReason::Command));
@@ -479,7 +479,7 @@ fn test_stale_tip() {
     let remote: PeerId = ([33, 33, 33, 33], network.port()).into();
     let headers = &BITCOIN_HEADERS;
 
-    alice.connect(&remote, Link::Outbound);
+    alice.connect_addr(&remote, Link::Outbound);
     alice.step(Input::Received(
         remote,
         // Receive an unsolicited header announcement for the latest.
@@ -539,7 +539,7 @@ fn test_addrs() {
     let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
 
-    alice.connect(&bob, Link::Outbound);
+    alice.connect_addr(&bob, Link::Outbound);
 
     let jak: PeerId = ([88, 13, 16, 59], 8333).into();
     let jim: PeerId = ([99, 45, 180, 58], 8333).into();

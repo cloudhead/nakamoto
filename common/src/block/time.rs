@@ -219,6 +219,14 @@ impl std::ops::Div<u32> for LocalDuration {
     }
 }
 
+impl std::ops::Mul<u64> for LocalDuration {
+    type Output = LocalDuration;
+
+    fn mul(self, other: u64) -> LocalDuration {
+        LocalDuration(self.0 * other as u128)
+    }
+}
+
 impl From<LocalDuration> for std::time::Duration {
     fn from(other: LocalDuration) -> Self {
         std::time::Duration::from_millis(other.0 as u64)
