@@ -105,7 +105,7 @@ transacting on the network.  This is completely counter to the idea and *raison
 d'être* of blockchains, and poses a giant security and privacy risk.
 Unfortunately, this is due to the lackluster support for light-clients, both at
 the protocol level, and in terms of the available implementations. Light-clients
-are necessary for the average user to be able to securily interface with a
+are necessary for the average user to be able to securely interface with a
 network like Ethereum or Bitcoin.
 
 For this purpose, Nakamoto was conceived as a client that can efficiently run
