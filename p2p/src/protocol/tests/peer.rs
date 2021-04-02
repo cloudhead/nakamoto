@@ -145,6 +145,10 @@ impl Peer {
         self.protocol.step(input, self.time)
     }
 
+    pub fn tick(&mut self) {
+        self.protocol.step(Input::Timeout, self.time);
+    }
+
     pub fn initialize(&mut self) {
         if !self.initialized {
             self.initialized = true;

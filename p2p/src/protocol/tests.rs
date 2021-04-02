@@ -116,7 +116,7 @@ fn test_idle_disconnect() {
     // Let a certain amount of time pass.
     peer.time.elapse(pingmgr::PING_INTERVAL);
 
-    peer.step(Input::Timeout);
+    peer.tick();
     peer.upstream
         .try_iter()
         .find(|o| {
@@ -133,7 +133,7 @@ fn test_idle_disconnect() {
     peer.time.elapse(pingmgr::PING_TIMEOUT);
 
     // Peer now decides to disconnect remote.
-    peer.step(Input::Timeout);
+    peer.tick();
     peer.upstream
         .try_iter()
         .find(|o| {
@@ -314,7 +314,7 @@ fn test_handshake_version_timeout() {
             .expect("a timer should be returned");
 
         peer.time.elapse(peermgr::HANDSHAKE_TIMEOUT);
-        peer.step(Input::Timeout);
+        peer.tick();
         peer.upstream.try_iter().find(
             |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote)
         ).expect("peer should disconnect when no `version` is received");
@@ -353,7 +353,7 @@ fn test_handshake_verack_timeout() {
             .expect("a timer should be returned");
 
         peer.time.elapse(LocalDuration::from_secs(60));
-        peer.step(Input::Timeout);
+        peer.tick();
         peer.upstream.try_iter().find(
             |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote.addr)
         ).expect("peer should disconnect if no `verack` is received");

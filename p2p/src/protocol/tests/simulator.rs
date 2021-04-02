@@ -7,6 +7,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 use std::fmt;
 
+/// A scheduled protocol input.
 #[derive(Debug, Clone)]
 pub struct Scheduled {
     remote: PeerId,
