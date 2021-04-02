@@ -277,7 +277,7 @@ fn test_getheaders_retry() {
     // While there's still peers to ask...
     while asked.len() < peers.len() {
         alice.time.elapse(syncmgr::REQUEST_TIMEOUT);
-        alice.step(Input::Timeout);
+        alice.tick();
 
         let (addr, _) = alice
             .upstream
@@ -441,7 +441,7 @@ fn test_getaddr() {
         .expect("Alice should emit `AddressBookExhausted`");
 
     // When we receive a timeout, we fetch new addresses, since our addresses have been exhausted.
-    alice.step(Input::Timeout);
+    alice.tick();
     alice
         .upstream
         .try_iter()
@@ -461,7 +461,7 @@ fn test_getaddr() {
 
     // After some time, Alice tries to connect to the new address.
     alice.time.elapse(connmgr::IDLE_TIMEOUT);
-    alice.step(Input::Timeout);
+    alice.tick();
 
     alice
         .upstream
@@ -496,11 +496,11 @@ fn test_stale_tip() {
 
     // Timeout the request.
     alice.time.elapse(syncmgr::REQUEST_TIMEOUT);
-    alice.step(Input::Timeout);
+    alice.tick();
 
     // Some time has passed. The tip timestamp should be considered stale now.
     alice.time.elapse(syncmgr::TIP_STALE_DURATION);
-    alice.step(Input::Timeout);
+    alice.tick();
     alice
         .upstream
         .try_iter()
@@ -510,7 +510,7 @@ fn test_stale_tip() {
 
     // Timeout the `getheaders` request.
     alice.time.elapse(syncmgr::REQUEST_TIMEOUT);
-    alice.step(Input::Timeout);
+    alice.tick();
 
     // Now send another header and wait until the chain update is stale.
     alice.step(Input::Received(
@@ -522,7 +522,7 @@ fn test_stale_tip() {
 
     // Some more time has passed.
     alice.time.elapse(syncmgr::TIP_STALE_DURATION);
-    alice.step(Input::Timeout);
+    alice.tick();
     // Chain update should be stale this time.
     alice
         .upstream
@@ -627,7 +627,7 @@ fn prop_connect_timeout(seed: u64) {
     attempted.pop().unwrap();
 
     alice.time.elapse(connmgr::IDLE_TIMEOUT);
-    alice.step(Input::Timeout);
+    alice.tick();
 
     assert!(alice.upstream.try_iter().all(|o| match o {
         Out::Connect(addr, _) => !attempted.contains(&addr),

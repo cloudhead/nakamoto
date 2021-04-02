@@ -136,8 +136,11 @@ pub enum Input {
     Sent(PeerId, usize),
     /// An external command has been received.
     Command(Command),
-    /// A timeout has been reached.
-    Timeout,
+    /// Used to advance the state machine after some wall time has passed.
+    ///
+    /// "a regular short, sharp sound, especially that made by a clock or watch, typically
+    /// every second."
+    Tick,
 }
 
 /// Output of a state transition (step) of the `Protocol` state machine.
@@ -810,16 +813,15 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                     self.upstream.push(Out::Shutdown);
                 }
             },
-            Input::Timeout => {
-                trace!(target: self.target, "Received timeout");
+            Input::Tick => {
+                trace!(target: self.target, "Received tick");
 
-                self.connmgr
-                    .received_timeout::<P>(local_time, &self.addrmgr);
-                self.syncmgr.received_timeout(local_time, &self.tree);
-                self.pingmgr.received_timeout(local_time);
-                self.addrmgr.received_timeout(local_time);
-                self.peermgr.received_timeout(local_time);
-                self.spvmgr.received_timeout(local_time, &self.tree);
+                self.connmgr.received_tick::<P>(local_time, &self.addrmgr);
+                self.syncmgr.received_tick(local_time, &self.tree);
+                self.pingmgr.received_tick(local_time);
+                self.addrmgr.received_tick(local_time);
+                self.peermgr.received_tick(local_time);
+                self.spvmgr.received_tick(local_time, &self.tree);
             }
         };
     }

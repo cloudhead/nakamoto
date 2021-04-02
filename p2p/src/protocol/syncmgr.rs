@@ -558,8 +558,8 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         }
     }
 
-    /// Called when we received a timeout.
-    pub fn received_timeout<T: BlockTree>(&mut self, local_time: LocalTime, tree: &T) {
+    /// Called when we received a tick.
+    pub fn received_tick<T: BlockTree>(&mut self, local_time: LocalTime, tree: &T) {
         let timeout = self.config.request_timeout;
         let timed_out = self
             .inflight

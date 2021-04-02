@@ -93,7 +93,7 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
         self.peers.remove(addr);
     }
 
-    pub fn received_timeout(&mut self, now: LocalTime) {
+    pub fn received_tick(&mut self, now: LocalTime) {
         for peer in self.peers.values_mut() {
             match peer.state {
                 State::AwaitingPong { since, .. } => {

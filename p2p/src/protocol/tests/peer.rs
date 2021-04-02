@@ -146,7 +146,7 @@ impl Peer {
     }
 
     pub fn tick(&mut self) {
-        self.protocol.step(Input::Timeout, self.time);
+        self.protocol.step(Input::Tick, self.time);
     }
 
     pub fn initialize(&mut self) {

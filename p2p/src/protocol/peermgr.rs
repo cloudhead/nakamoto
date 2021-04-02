@@ -374,8 +374,8 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
         None
     }
 
-    /// Called when a timeout was received.
-    pub fn received_timeout(&mut self, local_time: LocalTime) {
+    /// Called when a tick was received.
+    pub fn received_tick(&mut self, local_time: LocalTime) {
         let mut timed_out = Vec::new();
 
         for (addr, peer) in self.peers.iter() {

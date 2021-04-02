@@ -240,8 +240,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         }
     }
 
-    /// A timeout was received.
-    pub fn received_timeout<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+    /// A tick was received.
+    pub fn received_tick<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
         self.idle(now, tree);
     }
 

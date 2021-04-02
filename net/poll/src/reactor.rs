@@ -233,7 +233,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
 
                     if !timeouts.is_empty() {
                         timeouts.clear();
-                        self.inputs.push_back(Input::Timeout);
+                        self.inputs.push_back(Input::Tick);
                     }
                 }
                 Err(err) => return Err(err.into()),
@@ -320,7 +320,7 @@ impl Reactor<net::TcpStream> {
                             self.inputs.push_back(Input::Connecting { addr });
                         }
                         Err(err) => {
-                            self.inputs.push_back(Input::Timeout);
+                            self.inputs.push_back(Input::Tick);
 
                             error!("{}: Connection error: {}", addr, err.to_string());
                         }

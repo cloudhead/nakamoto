@@ -235,8 +235,8 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         }
     }
 
-    /// Call when we recevied a timeout.
-    pub fn received_timeout<S: peer::Store>(&mut self, local_time: LocalTime, addrs: &A) {
+    /// Call when we recevied a tick.
+    pub fn received_tick<S: peer::Store>(&mut self, local_time: LocalTime, addrs: &A) {
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.maintain_connections::<S>(addrs);
             self.upstream.set_timeout(IDLE_TIMEOUT);

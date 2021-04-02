@@ -159,7 +159,7 @@ impl Simulation {
                     self.schedule(&peer, o);
                 }
             }
-            if self.inbox.iter().all(|s| matches!(s.input, Input::Timeout)) {
+            if self.inbox.iter().all(|s| matches!(s.input, Input::Tick)) {
                 break;
             }
         }
@@ -250,7 +250,7 @@ impl Simulation {
                 inbox.insert(Scheduled {
                     remote: peer,
                     peer,
-                    input: Input::Timeout,
+                    input: Input::Tick,
                     time: *local_time + duration,
                 });
             }

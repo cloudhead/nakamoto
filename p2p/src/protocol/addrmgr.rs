@@ -153,8 +153,8 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         self.upstream.send_addresses(*from, addrs);
     }
 
-    /// Called when a timeout is received.
-    pub fn received_timeout(&mut self, local_time: LocalTime) {
+    /// Called when a tick is received.
+    pub fn received_tick(&mut self, local_time: LocalTime) {
         // If we're already using all the addresses we have available, we should fetch more.
         if local_time - self.last_request.unwrap_or_default() >= REQUEST_TIMEOUT
             && self.is_exhausted()
