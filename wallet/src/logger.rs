@@ -27,7 +27,7 @@ impl Log for Logger {
                 let now = Local::now().to_rfc3339_opts(SecondsFormat::Millis, true);
                 writeln!(stream, "{} {}", now, record.args().to_string())
                     .expect("write shouldn't fail");
-            };
+            }
         }
     }
 

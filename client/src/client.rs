@@ -226,6 +226,10 @@ impl<R: Reactor> Client<R> {
 
         let path = dir.join("headers.db");
         let store = match store::File::create(&path, genesis) {
+            Ok(store) => {
+                log::info!("Initializing new block store {:?}", path);
+                store
+            }
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", path);
                 let store = store::File::open(path, genesis)?;
@@ -239,11 +243,7 @@ impl<R: Reactor> Client<R> {
 
                 store
             }
-            Err(err) => panic!(err.to_string()),
-            Ok(store) => {
-                log::info!("Initializing new block store {:?}", path);
-                store
-            }
+            Err(err) => return Err(err.into()),
         };
 
         let local_time = SystemTime::now().into();
@@ -257,6 +257,10 @@ impl<R: Reactor> Client<R> {
         let cfheaders_genesis = filter::cache::StoredHeader::genesis(self.config.network);
         let cfheaders_path = dir.join("filters.db");
         let cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
+            Ok(store) => {
+                log::info!("Initializing new filter header store {:?}", cfheaders_path);
+                store
+            }
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing store {:?}", cfheaders_path);
                 let store = store::File::open(cfheaders_path, cfheaders_genesis)?;
@@ -270,11 +274,7 @@ impl<R: Reactor> Client<R> {
 
                 store
             }
-            Err(err) => panic!(err.to_string()), // TODO
-            Ok(store) => {
-                log::info!("Initializing new filter header store {:?}", cfheaders_path);
-                store
-            }
+            Err(err) => return Err(err.into()),
         };
 
         let filters = FilterCache::from(cfheaders_store)?;

@@ -48,7 +48,7 @@ impl Log for Logger {
                     message,
                 )
                 .expect("write shouldn't fail");
-            };
+            }
         }
     }
 
