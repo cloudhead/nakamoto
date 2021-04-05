@@ -16,6 +16,7 @@ use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::HashMap;
+use nakamoto_common::source;
 
 use super::channel::SetTimeout;
 use super::{Link, PeerId, Timeout};
@@ -276,7 +277,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             }
         } else {
             // TODO: Return an error instead.
-            panic!("SpvManager::get_cfilters: called without any available peers!");
+            panic!("{}: called without any available peers!", source!());
         }
     }
 
@@ -612,7 +613,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 });
             }
         } else if filter_height > block_height {
-            panic!("SpvManager::idle: filter chain is longer than header chain!");
+            panic!("{}: filter chain is longer than header chain!", source!());
         }
     }
 }

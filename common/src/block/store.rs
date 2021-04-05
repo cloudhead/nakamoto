@@ -9,6 +9,7 @@ use bitcoin::util::bip158::BlockFilter;
 use thiserror::Error;
 
 use crate::network::Network;
+use crate::source;
 
 /// A block storage error.
 #[derive(Debug, Error)]
@@ -44,7 +45,7 @@ impl Genesis for FilterHash {
 
         let genesis = network.genesis_block();
         let filter = BlockFilter::new_script_filter(&genesis, |_| {
-            panic!("FilterHash::genesis: genesis block should have no inputs")
+            panic!("{}: genesis block should have no inputs", source!())
         })
         .unwrap();
 
