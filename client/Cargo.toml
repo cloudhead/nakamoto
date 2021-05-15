@@ -22,5 +22,5 @@ microserde = "0.1"
 [dev-dependencies]
 nakamoto-test = { version = "0.2.0", path = "../test" }
 nakamoto-net-poll = { version = "0.2.0", path = "../net/poll" }
-bitcoin = "0.25.1"
+bitcoin = "0.26.0"
 tempfile = "3"

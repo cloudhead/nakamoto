@@ -201,7 +201,7 @@ pub mod gen {
     /// Create a filter header from a previous header and a filter.
     pub fn cfheader(parent: &FilterHeader, cfilter: &BlockFilter) -> (FilterHash, FilterHeader) {
         let hash = FilterHash::hash(&cfilter.content);
-        let header = FilterHeader::new(hash, parent);
+        let header = hash.filter_header(parent);
 
         (hash, header)
     }
@@ -231,7 +231,7 @@ pub mod gen {
                 .take(32)
                 .collect::<Vec<_>>();
             let hash = FilterHash::consensus_decode(bytes.as_slice()).unwrap();
-            let header = FilterHeader::new(hash, &parent);
+            let header = hash.filter_header(&parent);
 
             parent = header;
 

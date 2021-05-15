@@ -61,5 +61,6 @@ pub fn pow_limit_bits(network: &bitcoin::Network) -> Bits {
         bitcoin::Network::Bitcoin => 0x1d00ffff,
         bitcoin::Network::Testnet => 0x1d00ffff,
         bitcoin::Network::Regtest => 0x207fffff,
+        bitcoin::Network::Signet => 0x1e0377ae,
     }
 }

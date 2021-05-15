@@ -530,7 +530,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         }
     }
 
-    /// Get a block by hash. *Only searches the active chain.
+    /// Get a block by hash. Only searches the active chain.
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         self.headers
             .get(hash)

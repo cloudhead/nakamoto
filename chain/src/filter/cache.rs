@@ -26,7 +26,7 @@ pub struct StoredHeader {
 }
 
 impl Encodable for StoredHeader {
-    fn consensus_encode<W: io::Write>(&self, mut e: W) -> Result<usize, encode::Error> {
+    fn consensus_encode<W: io::Write>(&self, mut e: W) -> Result<usize, io::Error> {
         let mut len = 0;
 
         len += self.hash.consensus_encode(&mut e)?;
@@ -85,7 +85,7 @@ impl<S> FilterCache<S> {
         }
 
         for stored_header in self.headers.iter() {
-            let expected = FilterHeader::new(stored_header.hash, &prev_header);
+            let expected = stored_header.hash.filter_header(&prev_header);
             let actual = stored_header.header;
 
             if actual != expected {

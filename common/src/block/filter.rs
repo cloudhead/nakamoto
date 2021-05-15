@@ -1,91 +1,17 @@
 //! Compact block filter core types and traits.
 #![warn(missing_docs)]
 
-use std::io;
 use std::ops::Range;
 
 use thiserror::Error;
 
-use bitcoin::consensus::encode;
-use bitcoin::consensus::{Decodable, Encodable};
-
-pub use bitcoin::hash_types::FilterHash;
+pub use bitcoin::hash_types::{FilterHash, FilterHeader};
 pub use bitcoin::util::bip158::BlockFilter;
 
 use super::Height;
 use crate::block::store::{self, Genesis};
 use crate::network::Network;
 use crate::source;
-
-/// A filter header.
-///
-/// This type is used to distinguish hashes from headers, which are concatenations of filter
-/// hashes.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct FilterHeader {
-    hash: FilterHash,
-}
-
-impl Encodable for FilterHeader {
-    fn consensus_encode<W: io::Write>(&self, e: W) -> Result<usize, encode::Error> {
-        self.hash.consensus_encode(e)
-    }
-}
-
-impl Decodable for FilterHeader {
-    fn consensus_decode<D: io::Read>(d: D) -> Result<Self, encode::Error> {
-        let hash = FilterHash::consensus_decode(d)?;
-        Ok(FilterHeader { hash })
-    }
-}
-
-impl AsRef<[u8]> for FilterHeader {
-    fn as_ref(&self) -> &[u8] {
-        self.hash.as_ref()
-    }
-}
-
-impl From<FilterHash> for FilterHeader {
-    fn from(hash: FilterHash) -> Self {
-        FilterHeader { hash }
-    }
-}
-
-impl From<FilterHeader> for FilterHash {
-    fn from(header: FilterHeader) -> Self {
-        header.hash
-    }
-}
-
-impl Default for FilterHeader {
-    fn default() -> Self {
-        FilterHeader {
-            hash: FilterHash::default(),
-        }
-    }
-}
-
-impl FilterHeader {
-    /// Create a new filter header from the filter hash and the previous header.
-    ///
-    /// *BIP 157: The canonical hash of a block filter is the double-SHA256 of the serialized
-    /// filter.  Filter headers are 32-byte hashes derived for each block filter. They are computed
-    /// as the double-SHA256 of the concatenation of the filter hash with the previous filter
-    /// header.*
-    ///
-    pub fn new(filter_hash: FilterHash, prev_header: &FilterHeader) -> Self {
-        use bitcoin_hashes::Hash;
-
-        let mut header_bytes = [0u8; 64];
-
-        header_bytes[0..32].copy_from_slice(&filter_hash[..]);
-        header_bytes[32..64].copy_from_slice(&prev_header.as_ref()[..]);
-
-        Self {
-            hash: FilterHash::hash(&header_bytes),
-        }
-    }
-}
 
 impl Genesis for FilterHeader {
     /// Filter header for the genesis block.
@@ -94,13 +20,13 @@ impl Genesis for FilterHeader {
     /// use nakamoto_common::block::filter::{FilterHash, FilterHeader};
     /// use nakamoto_common::block::store::Genesis as _;
     /// use nakamoto_common::network::Network;
-    /// use bitcoin_hashes::hex::FromHex;
+    /// use bitcoin_hashes::{hex::FromHex, sha256d};
     ///
     /// let genesis = FilterHeader::genesis(Network::Testnet);
     ///
     /// assert_eq!(
-    ///     FilterHash::from(genesis),
-    ///     FilterHash::from_hex(
+    ///     genesis.as_hash(),
+    ///     sha256d::Hash::from_hex(
     ///         "21584579b7eb08997773e5aeff3a7f932700042d0ed2a6129012b7d7ae81b750"
     ///     ).unwrap()
     /// );
@@ -112,9 +38,7 @@ impl Genesis for FilterHeader {
         })
         .unwrap();
 
-        FilterHeader {
-            hash: filter.filter_id(&FilterHash::default()),
-        }
+        filter.filter_header(&FilterHeader::default())
     }
 }
 

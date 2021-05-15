@@ -11,7 +11,7 @@ use thiserror::Error;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 
-use nakamoto_common::block::filter::{self, BlockFilter, FilterHeader, Filters};
+use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
@@ -298,7 +298,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             });
         }
 
-        let prev_header: FilterHeader = msg.previous_filter.into();
+        let prev_header = msg.previous_filter_header;
         let (_, tip) = self.filters.tip();
 
         // If the previous header doesn't match our tip, this could be a stale
@@ -355,7 +355,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
 
         // Create headers out of the hashes.
         for filter_hash in hashes {
-            last_header = FilterHeader::new(filter_hash, &last_header);
+            last_header = filter_hash.filter_header(&last_header);
             headers.push((filter_hash, last_header));
         }
         self.filters
@@ -414,7 +414,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 CFHeaders {
                     filter_type: msg.filter_type,
                     stop_hash: msg.stop_hash,
-                    previous_filter: prev_header.into(),
+                    previous_filter_header: prev_header,
                     filter_hashes: hashes.collect(),
                 },
             );
@@ -473,7 +473,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             .expect("SpvManager::received_cfilter: all headers up to the tip must exist");
         let filter = BlockFilter::new(&msg.filter);
 
-        if filter.filter_id(&prev_header.into()) != header.into() {
+        if filter.filter_header(&prev_header) != header {
             return Err(Error::InvalidMessage {
                 from,
                 reason: "cfilter: filter hash doesn't match header",
@@ -649,7 +649,7 @@ mod tests {
 
     use nakamoto_chain::block::{cache::BlockCache, store};
     use nakamoto_chain::filter::cache::FilterCache;
-    use nakamoto_common::block::filter::FilterHash;
+    use nakamoto_common::block::filter::{FilterHash, FilterHeader};
     use nakamoto_common::network::Network;
     use nakamoto_test::BITCOIN_HEADERS;
 
@@ -721,7 +721,7 @@ mod tests {
                     "00000000b3322c8c3ef7d2cf6da009a776e6a99ee65ec5a32f3f345712238473",
                 )
                 .unwrap(),
-                previous_filter: FilterHash::from_hex(
+                previous_filter_header: FilterHeader::from_hex(
                     "02c2392180d0ce2b5b6f8b08d39a11ffe831c673311a3ecf77b97fc3f0303c9f",
                 )
                 .unwrap(),

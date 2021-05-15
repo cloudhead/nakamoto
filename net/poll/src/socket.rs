@@ -58,7 +58,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
     }
 
     pub fn read(&mut self) -> Result<M, encode::Error> {
-        fallible! { encode::Error::Io(io::ErrorKind::Other.into()) };
+        fallible! { io::Error::from(io::ErrorKind::Other) };
 
         match self.raw.read_next::<M>() {
             Ok(msg) => {
@@ -70,8 +70,8 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    pub fn write(&mut self, msg: &M) -> Result<usize, encode::Error> {
-        fallible! { encode::Error::Io(io::ErrorKind::Other.into()) };
+    pub fn write(&mut self, msg: &M) -> Result<usize, io::Error> {
+        fallible! { io::Error::from(io::ErrorKind::Other) };
 
         let mut buf = [0u8; MAX_MESSAGE_SIZE];
 
@@ -86,7 +86,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
                 Ok(len)
             }
-            Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WriteZero => {
+            Err(err) if err.kind() == io::ErrorKind::WriteZero => {
                 unreachable!();
             }
             Err(err) => Err(err),
@@ -97,13 +97,13 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         &mut self,
         inputs: &mut VecDeque<Input>,
         source: &mut popol::Source,
-    ) -> Result<(), encode::Error> {
+    ) -> Result<(), io::Error> {
         while let Some(msg) = self.queue.pop_front() {
             match self.write(&msg) {
                 Ok(n) => {
                     inputs.push_back(Input::Sent(self.address, n));
                 }
-                Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     source.set(popol::interest::WRITE);
                     self.queue.push_front(msg);
 
