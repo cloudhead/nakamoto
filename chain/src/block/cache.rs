@@ -148,7 +148,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     pub fn median_time_past(&self, height: Height) -> BlockTime {
         assert!(height != 0, "height must be > 0");
 
-        let mut times = [0 as BlockTime; time::MEDIAN_TIME_SPAN as usize];
+        let mut times = [0; time::MEDIAN_TIME_SPAN as usize];
 
         let start = height.saturating_sub(time::MEDIAN_TIME_SPAN);
         let end = height;
@@ -602,7 +602,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
             let (height, _) = self.get_block(hash).unwrap();
             height
         } else {
-            0 as Height
+            0
         };
 
         let start = start + 1;

@@ -138,7 +138,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
 
         protocol.initialize(local_time);
 
-        if let Control::Shutdown = self.process(&rx, local_time)? {
+        if let Control::Shutdown = self.process(&rx, local_time) {
             return Ok(());
         }
 
@@ -146,7 +146,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         while let Some(event) = self.inputs.pop_front() {
             protocol.step(event, local_time);
 
-            if let Control::Shutdown = self.process(&rx, local_time)? {
+            if let Control::Shutdown = self.process(&rx, local_time) {
                 return Ok(());
             }
         }
@@ -242,7 +242,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
             while let Some(event) = self.inputs.pop_front() {
                 protocol.step(event, local_time);
 
-                if let Control::Shutdown = self.process(&rx, local_time)? {
+                if let Control::Shutdown = self.process(&rx, local_time) {
                     return Ok(());
                 }
             }
@@ -271,11 +271,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
 
 impl Reactor<net::TcpStream> {
     /// Process protocol state machine outputs.
-    fn process(
-        &mut self,
-        outputs: &chan::Receiver<Out>,
-        local_time: LocalTime,
-    ) -> Result<Control, Error> {
+    fn process(&mut self, outputs: &chan::Receiver<Out>, local_time: LocalTime) -> Control {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
         for out in outputs.try_iter() {
@@ -353,11 +349,11 @@ impl Reactor<net::TcpStream> {
                 Out::Shutdown => {
                     info!("Shutdown received");
 
-                    return Ok(Control::Shutdown);
+                    return Control::Shutdown;
                 }
             }
         }
-        Ok(Control::Continue)
+        Control::Continue
     }
 
     fn handle_readable(&mut self, addr: &net::SocketAddr) {

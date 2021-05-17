@@ -491,6 +491,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     }
 
     /// Handle `getcfilters` message.
+    #[allow(clippy::needless_return)]
     pub fn received_getcfilters<T: BlockTree>(
         &mut self,
         _addr: &PeerId,

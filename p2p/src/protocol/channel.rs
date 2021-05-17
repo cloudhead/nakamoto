@@ -189,10 +189,8 @@ impl syncmgr::SyncHeaders for Channel {
         debug!(target: self.target, "[sync] {}", &event);
 
         match &event {
-            syncmgr::Event::HeadersImported(import_result) => {
-                if let ImportResult::TipChanged(tip, height, _) = import_result {
-                    info!(target: self.target, "Block height = {}, tip = {}", height, tip);
-                }
+            syncmgr::Event::HeadersImported(ImportResult::TipChanged(tip, height, _)) => {
+                info!(target: self.target, "Block height = {}, tip = {}", height, tip);
             }
             _ => {}
         }
