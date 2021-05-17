@@ -1,5 +1,6 @@
 //! Shared peer types.
 
+use std::io;
 use std::net;
 
 use microserde as serde;
@@ -38,18 +39,38 @@ pub trait Store {
     }
 
     /// Seed the peer store with addresses.
+    /// Fails if *none* of the seeds could be resolved to addresses.
     fn seed<S: net::ToSocketAddrs>(
         &mut self,
         seeds: impl Iterator<Item = S>,
         source: Source,
-    ) -> std::io::Result<()> {
+    ) -> io::Result<()> {
+        let mut error = None;
+        let mut success = false;
+
         for seed in seeds {
-            for addr in seed.to_socket_addrs()? {
-                self.insert(
-                    addr.ip(),
-                    KnownAddress::new(Address::new(&addr, ServiceFlags::NONE), source),
-                );
+            match seed.to_socket_addrs() {
+                Ok(addrs) => {
+                    success = true;
+                    for addr in addrs {
+                        self.insert(
+                            addr.ip(),
+                            KnownAddress::new(Address::new(&addr, ServiceFlags::NONE), source),
+                        );
+                    }
+                }
+                Err(err) => error = Some(err),
             }
+        }
+
+        if success {
+            return Ok(());
+        }
+        if let Some(err) = error {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                format!("seeds failed to resolve: {}", err),
+            ));
         }
         Ok(())
     }
@@ -58,7 +79,7 @@ pub trait Store {
     fn clear(&mut self);
 
     /// Flush data to permanent storage.
-    fn flush(&mut self) -> std::io::Result<()>;
+    fn flush(&mut self) -> io::Result<()>;
 }
 
 /// Implementation of [`Store`] for [`std::collections::HashMap`].
