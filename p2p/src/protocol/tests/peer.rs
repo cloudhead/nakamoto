@@ -18,6 +18,12 @@ use nakamoto_test::block::cache::model;
 
 use crate::protocol::Protocol;
 
+type TestProtocol = Protocol<
+    BlockCache<store::Memory<BlockHeader>>,
+    model::FilterCache,
+    HashMap<net::IpAddr, KnownAddress>,
+>;
+
 pub struct PeerDummy {
     pub addr: PeerId,
     pub height: Height,
@@ -61,12 +67,8 @@ impl PeerDummy {
     }
 }
 
-pub struct Peer {
-    pub protocol: Protocol<
-        BlockCache<store::Memory<BlockHeader>>,
-        model::FilterCache,
-        HashMap<net::IpAddr, KnownAddress>,
-    >,
+pub struct Peer<M: Machine> {
+    pub protocol: M,
     pub upstream: chan::Receiver<Out>,
     pub time: LocalTime,
     pub addr: PeerId,
@@ -75,7 +77,25 @@ pub struct Peer {
     initialized: bool,
 }
 
-impl Peer {
+impl<M: Machine> Peer<M> {
+    pub fn step(&mut self, input: Input) {
+        self.initialize();
+        self.protocol.step(input, self.time)
+    }
+
+    pub fn tick(&mut self) {
+        self.protocol.step(Input::Tick, self.time);
+    }
+
+    pub fn initialize(&mut self) {
+        if !self.initialized {
+            self.initialized = true;
+            self.protocol.initialize(self.time);
+        }
+    }
+}
+
+impl Peer<TestProtocol> {
     pub fn new(
         name: &'static str,
         ip: impl Into<net::IpAddr>,
@@ -137,22 +157,6 @@ impl Peer {
             addr,
             initialized: false,
             cfg,
-        }
-    }
-
-    pub fn step(&mut self, input: Input) {
-        self.initialize();
-        self.protocol.step(input, self.time)
-    }
-
-    pub fn tick(&mut self) {
-        self.protocol.step(Input::Tick, self.time);
-    }
-
-    pub fn initialize(&mut self) {
-        if !self.initialized {
-            self.initialized = true;
-            self.protocol.initialize(self.time);
         }
     }
 

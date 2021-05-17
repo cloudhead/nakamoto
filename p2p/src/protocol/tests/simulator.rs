@@ -103,7 +103,7 @@ impl Simulation {
         }
     }
 
-    pub fn run<'a>(&mut self, peers: impl Into<Vec<&'a mut super::Peer>>) {
+    pub fn run<'a, M: 'a + Machine>(&mut self, peers: impl Into<Vec<&'a mut super::Peer<M>>>) {
         let mut map = HashMap::with_hasher(self.rng.clone().into());
         for peer in peers.into().into_iter() {
             map.insert(peer.addr, peer);
@@ -120,7 +120,7 @@ impl Simulation {
         self.step(&mut map);
     }
 
-    pub fn connect(&mut self, peer: &mut super::Peer, remote: &mut super::Peer) {
+    pub fn connect<M: Machine>(&mut self, peer: &mut super::Peer<M>, remote: &mut super::Peer<M>) {
         peer.step(Input::Connected {
             local_addr: peer.addr,
             addr: remote.addr,
@@ -141,7 +141,7 @@ impl Simulation {
     }
 
     /// Run the simulation until there are no events left to schedule.
-    pub fn step(&mut self, peers: &mut HashMap<PeerId, &mut super::Peer>) {
+    pub fn step<M: Machine>(&mut self, peers: &mut HashMap<PeerId, &mut super::Peer<M>>) {
         while let Some(next) = self.inbox.iter().cloned().next() {
             info!(target: "sim", "{}", next);
 
