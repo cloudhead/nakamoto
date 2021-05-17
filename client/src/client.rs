@@ -534,9 +534,9 @@ impl<R: Reactor> handle::Handle for Handle<R> {
 
     /// Subscribe to the event feed, and wait for the given function to return something,
     /// or timeout if the specified amount of time has elapsed.
-    fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
+    fn wait<F, T>(&self, mut f: F) -> Result<T, handle::Error>
     where
-        F: Fn(Event) -> Option<T>,
+        F: FnMut(Event) -> Option<T>,
     {
         let start = time::Instant::now();
 
@@ -565,21 +565,19 @@ impl<R: Reactor> handle::Handle for Handle<R> {
     fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
         use std::collections::HashSet;
 
-        self.wait(|e| {
-            let mut negotiated = HashSet::new();
+        let mut negotiated = HashSet::new();
 
-            match e {
-                Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
-                    negotiated.insert(addr);
+        self.wait(|e| match e {
+            Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
+                negotiated.insert(addr);
 
-                    if negotiated.len() == count {
-                        Some(())
-                    } else {
-                        None
-                    }
+                if negotiated.len() == count {
+                    Some(())
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
     }
 

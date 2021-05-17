@@ -71,7 +71,7 @@ pub trait Handle {
         headers: Vec<BlockHeader>,
     ) -> Result<Result<ImportResult, block::tree::Error>, Error>;
     /// Wait for the given predicate to be fulfilled.
-    fn wait<F: Fn(Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
+    fn wait<F: FnMut(Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected.
     fn wait_for_peers(&self, count: usize) -> Result<(), Error>;
     /// Wait for the node to be ready and in sync with the blockchain.

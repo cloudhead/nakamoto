@@ -97,3 +97,14 @@ fn test_full_sync() {
         thread.join().unwrap();
     }
 }
+
+#[test]
+fn test_wait_for_peers() {
+    logger::init(log::Level::Debug);
+
+    let cfgs = vec![Config::default(); 5];
+    let nodes = network(&cfgs).unwrap();
+
+    let (handle, _, _) = nodes.first().unwrap();
+    handle.wait_for_peers(nodes.len() - 1).unwrap();
+}
