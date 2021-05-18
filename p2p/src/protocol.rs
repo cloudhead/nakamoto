@@ -24,10 +24,10 @@ use syncmgr::SyncManager;
 
 use crate::event::Event;
 
-use std::collections::HashSet;
 use std::fmt::{self, Debug};
 use std::net;
 use std::ops::Range;
+use std::{collections::HashSet, net::SocketAddr};
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -85,6 +85,8 @@ impl Link {
 /// A command or request that can be sent to the protocol.
 #[derive(Debug, Clone)]
 pub enum Command {
+    /// Get connected peers.
+    GetPeers(chan::Sender<HashSet<SocketAddr>>),
     /// Get the tip of the active chain.
     GetTip(chan::Sender<(Height, BlockHeader)>),
     /// Get a block from the active chain.
@@ -746,6 +748,18 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
             }
             Input::Sent(_addr, _msg) => {}
             Input::Command(cmd) => match cmd {
+                Command::GetPeers(reply) => {
+                    debug!(target: self.target, "Received command: GetPeers");
+
+                    let peers = self
+                        .peermgr
+                        .peers()
+                        .filter(|f| f.is_negotiated())
+                        .map(|f| f.address())
+                        .collect::<HashSet<SocketAddr>>();
+
+                    reply.send(peers).ok();
+                }
                 Command::Connect(addr) => {
                     debug!(target: self.target, "Received command: Connect({})", addr);
 
