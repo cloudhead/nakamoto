@@ -2,9 +2,9 @@ name: Cargo
 
 on:
   push:
-    branches: [ master ]
+    branches: [master]
   pull_request:
-    branches: [ master ]
+    branches: [master]
 
 jobs:
   build:
@@ -17,6 +17,8 @@ jobs:
       - uses: actions/checkout@v2
       - name: Build
         run: cargo build --verbose
+        env:
+          RUSTFLAGS: -D warnings
       - name: Run tests
         run: cargo test --all --verbose
 
@@ -40,6 +42,9 @@ jobs:
         uses: actions-rs/cargo@v1
         with:
           command: clippy
+          args: --all --tests
+        env:
+          RUSTFLAGS: -D warnings
       - name: Check formating
         uses: actions-rs/cargo@v1
         with:
