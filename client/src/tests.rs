@@ -68,6 +68,7 @@ fn network(
     Ok(handles)
 }
 
+#[ignore]
 #[test]
 fn test_full_sync() {
     logger::init(log::Level::Debug);
@@ -106,5 +107,6 @@ fn test_wait_for_peers() {
     let nodes = network(&cfgs).unwrap();
 
     let (handle, _, _) = nodes.first().unwrap();
+
     handle.wait_for_peers(nodes.len() - 1).unwrap();
 }

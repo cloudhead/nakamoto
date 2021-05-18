@@ -447,7 +447,11 @@ impl<R: Reactor> Handle<R> {
 
     /// Get number of connected peers.
     pub fn get_connected_peers(&self) -> Result<HashSet<SocketAddr>, handle::Error> {
-        todo!()
+        let (sender, recvr) = chan::bounded(1);
+        self.command(Command::GetPeers(sender))?;
+        let res = recvr.recv()?;
+
+        Ok(res)
     }
 }
 
