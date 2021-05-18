@@ -574,7 +574,7 @@ impl<R: Reactor> handle::Handle for Handle<R> {
     }
 
     fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
-        // Get number of already connected peers.
+        // Get already connected peers.
         let mut negotiated = self.get_connected_peers()?;
 
         if negotiated.len() == count {
