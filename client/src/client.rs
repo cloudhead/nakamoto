@@ -1,10 +1,12 @@
 //! Core nakamoto client functionality. Wraps all the other modules under a unified
 //! interface.
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io;
 use std::net;
+use std::net::SocketAddr;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -442,6 +444,11 @@ impl<R: Reactor> Handle<R> {
 
         Ok(())
     }
+
+    /// Get number of connected peers.
+    pub fn get_connected_peers(&self) -> Result<HashSet<SocketAddr>, handle::Error> {
+        todo!()
+    }
 }
 
 impl<R: Reactor> handle::Handle for Handle<R> {
@@ -563,9 +570,12 @@ impl<R: Reactor> handle::Handle for Handle<R> {
     }
 
     fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
-        use std::collections::HashSet;
+        // Get number of already connected peers.
+        let mut negotiated = self.get_connected_peers()?;
 
-        let mut negotiated = HashSet::new();
+        if negotiated.len() == count {
+            return Ok(());
+        }
 
         self.wait(|e| match e {
             Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
