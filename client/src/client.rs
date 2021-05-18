@@ -445,13 +445,12 @@ impl<R: Reactor> Handle<R> {
         Ok(())
     }
 
-    /// Get number of connected peers.
-    pub fn get_connected_peers(&self) -> Result<HashSet<SocketAddr>, handle::Error> {
+    /// Get connected peers.
+    pub fn get_peers(&self) -> Result<HashSet<SocketAddr>, handle::Error> {
         let (sender, recvr) = chan::bounded(1);
         self.command(Command::GetPeers(sender))?;
-        let res = recvr.recv()?;
 
-        Ok(res)
+        Ok(recvr.recv()?)
     }
 }
 
@@ -575,7 +574,7 @@ impl<R: Reactor> handle::Handle for Handle<R> {
 
     fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
         // Get already connected peers.
-        let mut negotiated = self.get_connected_peers()?;
+        let mut negotiated = self.get_peers()?;
 
         if negotiated.len() == count {
             return Ok(());
