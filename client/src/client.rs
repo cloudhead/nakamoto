@@ -1,10 +1,12 @@
 //! Core nakamoto client functionality. Wraps all the other modules under a unified
 //! interface.
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::io;
 use std::net;
+use std::net::SocketAddr;
 use std::ops::Range;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -442,6 +444,14 @@ impl<R: Reactor> Handle<R> {
 
         Ok(())
     }
+
+    /// Get connected peers.
+    pub fn get_peers(&self) -> Result<HashSet<SocketAddr>, handle::Error> {
+        let (sender, recvr) = chan::bounded(1);
+        self.command(Command::GetPeers(sender))?;
+
+        Ok(recvr.recv()?)
+    }
 }
 
 impl<R: Reactor> handle::Handle for Handle<R> {
@@ -534,9 +544,9 @@ impl<R: Reactor> handle::Handle for Handle<R> {
 
     /// Subscribe to the event feed, and wait for the given function to return something,
     /// or timeout if the specified amount of time has elapsed.
-    fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
+    fn wait<F, T>(&self, mut f: F) -> Result<T, handle::Error>
     where
-        F: Fn(Event) -> Option<T>,
+        F: FnMut(Event) -> Option<T>,
     {
         let start = time::Instant::now();
 
@@ -563,23 +573,24 @@ impl<R: Reactor> handle::Handle for Handle<R> {
     }
 
     fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
-        use std::collections::HashSet;
+        // Get already connected peers.
+        let mut negotiated = self.get_peers()?;
 
-        self.wait(|e| {
-            let mut negotiated = HashSet::new();
+        if negotiated.len() == count {
+            return Ok(());
+        }
 
-            match e {
-                Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
-                    negotiated.insert(addr);
+        self.wait(|e| match e {
+            Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
+                negotiated.insert(addr);
 
-                    if negotiated.len() == count {
-                        Some(())
-                    } else {
-                        None
-                    }
+                if negotiated.len() == count {
+                    Some(())
+                } else {
+                    None
                 }
-                _ => None,
             }
+            _ => None,
         })
     }
 
