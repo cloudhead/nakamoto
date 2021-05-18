@@ -34,6 +34,7 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::single_match)]
 #![allow(clippy::comparison_chain)]
+#![allow(clippy::inconsistent_struct_constructor)]
 #![deny(missing_docs, unsafe_code)]
 pub mod error;
 pub mod event;

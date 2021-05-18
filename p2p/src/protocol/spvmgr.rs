@@ -659,7 +659,7 @@ mod tests {
 
     use super::*;
 
-    const FILTER_HASHES: [&'static str; 15] = [
+    const FILTER_HASHES: [&str; 15] = [
         "9acd599f31639d36b8e531d12afb430bb17e7cdd6e73c993c343e417cda1f299",
         "0bfdf66fef865ea20f1a3c4d12a9570685aa89cdd8a950755ef7e870520533ad",
         "155215e98328f097cf085f721edff6f4e9e1072e14012052b86297aa21085dcb",

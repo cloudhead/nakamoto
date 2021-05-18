@@ -165,7 +165,7 @@ mod test {
             cache.flush().unwrap();
 
             for (ip, ka) in cache.iter() {
-                expected.push((ip.clone(), ka.clone()));
+                expected.push((*ip, ka.clone()));
             }
         }
 
@@ -173,7 +173,7 @@ mod test {
             let cache = Cache::open(&path).unwrap();
             let mut actual = cache
                 .iter()
-                .map(|(i, ka)| (i.clone(), ka.clone()))
+                .map(|(i, ka)| (*i, ka.clone()))
                 .collect::<Vec<_>>();
 
             actual.sort_by_key(|(i, _)| *i);

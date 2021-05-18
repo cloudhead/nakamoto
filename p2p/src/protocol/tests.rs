@@ -63,7 +63,7 @@ mod setup {
 fn test_handshake() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let outbound = ([241, 19, 44, 19], 8333).into();
     let inbound = ([241, 19, 44, 18], 8333).into();
 
@@ -108,7 +108,7 @@ fn test_initial_sync() {
 fn test_idle_disconnect() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let remote = ([241, 19, 44, 18], 8333).into();
 
     peer.connect_addr(&remote, Link::Outbound);
@@ -150,7 +150,7 @@ fn test_inv_getheaders() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let remote: PeerId = ([241, 19, 44, 18], 8333).into();
 
     // Some hash for a nonexistent block.
@@ -180,7 +180,7 @@ fn test_maintain_connections() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let port = network.port();
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
 
     let peers: Vec<PeerId> = vec![
         ([88, 88, 88, 1], 8333).into(),
@@ -422,7 +422,7 @@ fn test_getaddr() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
     let eve: PeerId = ([241, 19, 44, 19], 8333).into();
 
@@ -475,7 +475,7 @@ fn test_stale_tip() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let remote: PeerId = ([33, 33, 33, 33], network.port()).into();
     let headers = &BITCOIN_HEADERS;
 
@@ -536,7 +536,7 @@ fn test_stale_tip() {
 fn test_addrs() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
 
     alice.connect_addr(&bob, Link::Outbound);

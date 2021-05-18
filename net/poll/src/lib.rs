@@ -25,6 +25,7 @@
 //! reactor and protocol interplay to handle network events.
 //!
 #![allow(clippy::new_without_default)]
+#![allow(clippy::inconsistent_struct_constructor)]
 
 #[cfg(unix)]
 pub mod reactor;

@@ -2,6 +2,7 @@
 #[allow(clippy::len_without_is_empty)]
 #[allow(clippy::collapsible_if)]
 #[allow(clippy::type_complexity)]
+#[allow(clippy::inconsistent_struct_constructor)]
 #[deny(
     unsafe_code,
     missing_docs,
@@ -11,6 +12,7 @@
 pub mod block;
 pub use block::*;
 
+#[allow(clippy::inconsistent_struct_constructor)]
 pub mod filter;
 
 #[cfg(test)]
