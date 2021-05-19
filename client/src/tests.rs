@@ -68,7 +68,6 @@ fn network(
     Ok(handles)
 }
 
-#[ignore]
 #[test]
 fn test_full_sync() {
     logger::init(log::Level::Debug);

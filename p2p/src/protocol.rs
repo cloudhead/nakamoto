@@ -85,6 +85,8 @@ impl Link {
 /// A command or request that can be sent to the protocol.
 #[derive(Debug, Clone)]
 pub enum Command {
+    /// Get block height.
+    GetBlockByHeight(u64, chan::Sender<Option<BlockHash>>),
     /// Get connected peers.
     GetPeers(chan::Sender<HashSet<SocketAddr>>),
     /// Get the tip of the active chain.
@@ -748,6 +750,16 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
             }
             Input::Sent(_addr, _msg) => {}
             Input::Command(cmd) => match cmd {
+                Command::GetBlockByHeight(height, reply) => {
+                    debug!(target: self.target, "Received command: GetHeight");
+
+                    let a = self
+                        .tree
+                        .get_block_by_height(height)
+                        .map(|a| a.block_hash());
+
+                    reply.send(a).ok();
+                }
                 Command::GetPeers(reply) => {
                     debug!(target: self.target, "Received command: GetPeers");
 
