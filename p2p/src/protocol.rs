@@ -751,7 +751,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
             Input::Sent(_addr, _msg) => {}
             Input::Command(cmd) => match cmd {
                 Command::GetBlockByHeight(height, reply) => {
-                    debug!(target: self.target, "Received command: GetHeight");
+                    debug!(target: self.target, "Received command: GetBlockByHeight");
 
                     let a = self
                         .tree
