@@ -86,7 +86,7 @@ impl Link {
 #[derive(Debug, Clone)]
 pub enum Command {
     /// Get block height.
-    GetBlockByHeight(u64, chan::Sender<Option<BlockHash>>),
+    GetBlockByHeight(Height, chan::Sender<Option<BlockHeader>>),
     /// Get connected peers.
     GetPeers(chan::Sender<HashSet<SocketAddr>>),
     /// Get the tip of the active chain.
@@ -753,10 +753,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                 Command::GetBlockByHeight(height, reply) => {
                     debug!(target: self.target, "Received command: GetBlockByHeight");
 
-                    let a = self
-                        .tree
-                        .get_block_by_height(height)
-                        .map(|a| a.block_hash());
+                    let a = self.tree.get_block_by_height(height).map(|a| a.to_owned());
 
                     reply.send(a).ok();
                 }
