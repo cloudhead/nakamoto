@@ -68,7 +68,6 @@ fn network(
     Ok(handles)
 }
 
-#[ignore]
 #[test]
 fn test_full_sync() {
     logger::init(log::Level::Debug);
@@ -87,13 +86,20 @@ fn test_full_sync() {
     let height = headers.len() as Height;
     let hash = headers.last().unwrap().block_hash();
 
+    // Ensure all peers are connected to misha,
+    // so that misha can send effectively send blocks to
+    // all peers on time.
+    handle.wait_for_peers(2).unwrap();
+
     handle
         .import_headers(headers)
         .expect("command is successful")
         .expect("chain is valid");
 
-    for (node, _, thread) in nodes.into_iter() {
+    for (mut node, _, thread) in nodes.into_iter() {
+        node.set_timeout(std::time::Duration::from_secs(5));
         assert_eq!(node.wait_for_height(height).unwrap(), hash);
+
         node.shutdown().unwrap();
         thread.join().unwrap();
     }

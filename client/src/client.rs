@@ -452,6 +452,17 @@ impl<R: Reactor> Handle<R> {
 
         Ok(recvr.recv()?)
     }
+
+    /// Get block by height.
+    pub fn get_block_by_height(
+        &self,
+        height: Height,
+    ) -> Result<Option<BlockHeader>, handle::Error> {
+        let (sender, recvr) = chan::bounded(1);
+        self.command(Command::GetBlockByHeight(height, sender))?;
+
+        Ok(recvr.recv()?)
+    }
 }
 
 impl<R: Reactor> handle::Handle for Handle<R> {
@@ -602,15 +613,19 @@ impl<R: Reactor> handle::Handle for Handle<R> {
     }
 
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, handle::Error> {
-        // TODO: Should return immediately if we are already at that height.
-        self.wait(|e| match e {
-            Event::SyncManager(syncmgr::Event::HeadersImported(ImportResult::TipChanged(
-                hash,
-                height,
-                _,
-            ))) if height == h => Some(hash),
-            _ => None,
-        })
+        match self.get_block_by_height(h)? {
+            Some(e) => Ok(e.block_hash()),
+
+            None => {
+                self.wait(|e| match e {
+                    Event::SyncManager(syncmgr::Event::HeadersImported(
+                        ImportResult::TipChanged(hash, height, _),
+                    )) if height == h => Some(hash),
+
+                    _ => None,
+                })
+            }
+        }
     }
 
     fn events(&self) -> &chan::Receiver<Event> {
