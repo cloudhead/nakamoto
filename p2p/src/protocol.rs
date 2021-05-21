@@ -85,7 +85,7 @@ impl Link {
 /// A command or request that can be sent to the protocol.
 #[derive(Debug, Clone)]
 pub enum Command {
-    /// Get block height.
+    /// Get block header at height.
     GetBlockByHeight(Height, chan::Sender<Option<BlockHeader>>),
     /// Get connected peers.
     GetPeers(chan::Sender<HashSet<SocketAddr>>),
