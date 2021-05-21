@@ -753,9 +753,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                 Command::GetBlockByHeight(height, reply) => {
                     debug!(target: self.target, "Received command: GetBlockByHeight");
 
-                    let a = self.tree.get_block_by_height(height).map(|a| a.to_owned());
+                    let header = self.tree.get_block_by_height(height).map(|h| h.to_owned());
 
-                    reply.send(a).ok();
+                    reply.send(header).ok();
                 }
                 Command::GetPeers(reply) => {
                     debug!(target: self.target, "Received command: GetPeers");

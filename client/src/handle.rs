@@ -17,9 +17,6 @@ pub enum Error {
     /// The command channel disconnected.
     #[error("command channel disconnected")]
     Disconnected,
-    /// Invalid block height specified.
-    #[error("invalid block height")]
-    InvalidBlockHeight,
     /// The operation timed out.
     #[error("the operation timed out")]
     Timeout,

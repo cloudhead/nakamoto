@@ -80,7 +80,7 @@ fn test_full_sync() {
         }
     }
 
-    let mut nodes = network(&[config("olive"), config("alice"), config("misha")]).unwrap();
+    let nodes = network(&[config("olive"), config("alice"), config("misha")]).unwrap();
     let (handle, _, _) = nodes.last().unwrap();
     let headers = BITCOIN_HEADERS.tail.clone();
     let height = headers.len() as Height;
@@ -96,12 +96,10 @@ fn test_full_sync() {
         .expect("command is successful")
         .expect("chain is valid");
 
-    for (node, _, _) in nodes.iter_mut() {
+    for (mut node, _, thread) in nodes.into_iter() {
         node.set_timeout(std::time::Duration::from_secs(5));
         assert_eq!(node.wait_for_height(height).unwrap(), hash);
-    }
 
-    for (node, _, thread) in nodes.into_iter() {
         node.shutdown().unwrap();
         thread.join().unwrap();
     }
