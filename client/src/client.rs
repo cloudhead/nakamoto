@@ -440,18 +440,10 @@ where
         self.timeout = timeout;
     }
 
-    /// Send a command to the command channel, and wake up the event loop.
-    pub fn command(&self, cmd: Command) -> Result<(), handle::Error> {
-        self.commands.send(cmd)?;
-        R::wake(&self.waker)?;
-
-        Ok(())
-    }
-
     /// Get connected peers.
     pub fn get_peers(&self) -> Result<HashSet<SocketAddr>, handle::Error> {
         let (sender, recvr) = chan::bounded(1);
-        self.command(Command::GetPeers(sender))?;
+        self._command(Command::GetPeers(sender))?;
 
         Ok(recvr.recv()?)
     }
@@ -462,9 +454,17 @@ where
         height: Height,
     ) -> Result<Option<BlockHeader>, handle::Error> {
         let (sender, recvr) = chan::bounded(1);
-        self.command(Command::GetBlockByHeight(height, sender))?;
+        self._command(Command::GetBlockByHeight(height, sender))?;
 
         Ok(recvr.recv()?)
+    }
+
+    /// Send a command to the command channel, and wake up the event loop.
+    fn _command(&self, cmd: Command) -> Result<(), handle::Error> {
+        self.commands.send(cmd)?;
+        R::wake(&self.waker)?;
+
+        Ok(())
     }
 }
 
@@ -506,6 +506,10 @@ where
         self.command(Command::GetFilters(range))?;
 
         Ok(())
+    }
+
+    fn command(&self, cmd: Command) -> Result<(), handle::Error> {
+        self._command(cmd)
     }
 
     fn broadcast(&self, msg: NetworkMessage) -> Result<(), handle::Error> {

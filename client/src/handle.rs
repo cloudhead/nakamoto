@@ -9,6 +9,7 @@ use thiserror::Error;
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 
 /// An error resulting from a handle method.
@@ -53,6 +54,8 @@ pub trait Handle: Sized + Send + Sync {
         range: Range<Height>,
         channel: chan::Sender<(BlockFilter, BlockHash, Height)>,
     ) -> Result<(), Error>;
+    /// Send a command to the client.
+    fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Broadcast a message to all *outbound* peers.
     fn broadcast(&self, msg: NetworkMessage) -> Result<(), Error>;
     /// Send a message to a random *outbound* peer. Return the chosen
