@@ -431,7 +431,10 @@ pub struct Handle<R: Reactor> {
     filters: Arc<Mutex<FilterSubscribers>>,
 }
 
-impl<R: Reactor> Handle<R> {
+impl<R: Reactor> Handle<R>
+where
+    R::Waker: Sync,
+{
     /// Set the timeout for operations that wait on the network.
     pub fn set_timeout(&mut self, timeout: time::Duration) {
         self.timeout = timeout;
@@ -465,7 +468,10 @@ impl<R: Reactor> Handle<R> {
     }
 }
 
-impl<R: Reactor> handle::Handle for Handle<R> {
+impl<R: Reactor> handle::Handle for Handle<R>
+where
+    R::Waker: Sync,
+{
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
         let (transmit, receive) = chan::bounded::<(Height, BlockHeader)>(1);
         self.command(Command::GetTip(transmit))?;

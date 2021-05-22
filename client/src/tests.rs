@@ -116,3 +116,15 @@ fn test_wait_for_peers() {
 
     handle.wait_for_peers(nodes.len() - 1).unwrap();
 }
+
+#[test]
+fn test_send_handle() {
+    let cfg = Config::default();
+
+    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let handle = client.handle();
+
+    thread::spawn(move || {
+        handle.wait_for_ready().unwrap();
+    });
+}
