@@ -4,21 +4,19 @@ use std::{io, net};
 use crossbeam_channel as chan;
 
 use crate::error::Error;
-use crate::event::Event;
+use crate::event::Publisher;
 use crate::protocol::{Command, Machine, Out};
 
 /// Any network reactor that can drive the light-client protocol.
-pub trait Reactor {
+pub trait Reactor<E: Publisher> {
     /// The type of waker this reactor uses.
     type Waker: Send;
 
-    /// Create a new reactor, initializing it with a channel to send protocol events on, and
-    /// a channel to receive commands.
-    fn new(
-        subscriber: chan::Sender<Event>,
-        commands: chan::Receiver<Command>,
-    ) -> Result<Self, io::Error>
+    /// Create a new reactor, initializing it with a publisher for protocol events,
+    /// a channel to receive commands, and a context.
+    fn new(publisher: E, commands: chan::Receiver<Command>) -> Result<Self, io::Error>
     where
+        E: Publisher,
         Self: Sized;
 
     /// Run the given protocol state machine with the reactor.
@@ -26,13 +24,6 @@ pub trait Reactor {
     where
         F: FnOnce(chan::Sender<Out>) -> M,
         M: Machine;
-
-    /// Run the given function when an event is received from the underlying protocol.
-    ///
-    /// *The function is run in the same thread as the reactor.*
-    fn on_event<F>(&mut self, callback: F)
-    where
-        F: Fn(Event) + Send + Sync + 'static;
 
     /// Used to wake certain types of reactors.
     fn wake(waker: &Self::Waker) -> io::Result<()>;

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::net;
 use std::thread;
+use std::time;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
@@ -9,11 +10,11 @@ use nakamoto_common::block::Height;
 use nakamoto_p2p::protocol::syncmgr;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
-use crate::client::{self, Client, Config, Event};
+use crate::client::{self, event, Client, Config, Event};
 use crate::error;
 use crate::handle::Handle as _;
 
-type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
 
 fn network(
     cfgs: &[Config],
@@ -34,6 +35,7 @@ fn network(
 
         let node = Client::new(cfg)?;
         let handle = node.handle();
+        let events = handle.events();
 
         let t = thread::spawn({
             let params = params.clone();
@@ -49,12 +51,15 @@ fn network(
             }
         });
 
-        let addr = handle
-            .wait(|e| match e {
+        let addr = event::wait(
+            &events,
+            |e| match e {
                 Event::Listening(addr) => Some(addr),
                 _ => None,
-            })
-            .unwrap();
+            },
+            time::Duration::from_secs(5),
+        )
+        .unwrap();
 
         handles.push((handle, addr, t));
     }
@@ -111,7 +116,6 @@ fn test_wait_for_peers() {
 
     let cfgs = vec![Config::default(); 5];
     let nodes = network(&cfgs).unwrap();
-
     let (handle, _, _) = nodes.first().unwrap();
 
     handle.wait_for_peers(nodes.len() - 1).unwrap();
@@ -127,4 +131,47 @@ fn test_send_handle() {
     thread::spawn(move || {
         handle.wait_for_ready().unwrap();
     });
+}
+
+#[test]
+fn test_multiple_handle_events() {
+    use std::time;
+
+    let cfg = Config::default();
+    let genesis = cfg.network.genesis();
+    let params = cfg.network.params();
+    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let store = store::Memory::new((genesis, vec![]).into());
+    let cache = BlockCache::from(store, params, &[]).unwrap();
+    let filters = FilterCache::from(store::Memory::default()).unwrap();
+    let peers = HashMap::new();
+
+    let alice = client.handle();
+    let bob = client.handle();
+    let alice_events = alice.events();
+    let bob_events = bob.events();
+
+    thread::spawn(|| {
+        client.run_with(cache, filters, peers).unwrap();
+    });
+
+    event::wait(
+        &alice_events,
+        |e| match e {
+            Event::Listening(_) => Some(()),
+            _ => None,
+        },
+        time::Duration::from_secs(2),
+    )
+    .unwrap();
+
+    event::wait(
+        &bob_events,
+        |e| match e {
+            Event::Listening(_) => Some(()),
+            _ => None,
+        },
+        time::Duration::from_secs(2),
+    )
+    .unwrap();
 }

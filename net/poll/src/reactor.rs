@@ -7,7 +7,7 @@ use crossbeam_channel as chan;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
 use nakamoto_p2p::error::Error;
-use nakamoto_p2p::event::Event;
+use nakamoto_p2p::event::{self, Event};
 use nakamoto_p2p::protocol::Machine;
 use nakamoto_p2p::protocol::{Command, DisconnectReason, Input, Link, Out};
 
@@ -49,20 +49,19 @@ enum Source {
 }
 
 /// A single-threaded non-blocking reactor.
-pub struct Reactor<R: Write + Read> {
+pub struct Reactor<R: Write + Read, E> {
     peers: HashMap<net::SocketAddr, Socket<R, RawNetworkMessage>>,
     connecting: HashSet<net::SocketAddr>,
     inputs: VecDeque<Input>,
-    subscriber: chan::Sender<Event>, // TODO: Reconcile with 'subscribers'
-    subscribers: Vec<Box<dyn Fn(Event) + Send + Sync + 'static>>,
     commands: chan::Receiver<Command>,
+    publisher: E,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
     timeouts: TimeoutManager<()>,
 }
 
 /// The `R` parameter represents the underlying stream type, eg. `net::TcpStream`.
-impl<R: Write + Read + AsRawFd> Reactor<R> {
+impl<R: Write + Read + AsRawFd, E> Reactor<R, E> {
     /// Register a peer with the reactor.
     fn register_peer(&mut self, addr: net::SocketAddr, stream: R, link: Link) {
         self.sources
@@ -79,14 +78,11 @@ impl<R: Write + Read + AsRawFd> Reactor<R> {
     }
 }
 
-impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
+impl<E: event::Publisher> nakamoto_p2p::reactor::Reactor<E> for Reactor<net::TcpStream, E> {
     type Waker = Arc<popol::Waker>;
 
     /// Construct a new reactor, given a channel to send events on.
-    fn new(
-        subscriber: chan::Sender<Event>,
-        commands: chan::Receiver<Command>,
-    ) -> Result<Self, io::Error> {
+    fn new(publisher: E, commands: chan::Receiver<Command>) -> Result<Self, io::Error> {
         let peers = HashMap::new();
         let inputs: VecDeque<Input> = VecDeque::new();
 
@@ -94,18 +90,16 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
         let timeouts = TimeoutManager::new();
         let connecting = HashSet::new();
-        let subscribers = Vec::new();
 
         Ok(Self {
             peers,
             connecting,
             sources,
             inputs,
-            subscriber,
             commands,
+            publisher,
             waker,
             timeouts,
-            subscribers,
         })
     }
 
@@ -123,7 +117,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
 
             self.sources
                 .register(Source::Listener, &listener, popol::interest::READ);
-            self.subscriber.send(Event::Listening(local_addr))?;
+            self.publisher.publish(Event::Listening(local_addr));
 
             info!("Listening on {}", local_addr);
 
@@ -253,13 +247,6 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
         }
     }
 
-    fn on_event<F>(&mut self, callback: F)
-    where
-        F: Fn(Event) + Send + Sync + 'static,
-    {
-        self.subscribers.push(Box::new(callback));
-    }
-
     /// Wake the waker.
     fn wake(waker: &Arc<popol::Waker>) -> io::Result<()> {
         waker.wake()
@@ -273,7 +260,7 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
     }
 }
 
-impl Reactor<net::TcpStream> {
+impl<E: event::Publisher> Reactor<net::TcpStream, E> {
     /// Process protocol state machine outputs.
     fn process(&mut self, outputs: &chan::Receiver<Out>, local_time: LocalTime) -> Control {
         // Note that there may be messages destined for a peer that has since been
@@ -345,10 +332,7 @@ impl Reactor<net::TcpStream> {
                 Out::Event(event) => {
                     trace!("Event: {:?}", event);
 
-                    for callback in self.subscribers.iter() {
-                        callback(event.clone());
-                    }
-                    self.subscriber.try_send(event).unwrap(); // FIXME
+                    self.publisher.publish(event);
                 }
                 Out::Shutdown => {
                     info!("Shutdown received");

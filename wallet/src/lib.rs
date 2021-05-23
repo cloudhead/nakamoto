@@ -13,7 +13,7 @@ use bitcoin::Address;
 use nakamoto_client::error::Error;
 use nakamoto_client::handle::Handle;
 use nakamoto_client::Network;
-use nakamoto_client::{Client, Config};
+use nakamoto_client::{client, Client, Config};
 use nakamoto_common::block::Height;
 
 /// Re-scan parameters.
@@ -74,11 +74,11 @@ impl<H: Handle> Wallet<H> {
         let range = options.genesis..height;
         let count = (range.end - range.start) as usize;
 
-        let (blocks_send, blocks_recv) = chan::unbounded();
-        let (filters_send, filters_recv) = chan::bounded(count);
+        let blocks_recv = self.client.blocks();
+        let filters_recv = self.client.filters();
 
         log::info!("Fetching filters in range {}..{}", range.start, range.end);
-        self.client.get_filters(range, filters_send)?;
+        self.client.get_filters(range)?;
 
         let mut filter_height = options.genesis;
         let mut blocks_remaining = HashSet::new();
@@ -102,7 +102,7 @@ impl<H: Handle> Wallet<H> {
                                 // TODO: For BIP32 wallets, add one more address to check, if the
                                 // matching one was the highest-index one.
                                 blocks_remaining.insert(block_hash);
-                                self.client.get_block(&block_hash, blocks_send.clone())?;
+                                self.client.get_block(&block_hash)?;
 
                             }
                         } else {
@@ -160,7 +160,7 @@ impl<H: Handle> Wallet<H> {
 }
 
 /// The network reactor we're going to use.
-type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
 
 /// Entry point for running the wallet.
 pub fn run<S: net::ToSocketAddrs + fmt::Debug>(

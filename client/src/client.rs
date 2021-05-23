@@ -1,6 +1,5 @@
 //! Core nakamoto client functionality. Wraps all the other modules under a unified
 //! interface.
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -9,21 +8,20 @@ use std::net;
 use std::net::SocketAddr;
 use std::ops::Range;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::{self, SystemTime};
 
 use crossbeam_channel as chan;
 
-use nakamoto_chain::block::cache::BlockCache;
-use nakamoto_chain::block::store;
+use nakamoto_chain::block::{store, Block};
 use nakamoto_chain::filter;
 use nakamoto_chain::filter::cache::FilterCache;
+use nakamoto_chain::{block::cache::BlockCache, filter::BlockFilter};
 
-use nakamoto_common::block::filter::{BlockFilter, Filters};
+use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::p2p::peer::{Source, Store as _};
 
 pub use nakamoto_common::network::Network;
@@ -35,7 +33,7 @@ use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
 use nakamoto_p2p::protocol::{Command, Protocol};
 
-pub use nakamoto_p2p::event::Event;
+pub use nakamoto_p2p::event::{self, Event};
 pub use nakamoto_p2p::reactor::Reactor;
 
 use crate::error::Error;
@@ -111,84 +109,75 @@ impl Default for Config {
     }
 }
 
-struct BlockSubscribers {
-    subs: HashMap<BlockHash, Vec<chan::Sender<(Block, Height)>>>,
+/// The client's event publisher.
+pub struct Publisher {
+    publishers: Vec<Box<dyn event::Publisher>>,
 }
 
-impl BlockSubscribers {
+impl Publisher {
     fn new() -> Self {
         Self {
-            subs: HashMap::new(),
+            publishers: Vec::new(),
         }
     }
 
-    fn subscribe(&mut self, hash: BlockHash, channel: chan::Sender<(Block, Height)>) {
-        self.subs.entry(hash).or_default().push(channel);
-    }
-
-    fn input(&self, block: Block, height: Height) {
-        let hash = block.block_hash();
-
-        for (h, subs) in self.subs.iter() {
-            if *h == hash {
-                for sub in subs {
-                    // TODO: Can we avoid the extra clone here? Eg. if there's only one sub.
-                    sub.send((block.clone(), height)).unwrap();
-                }
-            }
-        }
+    fn register(mut self, publisher: impl event::Publisher + 'static) -> Self {
+        self.publishers.push(Box::new(publisher));
+        self
     }
 }
 
-type FilterSubscriber = chan::Sender<(BlockFilter, BlockHash, Height)>;
-
-struct FilterSubscribers {
-    subs: HashMap<Range<Height>, Vec<FilterSubscriber>>,
-}
-
-impl FilterSubscribers {
-    fn new() -> Self {
-        Self {
-            subs: HashMap::new(),
-        }
-    }
-
-    fn subscribe(&mut self, range: Range<Height>, channel: FilterSubscriber) {
-        self.subs.entry(range).or_default().push(channel);
-    }
-
-    fn input(&self, filter: BlockFilter, block_hash: BlockHash, height: Height) {
-        for (range, subs) in self.subs.iter() {
-            if range.contains(&height) {
-                for sub in subs {
-                    sub.send((filter.clone(), block_hash, height)).unwrap();
-                }
-            }
+impl event::Publisher for Publisher {
+    fn publish(&self, e: Event) {
+        for p in self.publishers.iter() {
+            p.publish(e.clone());
         }
     }
 }
 
 /// A light-client process.
-pub struct Client<R> {
+pub struct Client<R: Reactor<Publisher>> {
     /// Client configuration.
     pub config: Config,
 
     handle: chan::Sender<Command>,
-    events: chan::Receiver<Event>,
-    reactor: R,
+    events: event::Subscriber<Event>,
+    blocks: event::Subscriber<(Block, Height)>,
+    filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
 
-    blocks: Arc<Mutex<BlockSubscribers>>,
-    filters: Arc<Mutex<FilterSubscribers>>,
+    reactor: R,
 }
 
-impl<R: Reactor> Client<R> {
+impl<R: Reactor<Publisher>> Client<R> {
     /// Create a new client.
     pub fn new(config: Config) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
-        let (subscriber, events) = chan::unbounded::<Event>();
-        let reactor = R::new(subscriber, commands)?;
-        let blocks = Arc::new(Mutex::new(BlockSubscribers::new()));
-        let filters = Arc::new(Mutex::new(FilterSubscribers::new()));
+        let (event_pub, events) = event::broadcast(Some);
+        let (blocks_pub, blocks) = event::broadcast(|e| {
+            if let Event::SyncManager(syncmgr::Event::BlockReceived(_, block, height)) = e {
+                return Some((block, height));
+            }
+            None
+        });
+        let (filters_pub, filters) = event::broadcast(|e| {
+            if let Event::SpvManager(spvmgr::Event::FilterReceived {
+                filter,
+                block_hash,
+                height,
+                ..
+            }) = e
+            {
+                return Some((filter, block_hash, height));
+            }
+            None
+        });
+
+        let publisher = Publisher::new()
+            .register(event_pub)
+            .register(blocks_pub)
+            .register(filters_pub);
+
+        let reactor = R::new(publisher, commands)?;
 
         Ok(Self {
             events,
@@ -331,12 +320,6 @@ impl<R: Reactor> Client<R> {
             ..p2p::protocol::Config::default()
         };
 
-        self.reactor.on_event({
-            let blocks = self.blocks;
-            let filters = self.filters;
-
-            move |event| Self::process_event(event, blocks.clone(), filters.clone())
-        });
         self.reactor.run(&listen, move |upstream| {
             Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
         })?;
@@ -371,12 +354,6 @@ impl<R: Reactor> Client<R> {
 
         log::info!("{} peer(s) found..", peers.len());
 
-        self.reactor.on_event({
-            let blocks = self.blocks;
-            let filters = self.filters;
-
-            move |event| Self::process_event(event, blocks.clone(), filters.clone())
-        });
         self.reactor.run(&self.config.listen, |upstream| {
             Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
         })?;
@@ -387,51 +364,27 @@ impl<R: Reactor> Client<R> {
     /// Create a new handle to communicate with the client.
     pub fn handle(&self) -> Handle<R> {
         Handle {
+            events: self.events.clone(),
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
-            events: self.events.clone(),
             timeout: self.config.timeout,
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
         }
     }
-
-    ////////////////////////////////////////////////////////////////////////////
-
-    fn process_event(
-        event: Event,
-        blocks: Arc<Mutex<BlockSubscribers>>,
-        filters: Arc<Mutex<FilterSubscribers>>,
-    ) {
-        match event {
-            Event::SyncManager(syncmgr::Event::BlockReceived(_, block, height)) => {
-                blocks.lock().unwrap().input(block, height);
-            }
-            Event::SpvManager(spvmgr::Event::FilterReceived {
-                filter,
-                block_hash,
-                height,
-                ..
-            }) => {
-                filters.lock().unwrap().input(filter, block_hash, height);
-            }
-            _ => {}
-        }
-    }
 }
 
 /// An instance of [`handle::Handle`] for [`Client`].
-pub struct Handle<R: Reactor> {
+pub struct Handle<R: Reactor<Publisher>> {
     commands: chan::Sender<Command>,
-    events: chan::Receiver<Event>,
+    events: event::Subscriber<Event>,
+    blocks: event::Subscriber<(Block, Height)>,
+    filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
     waker: R::Waker,
     timeout: time::Duration,
-
-    blocks: Arc<Mutex<BlockSubscribers>>,
-    filters: Arc<Mutex<FilterSubscribers>>,
 }
 
-impl<R: Reactor> Handle<R>
+impl<R: Reactor<Publisher>> Handle<R>
 where
     R::Waker: Sync,
 {
@@ -468,7 +421,7 @@ where
     }
 }
 
-impl<R: Reactor> handle::Handle for Handle<R>
+impl<R: Reactor<Publisher>> handle::Handle for Handle<R>
 where
     R::Waker: Sync,
 {
@@ -479,33 +432,28 @@ where
         Ok(receive.recv()?)
     }
 
-    fn get_block(
-        &self,
-        hash: &BlockHash,
-        channel: chan::Sender<(Block, Height)>,
-    ) -> Result<(), handle::Error> {
-        self.blocks.lock().unwrap().subscribe(*hash, channel);
+    fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
         self.command(Command::GetBlock(*hash))?;
 
         Ok(())
     }
 
-    fn get_filters(
-        &self,
-        range: Range<Height>,
-        channel: FilterSubscriber,
-    ) -> Result<(), handle::Error> {
+    fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {
         assert!(
             !range.is_empty(),
             "client::Handle::get_filters: range cannot be empty"
         );
-        self.filters
-            .lock()
-            .unwrap()
-            .subscribe(range.clone(), channel);
         self.command(Command::GetFilters(range))?;
 
         Ok(())
+    }
+
+    fn blocks(&self) -> chan::Receiver<(Block, Height)> {
+        self.blocks.subscribe()
+    }
+
+    fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)> {
+        self.filters.subscribe()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {
@@ -524,27 +472,42 @@ where
     }
 
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, handle::Error> {
+        let events = self.events();
         self.command(Command::Connect(addr))?;
-        self.wait(|e| match e {
-            Event::ConnManager(connmgr::Event::Connected(a, link))
-                if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
-            {
-                Some(link)
-            }
-            _ => None,
-        })
+
+        event::wait(
+            &events,
+            |e| match dbg!(e) {
+                Event::ConnManager(connmgr::Event::Connected(a, link))
+                    if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
+                {
+                    Some(link)
+                }
+                _ => None,
+            },
+            self.timeout,
+        )
+        .map_err(handle::Error::from)
     }
 
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
+        let events = self.events();
+
         self.command(Command::Disconnect(addr))?;
-        self.wait(|e| match e {
-            Event::ConnManager(connmgr::Event::Disconnected(a))
-                if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
-            {
-                Some(())
-            }
-            _ => None,
-        })
+        event::wait(
+            &events,
+            |e| match e {
+                Event::ConnManager(connmgr::Event::Disconnected(a))
+                    if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
+                {
+                    Some(())
+                }
+                _ => None,
+            },
+            self.timeout,
+        )?;
+
+        Ok(())
     }
 
     fn import_headers(
@@ -563,83 +526,80 @@ where
         Ok(())
     }
 
-    /// Subscribe to the event feed, and wait for the given function to return something,
-    /// or timeout if the specified amount of time has elapsed.
-    fn wait<F, T>(&self, mut f: F) -> Result<T, handle::Error>
+    fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
     where
         F: FnMut(Event) -> Option<T>,
     {
-        let start = time::Instant::now();
+        let events = self.events();
+        let result = event::wait(&events, f, self.timeout)?;
 
-        loop {
-            if let Some(timeout) = self.timeout.checked_sub(start.elapsed()) {
-                match self.events.recv_timeout(timeout) {
-                    Ok(event) => {
-                        if let Some(t) = f(event) {
-                            return Ok(t);
-                        }
-                    }
-                    Err(chan::RecvTimeoutError::Disconnected) => {
-                        return Err(handle::Error::Disconnected);
-                    }
-                    Err(chan::RecvTimeoutError::Timeout) => {
-                        // Keep trying until our timeout reaches zero.
-                        continue;
-                    }
-                }
-            } else {
-                return Err(handle::Error::Timeout);
-            }
-        }
+        Ok(result)
     }
 
     fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
-        // Get already connected peers.
-        let mut negotiated = self.get_peers()?;
+        let events = self.events();
+        let mut negotiated = self.get_peers()?; // Get already connected peers.
 
         if negotiated.len() == count {
             return Ok(());
         }
 
-        self.wait(|e| match e {
-            Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
-                negotiated.insert(addr);
+        event::wait(
+            &events,
+            |e| match e {
+                Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
+                    negotiated.insert(addr);
 
-                if negotiated.len() == count {
-                    Some(())
-                } else {
-                    None
+                    if negotiated.len() == count {
+                        Some(())
+                    } else {
+                        None
+                    }
                 }
-            }
-            _ => None,
-        })
+                _ => None,
+            },
+            self.timeout,
+        )?;
+
+        Ok(())
     }
 
     fn wait_for_ready(&self) -> Result<(), handle::Error> {
-        self.wait(|e| match e {
-            Event::SyncManager(syncmgr::Event::Synced(_, _)) => Some(()),
-            _ => None,
-        })
+        let events = self.events();
+        event::wait(
+            &events,
+            |e| match e {
+                Event::SyncManager(syncmgr::Event::Synced(_, _)) => Some(()),
+                _ => None,
+            },
+            self.timeout,
+        )?;
+
+        Ok(())
     }
 
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, handle::Error> {
+        let events = self.events();
+
         match self.get_block_by_height(h)? {
             Some(e) => Ok(e.block_hash()),
-
-            None => {
-                self.wait(|e| match e {
+            None => event::wait(
+                &events,
+                |e| match e {
                     Event::SyncManager(syncmgr::Event::HeadersImported(
                         ImportResult::TipChanged(hash, height, _),
                     )) if height == h => Some(hash),
 
                     _ => None,
-                })
-            }
+                },
+                self.timeout,
+            )
+            .map_err(handle::Error::from),
         }
     }
 
-    fn events(&self) -> &chan::Receiver<Event> {
-        &self.events
+    fn events(&self) -> chan::Receiver<Event> {
+        self.events.subscribe()
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {

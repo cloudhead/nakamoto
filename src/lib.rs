@@ -13,12 +13,12 @@
 //! ```no_run
 //! use std::{net, thread};
 //!
-//! use nakamoto::client::{Client, Config, Network};
+//! use nakamoto::client::{Publisher, Client, Config, Network};
 //! use nakamoto::client::error::Error;
 //! use nakamoto::client::handle::Handle as _;
 //!
 //! /// The network reactor we're going to use.
-//! type Reactor = nakamoto::net::poll::Reactor<net::TcpStream>;
+//! type Reactor = nakamoto::net::poll::Reactor<net::TcpStream, Publisher>;
 //!
 //! /// Run the light-client.
 //! fn main() -> Result<(), Error> {

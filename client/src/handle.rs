@@ -32,6 +32,15 @@ impl From<chan::RecvError> for Error {
     }
 }
 
+impl From<chan::RecvTimeoutError> for Error {
+    fn from(err: chan::RecvTimeoutError) -> Self {
+        match err {
+            chan::RecvTimeoutError::Timeout => Self::Timeout,
+            chan::RecvTimeoutError::Disconnected => Self::Disconnected,
+        }
+    }
+}
+
 impl<T> From<chan::SendError<T>> for Error {
     fn from(_: chan::SendError<T>) -> Self {
         Self::Disconnected
@@ -43,17 +52,13 @@ pub trait Handle: Sized + Send + Sync {
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<(Height, BlockHeader), Error>;
     /// Get a full block from the network.
-    fn get_block(
-        &self,
-        hash: &BlockHash,
-        channel: chan::Sender<(Block, Height)>,
-    ) -> Result<(), Error>;
+    fn get_block(&self, hash: &BlockHash) -> Result<(), Error>;
     /// Get compact filters from the network.
-    fn get_filters(
-        &self,
-        range: Range<Height>,
-        channel: chan::Sender<(BlockFilter, BlockHash, Height)>,
-    ) -> Result<(), Error>;
+    fn get_filters(&self, range: Range<Height>) -> Result<(), Error>;
+    /// Subscribe to blocks received.
+    fn blocks(&self) -> chan::Receiver<(Block, Height)>;
+    /// Subscribe to compact filters received.
+    fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Broadcast a message to all *outbound* peers.
@@ -83,7 +88,7 @@ pub trait Handle: Sized + Send + Sync {
     /// is returned.
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;
     /// Listen on events.
-    fn events(&self) -> &chan::Receiver<Event>;
+    fn events(&self) -> chan::Receiver<Event>;
     /// Shutdown the node process.
     fn shutdown(self) -> Result<(), Error>;
 }

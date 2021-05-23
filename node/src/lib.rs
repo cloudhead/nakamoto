@@ -5,13 +5,13 @@ use std::net;
 use std::path::PathBuf;
 use std::time;
 
-pub use nakamoto_client::client::{Client, Config, Network};
+pub use nakamoto_client::client::{self, Client, Config, Network};
 pub use nakamoto_client::error::Error;
 
 pub mod logger;
 
 /// The network reactor we're going to use.
-type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
 
 /// Run the light-client. Takes an initial list of peers to connect to, a list of listen addresses,
 /// the client root and the Bitcoin network to connect to.
