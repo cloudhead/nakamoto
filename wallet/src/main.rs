@@ -38,6 +38,11 @@ fn main() {
     };
     logger::init(level).expect("initializing logger for the first time");
 
+    if opts.addresses.is_empty() {
+        log::error!("Fatal: at least one address must be specified with `--addresses`");
+        std::process::exit(1);
+    }
+
     if let Err(err) = nakamoto_wallet::run(&opts.connect, opts.addresses, opts.genesis) {
         log::error!("Fatal: {}", err);
         std::process::exit(1);
