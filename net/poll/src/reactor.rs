@@ -205,6 +205,8 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
                                             break;
                                         }
                                     };
+                                    trace!("{}: Accepting peer connection", addr);
+
                                     conn.set_nonblocking(true)?;
 
                                     let local_addr = conn.local_addr()?;
@@ -219,6 +221,8 @@ impl nakamoto_p2p::reactor::Reactor for Reactor<net::TcpStream> {
                                 }
                             },
                             Source::Waker => {
+                                trace!("Woken up by waker ({} command(s))", self.commands.len());
+
                                 for cmd in self.commands.try_iter() {
                                     self.inputs.push_back(Input::Command(cmd));
                                 }

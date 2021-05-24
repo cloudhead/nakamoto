@@ -62,7 +62,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
         match self.raw.read_next::<M>() {
             Ok(msg) => {
-                trace!("{}: (read) {:#?}", self.address, msg);
+                trace!("{}: (read) {:?}", self.address, msg);
 
                 Ok(msg)
             }
@@ -77,7 +77,7 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
         match msg.consensus_encode(&mut buf[..]) {
             Ok(len) => {
-                trace!("{}: (write) {:#?}", self.address, msg);
+                trace!("{}: (write) {:?}", self.address, msg);
 
                 // TODO: Is it possible to get a `WriteZero` here, given
                 // the non-blocking socket?
