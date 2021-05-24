@@ -216,6 +216,9 @@ impl<E: event::Publisher> nakamoto_p2p::reactor::Reactor<E> for Reactor<net::Tcp
                             },
                             Source::Waker => {
                                 trace!("Woken up by waker ({} command(s))", self.commands.len());
+                                debug_assert!(!self.commands.is_empty());
+
+                                popol::Waker::reset(ev.source).ok();
 
                                 for cmd in self.commands.try_iter() {
                                     self.inputs.push_back(Input::Command(cmd));

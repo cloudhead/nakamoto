@@ -390,9 +390,9 @@ dependencies = [
 
 [[package]]
 name = "popol"
-version = "0.4.0"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9cc2432bf292365c81ff3f4cdee30d38c670ecca65698f5693aaf51ec2a5a2d"
+checksum = "2dac9010e6fc2d991bbf3c362433214c28f7f1a82151b6b1de8dd69d27211495"
 dependencies = [
  "libc",
 ]
