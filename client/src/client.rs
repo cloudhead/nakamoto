@@ -477,7 +477,7 @@ where
 
         event::wait(
             &events,
-            |e| match dbg!(e) {
+            |e| match e {
                 Event::ConnManager(connmgr::Event::Connected(a, link))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
