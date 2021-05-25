@@ -275,7 +275,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                 ..
             } = msg;
 
-            let whitelisted = self.config.whitelist.contains(&addr.ip(), &user_agent)
+            let trusted = self.config.whitelist.contains(&addr.ip(), &user_agent)
                 || addrmgr::is_local(&addr.ip());
 
             // Don't support peers with an older protocol than ours, we won't be
@@ -289,10 +289,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             // Peers that don't advertise the `NETWORK` service are not full nodes.
             // It's not so useful for us to connect to them, because they're likely
             // to be less secure.
-            if conn.link.is_outbound()
-                && !services.has(self.config.required_services)
-                && !whitelisted
-            {
+            if conn.link.is_outbound() && !services.has(self.config.required_services) && !trusted {
                 return self
                     .upstream
                     .disconnect(*addr, DisconnectReason::PeerServices(services));
@@ -301,7 +298,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             // have to wait for it to catch up.
             if conn.link.is_outbound()
                 && height.saturating_sub(start_height as Height) > MAX_STALE_HEIGHT_DIFFERENCE
-                && !whitelisted
+                && !trusted
             {
                 return self
                     .upstream

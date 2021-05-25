@@ -717,6 +717,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
         match input {
             Input::Connecting { addr } => {
                 self.addrmgr.peer_attempted(&addr, local_time);
+                self.connmgr.peer_attempted(&addr);
             }
             Input::Connected {
                 addr,

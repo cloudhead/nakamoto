@@ -1,6 +1,6 @@
 //! Peer connection manager.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::net;
 
@@ -82,17 +82,22 @@ pub struct Config {
 
 /// A connected peer.
 #[derive(Debug)]
-struct Peer {
-    /// Remote peer address.
-    address: net::SocketAddr,
-    /// Local peer address.
-    local_address: net::SocketAddr,
-    /// Whether this is an inbound or outbound peer connection.
-    link: Link,
-    /// Services offered.
-    services: ServiceFlags,
-    /// Time connected.
-    time: LocalTime,
+enum Peer {
+    Connecting,
+    Connected {
+        /// Remote peer address.
+        address: net::SocketAddr,
+        /// Local peer address.
+        local_address: net::SocketAddr,
+        /// Whether this is an inbound or outbound peer connection.
+        link: Link,
+        /// Services offered.
+        services: ServiceFlags,
+        /// Time connected.
+        time: LocalTime,
+    },
+    Disconnecting,
+    Disconnected, // TODO: Keep track of when the peer was disconnected, so we can prune.
 }
 
 /// Manages peer connections.
@@ -101,13 +106,7 @@ pub struct ConnectionManager<U, A> {
     /// Configuration.
     pub config: Config,
     /// Set of outbound peers being connected to.
-    connecting: HashSet<PeerId>,
-    /// Set of all connected peers.
-    connected: HashMap<PeerId, Peer>,
-    /// Set of disconnected peers.
-    disconnected: HashSet<PeerId>,
-    /// Set of peers being disconnected.
-    disconnecting: HashSet<PeerId>,
+    peers: HashMap<PeerId, Peer>,
     /// Last time we were idle.
     last_idle: Option<LocalTime>,
     /// Channel to the network.
@@ -120,10 +119,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     /// Create a new connection manager.
     pub fn new(upstream: U, config: Config) -> Self {
         Self {
-            connecting: HashSet::new(),
-            connected: HashMap::new(),
-            disconnected: HashSet::new(),
-            disconnecting: HashSet::new(),
+            peers: HashMap::new(),
             last_idle: None,
             config,
             upstream,
@@ -150,15 +146,31 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
 
     /// Check whether a peer is connected.
     pub fn is_connected(&self, addr: &PeerId) -> bool {
-        self.connected.contains_key(addr) && !self.disconnecting.contains(addr)
+        self.peers
+            .get(addr)
+            .map_or(false, |p| matches!(p, Peer::Connected { .. }))
+    }
+
+    /// Check whether a peer is disconnected.
+    pub fn is_disconnected(&self, addr: &PeerId) -> bool {
+        self.peers
+            .get(addr)
+            .map_or(true, |p| matches!(p, Peer::Disconnected))
+    }
+
+    /// Check whether a peer is connecting.
+    pub fn is_connecting(&self, addr: &PeerId) -> bool {
+        self.peers
+            .get(addr)
+            .map_or(false, |p| matches!(p, Peer::Connecting))
     }
 
     /// Connect to a peer.
     pub fn connect<S: peer::Store>(&mut self, addr: &PeerId) -> bool {
-        if self.connected.contains_key(&addr) || self.connecting.contains(addr) {
+        if !self.is_disconnected(addr) {
             return false;
         }
-        self.connecting.insert(*addr);
+        self.peers.insert(*addr, Peer::Connecting);
         self.upstream.connect(*addr, CONNECTION_TIMEOUT);
 
         true
@@ -167,12 +179,16 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     /// Disconnect from a peer.
     pub fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
         if self.is_connected(&addr) {
-            debug_assert!(!self.disconnected.contains(&addr));
             self._disconnect(addr, reason);
         }
     }
 
-    /// Call when a peer connected.
+    /// Called when a peer is being connected to.
+    pub fn peer_attempted(&mut self, addr: &net::SocketAddr) {
+        debug_assert!(self.is_connecting(addr));
+    }
+
+    /// Called when a peer connected.
     pub fn peer_connected(
         &mut self,
         address: net::SocketAddr,
@@ -180,21 +196,20 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         link: Link,
         time: LocalTime,
     ) {
-        debug_assert!(!self.connected.contains_key(&address));
+        debug_assert!(!self.is_connected(&address));
 
         Events::event(&self.upstream, Event::Connected(address, link));
 
         match link {
             Link::Inbound if self.inbound_peers().count() >= self.config.max_inbound_peers => {
+                // TODO: Test this branch.
                 // Don't allow inbound connections beyond the configured limit.
                 self._disconnect(address, DisconnectReason::ConnectionLimit);
             }
             _ => {
-                self.disconnected.remove(&address);
-                self.connecting.remove(&address);
-                self.connected.insert(
+                self.peers.insert(
                     address,
-                    Peer {
+                    Peer::Connected {
                         address,
                         local_address,
                         services: ServiceFlags::NONE,
@@ -207,31 +222,33 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Call when a peer negotiated.
-    pub fn peer_negotiated(&mut self, address: net::SocketAddr, services: ServiceFlags) {
-        let peer = self.connected.get_mut(&address).expect(
-            "ConnectionManager::peer_negotiated: negotiated peers should be connected first",
-        );
-        peer.services = services;
+    pub fn peer_negotiated(&mut self, address: net::SocketAddr, flags: ServiceFlags) {
+        if let Some(Peer::Connected {
+            ref mut services, ..
+        }) = self.peers.get_mut(&address)
+        {
+            *services = flags;
+        } else {
+            panic!(
+                "ConnectionManager::peer_negotiated: negotiated peers should be connected first"
+            );
+        }
     }
 
     /// Call when a peer disconnected.
     pub fn peer_disconnected<S: peer::Store>(&mut self, addr: &net::SocketAddr, addrs: &A) {
-        debug_assert!(self.connected.contains_key(&addr));
-        debug_assert!(!self.disconnected.contains(&addr));
+        debug_assert!(self.peers.contains_key(addr));
+        debug_assert!(!self.is_disconnected(&addr));
 
         Events::event(&self.upstream, Event::Disconnected(*addr));
 
-        self.disconnecting.remove(addr);
-        self.disconnected.insert(*addr);
-
-        if let Some(peer) = self.connected.remove(&addr) {
+        let previous = self.peers.insert(*addr, Peer::Disconnected);
+        if let Some(Peer::Connected { link, .. }) = previous {
             // If an outbound peer disconnected, we should make sure to maintain
             // our target outbound connection count.
-            if peer.link.is_outbound() {
+            if link.is_outbound() {
                 self.maintain_connections::<S>(addrs);
             }
-        } else {
-            self.connecting.remove(&addr);
         }
     }
 
@@ -246,23 +263,30 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
 
     /// Returns outbound peer addresses.
     pub fn outbound_peers(&self) -> impl Iterator<Item = &PeerId> {
-        self.connected
+        self.peers
             .iter()
-            .filter(|(_, p)| p.link.is_outbound())
+            .filter(|(_, p)| matches!(p, Peer::Connected { link, .. } if link.is_outbound()))
             .map(|(addr, _)| addr)
     }
 
     /// Returns inbound peer addresses.
     pub fn inbound_peers(&self) -> impl Iterator<Item = &PeerId> {
-        self.connected
+        self.peers
             .iter()
-            .filter(|(_, p)| p.link.is_inbound())
+            .filter(|(_, p)| matches!(p, Peer::Connected { link, .. } if link.is_inbound()))
             .map(|(addr, _)| addr)
     }
 
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections<S: peer::Store>(&mut self, addrs: &A) {
-        while self.outbound().count() + self.connecting.len() < self.config.target_outbound_peers {
+        while self.outbound().count()
+            + self
+                .peers
+                .values()
+                .filter(|p| matches!(p, Peer::Connecting))
+                .count()
+            < self.config.target_outbound_peers
+        {
             // Prefer addresses with the preferred services.
             let result = addrs
                 .sample(self.config.preferred_services)
@@ -273,7 +297,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
                 if let Ok(sockaddr) = addr.socket_addr() {
                     // TODO: Remove this assertion once address manager no longer cares about
                     // connections.
-                    debug_assert!(!self.connected.contains_key(&sockaddr));
+                    debug_assert!(!self.is_connected(&sockaddr));
 
                     if self.connect::<S>(&sockaddr) {
                         self.upstream.event(Event::Connecting(sockaddr, source));
@@ -291,12 +315,14 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
 
     /// Get outbound peers.
     fn outbound(&self) -> impl Iterator<Item = &Peer> + Clone {
-        self.connected.values().filter(|p| p.link.is_outbound())
+        self.peers
+            .values()
+            .filter(|p| matches!(p, Peer::Connected { link, .. } if link.is_outbound()))
     }
 
     /// Disconnect a peer (internal).
     fn _disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
-        self.disconnecting.insert(addr);
+        self.peers.insert(addr, Peer::Disconnecting);
         self.upstream.disconnect(addr, reason);
     }
 }

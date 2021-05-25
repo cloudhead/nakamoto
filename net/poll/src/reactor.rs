@@ -390,6 +390,11 @@ impl<E: event::Publisher> Reactor<net::TcpStream, E> {
         let src = self.sources.get_mut(source).unwrap();
         let socket = self.peers.get_mut(&addr).unwrap();
 
+        // "A file descriptor for a socket that is connecting asynchronously shall indicate
+        // that it is ready for writing, once a connection has been established."
+        //
+        // Since we perform a non-blocking connect, we're only really connected once the socket
+        // is writable.
         if self.connecting.remove(addr) {
             let local_addr = socket.local_address()?;
 
