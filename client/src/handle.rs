@@ -4,6 +4,7 @@ use std::net;
 use std::ops::Range;
 
 use crossbeam_channel as chan;
+use nakamoto_common::network::Service;
 use thiserror::Error;
 
 use nakamoto_common::block::filter::BlockFilter;
@@ -81,7 +82,7 @@ pub trait Handle: Sized + Send + Sync {
     /// Wait for the given predicate to be fulfilled.
     fn wait<F: FnMut(Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected.
-    fn wait_for_peers(&self, count: usize) -> Result<(), Error>;
+    fn wait_for_peers(&self, count: usize, services: Service) -> Result<(), Error>;
     /// Wait for the node to be ready and in sync with the blockchain.
     fn wait_for_ready(&self) -> Result<(), Error>;
     /// Wait for the node's active chain to reach a certain height. The hash at that height

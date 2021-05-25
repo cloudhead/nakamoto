@@ -22,6 +22,7 @@ use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::network::Service;
 use nakamoto_common::p2p::peer::{Source, Store as _};
 
 pub use nakamoto_common::network::Network;
@@ -103,7 +104,7 @@ impl Default for Config {
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
             target_outbound_peers: p2p::protocol::connmgr::TARGET_OUTBOUND_PEERS,
             max_inbound_peers: p2p::protocol::connmgr::MAX_INBOUND_PEERS,
-            services: ServiceFlags::NONE,
+            services: ServiceFlags::NETWORK,
             name: "self",
         }
     }
@@ -394,9 +395,9 @@ where
     }
 
     /// Get connected peers.
-    pub fn get_peers(&self) -> Result<HashSet<SocketAddr>, handle::Error> {
+    pub fn get_peers(&self, services: Service) -> Result<HashSet<SocketAddr>, handle::Error> {
         let (sender, recvr) = chan::bounded(1);
-        self._command(Command::GetPeers(sender))?;
+        self._command(Command::GetPeers(services, sender))?;
 
         Ok(recvr.recv()?)
     }
@@ -536,9 +537,13 @@ where
         Ok(result)
     }
 
-    fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
+    fn wait_for_peers(
+        &self,
+        count: usize,
+        supported_services: Service,
+    ) -> Result<(), handle::Error> {
         let events = self.events();
-        let mut negotiated = self.get_peers()?; // Get already connected peers.
+        let mut negotiated = self.get_peers(supported_services)?; // Get already connected peers.
 
         if negotiated.len() == count {
             return Ok(());
@@ -547,8 +552,10 @@ where
         event::wait(
             &events,
             |e| match e {
-                Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
-                    negotiated.insert(addr);
+                Event::PeerManager(peermgr::Event::PeerNegotiated { addr, services }) => {
+                    if services == supported_services.into() {
+                        negotiated.insert(addr);
+                    }
 
                     if negotiated.len() == count {
                         Some(())
