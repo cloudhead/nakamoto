@@ -247,7 +247,7 @@ impl Peer<TestProtocol> {
                 matches!(
                     o,
                     Out::Event(
-                        Event::PeerManager(peermgr::Event::PeerNegotiated { addr })
+                        Event::PeerManager(peermgr::Event::PeerNegotiated { addr, services })
                     ) if addr == &remote.addr
                 )
             })

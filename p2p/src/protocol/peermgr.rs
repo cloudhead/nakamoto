@@ -55,6 +55,8 @@ pub enum Event {
     PeerNegotiated {
         /// The peer's id.
         addr: PeerId,
+        /// Services by negotiated peer
+        services: ServiceFlags,
     },
 }
 
@@ -66,7 +68,11 @@ impl std::fmt::Display for Event {
                 "{}: Peer version = {}, height = {}, agent = {}, services = {}, timestamp = {}",
                 addr, msg.version, msg.start_height, msg.user_agent, msg.services, msg.timestamp
             ),
-            Self::PeerNegotiated { addr } => write!(fmt, "{}: Peer negotiated..", addr),
+            Self::PeerNegotiated { addr, services } => write!(
+                fmt,
+                "{}: Peer negotiated with services {}..",
+                addr, services
+            ),
         }
     }
 }
@@ -356,7 +362,10 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
     pub fn received_verack(&mut self, addr: &PeerId, local_time: LocalTime) -> Option<&Peer> {
         if let Some(peer) = self.peers.get_mut(addr) {
             if let PeerState::AwaitingVerack { .. } = peer.state {
-                self.upstream.event(Event::PeerNegotiated { addr: *addr });
+                self.upstream.event(Event::PeerNegotiated {
+                    addr: *addr,
+                    services: peer.services,
+                });
 
                 peer.state = PeerState::Negotiated { since: local_time };
 
