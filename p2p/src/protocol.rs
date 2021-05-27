@@ -88,7 +88,7 @@ pub enum Command {
     /// Get block header at height.
     GetBlockByHeight(Height, chan::Sender<Option<BlockHeader>>),
     /// Get connected peers.
-    GetPeers(chan::Sender<HashSet<SocketAddr>>),
+    GetPeers(ServiceFlags, chan::Sender<HashSet<SocketAddr>>),
     /// Get the tip of the active chain.
     GetTip(chan::Sender<(Height, BlockHeader)>),
     /// Get a block from the active chain.
@@ -758,13 +758,14 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
 
                     reply.send(header).ok();
                 }
-                Command::GetPeers(reply) => {
+                Command::GetPeers(services, reply) => {
                     debug!(target: self.target, "Received command: GetPeers");
 
                     let peers = self
                         .peermgr
                         .peers()
                         .filter(|f| f.is_negotiated())
+                        .filter(|f| f.services.has(services))
                         .map(|f| f.address())
                         .collect::<HashSet<SocketAddr>>();
 

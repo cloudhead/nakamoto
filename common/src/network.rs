@@ -3,11 +3,36 @@
 use bitcoin::blockdata::block::{Block, BlockHeader};
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::network::constants::ServiceFlags;
 use bitcoin_hashes::hex::FromHex;
 
 use bitcoin_hashes::sha256d;
 
 use crate::block::Height;
+
+/// Peer services supported by nakamoto.
+#[derive(Debug, Copy, Clone)]
+pub enum Services {
+    /// Peers with compact filter support
+    All,
+    /// Peers with only block support.
+    Chain,
+}
+
+impl From<Services> for ServiceFlags {
+    fn from(value: Services) -> Self {
+        match value {
+            Services::All => Self::COMPACT_FILTERS | Self::NETWORK,
+            Services::Chain => Self::NETWORK,
+        }
+    }
+}
+
+impl Default for Services {
+    fn default() -> Self {
+        Services::All
+    }
+}
 
 /// Bitcoin peer network.
 #[derive(Debug, Copy, Clone)]

@@ -247,8 +247,8 @@ impl Peer<TestProtocol> {
                 matches!(
                     o,
                     Out::Event(
-                        Event::PeerManager(peermgr::Event::PeerNegotiated { addr })
-                    ) if addr == &remote.addr
+                        Event::PeerManager(peermgr::Event::PeerNegotiated { addr, services })
+                    ) if addr == &remote.addr && services.has(ServiceFlags::NETWORK)
                 )
             })
             .expect("peer handshake is successful");

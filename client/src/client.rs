@@ -394,9 +394,12 @@ where
     }
 
     /// Get connected peers.
-    pub fn get_peers(&self) -> Result<HashSet<SocketAddr>, handle::Error> {
+    pub fn get_peers(
+        &self,
+        services: impl Into<ServiceFlags>,
+    ) -> Result<HashSet<SocketAddr>, handle::Error> {
         let (sender, recvr) = chan::bounded(1);
-        self._command(Command::GetPeers(sender))?;
+        self._command(Command::GetPeers(services.into(), sender))?;
 
         Ok(recvr.recv()?)
     }
@@ -536,9 +539,15 @@ where
         Ok(result)
     }
 
-    fn wait_for_peers(&self, count: usize) -> Result<(), handle::Error> {
+    fn wait_for_peers(
+        &self,
+        count: usize,
+        required_services: impl Into<ServiceFlags>,
+    ) -> Result<(), handle::Error> {
         let events = self.events();
-        let mut negotiated = self.get_peers()?; // Get already connected peers.
+        let required_services = required_services.into();
+
+        let mut negotiated = self.get_peers(required_services)?; // Get already connected peers.
 
         if negotiated.len() == count {
             return Ok(());
@@ -547,8 +556,10 @@ where
         event::wait(
             &events,
             |e| match e {
-                Event::PeerManager(peermgr::Event::PeerNegotiated { addr }) => {
-                    negotiated.insert(addr);
+                Event::PeerManager(peermgr::Event::PeerNegotiated { addr, services }) => {
+                    if services.has(required_services) {
+                        negotiated.insert(addr);
+                    }
 
                     if negotiated.len() == count {
                         Some(())

@@ -15,6 +15,7 @@ use nakamoto_client::handle::Handle;
 use nakamoto_client::Network;
 use nakamoto_client::{client, Client, Config};
 use nakamoto_common::block::Height;
+use nakamoto_common::network::Services;
 
 /// Re-scan parameters.
 pub struct Rescan {
@@ -59,7 +60,7 @@ impl<H: Handle> Wallet<H> {
 
         log::info!("Waiting for peers..");
 
-        self.client.wait_for_peers(1)?;
+        self.client.wait_for_peers(1, Services::All)?;
         self.client.wait_for_ready()?;
 
         let (height, _) = self.client.get_tip()?;
