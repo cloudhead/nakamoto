@@ -418,6 +418,26 @@ fn test_handshake_initial_messages() {
 }
 
 #[test]
+fn test_connection_error() {
+    let network = Network::Mainnet;
+    let rng = fastrand::Rng::new();
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
+
+    peer.step(Input::Command(Command::Connect(remote.addr)));
+    peer.upstream
+        .try_iter()
+        .find(|o| matches!(o, Out::Connect(addr, _) if *addr == remote.addr))
+        .expect("Alice should try to connect to remote");
+    peer.step(Input::Connecting { addr: remote.addr });
+    // Make sure we can handle a disconnection before an established connection.
+    peer.step(Input::Disconnected(
+        remote.addr,
+        DisconnectReason::ConnectionError(String::from("oops")),
+    ));
+}
+
+#[test]
 fn test_getaddr() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
