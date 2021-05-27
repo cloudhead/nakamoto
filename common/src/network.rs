@@ -12,25 +12,25 @@ use crate::block::Height;
 
 /// Peer services supported by nakamoto.
 #[derive(Debug, Copy, Clone)]
-pub enum Service {
+pub enum Services {
     /// Peers with compact filter support
-    Filters,
+    All,
     /// Peers with only block support.
-    Blocks,
+    Chain,
 }
 
-impl From<Service> for ServiceFlags {
-    fn from(value: Service) -> Self {
+impl From<Services> for ServiceFlags {
+    fn from(value: Services) -> Self {
         match value {
-            Service::Filters => Self::COMPACT_FILTERS,
-            _ => Self::NETWORK,
+            Services::All => Self::COMPACT_FILTERS | Self::NETWORK,
+            Services::Chain => Self::NETWORK,
         }
     }
 }
 
-impl Default for Service {
+impl Default for Services {
     fn default() -> Self {
-        Service::Filters
+        Services::All
     }
 }
 

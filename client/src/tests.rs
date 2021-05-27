@@ -3,11 +3,12 @@ use std::net;
 use std::thread;
 use std::time;
 
+use bitcoin::network::constants::ServiceFlags;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_chain::filter::cache::FilterCache;
 use nakamoto_common::block::Height;
-use nakamoto_common::network::Service;
+use nakamoto_common::network::Services;
 use nakamoto_p2p::protocol::syncmgr;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
@@ -95,7 +96,7 @@ fn test_full_sync() {
     // Ensure all peers are connected to misha,
     // so that misha can send effectively send blocks to
     // all peers on time.
-    handle.wait_for_peers(2, Service::Blocks).unwrap();
+    handle.wait_for_peers(2, Services::Chain).unwrap();
 
     handle
         .import_headers(headers)
@@ -115,12 +116,19 @@ fn test_full_sync() {
 fn test_wait_for_peers() {
     logger::init(log::Level::Debug);
 
-    let cfgs = vec![Config::default(); 5];
+    let cfgs = vec![
+        Config {
+            services: ServiceFlags::NETWORK,
+            ..Default::default()
+        };
+        5
+    ];
+
     let nodes = network(&cfgs).unwrap();
     let (handle, _, _) = nodes.first().unwrap();
 
     handle
-        .wait_for_peers(nodes.len() - 1, Service::Blocks)
+        .wait_for_peers(nodes.len() - 1, Services::Chain)
         .unwrap();
 }
 

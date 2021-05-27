@@ -40,7 +40,7 @@ use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::Transaction;
 use nakamoto_common::block::{BlockHash, Height};
-use nakamoto_common::network::{self, Network, Service};
+use nakamoto_common::network::{self, Network};
 use nakamoto_common::p2p::peer;
 
 /// Peer-to-peer protocol version.
@@ -88,7 +88,7 @@ pub enum Command {
     /// Get block header at height.
     GetBlockByHeight(Height, chan::Sender<Option<BlockHeader>>),
     /// Get connected peers.
-    GetPeers(Service, chan::Sender<HashSet<SocketAddr>>),
+    GetPeers(ServiceFlags, chan::Sender<HashSet<SocketAddr>>),
     /// Get the tip of the active chain.
     GetTip(chan::Sender<(Height, BlockHeader)>),
     /// Get a block from the active chain.
@@ -765,7 +765,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                         .peermgr
                         .peers()
                         .filter(|f| f.is_negotiated())
-                        .filter(|f| f.services.has(services.into()))
+                        .filter(|f| f.services.has(services))
                         .map(|f| f.address())
                         .collect::<HashSet<SocketAddr>>();
 

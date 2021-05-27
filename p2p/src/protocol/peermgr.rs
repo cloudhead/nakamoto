@@ -55,7 +55,7 @@ pub enum Event {
     PeerNegotiated {
         /// The peer's id.
         addr: PeerId,
-        /// Services by negotiated peer
+        /// Services offered by negotiated peer.
         services: ServiceFlags,
     },
 }
