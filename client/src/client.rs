@@ -598,7 +598,7 @@ where
                 &events,
                 |e| match e {
                     Event::SyncManager(syncmgr::Event::HeadersImported(
-                        ImportResult::TipChanged(hash, height, _),
+                        ImportResult::TipChanged(_, hash, height, _),
                     )) if height == h => Some(hash),
 
                     _ => None,

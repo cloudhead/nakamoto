@@ -272,6 +272,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         if hash != best {
             // TODO: Test the reverted blocks.
             Ok(ImportResult::TipChanged(
+                header,
                 hash,
                 self.height(),
                 stale.into_iter().map(|h| h.block_hash()).collect(),
@@ -524,7 +525,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
             self.extend_chain(height, hash, header);
             self.store.put(std::iter::once(header))?;
 
-            Ok(ImportResult::TipChanged(hash, height, vec![]))
+            Ok(ImportResult::TipChanged(header, hash, height, vec![]))
         } else {
             Ok(ImportResult::TipUnchanged)
         }

@@ -123,7 +123,12 @@ impl BlockTree for Cache {
         self.tip = self.chain.last().block_hash();
 
         if tip != self.tip {
-            Ok(ImportResult::TipChanged(self.tip, self.height(), vec![]))
+            Ok(ImportResult::TipChanged(
+                self.chain.last().to_owned(),
+                self.tip,
+                self.height(),
+                vec![],
+            ))
         } else {
             Ok(ImportResult::TipUnchanged)
         }
@@ -137,7 +142,12 @@ impl BlockTree for Cache {
             self.chain.push(header);
             self.tip = hash;
 
-            Ok(ImportResult::TipChanged(self.tip, self.height(), vec![]))
+            Ok(ImportResult::TipChanged(
+                header,
+                self.tip,
+                self.height(),
+                vec![],
+            ))
         } else {
             Ok(ImportResult::TipUnchanged)
         }
