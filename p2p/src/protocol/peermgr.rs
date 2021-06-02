@@ -323,7 +323,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             }
 
             // Call the user-provided version hook and disconnect if asked.
-            if let Err(reason) = self.hooks.on_version(*addr, msg) {
+            if let Err(reason) = (*self.hooks.on_version)(*addr, msg) {
                 return self
                     .upstream
                     .disconnect(*addr, DisconnectReason::Other(reason));

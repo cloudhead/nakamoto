@@ -26,7 +26,7 @@ use crate::event::Event;
 
 use std::fmt::{self, Debug};
 use std::net;
-use std::ops::{Deref, Range};
+use std::ops::Range;
 use std::sync::Arc;
 use std::{collections::HashSet, net::SocketAddr};
 
@@ -270,32 +270,18 @@ mod message {
     }
 }
 
-/// Holds an object that implements [`Listener`].
+/// Holds functions that are used to hook into or alter protocol behavior.
 #[derive(Clone)]
 pub struct Hooks {
-    listener: Arc<dyn Listener>,
+    /// Called when a `version` message is received.
+    /// If an error is returned, the peer is dropped, and the error is logged.
+    pub on_version: Arc<dyn Fn(PeerId, VersionMessage) -> Result<(), &'static str> + Send + Sync>,
 }
 
 impl Default for Hooks {
     fn default() -> Self {
         Self {
-            listener: Arc::new(()),
-        }
-    }
-}
-
-impl Deref for Hooks {
-    type Target = Arc<dyn Listener>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.listener
-    }
-}
-
-impl<T: Listener + 'static> From<T> for Hooks {
-    fn from(other: T) -> Self {
-        Self {
-            listener: Arc::new(other),
+            on_version: Arc::new(|_, _| Ok(())),
         }
     }
 }

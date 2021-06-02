@@ -18,7 +18,7 @@ use nakamoto_common::p2p::peer::Source;
 use nakamoto_test::logger;
 use nakamoto_test::BITCOIN_HEADERS;
 
-use crate::protocol::{self, connmgr, pingmgr};
+use crate::protocol::{connmgr, pingmgr};
 
 fn payload(o: Out) -> Option<(net::SocketAddr, NetworkMessage)> {
     match o {
@@ -367,23 +367,17 @@ fn test_handshake_verack_timeout() {
 
 #[test]
 fn test_handshake_version_hook() {
-    struct Hooks;
-
-    impl protocol::Listener for Hooks {
-        fn on_version(&self, _peer: PeerId, version: VersionMessage) -> Result<(), &'static str> {
-            if version.user_agent.contains("craig") {
-                return Err("craig is not satoshi");
-            }
-            Ok(())
-        }
-    }
-
     let network = Network::Mainnet;
     let rng = fastrand::Rng::new();
-    let cfg = Config {
-        hooks: Hooks.into(),
-        ..Config::default()
-    };
+
+    let mut cfg = Config::default();
+    cfg.hooks.on_version = Arc::new(|_, version: VersionMessage| {
+        if version.user_agent.contains("craig") {
+            return Err("craig is not satoshi");
+        }
+        Ok(())
+    });
+
     let mut peer = Peer::config([48, 48, 48, 48], vec![], vec![], cfg, rng);
     let craig = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
     let satoshi = PeerDummy::new([131, 31, 11, 66], network, 144, ServiceFlags::NETWORK);
