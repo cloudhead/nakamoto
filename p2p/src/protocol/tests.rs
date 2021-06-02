@@ -18,7 +18,7 @@ use nakamoto_common::p2p::peer::Source;
 use nakamoto_test::logger;
 use nakamoto_test::BITCOIN_HEADERS;
 
-use crate::protocol::{connmgr, pingmgr};
+use crate::protocol::{self, connmgr, pingmgr};
 
 fn payload(o: Out) -> Option<(net::SocketAddr, NetworkMessage)> {
     match o {
@@ -363,6 +363,71 @@ fn test_handshake_verack_timeout() {
             DisconnectReason::PeerTimeout("verack"),
         ));
     }
+}
+
+#[test]
+fn test_handshake_version_hook() {
+    struct Hooks;
+
+    impl protocol::Listener for Hooks {
+        fn on_version(&self, _peer: PeerId, version: VersionMessage) -> Result<(), &'static str> {
+            if version.user_agent.contains("craig") {
+                return Err("craig is not satoshi");
+            }
+            Ok(())
+        }
+    }
+
+    let network = Network::Mainnet;
+    let rng = fastrand::Rng::new();
+    let cfg = Config {
+        hooks: Hooks.into(),
+        ..Config::default()
+    };
+    let mut peer = Peer::config([48, 48, 48, 48], vec![], vec![], cfg, rng);
+    let craig = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
+    let satoshi = PeerDummy::new([131, 31, 11, 66], network, 144, ServiceFlags::NETWORK);
+
+    peer.step(Input::Connected {
+        addr: craig.addr,
+        local_addr: peer.addr,
+        link: Link::Inbound,
+    });
+    peer.step(Input::Received(
+        craig.addr,
+        RawNetworkMessage {
+            magic: network.magic(),
+            payload: NetworkMessage::Version(VersionMessage {
+                user_agent: "/craig:0.1.0/".to_owned(),
+                ..craig.version(peer.addr, 0)
+            }),
+        },
+    ));
+    peer.upstream
+        .try_iter()
+        .find(|o| matches!(o, Out::Disconnect(a, DisconnectReason::Other("craig is not satoshi")) if *a == craig.addr))
+        .expect("peer should disconnect when the 'on_version' hook returns an error");
+
+    peer.step(Input::Connected {
+        addr: satoshi.addr,
+        local_addr: peer.addr,
+        link: Link::Inbound,
+    });
+    peer.step(Input::Received(
+        satoshi.addr,
+        RawNetworkMessage {
+            magic: network.magic(),
+            payload: NetworkMessage::Version(VersionMessage {
+                user_agent: "satoshi".to_owned(),
+                ..satoshi.version(peer.addr, 0)
+            }),
+        },
+    ));
+    peer.upstream
+        .try_iter()
+        .filter_map(payload)
+        .find(|m| matches!(m, (a, NetworkMessage::Verack) if *a == satoshi.addr))
+        .expect("peer should send a 'verack' message back");
 }
 
 #[test]

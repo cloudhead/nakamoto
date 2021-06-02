@@ -13,7 +13,7 @@ use crate::block::Height;
 /// Peer services supported by nakamoto.
 #[derive(Debug, Copy, Clone)]
 pub enum Services {
-    /// Peers with compact filter support
+    /// Peers with compact filter support.
     All,
     /// Peers with only block support.
     Chain,

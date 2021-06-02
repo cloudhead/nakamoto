@@ -29,7 +29,7 @@ pub use nakamoto_common::network::Network;
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
-use nakamoto_p2p::protocol::Link;
+use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
 use nakamoto_p2p::protocol::{Command, Protocol};
 
@@ -61,6 +61,8 @@ pub struct Config {
     pub name: &'static str,
     /// Services offered by this node.
     pub services: ServiceFlags,
+    /// Protocol hooks.
+    pub hooks: protocol::Hooks,
 }
 
 impl Config {
@@ -105,6 +107,7 @@ impl Default for Config {
             max_inbound_peers: p2p::protocol::connmgr::MAX_INBOUND_PEERS,
             services: ServiceFlags::NONE,
             name: "self",
+            hooks: protocol::Hooks::default(),
         }
     }
 }
@@ -317,6 +320,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             target_outbound_peers: self.config.target_outbound_peers,
             max_inbound_peers: self.config.max_inbound_peers,
             services: self.config.services,
+            hooks: self.config.hooks,
             ..p2p::protocol::Config::default()
         };
 
@@ -337,6 +341,7 @@ impl<R: Reactor<Publisher>> Client<R> {
     ) -> Result<(), Error> {
         let cfg = p2p::protocol::Config {
             services: self.config.services,
+            hooks: self.config.hooks,
             ..p2p::protocol::Config::from(
                 self.config.name,
                 self.config.network,

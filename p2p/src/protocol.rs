@@ -26,7 +26,8 @@ use crate::event::Event;
 
 use std::fmt::{self, Debug};
 use std::net;
-use std::ops::Range;
+use std::ops::{Deref, Range};
+use std::sync::Arc;
 use std::{collections::HashSet, net::SocketAddr};
 
 use bitcoin::blockdata::block::BlockHeader;
@@ -34,6 +35,7 @@ use bitcoin::consensus::params::Params;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
+use bitcoin::network::message_network::VersionMessage;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
@@ -193,6 +195,8 @@ pub enum DisconnectReason {
     ConnectionError(String),
     /// Peer was forced to disconnect by external command.
     Command,
+    /// Peer was disconnected for another reason.
+    Other(&'static str),
 }
 
 impl DisconnectReason {
@@ -219,9 +223,24 @@ impl fmt::Display for DisconnectReason {
             Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
             Self::ConnectionError(err) => write!(f, "connection error: {}", err),
             Self::Command => write!(f, "received external command"),
+            Self::Other(reason) => write!(f, "{}", reason),
         }
     }
 }
+
+/// Protocol event and message listener.
+///
+/// User-provided functions that can be used to listen on or alter the behavior of the protocol.
+pub trait Listener: Send + Sync {
+    /// Called when a `version` message is received. If an error is returned, the peer is dropped,
+    /// and the error is logged.
+    fn on_version(&self, _peer: PeerId, _version: VersionMessage) -> Result<(), &'static str> {
+        Ok(())
+    }
+}
+
+/// Allows `()` to be used as a transparent listener.
+impl Listener for () {}
 
 mod message {
     use super::*;
@@ -248,6 +267,42 @@ mod message {
                 magic: self.magic,
             }
         }
+    }
+}
+
+/// Holds an object that implements [`Listener`].
+#[derive(Clone)]
+pub struct Hooks {
+    listener: Arc<dyn Listener>,
+}
+
+impl Default for Hooks {
+    fn default() -> Self {
+        Self {
+            listener: Arc::new(()),
+        }
+    }
+}
+
+impl Deref for Hooks {
+    type Target = Arc<dyn Listener>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.listener
+    }
+}
+
+impl<T: Listener + 'static> From<T> for Hooks {
+    fn from(other: T) -> Self {
+        Self {
+            listener: Arc::new(other),
+        }
+    }
+}
+
+impl fmt::Debug for Hooks {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Hooks").finish()
     }
 }
 
@@ -297,6 +352,8 @@ pub struct Protocol<T, F, P> {
     rng: fastrand::Rng,
     /// Outbound channel. Used to communicate protocol events with a reactor.
     upstream: Upstream,
+    /// Protocol event hooks.
+    hooks: Hooks,
 }
 
 /// Protocol configuration.
@@ -326,6 +383,8 @@ pub struct Config {
     pub ping_timeout: LocalDuration,
     /// Log target.
     pub target: &'static str,
+    /// Protocol event hooks.
+    pub hooks: Hooks,
 }
 
 impl Default for Config {
@@ -343,6 +402,7 @@ impl Default for Config {
             ping_timeout: pingmgr::PING_TIMEOUT,
             user_agent: USER_AGENT,
             target: "self",
+            hooks: Hooks::default(),
         }
     }
 }
@@ -419,6 +479,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             required_services,
             target,
             params,
+            hooks,
         } = config;
 
         let upstream = Upstream::new(network, protocol_version, target, upstream);
@@ -459,6 +520,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 user_agent,
             },
             rng.clone(),
+            hooks.clone(),
             upstream.clone(),
         );
         let addrmgr = AddressManager::new(
@@ -485,6 +547,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             last_tick: LocalTime::default(),
             rng,
             upstream,
+            hooks,
         }
     }
 

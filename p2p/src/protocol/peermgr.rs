@@ -30,7 +30,7 @@ use super::{
     channel::{Disconnect, SetTimeout},
     DisconnectReason,
 };
-use super::{Link, PeerId, Whitelist};
+use super::{Hooks, Link, PeerId, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
@@ -178,11 +178,12 @@ pub struct PeerManager<U> {
     peers: HashMap<PeerId, Peer>,
     upstream: U,
     rng: fastrand::Rng,
+    hooks: Hooks,
 }
 
 impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
     /// Create a new peer manager.
-    pub fn new(config: Config, rng: fastrand::Rng, upstream: U) -> Self {
+    pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, upstream: U) -> Self {
         let connections = HashMap::with_hasher(rng.clone().into());
         let peers = HashMap::with_hasher(rng.clone().into());
 
@@ -192,6 +193,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
             peers,
             upstream,
             rng,
+            hooks,
         }
     }
 
@@ -279,7 +281,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                 // Relay node.
                 relay,
                 ..
-            } = msg;
+            } = msg.clone();
 
             let trusted = self.config.whitelist.contains(&addr.ip(), &user_agent)
                 || addrmgr::is_local(&addr.ip());
@@ -318,6 +320,13 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
                         .upstream
                         .disconnect(*addr, DisconnectReason::SelfConnection);
                 }
+            }
+
+            // Call the user-provided version hook and disconnect if asked.
+            if let Err(reason) = self.hooks.on_version(*addr, msg) {
+                return self
+                    .upstream
+                    .disconnect(*addr, DisconnectReason::Other(reason));
             }
 
             // Record the address this peer has of us.
