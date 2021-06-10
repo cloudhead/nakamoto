@@ -10,7 +10,7 @@ use crate::protocol::{Command, Machine, Out};
 /// Any network reactor that can drive the light-client protocol.
 pub trait Reactor<E: Publisher> {
     /// The type of waker this reactor uses.
-    type Waker: Send;
+    type Waker: Send + Clone;
 
     /// Create a new reactor, initializing it with a publisher for protocol events,
     /// a channel to receive commands, and a context.

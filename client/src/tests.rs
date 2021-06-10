@@ -158,7 +158,7 @@ fn test_multiple_handle_events() {
     let peers = HashMap::new();
 
     let alice = client.handle();
-    let bob = client.handle();
+    let bob = alice.clone();
     let alice_events = alice.events();
     let bob_events = bob.events();
 
