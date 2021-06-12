@@ -415,6 +415,11 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
         }
     }
 
+    /// Whitelist a peer.
+    pub fn whitelist(&mut self, addr: net::SocketAddr) -> bool {
+        self.config.whitelist.addr.insert(addr.ip())
+    }
+
     /// Create a `version` message for this peer.
     pub fn version(
         &self,

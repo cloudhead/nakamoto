@@ -314,8 +314,6 @@ pub struct Protocol<T, F, P> {
     protocol_version: u32,
     /// Consensus parameters.
     params: Params,
-    /// Peer whitelist.
-    whitelist: Whitelist,
     /// Peer address manager.
     addrmgr: AddressManager<P, Upstream>,
     /// Blockchain synchronization manager.
@@ -500,7 +498,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         let peermgr = PeerManager::new(
             peermgr::Config {
                 protocol_version: PROTOCOL_VERSION,
-                whitelist: whitelist.clone(),
+                whitelist,
                 required_services,
                 services,
                 user_agent,
@@ -520,7 +518,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             tree,
             network,
             protocol_version,
-            whitelist,
             target,
             params,
             clock,
@@ -823,7 +820,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                 Command::Connect(addr) => {
                     debug!(target: self.target, "Received command: Connect({})", addr);
 
-                    self.whitelist.addr.insert(addr.ip());
+                    self.peermgr.whitelist(addr);
                     self.connmgr.connect::<P>(&addr);
                 }
                 Command::Disconnect(addr) => {
