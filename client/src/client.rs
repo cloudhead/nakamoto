@@ -389,6 +389,22 @@ pub struct Handle<R: Reactor<Publisher>> {
     timeout: time::Duration,
 }
 
+impl<R: Reactor<Publisher>> Clone for Handle<R>
+where
+    R::Waker: Sync,
+{
+    fn clone(&self) -> Self {
+        Self {
+            blocks: self.blocks.clone(),
+            commands: self.commands.clone(),
+            events: self.events.clone(),
+            filters: self.filters.clone(),
+            timeout: self.timeout,
+            waker: self.waker.clone(),
+        }
+    }
+}
+
 impl<R: Reactor<Publisher>> Handle<R>
 where
     R::Waker: Sync,
