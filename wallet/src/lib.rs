@@ -65,15 +65,16 @@ impl<H: Handle> Wallet<H> {
 
         let (height, _) = self.client.get_tip()?;
 
-        if options.genesis > height {
+        let range = if options.genesis > height {
             // If the wallet genesis is higher than the current block height, we need to wait
             // until we reach that height.
             log::info!("Waiting for height {}", options.genesis);
 
             self.client.wait_for_height(options.genesis)?;
-        }
-        // TODO: This range will be negative if the above condition is true.
-        let range = options.genesis..height + 1;
+            options.genesis..options.genesis + 1
+        } else {
+            options.genesis..height + 1
+        };
         let count = (range.end - range.start) as usize;
 
         let blocks_recv = self.client.blocks();
