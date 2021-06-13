@@ -72,7 +72,8 @@ impl<H: Handle> Wallet<H> {
 
             self.client.wait_for_height(options.genesis)?;
         }
-        let range = options.genesis..height;
+        // TODO: This range will be negative if the above condition is true.
+        let range = options.genesis..height + 1;
         let count = (range.end - range.start) as usize;
 
         let blocks_recv = self.client.blocks();

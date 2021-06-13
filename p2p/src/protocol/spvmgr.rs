@@ -269,7 +269,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 let peer = *peers.get(ix).unwrap(); // Can't fail.
 
                 // TODO: Return an error instead.
-                let stop_hash = tree.get_block_by_height(r.end).unwrap().block_hash();
+                let stop_hash = tree.get_block_by_height(r.end - 1).unwrap().block_hash();
                 let timeout = self.config.request_timeout;
 
                 self.upstream
