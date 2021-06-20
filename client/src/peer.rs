@@ -83,11 +83,7 @@ impl Store for Cache {
     }
 
     fn insert(&mut self, ip: net::IpAddr, ka: KnownAddress) -> bool {
-        let inserted = <HashMap<_, _> as Store>::insert(&mut self.addrs, ip, ka);
-        if inserted {
-            // TODO: Save to disk.
-        }
-        inserted
+        <HashMap<_, _> as Store>::insert(&mut self.addrs, ip, ka)
     }
 
     fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = (&net::IpAddr, &KnownAddress)> + 'a> {
