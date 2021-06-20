@@ -80,6 +80,32 @@ impl std::fmt::Display for Event {
     }
 }
 
+/// Iterator over addresses.
+pub struct Iter<F>(F);
+
+impl<'a, F> Iterator for Iter<F>
+where
+    F: FnMut() -> Option<(&'a Address, Source)>,
+{
+    type Item = (&'a Address, Source);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        (self.0)()
+    }
+}
+
+impl<P: Store, U> AddressManager<P, U> {
+    /// Check whether we have unused addresses.
+    pub fn is_exhausted(&self) -> bool {
+        for (addr, _) in self.peers.iter() {
+            if !self.connected.contains(addr) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
 /// Address manager configuration.
 #[derive(Debug)]
 pub struct Config {
@@ -113,24 +139,12 @@ pub struct AddressManager<P, U> {
     rng: fastrand::Rng,
 }
 
-impl<P: Store, U> AddressManager<P, U> {
-    /// Iterate over all addresses.
-    pub fn iter(&self) -> impl Iterator<Item = &Address> {
-        self.peers.iter().map(|(_, ka)| &ka.addr)
-    }
-
-    /// Check whether we have unused addresses.
-    pub fn is_exhausted(&self) -> bool {
-        for (addr, _) in self.peers.iter() {
-            if !self.connected.contains(addr) {
-                return false;
-            }
-        }
-        true
-    }
-}
-
 impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
+    /// Iterate over all addresses.
+    pub fn iter(&self, services: ServiceFlags) -> impl Iterator<Item = (&Address, Source)> + '_ {
+        Iter(move || self.sample(services))
+    }
+
     /// Get addresses from peers.
     pub fn get_addresses(&self) {
         for peer in &self.sources {
@@ -140,9 +154,9 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
 
     /// Called when we receive a `getaddr` message.
     pub fn received_getaddr(&mut self, from: &net::SocketAddr) {
-        // TODO: Use `sample` here when it returns an iterator.
         let addrs = self
-            .iter()
+            .iter(ServiceFlags::NONE)
+            .map(|(a, _)| a)
             // Don't send the peer their own address, nor non-TCP addresses.
             .filter(|a| a.socket_addr().map_or(false, |s| &s != from))
             .take(MAX_GETADDR_ADDRESSES)
@@ -437,8 +451,6 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// assert!(safe > adversary * 2, "safe addresses are picked twice more often");
     ///
     /// ```
-    /// TODO: Should return an iterator.
-    ///
     pub fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)> {
         if self.is_empty() {
             return None;

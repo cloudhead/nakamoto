@@ -122,7 +122,6 @@ pub trait BlockTree {
         &'a self,
         range: std::ops::Range<Height>,
     ) -> Box<dyn Iterator<Item = BlockHeader> + 'a> {
-        // TODO: Don't box twice?
         Box::new(
             self.iter()
                 .map(|(_, h)| h)
