@@ -35,6 +35,7 @@ use bitcoin::consensus::params::Params;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
+use bitcoin::network::message_filter::GetCFilters;
 use bitcoin::network::message_network::VersionMessage;
 
 use nakamoto_common::block::filter::Filters;
@@ -237,6 +238,9 @@ pub trait Listener: Send + Sync {
     fn on_version(&self, _peer: PeerId, _version: VersionMessage) -> Result<(), &'static str> {
         Ok(())
     }
+
+    /// Called when a `getcfilters` message is received.
+    fn on_getcfilters(&self, _peer: PeerId, _msg: GetCFilters) {}
 }
 
 /// Allows `()` to be used as a transparent listener.
@@ -276,12 +280,15 @@ pub struct Hooks {
     /// Called when a `version` message is received.
     /// If an error is returned, the peer is dropped, and the error is logged.
     pub on_version: Arc<dyn Fn(PeerId, VersionMessage) -> Result<(), &'static str> + Send + Sync>,
+    /// Called when a `getcfilters` message is received.
+    pub on_getcfilters: Arc<dyn Fn(PeerId, GetCFilters) + Send + Sync>,
 }
 
 impl Default for Hooks {
     fn default() -> Self {
         Self {
             on_version: Arc::new(|_, _| Ok(())),
+            on_getcfilters: Arc::new(|_, _| {}),
         }
     }
 }
@@ -724,7 +731,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
             }
             NetworkMessage::GetCFilters(msg) => {
-                self.spvmgr.received_getcfilters(&addr, msg, &self.tree);
+                (*self.hooks.on_getcfilters)(addr, msg);
             }
             NetworkMessage::Addr(addrs) => {
                 self.addrmgr.received_addr(addr, addrs);

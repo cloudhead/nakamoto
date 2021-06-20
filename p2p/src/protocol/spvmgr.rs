@@ -9,7 +9,7 @@ use nonempty::NonEmpty;
 use thiserror::Error;
 
 use bitcoin::network::constants::ServiceFlags;
-use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
+use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
 
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
@@ -488,20 +488,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         });
 
         Ok(())
-    }
-
-    /// Handle `getcfilters` message.
-    #[allow(clippy::needless_return)]
-    pub fn received_getcfilters<T: BlockTree>(
-        &mut self,
-        _addr: &PeerId,
-        msg: GetCFilters,
-        _tree: &T,
-    ) {
-        if msg.filter_type != 0x0 {
-            return;
-        }
-        // TODO
     }
 
     /// Called when a peer disconnected.
