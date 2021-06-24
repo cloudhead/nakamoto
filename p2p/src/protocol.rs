@@ -10,6 +10,7 @@ pub mod peermgr;
 pub mod pingmgr;
 pub mod spvmgr;
 pub mod syncmgr;
+pub mod txnmgr;
 
 #[cfg(test)]
 mod tests;
@@ -115,7 +116,7 @@ pub enum Command {
     /// Import addresses into the address book.
     ImportAddresses(Vec<Address>),
     /// Submit a transaction to the network.
-    SubmitTransaction(Transaction),
+    SubmitTransaction(Transaction, chan::Receiver<txnmgr::TransactionStatus>),
     /// Shutdown the protocol.
     Shutdown,
 }
@@ -907,7 +908,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                         p.services.has(ServiceFlags::NETWORK)
                     });
                 }
-                Command::SubmitTransaction(tx) => {
+                Command::SubmitTransaction(tx, _recvr) => {
                     debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
                     self.query(NetworkMessage::Tx(tx), |p| p.relay);

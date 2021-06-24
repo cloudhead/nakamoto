@@ -36,6 +36,7 @@ use nakamoto_p2p::protocol::{Command, Protocol};
 
 pub use nakamoto_p2p::event::{self, Event};
 pub use nakamoto_p2p::reactor::Reactor;
+use p2p::protocol::txnmgr::TransactionStatus;
 
 use crate::error::Error;
 use crate::handle;

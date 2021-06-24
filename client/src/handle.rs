@@ -6,6 +6,7 @@ use std::ops::Range;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::Address;
 use crossbeam_channel as chan;
+use nakamoto_p2p::protocol::txnmgr::TransactionStatus;
 use thiserror::Error;
 
 use nakamoto_common::block::filter::BlockFilter;
@@ -73,7 +74,11 @@ pub trait Handle: Sized + Send + Sync {
     /// Disconnect from the designated peer address.
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), Error>;
     /// Submit a transaction to the network.
-    fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
+    fn submit_transaction(
+        &self,
+        tx: Transaction,
+        recv: chan::Receiver<TransactionStatus>,
+    ) -> Result<(), Error>;
     /// Import block headers into the node.
     /// This may cause the node to broadcast header or inventory messages to its peers.
     fn import_headers(
