@@ -1,0 +1,388 @@
+0.2.2
+
+[ ] Timeout retry on getcfheaders
+[ ] Timeout channel
+[ ] Generic timeout/inflight-request handling with timeouts
+  [ ] Maybe this can be handled at the channel level?
+[ ] Coverage test
+[x] connmgr: Use peer status instead of multiple hash maps
+[ ] PeerMap with random selection
+
+Release
+
+[x] Broadcast tx to relay nodes only
+[x] Try to connect to peers with COMPACT_FILTERS support
+[x] Fix handshake & protocol version(s)
+[x] Update agent string
+[x] Update README with BIP158 status and `wallet` crate
+[x] Store addresses on disk
+[x] Non-blocking connect
+[x] Handle `unwrap` on errors from spv manager in `protocol.rs`
+[x] Figure out why we sometimes have an invalid socket
+
+Wallet
+
+[x] BlockTree should be in top level, because it's shared by `spvmgr` and `syncmgr`
+[ ] Test header chain rollback with filter chain
+[x] Don't start filter sync until target outbound peers reached
+[x] Download filters and then discard them?
+[x] Only start syncing filter headers when the blockchain is synced
+[x] Verify filter header chain on startup
+[ ] Support xpub/zpub as scan input
+[ ] Scan a chain for specific TXIDs, outputs, and addresses
+[ ] Get rid of redundant `Error` types, eg. filter::store::Error
+[x] `get_filters` and `get_block` should return results on a channel
+[x] Ability to start scanning from the block height at which BIP32 was standardized (1369267200 secs since epoch)
+[x] Store::heal doesn't need to be mutable
+[x] When a new header is synced, try to sync the filter header immediately
+
+Simulator
+
+[x] Interactive tests should not use the simulator
+[ ] Simulator should be a reactor, and then we can re-use client code
+
+0.3
+
+[ ] SpvManager should check peer height before asking it for filters
+[ ] Handling conflicting filter headers
+  [ ] Download filter headers from multiple peers?
+  [ ] On connect, getcfcheckpt
+  [ ] Find conflict block
+  [ ] Ask for block from random peer (who isn't used for filters)
+  [ ] Ban dishonest peer
+  [ ] Re-download missing headers if necessary
+[ ] Connect to peers even if they don't offer compact filters
+  [ ] Replace peers that don't have compact filters with peers that do (how?)
+  [ ] Connect to NETWORK first, then replace peers with COMPACT_FILTERS peers
+[ ] Test DNS seed that gets connected to, then services is updated and stored
+[ ] Don't start filter header sync until block headers are synced
+[ ] AddressManager shouldn't keep track of who's connected
+  [ ] But it should give addresses that work
+[ ] Popol shouldn't re-register same source
+[ ] Pass discovery into config
+[ ] Check if timeouts are leaking
+[ ] Deal with Tor addresses better
+[ ] Futures-based client API [^1]
+[ ] Networking
+  [ ] Try to reconnect to peer when using `--connect`
+    [ ] When `--connect` and the peer disconnects, try to reconnect
+    [ ] When `--connect` is specified, timeout on startup is an ERROR
+    [ ] Persistent peers (`bool` on Peer)
+      [ ] Retry after disconnect
+    [ ] When connection failed, set timeout to retry with backoff
+  [ ] Relay block headers
+  [ ] Drop high-latency non-diverse peers
+[ ] AddressManager
+  [ ] See about correctly handling local peers
+[ ] Errors should be sent upstream to a dedicated channel
+[ ] Multi-peer sync
+  [ ] Using checkpoints
+  [ ] Estimate blockchain size
+[ ] Code quality
+  [ ] Fix terminology
+    [ ] Orphan vs. stale
+  [ ] https://github.com/cloudhead/nakamoto/pull/1#discussion_r447123264
+  [ ] https://github.com/cloudhead/nakamoto/pull/1#discussion_r447129902
+[ ] C FFI
+[ ] BIP 151 (Encryption) when https://github.com/bitcoin/bitcoin/pull/14032 lands
+[ ] Testing
+  [ ] Test spamming and make sure we don't leak memory
+    [ ] Lots of peers connecting
+    [ ] Lots of cheap forks
+    [ ] Lots of `addr` messages
+[ ] Ban manager
+[ ] IBD
+  [ ] Latency-based peer selection
+[ ] Cache
+  [ ] Delete branches once we reach a checkpoint
+[ ] SyncManager
+  [ ] When we realize we need to sync many headers, pick peer with lowest latency from address book
+  [ ] Use stop-block when fetching single header
+[ ] AddressBook
+  [ ] Store peer latencies
+
+0.2
+
+[ ] Implement "discovery" mode
+  [ ] Static: addresses are supplied statically, and re-tried
+  [ ] DNS: addresses are discovered via DNS if none are stored locally
+[ ] Improve log msgs
+[ ] Only allow inbound connections when there are 8 outbound connections
+[ ] Disable inbound connections by default, have flag to enable
+[ ] Orphan pruning
+[ ] Logs
+  [x] "New (outbound) peer <addr> conntected"
+  [ ] "Syncing to block height <height> from peer <addr>"
+[ ] Banning
+  [ ] Ban Manager
+    [ ] record_evidence
+    [ ] Ban score
+  [ ] Drop peers that are spamming us
+  [ ] Drop peers that give us garbage data
+  [ ] Drop peers that don't adhere to the protocol
+  [x] Disconnect reason
+[x] "tick" method on `Protocol`, to act as clock, or `Event::Tick`?
+[ ] Use locator hashes to detect if we're on a fork
+[ ] Measure memory usage
+[x] AddressManager
+  [x] Mark seeds as `Source::Seed(String)`
+  [x] Persist DNS seed addresses to disk
+    [x] AddressBook as AddrMgr backend
+[x] Sync manager
+  [ ] Knows when there's a fork
+  [x] Knows when we're out of sync
+[ ] Node API
+  [x] get_block
+     [x] Verify block hash
+  [x] get_filters
+     [x] Verify filter hash
+  [x] get_tip
+  [x] sample
+  [x] broadcast
+  [x] disconnect
+  [x] Easy way to wait for message to be returned
+  [ ] Fork detected
+[ ] When header sync is done, disconnect outbound peers with much less work
+[ ] All data-structures should be bounded in size
+  [ ] Don't allow more than a maximum number of addresses
+[ ] Transaction confidence ala bitcoinj
+   [ ] Keep track of your transactions announced by peers
+[x] Separate reactor from rest of p2p crate
+[x] Basic SPV functionality
+  [x] Sync filter header chain
+    [x] Implementation
+  [x] Fetch & verify filters on demand
+[ ] Docs
+  [ ] Explain program *theory*
+  [x] Roadmap
+
+[x] Documentation
+  [x] README
+  [x] Repo structure
+  [x] Design philosophy etc.
+    [x] Why i/o-free protocol
+  [x] Source code
+    [x] Function signatures
+[x] Refactor into `pingmgr`, `syncmgr`, `connmgr`
+[x] Stochastic address manager
+[x] Having high-quality modules for the different aspects of p2p
+  [x] Address manager
+  [x] Sync manager
+  [x] Peer manager
+    [x] Connection manager (sending, connecting, disconnecting)
+[x] Reactor should be a trait
+  [x] Poll reactor should be its own crate
+[x] Get rid of `Protocol` trait
+[x] Separate protocol for handshake vs. syncing
+  [x] Move "ready" peers into their own map with their own type
+  [x] Have separate type for peers undergoing handshake
+[x] Sync
+  [x] Find missing headers
+    [x] Try peers one by one
+      [x] `getheaders` can timeout
+  [x] Detect if we're on a fork
+    [x] Compare tip with peers (3)
+  [x] Deal with stale tip
+[x] Connections
+  [x] Maintain a minimum number of outbound connections
+  [x] Don't allow more than a maximum number of inbound connections (1)
+[x] Addresses
+  [x] Maintain a minimum number of addresses (2)
+[x] Testnet support (4)
+[x] Good testing infrastructure
+[x] Node API
+  [x] More events
+    [x] Blocks reverted / Re-org
+    [x] Peer connected/disconnected
+    [x] Tip stale
+    [x] Connecting (peer target not met)
+  [x] `query` sends `NetworkMessage` to random peer
+  [x] Easy way to broadcast to outbound peers
+[x] Rename top-level crate to `nakamoto`.
+[x] Clock trait
+
+Bugs
+
+[ ] Fix assert when genesis hash is incorrect
+[x] We're sending too many `getheaders` out at the same time, especially due to `inv`
+[x] Difficulty calculation for testnet is wrong
+[x] Timeouts may come for previous AwaitingHeaders even though the peer is responsive
+  [x] Need to keep track of requests
+[x] When you try to connect, but it fails:
+  [x] It should indicate to the protocol that it failed so another address can be tried
+[x] Always at 2/8 peers
+[x] Periodic log info (connected peers, chain height, in-flight requests)
+[x] Different header db for each network
+[x] Better event architecture
+  [x] `Display` for all events to turn them to logs
+  [x] Log listener that can be setup to log
+  [x] Channels instead of event buffers?
+
+All
+
+[x] The Great Reshuffle
+  [x] Move "." into nakamoto-node
+  [x] Create top-level "nakamoto" crate which optionally depends on all
+
+[x] Block import
+  [x] Validation
+    [x] Difficulty
+    [x] PoW
+    [x] Parent hash
+    [x] Timestamp
+      [x] Check past median time
+      [x] At most 2h in the future
+    [x] Checkpoints
+  [x] Orphans
+  [x] Duplicates
+    [x] Ignore blocks we already have
+  [x] Forks
+    [x] Don't accept forks prior to last checkpoint
+    [x] Work calculation (3)
+    [x] Switch to fork/branch (3)
+      [x] Validation
+      [x] Block rollback
+        [x] Add to orphans
+
+[x] API
+  [x] Commands
+    [x] submit_transaction
+    [x] wait_for_peers
+    [x] wait_for_ready
+    [x] shutdown
+    [x] connect
+
+[x] Networking
+  [x] Annotate timeouts with the manager that it supposed to handle the timeout
+  [x] Remove `Input::Idle` if we can replace it with timeouts
+    [x] Remove time input in `step` if possible too
+  [x] Timeouts
+    [x] GetHeaders
+    [x] Version
+    [x] Verack
+    [x] Handshake (inbound)
+    [x] Handshake (outbound)
+  [x] Be less strict when other light clients are *inbound*
+    [x] Inbound connections can be light-nodes
+    [x] Outbound connections should be full-nodes
+  [x] Handle inbound peers
+  [x] Handshake
+    [x] Handle `nonce` in version message
+  [x] Connect to addresses
+  [x] Connect via address book
+  [x] Network adjusted time
+  [x] Decide sync mode on startup
+  [x] Initial block download
+    [x] Single peer
+      [x] Randomized selection
+    [x] Check best block against peers
+  [x] Ongoing sync
+    [x] Broadcast new headers
+    [x] Deal with missing headers
+      [x] Using locator hashes
+      [x] Based on tip staleness
+    [x] Subscribe to headers only
+      [x] Use 'SendHeaders' message
+    [x] Listen to header announcements
+      [x] From multiple peers
+    [x] Try different peer(s) if `getheaders` timeouts
+  [x] Pinging
+    [x] Using nonces
+    [x] Disconnect if no response within 20 minutes
+    [x] Record latency of all peers
+    [x] Record UTC local times of all peers
+    [x] Disconnect idle peers
+  [x] Respond to messages
+    [x] Ping
+    [x] 'GetHeaders' message
+      [x] Handle one locator hash
+      [x] Handle many locator hashes
+  [x] ConnectionManager
+    [x] Maintain a desired number of active connections
+  [x] Peer discovery
+    [x] DNS seeds
+    [x] Address book
+      [x] On disk
+    [x] Peer exchange
+      [x] Send 'GetAddr' message on handshake
+    [x] Address manager
+      [x] Ensure peer diversity
+      [x] Check if we need more addresses
+      [x] Max connected peers (configurable)
+      [x] Handle 'Addr' message
+      [x] Handle 'GetAddr' message
+
+[x] Storage
+  [x] File store
+  [x] Store the longest chain on disk
+  [x] Load the longest chain on startup
+
+Testing
+
+[ ] Move node integration test to `tests/` folder
+[ ] Testing
+  [x] InvalidBlockPoW
+  [x] InvalidBlockTarget
+  [x] BlockMissing
+  [ ] InvalidBlockTimestamp(Less)
+  [ ] InvalidBlockTimestamp(Greater)
+  [x] InvalidBlockHash
+    [x] Forks prior to last checkpoint
+  [x] DuplicateBlock
+  [x] Orphan with not enough PoW for network
+  [x] Difficulty adjustment
+    [x] Against bitcoin vectors
+  [ ] Storage
+    [ ] Saving/loading from storage
+  [ ] Forks
+    [x] Fork selection model (1)
+    [x] Fork selection input generation (2)
+    [x] Fork selection test
+      [x] Model test (4)
+      [x] "Connector block" test
+        [x] Valid branch discovered
+        [x] Invalid branch discovered (eg. bad target)
+      [x] "Back n' forth" test
+      [x] Equal work/difficulty test
+      [ ] Forks across difficulty changes
+      [ ] Forks across checkpoints
+      [ ] Chain with more height but less work test
+  [ ] BIP 157
+    [ ] Rollback of block header chain
+    [ ] Filter sync
+    [ ] Filter & header verification
+  [ ] Networking
+    [ ] Disconnects
+    [ ] Garbage data
+    [ ] Self-connections
+      [ ] Peer sends fake `receiver` in version, then sends our addr in `addr`.
+    [ ] Multiple connections from same peer
+    [ ] Max/min peers connected
+    [ ] Invalid data
+      [ ] Wrong values
+    [x] Timeouts
+      [x] Peer idle / no response from `ping`
+      [x] No response from `getheaders` etc.
+    [ ] Not connected to any peers and don't have any addresses left
+      [ ] Try to reconnect to disconnected peers?
+      [ ] Check seeds?
+    [ ] Incorrect responses
+    [ ] Two peers trying to sync with each other, both out of sync
+  [ ] Sync
+    [ ] Receiving orphan blocks
+      [!] Test that we are able to find a common ancestor and sync
+  [ ] Peer simulation
+    [x] Deterministic scheduling
+    [ ] Quickcheck schedules
+      [ ] No schedule should cause a crash or invalid state
+        [ ] Start adding invariants everywhere in the protocol (`contracts` crate)
+    [ ] Use MIRAI for static analysis (https://github.com/facebookexperimental/MIRAI)
+    [ ] Forks
+      [ ] Following shortest chain then reverting
+  [ ] Model-test store::io::FileStore against store::Memory
+  [ ] Fuzz test
+  [x] Integration test
+
+[^1]: <https://cfsamson.github.io/books-futures-explained/6_future_example.html
+
+% vim: filetype=todo
