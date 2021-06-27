@@ -611,9 +611,9 @@ fn test_stale_tip() {
         .expect("Alice emits a `StaleTipDetected` event");
 }
 
-#[test]
-fn test_addrs() {
-    let rng = fastrand::Rng::new();
+#[quickcheck]
+fn prop_addrs(seed: u64) {
+    let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
     let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
@@ -649,6 +649,8 @@ fn test_addrs() {
         NetworkMessage::Addr(addrs) => addrs,
         _ => unreachable!(),
     };
+    assert_eq!(addrs.len(), 3);
+
     let addrs: HashSet<net::SocketAddr> = addrs
         .iter()
         .map(|(_, a)| a.socket_addr().unwrap())

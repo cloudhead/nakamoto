@@ -21,8 +21,6 @@ pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
 /// Idle timeout. Used to run periodic functions.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(30);
 
-/// Maximum number of addresses to return when receiving a `getaddr` message.
-const MAX_GETADDR_ADDRESSES: usize = 8;
 /// Maximum number of addresses expected in a `addr` message.
 const MAX_ADDR_ADDRESSES: usize = 1000;
 /// Maximum number of addresses we store for a given address range.
@@ -142,7 +140,9 @@ pub struct AddressManager<P, U> {
 }
 
 impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
-    /// Iterate over all addresses.
+    /// Return an iterator over randomly sampled addresses.
+    ///
+    /// *May return duplicates.*
     pub fn iter(&self, services: ServiceFlags) -> impl Iterator<Item = (&Address, Source)> + '_ {
         Iter(move || self.sample(services))
     }
@@ -156,16 +156,19 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
 
     /// Called when we receive a `getaddr` message.
     pub fn received_getaddr(&mut self, from: &net::SocketAddr) {
-        let addrs = self
-            .iter(ServiceFlags::NONE)
-            .map(|(a, _)| a)
-            // Don't send the peer their own address, nor non-TCP addresses.
-            .filter(|a| a.socket_addr().map_or(false, |s| &s != from))
-            .take(MAX_GETADDR_ADDRESSES)
-            // TODO: Return a non-zero time value.
-            .map(|a| (0, a.clone()))
-            .collect();
+        // TODO: We should only respond with peers who were last active within
+        // the last 3 hours.
+        let mut addrs = Vec::new();
 
+        // Include one random address per address range.
+        for range in self.address_ranges.values() {
+            let ix = self.rng.usize(..range.len());
+            let ip = range.iter().nth(ix).expect("index must be present");
+            let ka = self.peers.get(&ip).expect("address must exist");
+
+            // TODO: Use time last active instead of `0`.
+            addrs.push((0, ka.addr.clone()));
+        }
         self.upstream.send_addresses(*from, addrs);
     }
 
