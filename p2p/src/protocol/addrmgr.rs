@@ -23,6 +23,8 @@ pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(30);
 
 /// Maximum number of addresses to return when receiving a `getaddr` message.
 const MAX_GETADDR_ADDRESSES: usize = 8;
+/// Maximum number of addresses expected in a `addr` message.
+const MAX_ADDR_ADDRESSES: usize = 1000;
 /// Maximum number of addresses we store for a given address range.
 const MAX_RANGE_SIZE: usize = 256;
 
@@ -297,8 +299,8 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
     /// Called when we received an `addr` message from a peer.
     pub fn received_addr(&mut self, peer: net::SocketAddr, addrs: Vec<(BlockTime, Address)>) {
-        if addrs.is_empty() {
-            // Peer misbehaving, got empty message.
+        if addrs.is_empty() || addrs.len() > MAX_ADDR_ADDRESSES {
+            // Peer misbehaving, got empty message or too many addresses.
             return;
         }
         let source = Source::Peer(peer);
