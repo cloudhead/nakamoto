@@ -155,6 +155,7 @@ mod test {
                     source: Source::Dns,
                     last_success: Some(LocalTime::from_secs(i as u64)),
                     last_attempt: None,
+                    last_active: None,
                 };
                 cache.insert(ip, ka);
             }

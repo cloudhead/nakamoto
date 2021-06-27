@@ -154,6 +154,8 @@ pub struct KnownAddress {
     pub last_success: Option<LocalTime>,
     /// Last time this address was tried.
     pub last_attempt: Option<LocalTime>,
+    /// Last time this peer was seen alive.
+    pub last_active: Option<LocalTime>,
 }
 
 impl KnownAddress {
@@ -164,6 +166,7 @@ impl KnownAddress {
             source,
             last_success: None,
             last_attempt: None,
+            last_active: None,
         }
     }
 
@@ -190,6 +193,13 @@ impl KnownAddress {
         obj.insert(
             "last_attempt".to_owned(),
             match self.last_attempt {
+                Some(t) => Value::Number(Number::U64(t.block_time() as u64)),
+                None => Value::Null,
+            },
+        );
+        obj.insert(
+            "last_active".to_owned(),
+            match self.last_active {
                 Some(t) => Value::Number(Number::U64(t.block_time() as u64)),
                 None => Value::Null,
             },
@@ -232,6 +242,11 @@ impl KnownAddress {
             Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
             _ => return Err(serde::Error),
         };
+        let last_active = match obj.get("last_active") {
+            Some(Value::Null) => None,
+            Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
+            _ => return Err(serde::Error),
+        };
         let source = match obj.get("source") {
             Some(Value::String(s)) => {
                 if s == "dns" {
@@ -251,6 +266,7 @@ impl KnownAddress {
             source,
             last_success,
             last_attempt,
+            last_active,
         })
     }
 }
@@ -274,6 +290,7 @@ mod tests {
             source: Source::Peer(net::SocketAddr::from(([4, 5, 6, 7], 8333))),
             last_success: Some(LocalTime::from_secs(42)),
             last_attempt: None,
+            last_active: None,
         };
 
         let value = ka.to_json();
