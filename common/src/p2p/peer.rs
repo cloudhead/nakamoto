@@ -132,6 +132,9 @@ pub enum Source {
     Peer(net::SocketAddr),
     /// An address that came from a DNS seed.
     Dns,
+    /// An address that came from some source external to the system, eg.
+    /// specified by the user or added directly to the address manager.
+    Imported,
 }
 
 impl std::fmt::Display for Source {
@@ -139,6 +142,7 @@ impl std::fmt::Display for Source {
         match self {
             Self::Peer(addr) => write!(f, "{}", addr),
             Self::Dns => write!(f, "DNS"),
+            Self::Imported => write!(f, "Imported"),
         }
     }
 }
@@ -208,6 +212,7 @@ impl KnownAddress {
             "source".to_owned(),
             match self.source {
                 Source::Dns => Value::String("dns".to_owned()),
+                Source::Imported => Value::String("imported".to_owned()),
                 Source::Peer(addr) => Value::String(addr.to_string()),
             },
         );
@@ -251,6 +256,8 @@ impl KnownAddress {
             Some(Value::String(s)) => {
                 if s == "dns" {
                     Source::Dns
+                } else if s == "imported" {
+                    Source::Imported
                 } else {
                     match s.parse() {
                         Ok(addr) => Source::Peer(addr),

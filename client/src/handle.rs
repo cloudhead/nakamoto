@@ -4,6 +4,7 @@ use std::net;
 use std::ops::Range;
 
 use bitcoin::network::constants::ServiceFlags;
+use bitcoin::network::Address;
 use crossbeam_channel as chan;
 use thiserror::Error;
 
@@ -79,6 +80,8 @@ pub trait Handle: Sized + Send + Sync {
         &self,
         headers: Vec<BlockHeader>,
     ) -> Result<Result<ImportResult, block::tree::Error>, Error>;
+    /// Import peer addresses into the node's address book.
+    fn import_addresses(&self, addrs: Vec<Address>) -> Result<(), Error>;
     /// Wait for the given predicate to be fulfilled.
     fn wait<F: FnMut(Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected with the given services.

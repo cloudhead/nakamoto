@@ -29,6 +29,7 @@ pub use nakamoto_common::network::Network;
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
+use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
 use nakamoto_p2p::protocol::{Command, Protocol};
@@ -542,6 +543,12 @@ where
         self.command(Command::ImportHeaders(headers, transmit))?;
 
         Ok(receive.recv()?)
+    }
+
+    fn import_addresses(&self, addrs: Vec<Address>) -> Result<(), handle::Error> {
+        self.command(Command::ImportAddresses(addrs))?;
+
+        Ok(())
     }
 
     fn submit_transaction(&self, tx: Transaction) -> Result<(), handle::Error> {

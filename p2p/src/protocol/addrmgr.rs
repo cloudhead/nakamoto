@@ -495,6 +495,12 @@ impl<P: Store, U: Events> AddressManager<P, U> {
                             continue;
                         }
                     }
+                    Source::Imported => {
+                        // We expect that imported addresses will always include the correct
+                        // service information. Hence, if this one doesn't have the necessary
+                        // services, it's safe to skip.
+                        continue;
+                    }
                     Source::Peer(_) => {
                         // Peer-sourced addresses come with service information. It's safe to
                         // skip this address if it doesn't have the required services.

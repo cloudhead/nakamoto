@@ -37,12 +37,13 @@ use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_filter::GetCFilters;
 use bitcoin::network::message_network::VersionMessage;
+use bitcoin::network::Address;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
-use nakamoto_common::block::Transaction;
 use nakamoto_common::block::{BlockHash, Height};
+use nakamoto_common::block::{BlockTime, Transaction};
 use nakamoto_common::network::{self, Network};
 use nakamoto_common::p2p::peer;
 
@@ -111,6 +112,8 @@ pub enum Command {
         Vec<BlockHeader>,
         chan::Sender<Result<ImportResult, tree::Error>>,
     ),
+    /// Import addresses into the address book.
+    ImportAddresses(Vec<Address>),
     /// Submit a transaction to the network.
     SubmitTransaction(Transaction),
     /// Shutdown the protocol.
@@ -860,6 +863,15 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                             reply.send(Err(err)).ok();
                         }
                     }
+                }
+                Command::ImportAddresses(addrs) => {
+                    debug!(target: self.target, "Received command: ImportAddresses(..)");
+
+                    self.addrmgr.insert(
+                        // Nb. For imported addresses, the time last active is not relevant.
+                        addrs.into_iter().map(|a| (BlockTime::default(), a)),
+                        peer::Source::Imported,
+                    );
                 }
                 Command::GetTip(reply) => {
                     let (_, header) = self.tree.tip();
