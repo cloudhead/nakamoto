@@ -229,23 +229,6 @@ impl fmt::Display for DisconnectReason {
     }
 }
 
-/// Protocol event and message listener.
-///
-/// User-provided functions that can be used to listen on or alter the behavior of the protocol.
-pub trait Listener: Send + Sync {
-    /// Called when a `version` message is received. If an error is returned, the peer is dropped,
-    /// and the error is logged.
-    fn on_version(&self, _peer: PeerId, _version: VersionMessage) -> Result<(), &'static str> {
-        Ok(())
-    }
-
-    /// Called when a `getcfilters` message is received.
-    fn on_getcfilters(&self, _peer: PeerId, _msg: GetCFilters) {}
-}
-
-/// Allows `()` to be used as a transparent listener.
-impl Listener for () {}
-
 mod message {
     use super::*;
 
@@ -277,6 +260,10 @@ mod message {
 /// Holds functions that are used to hook into or alter protocol behavior.
 #[derive(Clone)]
 pub struct Hooks {
+    /// Called when we receive a message from a peer.
+    /// If an error is returned, the message is not further processed.
+    pub on_message:
+        Arc<dyn Fn(PeerId, &NetworkMessage, &Upstream) -> Result<(), &'static str> + Send + Sync>,
     /// Called when a `version` message is received.
     /// If an error is returned, the peer is dropped, and the error is logged.
     pub on_version: Arc<dyn Fn(PeerId, VersionMessage) -> Result<(), &'static str> + Send + Sync>,
@@ -287,6 +274,7 @@ pub struct Hooks {
 impl Default for Hooks {
     fn default() -> Self {
         Self {
+            on_message: Arc::new(|_, _, _| Ok(())),
             on_version: Arc::new(|_, _| Ok(())),
             on_getcfilters: Arc::new(|_, _| {}),
         }
@@ -619,12 +607,20 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         if !self.connmgr.is_connected(&addr) {
             debug!(target: self.target, "Received {:?} from unknown peer {}", cmd, addr);
             return;
-        };
+        }
 
         debug!(
             target: self.target, "{}: Received {:?}",
             addr, cmd
         );
+
+        if let Err(err) = (self.hooks.on_message)(addr, &msg.payload, &self.upstream) {
+            debug!(
+                target: self.target,
+                "{}: Message {:?} dropped by user hook: {}", addr, cmd, err
+            );
+            return;
+        }
 
         match msg.payload {
             NetworkMessage::Version(msg) => {
