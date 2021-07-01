@@ -91,16 +91,19 @@ fn test_initial_sync() {
         network,
         headers,
         vec![],
+        vec![],
         rng.clone(),
     );
     assert_eq!(bob.protocol.tree.height(), height as Height);
 
-    let mut simulator = Simulation::new(time, rng);
+    let mut simulation = Simulation::new(time, rng);
 
-    simulator.connect(&mut alice, &mut bob);
-    simulator.run([&mut alice, &mut bob]);
-
-    assert_eq!(alice.protocol.tree.height(), height as Height);
+    alice.command(Command::Connect(bob.addr));
+    while simulation.step([&mut alice, &mut bob], Range::default()) {
+        if alice.protocol.tree.height() == height as Height {
+            break;
+        }
+    }
 }
 
 /// Test what happens when a peer is idle for too long.
@@ -378,7 +381,7 @@ fn test_handshake_version_hook() {
         Ok(())
     });
 
-    let mut peer = Peer::config([48, 48, 48, 48], vec![], vec![], cfg, rng);
+    let mut peer = Peer::config([48, 48, 48, 48], vec![], vec![], vec![], cfg, rng);
     let craig = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
     let satoshi = PeerDummy::new([131, 31, 11, 66], network, 144, ServiceFlags::NETWORK);
 
@@ -682,7 +685,14 @@ fn prop_connect_timeout(seed: u64) {
         network,
         ..Config::default()
     };
-    let mut alice = Peer::config([48, 48, 48, 48], vec![], vec![], config, rng.clone());
+    let mut alice = Peer::config(
+        [48, 48, 48, 48],
+        vec![],
+        vec![],
+        vec![],
+        config,
+        rng.clone(),
+    );
 
     alice.protocol.initialize(alice.time);
 

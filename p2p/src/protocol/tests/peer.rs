@@ -12,6 +12,7 @@ use nakamoto_chain::block::store;
 use nakamoto_common::block::filter::{FilterHash, FilterHeader};
 use nakamoto_common::block::store::Genesis;
 use nakamoto_common::block::BlockHeader;
+use nakamoto_common::collections::HashSet;
 use nakamoto_common::p2p::peer::KnownAddress;
 
 use nakamoto_test::block::cache::model;
@@ -67,6 +68,7 @@ impl PeerDummy {
     }
 }
 
+#[derive(Debug)]
 pub struct Peer<M: Machine> {
     pub protocol: M,
     pub upstream: chan::Receiver<Out>,
@@ -89,6 +91,8 @@ impl<M: Machine> Peer<M> {
 
     pub fn initialize(&mut self) {
         if !self.initialized {
+            info!(target: self.cfg.target, "Initializing: address = {}", self.addr);
+
             self.initialized = true;
             self.protocol.initialize(self.time);
         }
@@ -102,6 +106,7 @@ impl Peer<TestProtocol> {
         network: Network,
         headers: Vec<BlockHeader>,
         cfheaders: Vec<(FilterHash, FilterHeader)>,
+        peers: Vec<(net::SocketAddr, Source, ServiceFlags)>,
         rng: fastrand::Rng,
     ) -> Self {
         let cfg = Config {
@@ -112,7 +117,7 @@ impl Peer<TestProtocol> {
             services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
             ..Config::default()
         };
-        Self::config(ip, headers, cfheaders, cfg, rng)
+        Self::config(ip, headers, cfheaders, peers, cfg, rng)
     }
 
     pub fn genesis(
@@ -121,13 +126,14 @@ impl Peer<TestProtocol> {
         network: Network,
         rng: fastrand::Rng,
     ) -> Self {
-        Self::new(name, ip, network, vec![], vec![], rng)
+        Self::new(name, ip, network, vec![], vec![], vec![], rng)
     }
 
     pub fn config(
         ip: impl Into<net::IpAddr>,
         headers: Vec<BlockHeader>,
         cfheaders: Vec<(FilterHash, FilterHeader)>,
+        peers: Vec<(net::SocketAddr, Source, ServiceFlags)>,
         cfg: Config,
         rng: fastrand::Rng,
     ) -> Self {
@@ -135,12 +141,15 @@ impl Peer<TestProtocol> {
         let genesis = network.genesis();
         let time = LocalTime::from_secs(genesis.time as u64);
         let clock = AdjustedTime::new(time);
-        let peers = HashMap::new();
         let headers = NonEmpty::from((network.genesis(), headers));
         let cfheaders = NonEmpty::from((
             (FilterHash::genesis(network), FilterHeader::genesis(network)),
             cfheaders,
         ));
+        let peers = peers
+            .into_iter()
+            .map(|(addr, src, srvs)| (addr.ip(), KnownAddress::new(Address::new(&addr, srvs), src)))
+            .collect();
 
         let store = store::Memory::new(headers);
         let tree = BlockCache::from(store, cfg.params.clone(), &[]).unwrap();
@@ -171,6 +180,10 @@ impl Peer<TestProtocol> {
             },
             link,
         );
+    }
+
+    pub fn command(&mut self, cmd: Command) {
+        self.protocol.step(Input::Command(cmd), self.time);
     }
 
     pub fn connect(&mut self, remote: &PeerDummy, link: Link) {
@@ -253,4 +266,69 @@ impl Peer<TestProtocol> {
             })
             .expect("peer handshake is successful");
     }
+}
+
+/// Create a network of nodes of the given size.
+/// Populates their respective address books so that they can connect with each other on startup.
+#[allow(dead_code)]
+pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<TestProtocol>> {
+    assert!(size <= 8);
+
+    let mut addrs = HashSet::with_hasher(rng.clone().into());
+    let names = [
+        "peer#1", "peer#2", "peer#3", "peer#4", "peer#5", "peer#6", "peer#7", "peer#8",
+    ];
+
+    while addrs.len() < size {
+        let addr: net::SocketAddr = (
+            [rng.u8(..), rng.u8(..), rng.u8(..), rng.u8(..)],
+            network.port(),
+        )
+            .into();
+
+        if !addrmgr::is_routable(&addr.ip()) {
+            continue;
+        }
+        addrs.insert(addr);
+    }
+
+    let addresses = addrs
+        .into_iter()
+        .map(|a| {
+            (
+                a,
+                Source::Dns,
+                spvmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
+            )
+        })
+        .collect::<Vec<_>>();
+
+    // Populate address books.
+    let mut address_books = HashMap::new();
+    for (i, (local, _, _)) in addresses.iter().enumerate() {
+        for remote in addresses.iter().skip(i + 1) {
+            address_books
+                .entry(*local)
+                .and_modify(|addrs: &mut Vec<_>| addrs.push(*remote))
+                .or_insert_with(|| vec![*remote]);
+        }
+    }
+
+    addresses
+        .iter()
+        .enumerate()
+        .map(|(i, (addr, _, _))| {
+            let peers = address_books.get(addr).unwrap_or(&Vec::new()).clone();
+
+            Peer::new(
+                names[i],
+                addr.ip(),
+                network,
+                vec![],
+                vec![],
+                peers,
+                rng.clone(),
+            )
+        })
+        .collect::<Vec<_>>()
 }

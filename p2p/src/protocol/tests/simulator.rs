@@ -3,23 +3,29 @@ use super::*;
 
 use nakamoto_common::collections::HashMap;
 
-use std::cmp::Ordering;
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt;
+
+/// Identifier for a simulated node/peer.
+/// The simulator requires each peer to have a distinct IP address.
+type NodeId = std::net::IpAddr;
 
 /// A scheduled protocol input.
 #[derive(Debug, Clone)]
 pub struct Scheduled {
-    remote: PeerId,
-    peer: PeerId,
-    input: Input,
-    time: LocalTime,
+    /// The node for which this input is scheduled.
+    pub node: NodeId,
+    /// The remote peer from which this input originates.
+    /// If the input originates from the local node, this should be set to the zero address.
+    pub remote: PeerId,
+    /// The input being scheduled.
+    pub input: Input,
 }
 
 impl fmt::Display for Scheduled {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.input {
-            Input::Sent(to, msg) => write!(f, "{}: {} -> {}: {:?}", self.time, self.peer, to, msg),
+            Input::Sent(to, msg) => write!(f, "{} -> {}: {:?}", self.node, to, msg),
             Input::Received(from, msg) => {
                 let s = match &msg.payload {
                     NetworkMessage::Headers(vec) => {
@@ -34,228 +40,288 @@ impl fmt::Display for Scheduled {
                         format!("{:?}", msg)
                     }
                 };
-                write!(
-                    f,
-                    "{}: {} <- {}: `{}` {}",
-                    self.time,
-                    self.peer,
-                    from,
-                    msg.cmd(),
-                    s
-                )
+                write!(f, "{} <- {}: `{}` {}", self.node, from, msg.cmd(), s)
             }
             Input::Connected {
                 addr,
+                local_addr,
                 link: Link::Inbound,
                 ..
-            } => write!(f, "{}: {} <== {}: Connected", self.time, self.peer, addr),
+            } => write!(f, "{} <== {}: Connected", local_addr, addr),
             Input::Connected {
+                local_addr,
                 addr,
                 link: Link::Outbound,
                 ..
-            } => write!(f, "{}: {} ==> {}: Connected", self.time, self.peer, addr),
+            } => write!(f, "{} ==> {}: Connected", local_addr, addr),
+            Input::Connecting { addr } => {
+                write!(f, "{} => {}: Connecting", self.node, addr)
+            }
             Input::Disconnected(addr, reason) => {
-                write!(
-                    f,
-                    "{}: {} =/= {}: Disconnected: {}",
-                    self.time, self.peer, addr, reason
-                )
+                write!(f, "{} =/= {}: Disconnected: {}", self.node, addr, reason)
+            }
+            Input::Tick => {
+                write!(f, "{}: Tick", self.node)
             }
             _ => {
-                write!(f, "")
+                write!(f, "{:?}", self)
             }
         }
     }
 }
 
-impl PartialEq for Scheduled {
-    fn eq(&self, other: &Self) -> bool {
-        self.time == other.time
-    }
-}
-impl Eq for Scheduled {}
-
-impl Ord for Scheduled {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.time.cmp(&other.time)
-    }
-}
-impl PartialOrd for Scheduled {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.time.cmp(&other.time))
-    }
+/// Inbox of scheduled state machine inputs to be delivered to the simulated nodes.
+#[derive(Debug)]
+pub struct Inbox {
+    /// The set of scheduled inputs. We use a `BTreeMap` to ensure inputs are always
+    /// ordered by scheduled delivery time.
+    messages: BTreeMap<LocalTime, Scheduled>,
 }
 
+impl Inbox {
+    /// Iterate over all scheduled inputs.
+    #[allow(dead_code)]
+    pub fn iter(&self) -> impl Iterator<Item = &Scheduled> {
+        self.messages.values()
+    }
+
+    /// Add a scheduled input to the inbox.
+    fn insert(&mut self, mut time: LocalTime, msg: Scheduled) {
+        // Make sure we don't overwrite an existing message by using the same time slot.
+        while self.messages.contains_key(&time) {
+            time = time + LocalDuration::from_millis(1);
+        }
+        self.messages.insert(time, msg);
+    }
+
+    /// Get the next scheduled input to be delivered.
+    fn next(&mut self) -> Option<(LocalTime, Scheduled)> {
+        self.messages
+            .iter()
+            .next()
+            .map(|(time, scheduled)| (*time, scheduled.clone()))
+    }
+}
+
+/// A peer-to-peer node simulation.
 pub struct Simulation {
-    inbox: BTreeSet<Scheduled>,
-    latencies: HashMap<(PeerId, PeerId), LocalDuration>,
-    local_time: LocalTime,
+    /// Inbox of inputs to be delivered by the simulation.
+    inbox: Inbox,
+    /// Simulated latencies between nodes.
+    latencies: HashMap<(NodeId, NodeId), LocalDuration>,
+    /// Map of existing connections between nodes.
+    /// We use this to keep track of the local port used when establishing connections,
+    /// since each connection is established from a different local port.
+    connections: HashMap<(NodeId, net::SocketAddr), net::SocketAddr>,
+    /// Current simulation time. Updated when a scheduled message is processed.
+    time: LocalTime,
+    /// RNG.
     rng: fastrand::Rng,
 }
 
 impl Simulation {
+    /// Create a new simulation.
     pub fn new(time: LocalTime, rng: fastrand::Rng) -> Self {
         Self {
-            inbox: BTreeSet::new(),
+            inbox: Inbox {
+                messages: BTreeMap::new(),
+            },
             latencies: HashMap::with_hasher(rng.clone().into()),
-            local_time: time,
+            connections: HashMap::with_hasher(rng.clone().into()),
+            time,
             rng,
         }
     }
 
-    pub fn run<'a, M: 'a + Machine>(&mut self, peers: impl Into<Vec<&'a mut super::Peer<M>>>) {
+    /// Check whether the simulation is done, ie. there are no more messages to process.
+    pub fn is_done(&self) -> bool {
+        self.inbox.messages.is_empty()
+    }
+
+    /// Check whether the simulation has settled, ie. the only messages left to process
+    /// are (periodic) timeouts.
+    #[allow(dead_code)]
+    pub fn is_settled(&self) -> bool {
+        self.inbox
+            .messages
+            .iter()
+            .all(|(_, s)| matches!(s.input, Input::Tick))
+    }
+
+    /// Get the latency between two nodes. The minimum latency between nodes is 1 millisecond.
+    pub fn latency(&self, from: NodeId, to: NodeId) -> LocalDuration {
+        self.latencies
+            .get(&(from, to))
+            .cloned()
+            .unwrap_or_else(|| LocalDuration::from_millis(1))
+    }
+
+    /// Process one scheduled input from the inbox, using the provided peers.
+    /// This function should be called until it returns `false`, or some desired state is reached.
+    /// Returns `true` if there are more messages to process.
+    pub fn step<'a, M: 'a + Machine + Debug>(
+        &mut self,
+        peers: impl IntoIterator<Item = &'a mut super::Peer<M>>,
+        latencies: Range<u64>,
+    ) -> bool {
         let mut map = HashMap::with_hasher(self.rng.clone().into());
-        for peer in peers.into().into_iter() {
-            map.insert(peer.addr, peer);
+        for peer in peers.into_iter() {
+            peer.initialize();
+            map.insert(peer.addr.ip(), peer);
         }
-        // Configure latencies.
-        for (i, from) in map.keys().enumerate() {
-            for to in map.keys().skip(i + 1) {
-                let latency = LocalDuration::from_secs(self.rng.u64(0..5));
 
-                self.latencies.insert((*from, *to), latency);
-                self.latencies.insert((*to, *from), latency);
-            }
-        }
-        self.step(&mut map);
-    }
+        if !latencies.is_empty() {
+            // Configure latencies.
+            for (i, from) in map.keys().enumerate() {
+                for to in map.keys().skip(i + 1) {
+                    let latency = LocalDuration::from_secs(self.rng.u64(latencies.clone()));
 
-    pub fn connect<M: Machine>(&mut self, peer: &mut super::Peer<M>, remote: &mut super::Peer<M>) {
-        peer.step(Input::Connected {
-            local_addr: peer.addr,
-            addr: remote.addr,
-            link: Link::Outbound,
-        });
-        remote.step(Input::Connected {
-            local_addr: remote.addr,
-            addr: peer.addr,
-            link: Link::Inbound,
-        });
-
-        for o in peer.upstream.try_iter() {
-            self.schedule(&peer.addr, o);
-        }
-        for o in remote.upstream.try_iter() {
-            self.schedule(&remote.addr, o);
-        }
-    }
-
-    /// Run the simulation until there are no events left to schedule.
-    pub fn step<M: Machine>(&mut self, peers: &mut HashMap<PeerId, &mut super::Peer<M>>) {
-        while let Some(next) = self.inbox.iter().cloned().next() {
-            info!(target: "sim", "{}", next);
-
-            self.inbox.remove(&next);
-
-            let Scheduled {
-                input, peer, time, ..
-            } = next;
-
-            self.local_time = time;
-
-            if let Some(ref mut p) = peers.get_mut(&peer) {
-                p.protocol.step(input, self.local_time);
-                for o in p.upstream.try_iter() {
-                    self.schedule(&peer, o);
+                    self.latencies.insert((*from, *to), latency);
+                    self.latencies.insert((*to, *from), latency);
                 }
             }
-            if self.inbox.iter().all(|s| matches!(s.input, Input::Tick)) {
-                break;
+        }
+
+        // Schedule any messages in the pipes.
+        for peer in map.values() {
+            for o in peer.upstream.try_iter() {
+                self.schedule(&peer.addr.ip(), o);
             }
         }
+
+        if let Some((time, next)) = self.inbox.next() {
+            info!(target: "sim", "{} ({})", next, self.inbox.messages.len());
+
+            self.time = time;
+            self.inbox.messages.remove(&time);
+
+            let Scheduled { input, node, .. } = next;
+
+            if let Some(ref mut p) = map.get_mut(&node) {
+                p.protocol.step(input, self.time);
+                for o in p.upstream.try_iter() {
+                    self.schedule(&node, o);
+                }
+            } else {
+                panic!(
+                    "Node {} not found when attempting to schedule {:?}",
+                    node, input
+                );
+            }
+        }
+        !self.is_done()
     }
 
-    /// Process a protocol output event.
-    pub fn schedule(&mut self, peer: &PeerId, out: Out) {
-        let peer = *peer;
-        let Simulation {
-            inbox,
-            latencies,
-            ref mut local_time,
-            ..
-        } = self;
+    /// Process a protocol output event from a node.
+    pub fn schedule(&mut self, node: &NodeId, out: Out) {
+        let node = *node;
 
         match out {
             Out::Message(receiver, msg) => {
-                let latency = latencies
-                    .get(&(peer, receiver))
-                    .cloned()
-                    .unwrap_or_else(|| LocalDuration::from_secs(0));
+                let latency = self.latency(node, receiver.ip());
+                let time = self.time + latency;
+                let local_addr = self.connections.get(&(node, receiver)).expect(
+                    "Simulator::schedule: messages can only be sent between connected peers",
+                );
+                info!(target: "sim", "{} -> {}: `{}`", local_addr, receiver, msg.cmd());
 
-                info!(target: "sim", "{}: {} -> {}: `{}`", local_time, peer, receiver, msg.cmd());
-
-                inbox.insert(Scheduled {
-                    remote: peer,
-                    peer: receiver,
-                    input: Input::Received(peer, msg),
-                    time: *local_time + latency,
-                });
+                self.inbox.insert(
+                    time,
+                    Scheduled {
+                        remote: *local_addr,
+                        node: receiver.ip(),
+                        input: Input::Received(*local_addr, msg),
+                    },
+                );
             }
             Out::Connect(remote, _timeout) => {
-                assert!(remote != peer, "self-connections are not allowed");
+                assert!(remote.ip() != node, "self-connections are not allowed");
 
-                let latency = latencies
-                    .get(&(peer, remote))
-                    .cloned()
-                    .unwrap_or_else(|| LocalDuration::from_secs(0));
-                let time = *local_time + latency;
+                // Create an ephemeral sockaddr for the connecting (local) node.
+                let local_addr: net::SocketAddr = net::SocketAddr::new(node, self.rng.u16(8192..));
+                let latency = self.latency(node, remote.ip());
 
-                inbox.insert(Scheduled {
-                    remote,
-                    peer,
-                    input: Input::Connecting { addr: remote },
-                    time,
-                });
-                inbox.insert(Scheduled {
-                    remote: peer,
-                    peer: remote,
-                    input: Input::Connected {
-                        addr: peer,
-                        local_addr: remote,
-                        link: Link::Inbound,
+                self.connections.insert((node, remote), local_addr);
+                self.connections.insert((remote.ip(), local_addr), remote);
+
+                self.inbox.insert(
+                    self.time + LocalDuration::from_millis(1),
+                    Scheduled {
+                        node,
+                        remote,
+                        input: Input::Connecting { addr: remote },
                     },
-                    time,
-                });
-                inbox.insert(Scheduled {
-                    remote,
-                    peer,
-                    input: Input::Connected {
-                        addr: remote,
-                        local_addr: peer,
-                        link: Link::Outbound,
+                );
+                self.inbox.insert(
+                    // The remote will get the connection attempt with some latency.
+                    self.time + latency,
+                    Scheduled {
+                        node: remote.ip(),
+                        remote: local_addr,
+                        input: Input::Connected {
+                            addr: local_addr,
+                            local_addr: remote,
+                            link: Link::Inbound,
+                        },
                     },
-                    time,
-                });
+                );
+                self.inbox.insert(
+                    // The local node will have established the connection after some latency.
+                    self.time + latency,
+                    Scheduled {
+                        remote,
+                        node,
+                        input: Input::Connected {
+                            addr: remote,
+                            local_addr,
+                            link: Link::Outbound,
+                        },
+                    },
+                );
             }
             Out::Disconnect(remote, reason) => {
-                let latency = latencies
-                    .get(&(peer, remote))
-                    .cloned()
-                    .unwrap_or_else(|| LocalDuration::from_secs(0));
+                let latency = self.latency(node, remote.ip());
+                let local_addr = self
+                    .connections
+                    .remove(&(node, remote))
+                    .expect("Simulator::schedule: only connected peers can disconnect");
 
-                inbox.insert(Scheduled {
-                    remote: peer,
-                    peer: remote,
-                    input: Input::Disconnected(peer, reason.clone()),
-                    time: *local_time + latency,
-                });
-                inbox.insert(Scheduled {
-                    remote,
-                    peer,
-                    input: Input::Disconnected(remote, reason),
-                    time: *local_time,
-                });
+                // The local node is immediately disconnected.
+                self.inbox.insert(
+                    self.time,
+                    Scheduled {
+                        remote,
+                        node,
+                        input: Input::Disconnected(remote, reason.clone()),
+                    },
+                );
+                // The remote node receives the disconnection with some delay.
+                self.inbox.insert(
+                    self.time + latency,
+                    Scheduled {
+                        node: remote.ip(),
+                        remote: local_addr,
+                        input: Input::Disconnected(local_addr, reason),
+                    },
+                );
             }
             Out::SetTimeout(duration) => {
-                inbox.insert(Scheduled {
-                    remote: peer,
-                    peer,
-                    input: Input::Tick,
-                    time: *local_time + duration,
-                });
+                self.inbox.insert(
+                    self.time + duration,
+                    Scheduled {
+                        node,
+                        // The remote is not applicable for this type of output.
+                        remote: ([0, 0, 0, 0], 0).into(),
+                        input: Input::Tick,
+                    },
+                );
             }
-            _ => {}
+            Out::Event(_) => {
+                // Ignored.
+            }
+            Out::Shutdown => {
+                unimplemented! {}
+            }
         }
-        local_time.elapse(LocalDuration::from_millis(1));
     }
 }

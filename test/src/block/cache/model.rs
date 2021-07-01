@@ -201,7 +201,7 @@ impl BlockTree for Cache {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct FilterCache {
     headers: NonEmpty<(FilterHash, FilterHeader)>,
     filters: BTreeMap<Height, BlockFilter>,
