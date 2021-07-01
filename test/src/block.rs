@@ -15,6 +15,7 @@ pub mod cache {
 
 pub mod gen {
     use std::collections::HashMap;
+    use std::ops::Range;
 
     use bitcoin::blockdata::script::Script;
     use bitcoin::blockdata::transaction::{OutPoint, TxIn, TxOut};
@@ -165,10 +166,14 @@ pub mod gen {
     }
 
     /// Generate a random blockchain.
-    pub fn blockchain(genesis: Block, rng: &mut fastrand::Rng) -> NonEmpty<Block> {
-        let height = rng.usize(0..64);
-        let mut prev_header = genesis.header;
-        let mut chain = NonEmpty::new(genesis);
+    pub fn blockchain(
+        parent: Block,
+        height: Range<usize>,
+        rng: &mut fastrand::Rng,
+    ) -> NonEmpty<Block> {
+        let height = rng.usize(height);
+        let mut prev_header = parent.header;
+        let mut chain = NonEmpty::new(parent);
 
         for _ in 0..height {
             let block = block(&prev_header, rng);
