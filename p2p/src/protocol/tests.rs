@@ -511,12 +511,16 @@ fn test_getaddr() {
     // Disconnect a peer.
     alice.step(Input::Disconnected(bob, DisconnectReason::Command));
 
-    // We are unable to connect to a new peer because our address book is exhausted.
+    // Alice should now fetch new addresses, but she won't find any and the requests will time out.
+    alice.time.elapse(addrmgr::REQUEST_TIMEOUT);
+    alice.tick();
+
+    // Alice is unable to connect to a new peer because our address book is exhausted.
     alice
         .upstream
         .try_iter()
         .filter_map(event)
-        .find(|e| matches!(e, Event::ConnManager(connmgr::Event::AddressBookExhausted)))
+        .find(|e| matches!(e, Event::AddrManager(addrmgr::Event::AddressBookExhausted)))
         .expect("Alice should emit `AddressBookExhausted`");
 
     // When we receive a timeout, we fetch new addresses, since our addresses have been exhausted.

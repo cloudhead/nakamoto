@@ -282,6 +282,8 @@ impl KnownAddress {
 pub trait AddressSource {
     /// Sample a random peer address. Returns `None` if there are no addresses left.
     fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)>;
+    /// Return an iterator over random peer addresses.
+    fn iter(&self, services: ServiceFlags) -> Box<dyn Iterator<Item = (&Address, Source)> + '_>;
 }
 
 #[cfg(test)]

@@ -125,6 +125,11 @@ pub enum Command {
 #[derive(Debug, Clone)]
 pub enum Input {
     /// Connection attempt underway.
+    ///
+    /// This input is only encountered when an outgoing connection attempt is made,
+    /// and is always received before the `Connected` input.
+    ///
+    /// For incoming connections, the `Connected` input is received directly.
     Connecting {
         /// Remote peer address.
         addr: net::SocketAddr,

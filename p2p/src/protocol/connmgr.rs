@@ -45,8 +45,6 @@ pub enum Event {
     Connected(PeerId, Link),
     /// A peer has been disconnected.
     Disconnected(PeerId),
-    /// Address book exhausted when trying to connect.
-    AddressBookExhausted,
 }
 
 impl std::fmt::Display for Event {
@@ -57,9 +55,6 @@ impl std::fmt::Display for Event {
             }
             Event::Connected(addr, link) => write!(fmt, "{}: Peer connected ({:?})", &addr, link),
             Event::Disconnected(addr) => write!(fmt, "Disconnected from {}", &addr),
-            Event::AddressBookExhausted => {
-                write!(fmt, "Address book exhausted when attempting to connect..")
-            }
         }
     }
 }
@@ -165,6 +160,14 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
             .map_or(false, |p| matches!(p, Peer::Connecting))
     }
 
+    /// Check whether a peer is connected via an inbound link.
+    pub fn is_inbound(&self, addr: &PeerId) -> bool {
+        self.peers.get(addr).map_or(
+            false,
+            |p| matches!(p, Peer::Connected { link, .. } if link.is_inbound()),
+        )
+    }
+
     /// Connect to a peer.
     pub fn connect<S: peer::Store>(&mut self, addr: &PeerId) -> bool {
         if !self.is_disconnected(addr) {
@@ -185,7 +188,13 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
 
     /// Called when a peer is being connected to.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr) {
-        debug_assert!(self.is_connecting(addr));
+        // Since all "attempts" are made from this module, we expect that when a peer is
+        // attempted, we know about it already.
+        //
+        // It's possible that as we were attempting to connect to a peer, that peer in the
+        // meantime connected to us. Hence we also account for an alread-connected *inbound*
+        // peer.
+        debug_assert!(self.is_connecting(addr) || self.is_inbound(addr));
     }
 
     /// Called when a peer connected.
@@ -199,6 +208,11 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         debug_assert!(!self.is_connected(&address));
 
         Events::event(&self.upstream, Event::Connected(address, link));
+
+        // TODO: There is a chance that we simultaneously connect to a peer that is connecting
+        // to us. This would create two connections to the same peer, one outbound and one
+        // inbound. To prevent this, we could look at IPs when receiving inbound connections,
+        // to check whether we are already connected to the peer.
 
         match link {
             Link::Inbound if self.inbound_peers().count() >= self.config.max_inbound_peers => {
@@ -279,36 +293,31 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
 
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections<S: peer::Store>(&mut self, addrs: &A) {
-        while self.outbound().count()
+        let current = self.outbound().count()
             + self
                 .peers
                 .values()
                 .filter(|p| matches!(p, Peer::Connecting))
-                .count()
-            < self.config.target_outbound_peers
-        {
-            // Prefer addresses with the preferred services.
-            let result = addrs
-                .sample(self.config.preferred_services)
-                .or_else(|| addrs.sample(self.config.required_services));
+                .count();
+        let target = self.config.target_outbound_peers;
+        let addresses = addrs
+            .iter(self.config.preferred_services)
+            .chain(addrs.iter(self.config.required_services))
+            .take(target - current);
 
-            if let Some((addr, source)) = result {
-                // TODO: Support Tor?
-                if let Ok(sockaddr) = addr.socket_addr() {
-                    // TODO: Remove this assertion once address manager no longer cares about
-                    // connections.
-                    debug_assert!(!self.is_connected(&sockaddr));
+        // TODO: The address manager currently may return duplicates if the address book is small
+        // and we are requested more addresses than it has.
 
-                    if self.connect::<S>(&sockaddr) {
-                        self.upstream.event(Event::Connecting(sockaddr, source));
-                        break;
-                    }
+        for (addr, source) in addresses {
+            // TODO: Support Tor?
+            if let Ok(sockaddr) = addr.socket_addr() {
+                // TODO: Remove this assertion once address manager no longer cares about
+                // connections.
+                debug_assert!(!self.is_connected(&sockaddr));
+
+                if self.connect::<S>(&sockaddr) {
+                    self.upstream.event(Event::Connecting(sockaddr, source));
                 }
-            } else {
-                // We're out of addresses. We don't need to do anything here, the address manager
-                // will eventually find new addresses.
-                Events::event(&self.upstream, Event::AddressBookExhausted);
-                break;
             }
         }
     }

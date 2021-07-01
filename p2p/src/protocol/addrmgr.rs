@@ -56,6 +56,8 @@ pub enum Event {
     },
     /// A new peer address was discovered.
     AddressDiscovered(Address, Source),
+    /// Address book exhausted.
+    AddressBookExhausted,
     /// An error was encountered.
     Error(String),
 }
@@ -72,6 +74,12 @@ impl std::fmt::Display for Event {
             }
             Event::AddressDiscovered(addr, source) => {
                 write!(fmt, "{:?} discovered from source `{}`", addr, source)
+            }
+            Event::AddressBookExhausted => {
+                write!(
+                    fmt,
+                    "Address book exhausted.. fetching new addresses from peers"
+                )
             }
             Event::Error(msg) => {
                 write!(fmt, "error: {}", msg)
@@ -178,6 +186,8 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         if local_time - self.last_request.unwrap_or_default() >= REQUEST_TIMEOUT
             && self.is_exhausted()
         {
+            Events::event(&self.upstream, Event::AddressBookExhausted);
+
             self.get_addresses();
             self.last_request = Some(local_time);
             self.upstream.set_timeout(REQUEST_TIMEOUT);
@@ -570,9 +580,13 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     }
 }
 
-impl<P: Store, U: Events + SyncAddresses> AddressSource for AddressManager<P, U> {
+impl<P: Store, U: Events + SyncAddresses + SetTimeout> AddressSource for AddressManager<P, U> {
     fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)> {
         AddressManager::sample(&self, services)
+    }
+
+    fn iter(&self, services: ServiceFlags) -> Box<dyn Iterator<Item = (&Address, Source)> + '_> {
+        Box::new(AddressManager::iter(&self, services))
     }
 }
 
