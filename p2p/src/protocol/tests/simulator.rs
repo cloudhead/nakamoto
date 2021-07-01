@@ -201,8 +201,8 @@ impl Simulation {
                 for to in nodes.keys().skip(i + 1) {
                     let latency = LocalDuration::from_secs(self.rng.u64(self.opts.latency.clone()));
 
-                    self.latencies.insert((*from, *to), latency);
-                    self.latencies.insert((*to, *from), latency);
+                    self.latencies.entry((*from, *to)).or_insert(latency);
+                    self.latencies.entry((*to, *from)).or_insert(latency);
                 }
             }
         }
