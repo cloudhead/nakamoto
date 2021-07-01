@@ -126,7 +126,7 @@ pub struct Simulation {
     /// Map of existing connections between nodes.
     /// We use this to keep track of the local port used when establishing connections,
     /// since each connection is established from a different local port.
-    connections: HashMap<(NodeId, net::SocketAddr), net::SocketAddr>,
+    connections: HashMap<(NodeId, NodeId), (net::SocketAddr, net::SocketAddr)>,
     /// Simulation options.
     opts: Options,
     /// Current simulation time. Updated when a scheduled message is processed.
@@ -245,17 +245,17 @@ impl Simulation {
             Out::Message(receiver, msg) => {
                 let latency = self.latency(node, receiver.ip());
                 let time = self.time + latency;
-                let local_addr = self.connections.get(&(node, receiver)).expect(
+                let (sender_addr, _) = self.connections.get(&(node, receiver.ip())).expect(
                     "Simulator::schedule: messages can only be sent between connected peers",
                 );
-                info!(target: "sim", "{} -> {}: `{}`", local_addr, receiver, msg.cmd());
+                info!(target: "sim", "{} -> {}: `{}`", sender_addr, receiver, msg.cmd());
 
                 self.inbox.insert(
                     time,
                     Scheduled {
-                        remote: *local_addr,
+                        remote: *sender_addr,
                         node: receiver.ip(),
-                        input: Input::Received(*local_addr, msg),
+                        input: Input::Received(*sender_addr, msg),
                     },
                 );
             }
@@ -266,8 +266,10 @@ impl Simulation {
                 let local_addr: net::SocketAddr = net::SocketAddr::new(node, self.rng.u16(8192..));
                 let latency = self.latency(node, remote.ip());
 
-                self.connections.insert((node, remote), local_addr);
-                self.connections.insert((remote.ip(), local_addr), remote);
+                self.connections
+                    .insert((node, remote.ip()), (local_addr, remote));
+                self.connections
+                    .insert((remote.ip(), node), (remote, local_addr));
 
                 self.inbox.insert(
                     self.time + LocalDuration::from_millis(1),
@@ -306,9 +308,12 @@ impl Simulation {
             }
             Out::Disconnect(remote, reason) => {
                 let latency = self.latency(node, remote.ip());
-                let local_addr = self
+                let (local_addr, _) = self
                     .connections
-                    .remove(&(node, remote))
+                    .remove(&(node, remote.ip()))
+                    .expect("Simulator::schedule: only connected peers can disconnect");
+                self.connections
+                    .remove(&(remote.ip(), node))
                     .expect("Simulator::schedule: only connected peers can disconnect");
 
                 // The local node is immediately disconnected.
