@@ -103,6 +103,20 @@ impl Inbox {
     }
 }
 
+/// Simulation options.
+pub struct Options {
+    /// Minimum and maximum latency between nodes, in seconds.
+    pub latency: Range<u64>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            latency: Range::default(),
+        }
+    }
+}
+
 /// A peer-to-peer node simulation.
 pub struct Simulation {
     /// Inbox of inputs to be delivered by the simulation.
@@ -113,6 +127,8 @@ pub struct Simulation {
     /// We use this to keep track of the local port used when establishing connections,
     /// since each connection is established from a different local port.
     connections: HashMap<(NodeId, net::SocketAddr), net::SocketAddr>,
+    /// Simulation options.
+    opts: Options,
     /// Current simulation time. Updated when a scheduled message is processed.
     time: LocalTime,
     /// RNG.
@@ -121,13 +137,14 @@ pub struct Simulation {
 
 impl Simulation {
     /// Create a new simulation.
-    pub fn new(time: LocalTime, rng: fastrand::Rng) -> Self {
+    pub fn new(time: LocalTime, rng: fastrand::Rng, opts: Options) -> Self {
         Self {
             inbox: Inbox {
                 messages: BTreeMap::new(),
             },
             latencies: HashMap::with_hasher(rng.clone().into()),
             connections: HashMap::with_hasher(rng.clone().into()),
+            opts,
             time,
             rng,
         }
@@ -162,19 +179,18 @@ impl Simulation {
     pub fn step<'a, M: 'a + Machine + Debug>(
         &mut self,
         peers: impl IntoIterator<Item = &'a mut super::Peer<M>>,
-        latencies: Range<u64>,
     ) -> bool {
-        let mut map = HashMap::with_hasher(self.rng.clone().into());
+        let mut nodes = HashMap::with_hasher(self.rng.clone().into());
         for peer in peers.into_iter() {
             peer.initialize();
-            map.insert(peer.addr.ip(), peer);
+            nodes.insert(peer.addr.ip(), peer);
         }
 
-        if !latencies.is_empty() {
+        if !self.opts.latency.is_empty() {
             // Configure latencies.
-            for (i, from) in map.keys().enumerate() {
-                for to in map.keys().skip(i + 1) {
-                    let latency = LocalDuration::from_secs(self.rng.u64(latencies.clone()));
+            for (i, from) in nodes.keys().enumerate() {
+                for to in nodes.keys().skip(i + 1) {
+                    let latency = LocalDuration::from_secs(self.rng.u64(self.opts.latency.clone()));
 
                     self.latencies.insert((*from, *to), latency);
                     self.latencies.insert((*to, *from), latency);
@@ -183,7 +199,7 @@ impl Simulation {
         }
 
         // Schedule any messages in the pipes.
-        for peer in map.values() {
+        for peer in nodes.values() {
             for o in peer.upstream.try_iter() {
                 self.schedule(&peer.addr.ip(), o);
             }
@@ -197,7 +213,7 @@ impl Simulation {
 
             let Scheduled { input, node, .. } = next;
 
-            if let Some(ref mut p) = map.get_mut(&node) {
+            if let Some(ref mut p) = nodes.get_mut(&node) {
                 p.protocol.step(input, self.time);
                 for o in p.upstream.try_iter() {
                     self.schedule(&node, o);

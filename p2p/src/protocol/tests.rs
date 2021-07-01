@@ -4,7 +4,7 @@ pub mod simulator;
 
 use super::*;
 use peer::{Peer, PeerDummy};
-use simulator::Simulation;
+use simulator::{Options, Simulation};
 
 use bitcoin::network::message_blockdata::Inventory;
 use bitcoin::network::Address;
@@ -96,10 +96,10 @@ fn test_initial_sync() {
     );
     assert_eq!(bob.protocol.tree.height(), height as Height);
 
-    let mut simulation = Simulation::new(time, rng);
+    let mut simulation = Simulation::new(time, rng, Options::default());
 
     alice.command(Command::Connect(bob.addr));
-    while simulation.step([&mut alice, &mut bob], Range::default()) {
+    while simulation.step([&mut alice, &mut bob]) {
         if alice.protocol.tree.height() == height as Height {
             break;
         }
