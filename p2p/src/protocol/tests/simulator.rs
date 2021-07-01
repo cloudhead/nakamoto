@@ -173,6 +173,16 @@ impl Simulation {
             .unwrap_or_else(|| LocalDuration::from_millis(1))
     }
 
+    /// Initialize peers.
+    pub fn initialize<'a, M: 'a + Machine>(
+        &self,
+        peers: impl IntoIterator<Item = &'a mut super::Peer<M>>,
+    ) {
+        for peer in peers.into_iter() {
+            peer.initialize();
+        }
+    }
+
     /// Process one scheduled input from the inbox, using the provided peers.
     /// This function should be called until it returns `false`, or some desired state is reached.
     /// Returns `true` if there are more messages to process.
@@ -182,7 +192,6 @@ impl Simulation {
     ) -> bool {
         let mut nodes = HashMap::with_hasher(self.rng.clone().into());
         for peer in peers.into_iter() {
-            peer.initialize();
             nodes.insert(peer.addr.ip(), peer);
         }
 

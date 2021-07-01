@@ -96,9 +96,11 @@ fn test_initial_sync() {
     );
     assert_eq!(bob.protocol.tree.height(), height as Height);
 
-    let mut simulation = Simulation::new(time, rng, Options::default());
-
     alice.command(Command::Connect(bob.addr));
+
+    let mut simulation = Simulation::new(time, rng, Options::default());
+    simulation.initialize([&mut alice, &mut bob]);
+
     while simulation.step([&mut alice, &mut bob]) {
         if alice.protocol.tree.height() == height as Height {
             break;
