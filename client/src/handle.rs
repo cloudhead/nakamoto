@@ -62,6 +62,8 @@ pub trait Handle: Sized + Send + Sync {
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
+    /// Subscribe to sent transaction status.
+    fn transactions(&self) -> chan::Receiver<(Txid, TransactionStatus)>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Broadcast a message to all *outbound* peers.
@@ -74,11 +76,7 @@ pub trait Handle: Sized + Send + Sync {
     /// Disconnect from the designated peer address.
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), Error>;
     /// Submit a transaction to the network.
-    fn submit_transaction(
-        &self,
-        tx: Transaction,
-        recv: chan::Receiver<TransactionStatus>,
-    ) -> Result<(), Error>;
+    fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
     /// Import block headers into the node.
     /// This may cause the node to broadcast header or inventory messages to its peers.
     fn import_headers(

@@ -116,7 +116,7 @@ pub enum Command {
     /// Import addresses into the address book.
     ImportAddresses(Vec<Address>),
     /// Submit a transaction to the network.
-    SubmitTransaction(Transaction, chan::Receiver<txnmgr::TransactionStatus>),
+    SubmitTransaction(Transaction),
     /// Shutdown the protocol.
     Shutdown,
 }
@@ -908,7 +908,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                         p.services.has(ServiceFlags::NETWORK)
                     });
                 }
-                Command::SubmitTransaction(tx, _recvr) => {
+                Command::SubmitTransaction(tx) => {
                     debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
                     self.query(NetworkMessage::Tx(tx), |p| p.relay);

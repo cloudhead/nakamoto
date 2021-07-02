@@ -10,6 +10,7 @@ use std::ops::Range;
 use std::path::PathBuf;
 use std::time::{self, SystemTime};
 
+use bitcoin::Txid;
 use crossbeam_channel as chan;
 
 use nakamoto_chain::block::{store, Block};
@@ -149,6 +150,7 @@ pub struct Client<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
+    transactions: event::Subscriber<(Txid, TransactionStatus)>,
 
     reactor: R,
 }
@@ -177,10 +179,13 @@ impl<R: Reactor<Publisher>> Client<R> {
             None
         });
 
+        let (transactions_pub, transactions) = event::broadcast(|e| return None);
+
         let publisher = Publisher::new()
             .register(event_pub)
             .register(blocks_pub)
-            .register(filters_pub);
+            .register(filters_pub)
+            .register(transactions_pub);
 
         let reactor = R::new(publisher, commands)?;
 
@@ -191,6 +196,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             config,
             blocks,
             filters,
+            transactions,
         })
     }
 
@@ -371,6 +377,7 @@ impl<R: Reactor<Publisher>> Client<R> {
     /// Create a new handle to communicate with the client.
     pub fn handle(&self) -> Handle<R> {
         Handle {
+            transactions: self.transactions.clone(),
             events: self.events.clone(),
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
@@ -387,6 +394,7 @@ pub struct Handle<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
+    transactions: event::Subscriber<(Txid, TransactionStatus)>,
     waker: R::Waker,
     timeout: time::Duration,
 }
@@ -398,6 +406,7 @@ where
     fn clone(&self) -> Self {
         Self {
             blocks: self.blocks.clone(),
+            transactions: self.transactions.clone(),
             commands: self.commands.clone(),
             events: self.events.clone(),
             filters: self.filters.clone(),
@@ -480,6 +489,10 @@ where
 
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)> {
         self.filters.subscribe()
+    }
+
+    fn transactions(&self) -> chan::Receiver<(bitcoin::Txid, TransactionStatus)> {
+        self.transactions.subscribe()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {

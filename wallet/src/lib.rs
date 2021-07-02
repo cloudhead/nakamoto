@@ -4,11 +4,13 @@ pub mod logger;
 use std::collections::{HashMap, HashSet};
 use std::{fmt, net, thread};
 
+use bitcoin::blockdata::block;
+use bitcoin::util::bip158::BlockFilter;
 use crossbeam_channel as chan;
 
 use bitcoin::blockdata::script::Script;
 use bitcoin::blockdata::transaction::{OutPoint, TxOut};
-use bitcoin::Address;
+use bitcoin::{Address, Block, Transaction};
 
 use nakamoto_client::error::Error;
 use nakamoto_client::handle::Handle;
