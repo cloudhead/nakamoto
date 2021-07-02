@@ -192,7 +192,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         // attempted, we know about it already.
         //
         // It's possible that as we were attempting to connect to a peer, that peer in the
-        // meantime connected to us. Hence we also account for an alread-connected *inbound*
+        // meantime connected to us. Hence we also account for an already-connected *inbound*
         // peer.
         debug_assert!(self.is_connecting(addr) || self.is_inbound(addr));
     }
@@ -306,7 +306,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
             .take(target - current);
 
         // TODO: The address manager currently may return duplicates if the address book is small
-        // and we are requested more addresses than it has.
+        // and we requested more addresses than it has.
 
         for (addr, source) in addresses {
             // TODO: Support Tor?
