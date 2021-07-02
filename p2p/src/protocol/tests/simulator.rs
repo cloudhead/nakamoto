@@ -6,6 +6,9 @@ use nakamoto_common::collections::HashMap;
 use std::collections::BTreeMap;
 use std::fmt;
 
+/// Minimum latency between peers.
+pub const MIN_LATENCY: LocalDuration = LocalDuration::from_millis(1);
+
 /// Identifier for a simulated node/peer.
 /// The simulator requires each peer to have a distinct IP address.
 type NodeId = std::net::IpAddr;
@@ -89,7 +92,7 @@ impl Inbox {
     fn insert(&mut self, mut time: LocalTime, msg: Scheduled) {
         // Make sure we don't overwrite an existing message by using the same time slot.
         while self.messages.contains_key(&time) {
-            time = time + LocalDuration::from_millis(1);
+            time = time + MIN_LATENCY;
         }
         self.messages.insert(time, msg);
     }
@@ -171,12 +174,13 @@ impl Simulation {
             .get(&(from, to))
             .cloned()
             .map(|l| {
-                let millis = l.as_millis();
-                if millis <= 1 {
+                if l <= MIN_LATENCY {
                     l
                 } else {
                     // Create variance in the latency. The resulting latency
                     // will be between half, and two times the base latency.
+                    let millis = l.as_millis();
+
                     if self.rng.bool() {
                         // More latency.
                         LocalDuration::from_millis(millis + self.rng.u128(0..millis))
@@ -186,7 +190,7 @@ impl Simulation {
                     }
                 }
             })
-            .unwrap_or_else(|| LocalDuration::from_millis(1))
+            .unwrap_or_else(|| MIN_LATENCY)
     }
 
     /// Initialize peers.
@@ -288,7 +292,7 @@ impl Simulation {
                     .insert((remote.ip(), node), (remote, local_addr));
 
                 self.inbox.insert(
-                    self.time + LocalDuration::from_millis(1),
+                    self.time + MIN_LATENCY,
                     Scheduled {
                         node,
                         remote,
