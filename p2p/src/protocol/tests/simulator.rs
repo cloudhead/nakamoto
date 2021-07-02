@@ -307,33 +307,33 @@ impl Simulation {
                 );
             }
             Out::Disconnect(remote, reason) => {
-                let latency = self.latency(node, remote.ip());
-                let (local_addr, _) = self
-                    .connections
-                    .remove(&(node, remote.ip()))
-                    .expect("Simulator::schedule: only connected peers can disconnect");
-                self.connections
-                    .remove(&(remote.ip(), node))
-                    .expect("Simulator::schedule: only connected peers can disconnect");
+                // It's possible for disconnects to happen simultaneously from both ends, hence
+                // it can be that a node will try to disconnect a remote that is already
+                // disconnected from the other side.
+                if let Some((local_addr, _)) = self.connections.remove(&(node, remote.ip())) {
+                    self.connections.remove(&(remote.ip(), node));
 
-                // The local node is immediately disconnected.
-                self.inbox.insert(
-                    self.time,
-                    Scheduled {
-                        remote,
-                        node,
-                        input: Input::Disconnected(remote, reason.clone()),
-                    },
-                );
-                // The remote node receives the disconnection with some delay.
-                self.inbox.insert(
-                    self.time + latency,
-                    Scheduled {
-                        node: remote.ip(),
-                        remote: local_addr,
-                        input: Input::Disconnected(local_addr, reason),
-                    },
-                );
+                    let latency = self.latency(node, remote.ip());
+
+                    // The local node is immediately disconnected.
+                    self.inbox.insert(
+                        self.time,
+                        Scheduled {
+                            remote,
+                            node,
+                            input: Input::Disconnected(remote, reason.clone()),
+                        },
+                    );
+                    // The remote node receives the disconnection with some delay.
+                    self.inbox.insert(
+                        self.time + latency,
+                        Scheduled {
+                            node: remote.ip(),
+                            remote: local_addr,
+                            input: Input::Disconnected(local_addr, reason),
+                        },
+                    );
+                }
             }
             Out::SetTimeout(duration) => {
                 self.inbox.insert(
