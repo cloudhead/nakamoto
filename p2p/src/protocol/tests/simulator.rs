@@ -170,6 +170,22 @@ impl Simulation {
         self.latencies
             .get(&(from, to))
             .cloned()
+            .map(|l| {
+                let millis = l.as_millis();
+                if millis <= 1 {
+                    l
+                } else {
+                    // Create variance in the latency. The resulting latency
+                    // will be between half, and two times the base latency.
+                    if self.rng.bool() {
+                        // More latency.
+                        LocalDuration::from_millis(millis + self.rng.u128(0..millis))
+                    } else {
+                        // Less latency.
+                        LocalDuration::from_millis(millis - self.rng.u128(0..millis / 2))
+                    }
+                }
+            })
             .unwrap_or_else(|| LocalDuration::from_millis(1))
     }
 
