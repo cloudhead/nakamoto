@@ -219,7 +219,11 @@ impl Simulation {
             // Configure latencies.
             for (i, from) in nodes.keys().enumerate() {
                 for to in nodes.keys().skip(i + 1) {
-                    let latency = LocalDuration::from_secs(self.rng.u64(self.opts.latency.clone()));
+                    let range = self.opts.latency.clone();
+                    let latency = LocalDuration::from_millis(
+                        self.rng
+                            .u128(range.start as u128 * 1_000..range.end as u128 * 1_000),
+                    );
 
                     self.latencies.entry((*from, *to)).or_insert(latency);
                     self.latencies.entry((*to, *from)).or_insert(latency);
@@ -268,7 +272,7 @@ impl Simulation {
                 let (sender_addr, _) = self.connections.get(&(node, receiver.ip())).expect(
                     "Simulator::schedule: messages can only be sent between connected peers",
                 );
-                info!(target: "sim", "{} -> {}: `{}`", sender_addr, receiver, msg.cmd());
+                info!(target: "sim", "{} -> {}: `{}` ({})", sender_addr, receiver, msg.cmd(), latency);
 
                 self.inbox.insert(
                     time,
