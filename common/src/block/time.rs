@@ -193,7 +193,16 @@ impl std::fmt::Display for LocalDuration {
                 write!(f, "{} second(s)", self.as_secs())
             }
         } else {
-            write!(f, "{} minute(s)", self.as_mins())
+            let fraction = self.as_secs() % 60;
+            if fraction > 0 {
+                write!(
+                    f,
+                    "{:.2} minutes(s)",
+                    self.as_mins() as f64 + (fraction as f64 / 60.)
+                )
+            } else {
+                write!(f, "{} minutes(s)", self.as_mins())
+            }
         }
     }
 }
