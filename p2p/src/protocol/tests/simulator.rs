@@ -267,21 +267,23 @@ impl Simulation {
 
         match out {
             Out::Message(receiver, msg) => {
-                let latency = self.latency(node, receiver.ip());
-                let time = self.time + latency;
-                let (sender_addr, _) = self.connections.get(&(node, receiver.ip())).expect(
-                    "Simulator::schedule: messages can only be sent between connected peers",
-                );
-                info!(target: "sim", "{} -> {}: `{}` ({})", sender_addr, receiver, msg.cmd(), latency);
+                // If the other end has disconnected the sender with some latency, there may not be
+                // a connection remaining to use.
+                if let Some((sender_addr, _)) = self.connections.get(&(node, receiver.ip())) {
+                    let latency = self.latency(node, receiver.ip());
+                    let time = self.time + latency;
 
-                self.inbox.insert(
-                    time,
-                    Scheduled {
-                        remote: *sender_addr,
-                        node: receiver.ip(),
-                        input: Input::Received(*sender_addr, msg),
-                    },
-                );
+                    info!(target: "sim", "{} -> {}: `{}` ({})", sender_addr, receiver, msg.cmd(), latency);
+
+                    self.inbox.insert(
+                        time,
+                        Scheduled {
+                            remote: *sender_addr,
+                            node: receiver.ip(),
+                            input: Input::Received(*sender_addr, msg),
+                        },
+                    );
+                }
             }
             Out::Connect(remote, _timeout) => {
                 assert!(remote.ip() != node, "self-connections are not allowed");
@@ -345,7 +347,7 @@ impl Simulation {
                         Scheduled {
                             remote,
                             node,
-                            input: Input::Disconnected(remote, reason.clone()),
+                            input: Input::Disconnected(remote, reason),
                         },
                     );
                     // The remote node receives the disconnection with some delay.
@@ -354,7 +356,12 @@ impl Simulation {
                         Scheduled {
                             node: remote.ip(),
                             remote: local_addr,
-                            input: Input::Disconnected(local_addr, reason),
+                            input: Input::Disconnected(
+                                local_addr,
+                                DisconnectReason::ConnectionError(
+                                    "Remote end closed the connection".to_owned(),
+                                ),
+                            ),
                         },
                     );
                 }
