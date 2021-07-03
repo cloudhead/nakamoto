@@ -268,21 +268,23 @@ impl Peer<TestProtocol> {
 
 /// Create a network of nodes of the given size.
 /// Populates their respective address books so that they can connect with each other on startup.
-#[allow(dead_code)]
 pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<TestProtocol>> {
-    assert!(size <= 8);
+    assert!(size <= 10);
 
     let mut addrs = HashSet::with_hasher(rng.clone().into());
     let names = [
-        "peer#1", "peer#2", "peer#3", "peer#4", "peer#5", "peer#6", "peer#7", "peer#8",
+        "peer#0", "peer#1", "peer#2", "peer#3", "peer#4", "peer#5", "peer#6", "peer#7", "peer#8",
+        "peer#9",
     ];
+    let reserved = [[88, 88, 88, 88], [44, 44, 44, 44], [48, 48, 48, 48]];
 
     while addrs.len() < size {
-        let addr: net::SocketAddr = (
-            [rng.u8(..), rng.u8(..), rng.u8(..), rng.u8(..)],
-            network.port(),
-        )
-            .into();
+        let ip = [rng.u8(..), rng.u8(..), rng.u8(..), rng.u8(..)];
+
+        if reserved.contains(&ip) {
+            continue;
+        }
+        let addr: net::SocketAddr = (ip, network.port()).into();
 
         if !addrmgr::is_routable(&addr.ip()) {
             continue;
@@ -302,7 +304,6 @@ pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Te
         .collect::<Vec<_>>();
 
     // Populate address books.
-    // TODO: Peers shouldn't necessarily know each other.
     let mut address_books = HashMap::with_hasher(rng.clone().into());
     for (i, (local, _, _)) in addresses.iter().enumerate() {
         for remote in addresses.iter().skip(i + 1) {
@@ -318,16 +319,16 @@ pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Te
         .enumerate()
         .map(|(i, (addr, _, _))| {
             let peers = address_books.get(addr).unwrap_or(&Vec::new()).clone();
-
-            Peer::new(
-                names[i],
-                addr.ip(),
+            let cfg = Config {
                 network,
-                vec![],
-                vec![],
-                peers,
-                rng.clone(),
-            )
+                target: names[i],
+                // These nodes don't need to try connecting to other nodes.
+                target_outbound_peers: 0,
+                // These are full nodes.
+                services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
+                ..Config::default()
+            };
+            Peer::config(addr.ip(), vec![], vec![], peers, cfg, rng.clone())
         })
         .collect::<Vec<_>>()
 }

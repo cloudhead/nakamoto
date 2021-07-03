@@ -2,6 +2,8 @@
 pub mod peer;
 pub mod simulator;
 
+use std::iter;
+
 use super::*;
 use peer::{Peer, PeerDummy};
 use simulator::{Options, Simulation};
@@ -730,4 +732,42 @@ fn prop_connect_timeout(seed: u64) {
         Out::Connect(addr, _) => !attempted.contains(&addr),
         _ => true,
     }));
+}
+
+/// Test that we can find and connect to peers amidst network errors.
+#[test]
+fn sim_connect_to_peers() {
+    logger::init(log::Level::Debug);
+
+    let rng = fastrand::Rng::with_seed(0);
+    let network = Network::Mainnet;
+    let headers = BITCOIN_HEADERS.tail.to_vec();
+    let time = LocalTime::from_block_time(headers.last().unwrap().time);
+
+    // Alice will try to connect to enough outbound peers.
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut peers = peer::network(network, connmgr::TARGET_OUTBOUND_PEERS + 1, rng.clone());
+    let addrs = peers
+        .iter()
+        .map(|p| Address::new(&p.addr, p.cfg.services))
+        .collect();
+
+    alice.initialize();
+    alice.command(Command::ImportAddresses(addrs)); // Add all peers to Alice's address book.
+
+    let mut simulator = Simulation::new(
+        time,
+        rng,
+        Options {
+            latency: 0..4,      // 0 - 4 seconds
+            failure_rate: 0.04, // 4%
+        },
+    );
+    simulator.initialize(&mut peers);
+
+    while simulator.step(iter::once(&mut alice).chain(&mut peers)) {
+        if alice.protocol.connmgr.outbound_peers().count() >= connmgr::TARGET_OUTBOUND_PEERS - 1 {
+            break;
+        }
+    }
 }
