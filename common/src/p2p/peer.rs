@@ -125,6 +125,49 @@ impl Store for std::collections::HashMap<net::IpAddr, KnownAddress> {
     }
 }
 
+/// Implementation of [`Store`] for [`crate::collections::HashMap`].
+impl Store for crate::collections::HashMap<net::IpAddr, KnownAddress> {
+    fn get_mut(&mut self, ip: &net::IpAddr) -> Option<&mut KnownAddress> {
+        self.get_mut(ip)
+    }
+
+    fn get(&self, ip: &net::IpAddr) -> Option<&KnownAddress> {
+        self.get(ip)
+    }
+
+    fn remove(&mut self, ip: &net::IpAddr) -> Option<KnownAddress> {
+        self.remove(ip)
+    }
+
+    fn insert(&mut self, ip: net::IpAddr, ka: KnownAddress) -> bool {
+        use ::std::collections::hash_map::Entry;
+
+        match self.entry(ip) {
+            Entry::Vacant(v) => {
+                v.insert(ka);
+            }
+            Entry::Occupied(_) => return false,
+        }
+        true
+    }
+
+    fn iter<'a>(&'a self) -> Box<dyn Iterator<Item = (&net::IpAddr, &KnownAddress)> + 'a> {
+        Box::new(self.iter())
+    }
+
+    fn clear(&mut self) {
+        self.clear()
+    }
+
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Address source. Specifies where an address originated from.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Source {

@@ -493,6 +493,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 // Include services required by all sub-protocols.
                 preferred_services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
             },
+            rng.clone(),
         );
         let pingmgr = PingManager::new(ping_timeout, rng.clone(), upstream.clone());
         let spvmgr = SpvManager::new(

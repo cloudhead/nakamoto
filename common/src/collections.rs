@@ -36,6 +36,7 @@ impl std::hash::Hasher for Hasher {
 }
 
 /// Random hasher state.
+#[derive(Default)]
 pub struct RandomState {
     key1: u64,
     key2: u64,

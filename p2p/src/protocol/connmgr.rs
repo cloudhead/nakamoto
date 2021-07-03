@@ -1,12 +1,12 @@
 //! Peer connection manager.
 
-use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::net;
 
 use bitcoin::network::constants::ServiceFlags;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::collections::HashMap;
 use nakamoto_common::p2p::peer::{self, AddressSource, Source};
 
 use super::channel::{Disconnect, SetTimeout};
@@ -108,17 +108,20 @@ pub struct ConnectionManager<U, A> {
     upstream: U,
     /// Type witness for address source.
     addresses: PhantomData<A>,
+    /// RNG.
+    rng: fastrand::Rng,
 }
 
 impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> ConnectionManager<U, A> {
     /// Create a new connection manager.
-    pub fn new(upstream: U, config: Config) -> Self {
+    pub fn new(upstream: U, config: Config, rng: fastrand::Rng) -> Self {
         Self {
-            peers: HashMap::new(),
+            peers: HashMap::with_hasher(rng.clone().into()),
             last_idle: None,
             config,
             upstream,
             addresses: PhantomData,
+            rng,
         }
     }
 

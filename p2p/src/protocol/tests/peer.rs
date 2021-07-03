@@ -3,8 +3,6 @@ use super::*;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::Address;
 
-use std::collections::HashMap;
-
 use nonempty::NonEmpty;
 
 use nakamoto_chain::block::cache::BlockCache;
@@ -12,7 +10,7 @@ use nakamoto_chain::block::store;
 use nakamoto_common::block::filter::{FilterHash, FilterHeader};
 use nakamoto_common::block::store::Genesis;
 use nakamoto_common::block::BlockHeader;
-use nakamoto_common::collections::HashSet;
+use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::p2p::peer::KnownAddress;
 
 use nakamoto_test::block::cache::model;
@@ -304,7 +302,8 @@ pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Te
         .collect::<Vec<_>>();
 
     // Populate address books.
-    let mut address_books = HashMap::new();
+    // TODO: Peers shouldn't necessarily know each other.
+    let mut address_books = HashMap::with_hasher(rng.clone().into());
     for (i, (local, _, _)) in addresses.iter().enumerate() {
         for remote in addresses.iter().skip(i + 1) {
             address_books
