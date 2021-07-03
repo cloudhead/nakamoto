@@ -759,14 +759,14 @@ fn sim_connect_to_peers() {
         time,
         rng,
         Options {
-            latency: 0..4,      // 0 - 4 seconds
+            latency: 0..3,      // 0 - 3 seconds
             failure_rate: 0.04, // 4%
         },
     );
     simulator.initialize(&mut peers);
 
     while simulator.step(iter::once(&mut alice).chain(&mut peers)) {
-        if alice.protocol.connmgr.outbound_peers().count() >= connmgr::TARGET_OUTBOUND_PEERS - 1 {
+        if alice.protocol.connmgr.outbound_peers().count() >= connmgr::TARGET_OUTBOUND_PEERS {
             break;
         }
     }
