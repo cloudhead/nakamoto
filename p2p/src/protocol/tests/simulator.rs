@@ -136,6 +136,8 @@ pub struct Simulation {
     connections: HashMap<(NodeId, NodeId), (net::SocketAddr, net::SocketAddr)>,
     /// Simulation options.
     opts: Options,
+    /// Start time of simulation.
+    start_time: LocalTime,
     /// Current simulation time. Updated when a scheduled message is processed.
     time: LocalTime,
     /// RNG.
@@ -152,6 +154,7 @@ impl Simulation {
             latencies: HashMap::with_hasher(rng.clone().into()),
             connections: HashMap::with_hasher(rng.clone().into()),
             opts,
+            start_time: time,
             time,
             rng,
         }
@@ -160,6 +163,12 @@ impl Simulation {
     /// Check whether the simulation is done, ie. there are no more messages to process.
     pub fn is_done(&self) -> bool {
         self.inbox.messages.is_empty()
+    }
+
+    /// Total amount of simulated time elapsed.
+    #[allow(dead_code)]
+    pub fn elapsed(&self) -> LocalDuration {
+        self.time - self.start_time
     }
 
     /// Check whether the simulation has settled, ie. the only messages left to process
@@ -243,11 +252,13 @@ impl Simulation {
         }
 
         if let Some((time, next)) = self.inbox.next() {
+            let elapsed = (time - self.time).as_millis();
             if matches!(next.input, Input::Tick) {
-                trace!(target: "sim", "{}", next);
+                trace!(target: "sim", "+{:03} {}", elapsed, next);
             } else {
-                info!(target: "sim", "{} ({})", next, self.inbox.messages.len());
+                info!(target: "sim", "+{:03} {} ({})", elapsed, next, self.inbox.messages.len());
             }
+            assert!(time >= self.time, "Time only moves forwards!");
 
             self.time = time;
             self.inbox.messages.remove(&time);
