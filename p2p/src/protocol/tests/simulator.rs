@@ -110,12 +110,16 @@ impl Inbox {
 pub struct Options {
     /// Minimum and maximum latency between nodes, in seconds.
     pub latency: Range<u64>,
+    /// Probability that network I/O fails.
+    /// A rate of `1.0` means 100% of I/O fails.
+    pub failure_rate: f64,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Self {
             latency: Range::default(),
+            failure_rate: 0.,
         }
     }
 }
@@ -239,7 +243,11 @@ impl Simulation {
         }
 
         if let Some((time, next)) = self.inbox.next() {
-            info!(target: "sim", "{} ({})", next, self.inbox.messages.len());
+            if matches!(next.input, Input::Tick) {
+                trace!(target: "sim", "{}", next);
+            } else {
+                info!(target: "sim", "{} ({})", next, self.inbox.messages.len());
+            }
 
             self.time = time;
             self.inbox.messages.remove(&time);
@@ -268,8 +276,22 @@ impl Simulation {
         match out {
             Out::Message(receiver, msg) => {
                 // If the other end has disconnected the sender with some latency, there may not be
-                // a connection remaining to use.
+                // a connection remaining to use.https://github.com/maateen/battery-monitor
                 if let Some((sender_addr, _)) = self.connections.get(&(node, receiver.ip())) {
+                    // Randomly fail to send a message based on the failure rate.
+                    if self.is_fallible() {
+                        self.schedule(
+                            &node,
+                            Out::Disconnect(
+                                receiver,
+                                DisconnectReason::ConnectionError(
+                                    "unexpected I/O error".to_owned(),
+                                ),
+                            ),
+                        );
+                        return;
+                    }
+
                     let latency = self.latency(node, receiver.ip());
                     let time = self.time + latency;
 
@@ -292,11 +314,6 @@ impl Simulation {
                 let local_addr: net::SocketAddr = net::SocketAddr::new(node, self.rng.u16(8192..));
                 let latency = self.latency(node, remote.ip());
 
-                self.connections
-                    .insert((node, remote.ip()), (local_addr, remote));
-                self.connections
-                    .insert((remote.ip(), node), (remote, local_addr));
-
                 self.inbox.insert(
                     self.time + MIN_LATENCY,
                     Scheduled {
@@ -305,6 +322,33 @@ impl Simulation {
                         input: Input::Connecting { addr: remote },
                     },
                 );
+
+                // Randomly fail to connect based on the failure rate.
+                if self.is_fallible() {
+                    // Sometimes, the protocol gets a failure input, other times it just hangs.
+                    if self.rng.bool() {
+                        self.inbox.insert(
+                            self.time + MIN_LATENCY,
+                            Scheduled {
+                                node,
+                                remote,
+                                input: Input::Disconnected(
+                                    remote,
+                                    DisconnectReason::ConnectionError(
+                                        "failed to connect".to_owned(),
+                                    ),
+                                ),
+                            },
+                        );
+                    }
+                    return;
+                }
+
+                self.connections
+                    .insert((node, remote.ip()), (local_addr, remote));
+                self.connections
+                    .insert((remote.ip(), node), (remote, local_addr));
+
                 self.inbox.insert(
                     // The remote will get the connection attempt with some latency.
                     self.time + latency,
@@ -359,7 +403,7 @@ impl Simulation {
                             input: Input::Disconnected(
                                 local_addr,
                                 DisconnectReason::ConnectionError(
-                                    "Remote end closed the connection".to_owned(),
+                                    "remote end closed the connection".to_owned(),
                                 ),
                             ),
                         },
@@ -384,5 +428,10 @@ impl Simulation {
                 unimplemented! {}
             }
         }
+    }
+
+    /// Check whether we should fail the next operation.
+    fn is_fallible(&self) -> bool {
+        self.rng.f64() % 1.0 < self.opts.failure_rate
     }
 }

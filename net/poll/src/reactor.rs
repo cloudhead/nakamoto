@@ -310,6 +310,9 @@ impl<E: event::Publisher> Reactor<net::TcpStream, E> {
                             self.inputs.push_back(Input::Connecting { addr });
                         }
                         Err(err) => {
+                            // TODO: We should send an input here telling the protocol
+                            // that this connection failed.
+                            // This should also be updated in the simulator.
                             self.inputs.push_back(Input::Tick);
 
                             error!("{}: Connection error: {}", addr, err.to_string());
