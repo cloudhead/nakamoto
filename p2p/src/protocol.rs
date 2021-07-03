@@ -272,6 +272,8 @@ pub struct Hooks {
     pub on_version: Arc<dyn Fn(PeerId, VersionMessage) -> Result<(), &'static str> + Send + Sync>,
     /// Called when a `getcfilters` message is received.
     pub on_getcfilters: Arc<dyn Fn(PeerId, GetCFilters) + Send + Sync>,
+    /// Called when a `getdata` message is received.
+    pub on_getdata: Arc<dyn Fn(PeerId, Vec<Inventory>) + Send + Sync>,
 }
 
 impl Default for Hooks {
@@ -280,6 +282,7 @@ impl Default for Hooks {
             on_message: Arc::new(|_, _, _| Ok(())),
             on_version: Arc::new(|_, _| Ok(())),
             on_getcfilters: Arc::new(|_, _| {}),
+            on_getdata: Arc::new(|_, _| {}),
         }
     }
 }
@@ -737,6 +740,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             }
             NetworkMessage::GetAddr => {
                 self.addrmgr.received_getaddr(&addr);
+            }
+            NetworkMessage::GetData(inv) => {
+                (*self.hooks.on_getdata)(addr, inv);
             }
             _ => {
                 debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);
