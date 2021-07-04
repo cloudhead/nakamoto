@@ -192,7 +192,7 @@ impl std::fmt::Display for LocalDuration {
             } else {
                 write!(f, "{} second(s)", self.as_secs())
             }
-        } else {
+        } else if self.as_mins() < 60 {
             let fraction = self.as_secs() % 60;
             if fraction > 0 {
                 write!(
@@ -202,6 +202,13 @@ impl std::fmt::Display for LocalDuration {
                 )
             } else {
                 write!(f, "{} minutes(s)", self.as_mins())
+            }
+        } else {
+            let fraction = self.as_mins() % 60;
+            if fraction > 0 {
+                write!(f, "{:.2} hour(s)", self.as_mins() as f64 / 60.)
+            } else {
+                write!(f, "{} hour(s)", self.as_mins() / 60)
             }
         }
     }
@@ -394,6 +401,20 @@ mod tests {
     use super::*;
 
     use std::net::SocketAddr;
+
+    #[test]
+    fn test_local_duration_display() {
+        assert_eq!(LocalDuration::from_mins(90).to_string(), "1.50 hour(s)");
+        assert_eq!(LocalDuration::from_mins(60).to_string(), "1 hour(s)");
+        assert_eq!(
+            LocalDuration::from_millis(1280).to_string(),
+            "1.280 second(s)"
+        );
+        assert_eq!(
+            LocalDuration::from_millis(980).to_string(),
+            "980 millisecond(s)"
+        );
+    }
 
     #[test]
     fn test_adjusted_time() {
