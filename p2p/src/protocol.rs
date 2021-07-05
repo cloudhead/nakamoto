@@ -214,7 +214,10 @@ impl DisconnectReason {
     pub fn is_transient(&self) -> bool {
         matches!(
             self,
-            Self::ConnectionLimit | Self::PeerTimeout(_) | Self::PeerHeight(_)
+            Self::ConnectionLimit
+                | Self::PeerTimeout(_)
+                | Self::PeerHeight(_)
+                | Self::ConnectionError(_)
         )
     }
 }
