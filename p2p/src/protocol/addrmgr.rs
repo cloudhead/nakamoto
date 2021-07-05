@@ -91,11 +91,11 @@ impl std::fmt::Display for Event {
 /// Iterator over addresses.
 pub struct Iter<F>(F);
 
-impl<'a, F> Iterator for Iter<F>
+impl<F> Iterator for Iter<F>
 where
-    F: FnMut() -> Option<(&'a Address, Source)>,
+    F: FnMut() -> Option<(Address, Source)>,
 {
-    type Item = (&'a Address, Source);
+    type Item = (Address, Source);
 
     fn next(&mut self) -> Option<Self::Item> {
         (self.0)()
@@ -148,10 +148,15 @@ pub struct AddressManager<P, U> {
 }
 
 impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
+    /// Initialize the address manager.
+    pub fn initialize(&mut self, local_time: LocalTime) {
+        self.idle(local_time);
+    }
+
     /// Return an iterator over randomly sampled addresses.
     ///
     /// *May return duplicates.*
-    pub fn iter(&self, services: ServiceFlags) -> impl Iterator<Item = (&Address, Source)> + '_ {
+    pub fn iter(&mut self, services: ServiceFlags) -> impl Iterator<Item = (Address, Source)> + '_ {
         Iter(move || self.sample(services))
     }
 
@@ -193,13 +198,8 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
             self.upstream.set_timeout(REQUEST_TIMEOUT);
         }
 
-        // If it's been a while, save addresses to store.
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            if let Err(err) = self.peers.flush() {
-                self.upstream
-                    .event(Event::Error(format!("flush to disk failed: {}", err)));
-            }
-            self.upstream.set_timeout(IDLE_TIMEOUT);
+            self.idle(local_time);
         }
     }
 
@@ -260,6 +260,18 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
                 self.discard(&addr.ip());
             }
         }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+
+    fn idle(&mut self, local_time: LocalTime) {
+        // If it's been a while, save addresses to store.
+        if let Err(err) = self.peers.flush() {
+            self.upstream
+                .event(Event::Error(format!("flush to disk failed: {}", err)));
+        }
+        self.last_idle = Some(local_time);
+        self.upstream.set_timeout(IDLE_TIMEOUT);
     }
 }
 
@@ -466,7 +478,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// assert!(safe > adversary * 2, "safe addresses are picked twice more often");
     ///
     /// ```
-    pub fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)> {
+    pub fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
         if self.is_empty() {
             return None;
         }
@@ -486,7 +498,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             // Then select a random address in that range.
             let ix = self.rng.usize(..range.len());
             let ip = range.iter().nth(ix)?;
-            let ka = self.peers.get(&ip).expect("address must exist");
+            let ka = self.peers.get_mut(&ip).expect("address must exist");
 
             visited.insert(ip);
 
@@ -520,7 +532,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             }
 
             if !self.connected.contains(&ip) {
-                return Some((&ka.addr, ka.source));
+                debug_assert!(self.last_idle.is_some());
+                ka.last_sampled = self.last_idle;
+
+                return Some((ka.addr.clone(), ka.source));
             }
         }
 
@@ -581,12 +596,12 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 }
 
 impl<P: Store, U: Events + SyncAddresses + SetTimeout> AddressSource for AddressManager<P, U> {
-    fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)> {
-        AddressManager::sample(&self, services)
+    fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
+        AddressManager::sample(self, services)
     }
 
-    fn iter(&self, services: ServiceFlags) -> Box<dyn Iterator<Item = (&Address, Source)> + '_> {
-        Box::new(AddressManager::iter(&self, services))
+    fn iter(&mut self, services: ServiceFlags) -> Box<dyn Iterator<Item = (Address, Source)> + '_> {
+        Box::new(AddressManager::iter(self, services))
     }
 }
 
@@ -669,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_sample_empty() {
-        let addrmgr =
+        let mut addrmgr =
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
 
         assert!(addrmgr.sample(ServiceFlags::NONE).is_none());

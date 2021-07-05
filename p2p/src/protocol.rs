@@ -769,6 +769,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
+        self.addrmgr.initialize(time);
         self.syncmgr.initialize(time, &self.tree);
         self.connmgr.initialize::<P>(time, &mut self.addrmgr);
         self.spvmgr.initialize(time, &self.tree);
@@ -804,7 +805,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                 self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr, reason);
-                self.connmgr.peer_disconnected::<P>(&addr, &self.addrmgr);
+                self.connmgr
+                    .peer_disconnected::<P>(&addr, &mut self.addrmgr);
                 self.pingmgr.peer_disconnected(&addr);
                 self.peermgr.peer_disconnected(&addr);
             }
@@ -914,7 +916,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
             Input::Tick => {
                 trace!(target: self.target, "Received tick");
 
-                self.connmgr.received_tick::<P>(local_time, &self.addrmgr);
+                self.connmgr
+                    .received_tick::<P>(local_time, &mut self.addrmgr);
                 self.syncmgr.received_tick(local_time, &self.tree);
                 self.pingmgr.received_tick(local_time);
                 self.addrmgr.received_tick(local_time);

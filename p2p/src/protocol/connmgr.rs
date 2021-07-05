@@ -253,7 +253,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Call when a peer disconnected.
-    pub fn peer_disconnected<S: peer::Store>(&mut self, addr: &net::SocketAddr, addrs: &A) {
+    pub fn peer_disconnected<S: peer::Store>(&mut self, addr: &net::SocketAddr, addrs: &mut A) {
         debug_assert!(self.peers.contains_key(addr));
         debug_assert!(!self.is_disconnected(&addr));
 
@@ -270,7 +270,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Call when we recevied a tick.
-    pub fn received_tick<S: peer::Store>(&mut self, local_time: LocalTime, addrs: &A) {
+    pub fn received_tick<S: peer::Store>(&mut self, local_time: LocalTime, addrs: &mut A) {
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.maintain_connections::<S>(addrs);
             self.upstream.set_timeout(IDLE_TIMEOUT);
@@ -295,7 +295,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_connections<S: peer::Store>(&mut self, addrs: &A) {
+    fn maintain_connections<S: peer::Store>(&mut self, addrs: &mut A) {
         let current = self.outbound().count()
             + self
                 .peers
@@ -303,10 +303,19 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
                 .filter(|p| matches!(p, Peer::Connecting))
                 .count();
         let target = self.config.target_outbound_peers;
-        let addresses = addrs
+        let delta = target - current;
+
+        let mut addresses: Vec<_> = addrs
             .iter(self.config.preferred_services)
-            .chain(addrs.iter(self.config.required_services))
-            .take(target - current);
+            .take(delta)
+            .collect();
+        if addresses.len() < delta {
+            addresses.extend(
+                addrs
+                    .iter(self.config.required_services)
+                    .take(delta - addresses.len()),
+            )
+        }
 
         // TODO: The address manager currently may return duplicates if the address book is small
         // and we requested more addresses than it has.

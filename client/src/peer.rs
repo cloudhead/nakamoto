@@ -154,6 +154,7 @@ mod test {
                     addr: Address::new(&sockaddr, services),
                     source: Source::Dns,
                     last_success: Some(LocalTime::from_secs(i as u64)),
+                    last_sampled: Some(LocalTime::from_secs((i + 1) as u64)),
                     last_attempt: None,
                     last_active: None,
                 };

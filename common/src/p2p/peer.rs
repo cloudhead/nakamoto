@@ -199,6 +199,8 @@ pub struct KnownAddress {
     pub source: Source,
     /// Last time this address was used to successfully connect to a peer.
     pub last_success: Option<LocalTime>,
+    /// Last time this address was sampled.
+    pub last_sampled: Option<LocalTime>,
     /// Last time this address was tried.
     pub last_attempt: Option<LocalTime>,
     /// Last time this peer was seen alive.
@@ -213,6 +215,7 @@ impl KnownAddress {
             source,
             last_success: None,
             last_attempt: None,
+            last_sampled: None,
             last_active: None,
         }
     }
@@ -240,6 +243,13 @@ impl KnownAddress {
         obj.insert(
             "last_attempt".to_owned(),
             match self.last_attempt {
+                Some(t) => Value::Number(Number::U64(t.block_time() as u64)),
+                None => Value::Null,
+            },
+        );
+        obj.insert(
+            "last_sampled".to_owned(),
+            match self.last_sampled {
                 Some(t) => Value::Number(Number::U64(t.block_time() as u64)),
                 None => Value::Null,
             },
@@ -290,6 +300,11 @@ impl KnownAddress {
             Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
             _ => return Err(serde::Error),
         };
+        let last_sampled = match obj.get("last_sampled") {
+            Some(Value::Null) => None,
+            Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
+            _ => return Err(serde::Error),
+        };
         let last_active = match obj.get("last_active") {
             Some(Value::Null) => None,
             Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
@@ -315,6 +330,7 @@ impl KnownAddress {
             addr: Address::new(&addr, services),
             source,
             last_success,
+            last_sampled,
             last_attempt,
             last_active,
         })
@@ -324,9 +340,9 @@ impl KnownAddress {
 /// Source of peer addresses.
 pub trait AddressSource {
     /// Sample a random peer address. Returns `None` if there are no addresses left.
-    fn sample(&self, services: ServiceFlags) -> Option<(&Address, Source)>;
+    fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)>;
     /// Return an iterator over random peer addresses.
-    fn iter(&self, services: ServiceFlags) -> Box<dyn Iterator<Item = (&Address, Source)> + '_>;
+    fn iter(&mut self, services: ServiceFlags) -> Box<dyn Iterator<Item = (Address, Source)> + '_>;
 }
 
 #[cfg(test)]
@@ -341,6 +357,7 @@ mod tests {
             addr: Address::new(&sockaddr, services),
             source: Source::Peer(net::SocketAddr::from(([4, 5, 6, 7], 8333))),
             last_success: Some(LocalTime::from_secs(42)),
+            last_sampled: Some(LocalTime::from_secs(144)),
             last_attempt: None,
             last_active: None,
         };
