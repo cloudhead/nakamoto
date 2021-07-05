@@ -65,7 +65,7 @@ mod setup {
 fn test_handshake() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let outbound = ([241, 19, 44, 19], 8333).into();
     let inbound = ([241, 19, 44, 18], 8333).into();
 
@@ -86,7 +86,7 @@ fn test_initial_sync() {
 
     assert!(headers.len() >= height);
 
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng.clone());
     let mut bob = Peer::new(
         "bob",
         [97, 97, 97, 97],
@@ -115,7 +115,7 @@ fn test_initial_sync() {
 fn test_idle_disconnect() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote = ([241, 19, 44, 18], 8333).into();
 
     peer.connect_addr(&remote, Link::Outbound);
@@ -157,7 +157,7 @@ fn test_inv_getheaders() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote: PeerId = ([241, 19, 44, 18], 8333).into();
 
     // Some hash for a nonexistent block.
@@ -187,7 +187,7 @@ fn test_maintain_connections() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let port = network.port();
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
 
     let peers: Vec<PeerId> = vec![
         ([88, 88, 88, 1], 8333).into(),
@@ -250,7 +250,7 @@ fn test_getheaders_retry() {
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
-    let mut alice = Peer::genesis("alice", [49, 40, 43, 40], network, rng);
+    let mut alice = Peer::genesis("alice", [49, 40, 43, 40], network, vec![], rng);
     let peers = [
         ([55, 55, 55, 55], network.port()).into(),
         ([66, 66, 66, 66], network.port()).into(),
@@ -306,7 +306,7 @@ fn test_getheaders_retry() {
 fn test_handshake_version_timeout() {
     let network = Network::Mainnet;
     let rng = fastrand::Rng::new();
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote = ([131, 31, 11, 33], 11111).into();
 
     for link in &[Link::Outbound, Link::Inbound] {
@@ -337,7 +337,7 @@ fn test_handshake_version_timeout() {
 fn test_handshake_verack_timeout() {
     let network = Network::Mainnet;
     let rng = fastrand::Rng::new();
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
 
     for link in &[Link::Outbound, Link::Inbound] {
@@ -435,12 +435,13 @@ fn test_handshake_version_hook() {
 fn test_handshake_initial_messages() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
 
     let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
     let local = ([0, 0, 0, 0], 0).into();
 
     // Make sure the address manager trusts this remote address.
+    peer.initialize();
     peer.protocol.addrmgr.insert(
         std::iter::once((
             Default::default(),
@@ -487,7 +488,7 @@ fn test_handshake_initial_messages() {
 fn test_connection_error() {
     let network = Network::Mainnet;
     let rng = fastrand::Rng::new();
-    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
 
     peer.step(Input::Command(Command::Connect(remote.addr)));
@@ -508,7 +509,7 @@ fn test_getaddr() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
     let eve: PeerId = ([241, 19, 44, 19], 8333).into();
 
@@ -565,7 +566,7 @@ fn test_stale_tip() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
     let msg = message::Builder::new(network);
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote: PeerId = ([33, 33, 33, 33], network.port()).into();
     let headers = &BITCOIN_HEADERS;
 
@@ -626,7 +627,7 @@ fn test_stale_tip() {
 fn prop_addrs(seed: u64) {
     let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng);
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
 
     alice.connect_addr(&bob, Link::Outbound);
@@ -739,35 +740,40 @@ fn prop_connect_timeout(seed: u64) {
 fn sim_connect_to_peers() {
     logger::init(log::Level::Debug);
 
-    let rng = fastrand::Rng::with_seed(0);
+    let rng = fastrand::Rng::with_seed(1);
     let network = Network::Mainnet;
     let headers = BITCOIN_HEADERS.tail.to_vec();
     let time = LocalTime::from_block_time(headers.last().unwrap().time);
 
     // Alice will try to connect to enough outbound peers.
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, rng.clone());
     let mut peers = peer::network(network, connmgr::TARGET_OUTBOUND_PEERS + 1, rng.clone());
     let addrs = peers
         .iter()
-        .map(|p| Address::new(&p.addr, p.cfg.services))
-        .collect();
-
-    alice.initialize();
-    alice.command(Command::ImportAddresses(addrs)); // Add all peers to Alice's address book.
+        .map(|p| (p.addr, Source::Dns, p.cfg.services))
+        .collect::<Vec<_>>();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, addrs, rng.clone());
 
     let mut simulator = Simulation::new(
         time,
         rng,
         Options {
-            latency: 0..3,      // 0 - 3 seconds
+            latency: 1..5,      // 1 - 5 seconds
             failure_rate: 0.04, // 4%
         },
     );
+    alice.initialize();
     simulator.initialize(&mut peers);
+
+    // TODO: Node needs to try to reconnect after disconnect!
 
     while simulator.step(iter::once(&mut alice).chain(&mut peers)) {
         if alice.protocol.connmgr.outbound_peers().count() >= connmgr::TARGET_OUTBOUND_PEERS {
             break;
         }
     }
+    assert!(
+        simulator.elapsed() < LocalDuration::from_secs(20),
+        "Desired state took too long to reach: {}",
+        simulator.elapsed()
+    );
 }

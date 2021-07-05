@@ -252,11 +252,11 @@ impl Simulation {
         }
 
         if let Some((time, next)) = self.inbox.next() {
-            let elapsed = (time - self.time).as_millis();
+            let elapsed = (time - self.start_time).as_millis();
             if matches!(next.input, Input::Tick) {
-                trace!(target: "sim", "+{:03} {}", elapsed, next);
+                trace!(target: "sim", "{:05} {}", elapsed, next);
             } else {
-                info!(target: "sim", "+{:03} {} ({})", elapsed, next, self.inbox.messages.len());
+                info!(target: "sim", "{:05} {} ({})", elapsed, next, self.inbox.messages.len());
             }
             assert!(time >= self.time, "Time only moves forwards!");
 

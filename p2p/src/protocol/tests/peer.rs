@@ -122,9 +122,10 @@ impl Peer<TestProtocol> {
         name: &'static str,
         ip: impl Into<net::IpAddr>,
         network: Network,
+        peers: Vec<(net::SocketAddr, Source, ServiceFlags)>,
         rng: fastrand::Rng,
     ) -> Self {
-        Self::new(name, ip, network, vec![], vec![], vec![], rng)
+        Self::new(name, ip, network, vec![], vec![], peers, rng)
     }
 
     pub fn config(
