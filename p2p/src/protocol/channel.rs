@@ -97,6 +97,12 @@ impl SetTimeout for Channel {
     }
 }
 
+impl SetTimeout for () {
+    fn set_timeout(&self, _timeout: LocalDuration) -> &Self {
+        self
+    }
+}
+
 impl addrmgr::SyncAddresses for Channel {
     fn get_addresses(&self, addr: PeerId) {
         self.message(addr, NetworkMessage::GetAddr);

@@ -19,7 +19,10 @@ use super::{DisconnectReason, Link, PeerId};
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
 
 /// Idle timeout. Used to run periodic functions.
-pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(30);
+pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
+
+/// Sample timeout. How long before a sampled address can be returned again.
+pub const SAMPLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(3);
 
 /// Maximum number of addresses expected in a `addr` message.
 const MAX_ADDR_ADDRESSES: usize = 1000;
@@ -38,6 +41,11 @@ pub trait SyncAddresses {
     fn get_addresses(&self, addr: PeerId);
     /// Send addresses to a peer.
     fn send_addresses(&self, addr: PeerId, addrs: Vec<(BlockTime, Address)>);
+}
+
+impl SyncAddresses for () {
+    fn get_addresses(&self, _addr: PeerId) {}
+    fn send_addresses(&self, _addr: PeerId, _addrs: Vec<(BlockTime, Address)>) {}
 }
 
 impl Events for () {
@@ -154,8 +162,6 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
     }
 
     /// Return an iterator over randomly sampled addresses.
-    ///
-    /// *May return duplicates.*
     pub fn iter(&mut self, services: ServiceFlags) -> impl Iterator<Item = (Address, Source)> + '_ {
         Iter(move || self.sample(services))
     }
@@ -433,9 +439,13 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
     /// use nakamoto_common::p2p::peer::Source;
     /// use nakamoto_common::block::BlockTime;
+    /// use nakamoto_common::block::time::{LocalDuration, LocalTime};
     ///
     /// let cfg = Config::default();
     /// let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
+    /// let mut time = LocalTime::now();
+    ///
+    /// addrmgr.initialize(time);
     ///
     /// // Addresses controlled by an adversary.
     /// let adversary_addrs = vec![
@@ -466,6 +476,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// for _ in 0..99 {
     ///     let (addr, _) = addrmgr.sample(ServiceFlags::NONE).unwrap();
     ///
+    ///     // Make sure we can re-sample the same addresses for the purpose of this example.
+    ///     time = time + LocalDuration::from_mins(60);
+    ///     addrmgr.received_tick(time);
+    ///
     ///     if adversary_addrs.contains(&addr) {
     ///         adversary += 1;
     ///     } else if safe_addrs.contains(&addr) {
@@ -487,6 +501,9 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         // Keep track of the addresses we've visited, to make sure we don't
         // loop forever.
         let mut visited = HashSet::with_hasher(self.rng.clone().into());
+        let time = self
+            .last_idle
+            .expect("AddressManager::sample: manager must be initialized before sampling");
 
         while visited.len() < self.peers.len() {
             // First select a random address range.
@@ -504,6 +521,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
             // FIXME
             if ka.last_attempt.is_some() {
+                continue;
+            }
+            // If we recently sampled this address, don't return it again.
+            if time - ka.last_sampled.unwrap_or_default() < SAMPLE_TIMEOUT {
                 continue;
             }
             if !ka.addr.services.has(services) {
@@ -533,7 +554,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
             if !self.connected.contains(&ip) {
                 debug_assert!(self.last_idle.is_some());
-                ka.last_sampled = self.last_idle;
+                ka.last_sampled = Some(time);
 
                 return Some((ka.addr.clone(), ka.source));
             }
@@ -682,12 +703,69 @@ mod tests {
     use std::collections::HashMap;
     use std::iter;
 
+    use crossbeam_channel as chan;
+    use nakamoto_common::network::Network;
+    use quickcheck::TestResult;
+    use quickcheck_macros::quickcheck;
+
     #[test]
     fn test_sample_empty() {
         let mut addrmgr =
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
 
         assert!(addrmgr.sample(ServiceFlags::NONE).is_none());
+    }
+
+    #[quickcheck]
+    fn prop_sample_no_duplicates(size: usize, seed: u64) -> TestResult {
+        if size > 24 {
+            return TestResult::discard();
+        }
+        let (sender, _receiver) = chan::unbounded();
+
+        let mut addrmgr = {
+            let upstream =
+                crate::protocol::channel::Channel::new(Network::Mainnet, 0, "test", sender);
+
+            AddressManager::new(
+                Config::default(),
+                fastrand::Rng::with_seed(seed),
+                HashMap::new(),
+                upstream,
+            )
+        };
+        let time = BlockTime::default();
+        let services = ServiceFlags::NETWORK;
+        let mut addrs = vec![];
+
+        for i in 0..size {
+            addrs.push([96 + i as u8, 96 + i as u8, 96, 96]);
+        }
+
+        addrmgr.initialize(LocalTime::now());
+        addrmgr.insert(
+            addrs.iter().map(|a| {
+                (
+                    time,
+                    Address::new(&net::SocketAddr::from((*a, 8333)), services),
+                )
+            }),
+            Source::Dns,
+        );
+
+        let mut sampled = HashSet::with_hasher(fastrand::Rng::with_seed(seed).into());
+        for _ in 0..addrs.len() {
+            let (addr, _) = addrmgr
+                .sample(services)
+                .expect("an address should be returned");
+            sampled.insert(addr.socket_addr().unwrap().ip());
+        }
+
+        assert_eq!(
+            sampled,
+            addrs.iter().map(|a| (*a).into()).collect::<HashSet<_>>()
+        );
+        TestResult::passed()
     }
 
     #[test]
