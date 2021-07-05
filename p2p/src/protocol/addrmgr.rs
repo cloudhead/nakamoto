@@ -113,7 +113,11 @@ where
 impl<P: Store, U> AddressManager<P, U> {
     /// Check whether we have unused addresses.
     pub fn is_exhausted(&self) -> bool {
-        for (addr, _) in self.peers.iter() {
+        for (addr, ka) in self.peers.iter() {
+            // Unsuccessful attempt to connect.
+            if ka.last_attempt.is_some() && ka.last_success.is_none() {
+                continue;
+            }
             if !self.connected.contains(addr) {
                 return false;
             }
@@ -250,13 +254,14 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
             }
             // Keep track of when the last successful handshake was.
             ka.last_success = Some(time);
+            ka.last_active = Some(time);
             ka.addr.services = services;
         }
     }
 
     /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
-        if self.connected.contains(&addr.ip()) {
+        if self.connected.remove(&addr.ip()) {
             // Disconnected peers cannot be used as a source for new addresses.
             self.sources.remove(&addr);
 
@@ -380,7 +385,11 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///
     /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
     /// ```
-    pub fn insert(&mut self, addrs: impl Iterator<Item = (BlockTime, Address)>, source: Source) {
+    pub fn insert(
+        &mut self,
+        addrs: impl IntoIterator<Item = (BlockTime, Address)>,
+        source: Source,
+    ) {
         // TODO: Store timestamp.
         for (_, addr) in addrs {
             // Ignore addresses that don't have the required services.
@@ -714,6 +723,126 @@ mod tests {
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
 
         assert!(addrmgr.sample(ServiceFlags::NONE).is_none());
+    }
+
+    #[test]
+    fn test_known_addresses() {
+        let mut addrmgr =
+            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
+        let time = BlockTime::default();
+        let source = Source::Dns;
+        let services = ServiceFlags::NETWORK;
+
+        addrmgr.initialize(LocalTime::now());
+        addrmgr.insert(
+            [
+                (
+                    time,
+                    Address::new(&([33, 33, 33, 33], 8333).into(), services),
+                ),
+                (
+                    time,
+                    Address::new(&([44, 44, 44, 44], 8333).into(), services),
+                ),
+            ],
+            source,
+        );
+
+        let addr: &net::SocketAddr = &([33, 33, 33, 33], 8333).into();
+
+        let ka = addrmgr.peers.get(&addr.ip()).unwrap();
+        assert!(ka.last_success.is_none());
+        assert!(ka.last_attempt.is_none());
+        assert!(ka.last_active.is_none());
+        assert!(ka.last_sampled.is_none());
+
+        addrmgr.peer_attempted(&addr, LocalTime::now());
+
+        let ka = addrmgr.peers.get(&addr.ip()).unwrap();
+        assert!(ka.last_success.is_none());
+        assert!(ka.last_attempt.is_some());
+        assert!(ka.last_active.is_none());
+        assert!(ka.last_sampled.is_none());
+
+        // When a peer is connected, it is not yet considered a "success".
+        addrmgr.peer_connected(&addr, LocalTime::now());
+
+        let ka = addrmgr.peers.get(&addr.ip()).unwrap();
+        assert!(ka.last_success.is_none());
+        assert!(ka.last_attempt.is_some());
+        assert!(ka.last_active.is_none());
+        assert!(ka.last_sampled.is_none());
+
+        // Only when it is negotiated is it a "success".
+        addrmgr.peer_negotiated(&addr, services, Link::Outbound, LocalTime::now());
+
+        let ka = addrmgr.peers.get(&addr.ip()).unwrap();
+        assert!(ka.last_success.is_some());
+        assert!(ka.last_attempt.is_some());
+        assert!(ka.last_active.is_some());
+        assert!(ka.last_sampled.is_none());
+
+        let (sampled, _) = addrmgr.sample(services).unwrap();
+        assert_eq!(
+            sampled.socket_addr().ok(),
+            Some(([44, 44, 44, 44], 8333).into())
+        );
+        let ka = addrmgr.peers.get(&[44, 44, 44, 44].into()).unwrap();
+        assert!(ka.last_success.is_none());
+        assert!(ka.last_attempt.is_none());
+        assert!(ka.last_active.is_none());
+        assert!(ka.last_sampled.is_some());
+    }
+
+    #[test]
+    fn test_is_exhausted() {
+        let mut addrmgr =
+            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
+        let time = BlockTime::default();
+        let source = Source::Dns;
+        let services = ServiceFlags::NETWORK;
+
+        addrmgr.insert(
+            [(
+                time,
+                Address::new(&net::SocketAddr::from(([33, 33, 33, 33], 8333)), services),
+            )],
+            source,
+        );
+        assert!(!addrmgr.is_exhausted());
+
+        // Once a peer connects, it's no longer available as an address.
+        addrmgr.peer_connected(&([33, 33, 33, 33], 8333).into(), LocalTime::now());
+        assert!(addrmgr.is_exhausted());
+
+        addrmgr.insert(
+            [(
+                time,
+                Address::new(&net::SocketAddr::from(([44, 44, 44, 44], 8333)), services),
+            )],
+            source,
+        );
+        assert!(!addrmgr.is_exhausted());
+
+        // If a peer has been attempted with no success, it should not count towards the available
+        // addresses.
+        addrmgr.peer_attempted(&([44, 44, 44, 44], 8333).into(), LocalTime::now());
+        assert!(addrmgr.is_exhausted());
+
+        // If a peer has been connected to successfully, and then disconnected for a transient
+        // reason, its address should be once again available.
+        addrmgr.peer_connected(&([44, 44, 44, 44], 8333).into(), LocalTime::now());
+        addrmgr.peer_negotiated(
+            &([44, 44, 44, 44], 8333).into(),
+            services,
+            Link::Outbound,
+            LocalTime::now(),
+        );
+        addrmgr.peer_disconnected(
+            &([44, 44, 44, 44], 8333).into(),
+            DisconnectReason::PeerTimeout("timeout"),
+        );
+        assert!(!addrmgr.is_exhausted());
     }
 
     #[quickcheck]
