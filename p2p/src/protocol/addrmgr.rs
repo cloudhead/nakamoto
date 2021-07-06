@@ -502,11 +502,9 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///
     /// ```
     pub fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
-        if self.is_empty() {
+        if self.is_empty() || self.address_ranges.is_empty() {
             return None;
         }
-        assert!(!self.address_ranges.is_empty());
-
         // Keep track of the addresses we've visited, to make sure we don't
         // loop forever.
         let mut visited = HashSet::with_hasher(self.rng.clone().into());
@@ -602,14 +600,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         key
     }
 
-    /// Remove an address permanently.
-    fn discard(&mut self, addr: &net::IpAddr) -> (Option<KnownAddress>, bool) {
-        // TODO: For now, it's enough to remove the address, since we shouldn't
-        // be trying to reconnect to a peer that disconnected. However in the future
-        // we should probably keep it around, or decide based on the reason for
-        // disconnection.
-        let ka = self.peers.remove(addr);
-        let co = self.connected.remove(addr);
+    /// Remove an address from the address buckets.
+    /// This prevents the address from being sampled again.
+    fn discard(&mut self, addr: &net::IpAddr) -> bool {
+        debug_assert!(!self.connected.contains(addr));
 
         let key = self::addr_key(addr);
 
@@ -619,9 +613,9 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             if range.is_empty() {
                 self.address_ranges.remove(&key);
             }
+            return true;
         }
-
-        (ka, co)
+        false
     }
 }
 
@@ -843,6 +837,39 @@ mod tests {
             DisconnectReason::PeerTimeout("timeout"),
         );
         assert!(!addrmgr.is_exhausted());
+    }
+
+    #[test]
+    fn test_disconnect_rediscover() {
+        // Check that if we re-discover an address after permanent disconnection, we still know
+        // not to connect to it.
+        let mut addrmgr =
+            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
+        let time = BlockTime::default();
+        let source = Source::Dns;
+        let services = ServiceFlags::NETWORK;
+        let addr: &net::SocketAddr = &([33, 33, 33, 33], 8333).into();
+
+        addrmgr.initialize(LocalTime::now());
+        addrmgr.insert([(time, Address::new(addr, services))], source);
+
+        let (sampled, _) = addrmgr.sample(services).unwrap();
+        assert_eq!(sampled.socket_addr().ok(), Some(*addr));
+        assert!(addrmgr.sample(services).is_none());
+
+        addrmgr.peer_attempted(addr, LocalTime::now());
+        addrmgr.peer_connected(addr, LocalTime::now());
+        addrmgr.peer_negotiated(addr, services, Link::Outbound, LocalTime::now());
+        addrmgr.peer_disconnected(addr, DisconnectReason::PeerMisbehaving("misbehaving"));
+
+        // Peer is now disconnected for non-transient reasons.
+        // Receive from a new peer the same address we just disconnected from.
+        addrmgr.received_addr(
+            ([99, 99, 99, 99], 8333).into(),
+            vec![(time, Address::new(addr, services))],
+        );
+        // It should not be returned from `sample`.
+        assert!(addrmgr.sample(services).is_none());
     }
 
     #[quickcheck]
