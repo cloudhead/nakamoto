@@ -257,7 +257,7 @@ impl spvmgr::SyncFilters for Channel {
     }
 
     fn send_cfilter(&self, addr: PeerId, cfilter: CFilter) {
-        todo!()
+        self.message(addr, NetworkMessage::CFilter(cfilter));
     }
 }
 

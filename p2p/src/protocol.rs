@@ -279,9 +279,9 @@ pub struct Hooks {
     /// If an error is returned, the peer is dropped, and the error is logged.
     pub on_version: Arc<dyn Fn(PeerId, VersionMessage) -> Result<(), &'static str> + Send + Sync>,
     /// Called when a `getcfilters` message is received.
-    pub on_getcfilters: Arc<dyn Fn(PeerId, GetCFilters) + Send + Sync>,
+    pub on_getcfilters: Arc<dyn Fn(PeerId, GetCFilters, &Upstream) + Send + Sync>,
     /// Called when a `getdata` message is received.
-    pub on_getdata: Arc<dyn Fn(PeerId, Vec<Inventory>) + Send + Sync>,
+    pub on_getdata: Arc<dyn Fn(PeerId, Vec<Inventory>, &Upstream) + Send + Sync>,
 }
 
 impl Default for Hooks {
@@ -289,8 +289,8 @@ impl Default for Hooks {
         Self {
             on_message: Arc::new(|_, _, _| Ok(())),
             on_version: Arc::new(|_, _| Ok(())),
-            on_getcfilters: Arc::new(|_, _| {}),
-            on_getdata: Arc::new(|_, _| {}),
+            on_getcfilters: Arc::new(|_, _, _| {}),
+            on_getdata: Arc::new(|_, _, _| {}),
         }
     }
 }
@@ -742,7 +742,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
             }
             NetworkMessage::GetCFilters(msg) => {
-                (*self.hooks.on_getcfilters)(addr, msg);
+                (*self.hooks.on_getcfilters)(addr, msg, &self.upstream);
             }
             NetworkMessage::Addr(addrs) => {
                 self.addrmgr.received_addr(addr, addrs);
@@ -751,7 +751,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.addrmgr.received_getaddr(&addr);
             }
             NetworkMessage::GetData(inv) => {
-                (*self.hooks.on_getdata)(addr, inv);
+                (*self.hooks.on_getdata)(addr, inv, &self.upstream);
             }
             _ => {
                 debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);
