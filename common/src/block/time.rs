@@ -91,6 +91,15 @@ impl LocalTime {
         )
     }
 
+    /// Get the difference between two times.
+    pub fn diff(&self, other: LocalTime) -> LocalDuration {
+        if self > &other {
+            self.duration_since(other)
+        } else {
+            other.duration_since(*self)
+        }
+    }
+
     /// Elapse time.
     ///
     /// Adds the given duration to the time.
