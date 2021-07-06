@@ -1,8 +1,8 @@
 nakamoto
 ========
 
-Nakamoto is a high-assurance Bitcoin light-client implementation in Rust, with
-a focus on low resource utilization, modularity and security.
+Nakamoto is a privacy-preserving Bitcoin light-client implementation in Rust,
+with a focus on low resource utilization, modularity and security.
 
 The vision for the project is to build a set of libraries targeting light
 client functionality, that are easy to embed in any program and on any
@@ -17,7 +17,7 @@ to it via a foreign function interface (FFI).
     [dependencies]
     nakamoto = "0.2.0"
 
-Requires `rustc 1.47` or greater.
+Requires `rustc 1.53` or greater.
 
 ## Design
 

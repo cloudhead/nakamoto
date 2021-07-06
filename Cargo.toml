@@ -1,6 +1,6 @@
 [package]
 name = "nakamoto"
-description = "A high-assurance Bitcoin light-client"
+description = "Privacy-preserving Bitcoin light-client"
 documentation = "https://docs.rs/nakamoto"
 homepage = "https://cloudhead.io/nakamoto/"
 repository = "https://github.com/cloudhead/nakamoto"
