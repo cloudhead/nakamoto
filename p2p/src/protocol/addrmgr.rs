@@ -113,9 +113,16 @@ where
 impl<P: Store, U> AddressManager<P, U> {
     /// Check whether we have unused addresses.
     pub fn is_exhausted(&self) -> bool {
+        let time = self
+            .last_idle
+            .expect("AddressManager::is_exhausted: manager must be initialized");
+
         for (addr, ka) in self.peers.iter() {
             // Unsuccessful attempt to connect.
             if ka.last_attempt.is_some() && ka.last_success.is_none() {
+                continue;
+            }
+            if time - ka.last_sampled.unwrap_or_default() < SAMPLE_TIMEOUT {
                 continue;
             }
             if !self.connected.contains(addr) {
@@ -527,7 +534,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             visited.insert(ip);
 
             // FIXME
-            if ka.last_attempt.is_some() {
+            if ka.last_attempt.is_some() && ka.last_success.is_none() {
                 continue;
             }
             // If we recently sampled this address, don't return it again.
@@ -796,6 +803,7 @@ mod tests {
         let source = Source::Dns;
         let services = ServiceFlags::NETWORK;
 
+        addrmgr.initialize(LocalTime::now());
         addrmgr.insert(
             [(
                 time,
@@ -837,6 +845,9 @@ mod tests {
             DisconnectReason::PeerTimeout("timeout"),
         );
         assert!(!addrmgr.is_exhausted());
+        assert!(addrmgr.sample(services).is_some());
+        assert!(addrmgr.sample(services).is_none());
+        assert!(addrmgr.is_exhausted());
     }
 
     #[test]
