@@ -6,12 +6,18 @@ pub use nakamoto_common::block::time::{LocalDuration, LocalTime};
 /// Manages timers and triggers timeouts.
 pub struct TimeoutManager<K> {
     timeouts: Vec<(K, LocalTime)>,
+    threshold: LocalDuration,
 }
 
 impl<K> TimeoutManager<K> {
     /// Create a new timeout manager.
-    pub fn new() -> Self {
-        Self { timeouts: vec![] }
+    ///
+    /// Takes a threshold below which two timeouts cannot overlap.
+    pub fn new(threshold: LocalDuration) -> Self {
+        Self {
+            timeouts: vec![],
+            threshold,
+        }
     }
 
     /// Return the number of timeouts being tracked.
@@ -25,9 +31,42 @@ impl<K> TimeoutManager<K> {
     }
 
     /// Register a new timeout with an associated key and wake-up time.
-    pub fn register(&mut self, key: K, time: LocalTime) {
+    ///
+    /// ```
+    /// use nakamoto_net_poll::time::{LocalTime, LocalDuration, TimeoutManager};
+    ///
+    /// let mut tm = TimeoutManager::new(LocalDuration::from_secs(1));
+    /// let now = LocalTime::now();
+    ///
+    /// let registered = tm.register(0xA, now + LocalDuration::from_secs(8));
+    /// assert!(registered);
+    ///
+    /// let registered = tm.register(0xB, now + LocalDuration::from_secs(9));
+    /// assert!(registered);
+    /// assert_eq!(tm.len(), 2);
+    ///
+    /// let registered = tm.register(0xC, now + LocalDuration::from_millis(9541));
+    /// assert!(!registered);
+    ///
+    /// let registered = tm.register(0xC, now + LocalDuration::from_millis(9999));
+    /// assert!(!registered);
+    /// assert_eq!(tm.len(), 2);
+    /// ```
+    pub fn register(&mut self, key: K, time: LocalTime) -> bool {
+        // If this timeout is too close to a pre-existing timeout,
+        // don't register it.
+        if self
+            .timeouts
+            .iter()
+            .any(|(_, t)| t.diff(time) < self.threshold)
+        {
+            return false;
+        }
+
         self.timeouts.push((key, time));
         self.timeouts.sort_unstable_by(|(_, a), (_, b)| b.cmp(a));
+
+        true
     }
 
     /// Get the minimum time duration we should wait for at least one timeout
@@ -36,7 +75,7 @@ impl<K> TimeoutManager<K> {
     /// ```
     /// use nakamoto_net_poll::time::{LocalTime, LocalDuration, TimeoutManager};
     ///
-    /// let mut tm = TimeoutManager::new();
+    /// let mut tm = TimeoutManager::new(LocalDuration::from_secs(0));
     /// let now = LocalTime::now();
     ///
     /// tm.register(0xA, now + LocalDuration::from_millis(16));
@@ -70,7 +109,7 @@ impl<K> TimeoutManager<K> {
     /// ```
     /// use nakamoto_net_poll::time::{LocalTime, LocalDuration, TimeoutManager};
     ///
-    /// let mut tm = TimeoutManager::new();
+    /// let mut tm = TimeoutManager::new(LocalDuration::from_secs(0));
     /// let now = LocalTime::now();
     ///
     /// tm.register(0xA, now + LocalDuration::from_millis(8));

@@ -88,7 +88,7 @@ impl<E: event::Publisher> nakamoto_p2p::reactor::Reactor<E> for Reactor<net::Tcp
 
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
-        let timeouts = TimeoutManager::new();
+        let timeouts = TimeoutManager::new(LocalDuration::from_secs(1));
         let connecting = HashSet::new();
 
         Ok(Self {
