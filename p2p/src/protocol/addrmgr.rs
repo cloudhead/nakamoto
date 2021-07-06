@@ -274,6 +274,8 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
 
             // If the reason for disconnecting the peer suggests that we shouldn't try to
             // connect to this peer again, then remove the peer from the address book.
+            // Otherwise, we leave it in the address buckets so that it can be chosen
+            // in the future.
             if !reason.is_transient() {
                 self.discard(&addr.ip());
             }
@@ -425,11 +427,12 @@ impl<P: Store, U: Events> AddressManager<P, U> {
                 continue;
             }
 
+            // Record the address, and ignore addresses we already know.
+            // Note that this should never overwrite an existing address.
             if !self
                 .peers
                 .insert(ip, KnownAddress::new(addr.clone(), source))
             {
-                // Ignore addresses we already know.
                 continue;
             }
 
@@ -533,12 +536,16 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
             visited.insert(ip);
 
-            // FIXME
+            // If the address was already attempted unsuccessfully, skip it.
             if ka.last_attempt.is_some() && ka.last_success.is_none() {
                 continue;
             }
             // If we recently sampled this address, don't return it again.
             if time - ka.last_sampled.unwrap_or_default() < SAMPLE_TIMEOUT {
+                continue;
+            }
+            // If we're already connected to this address, skip it.
+            if self.connected.contains(&ip) {
                 continue;
             }
             if !ka.addr.services.has(services) {
@@ -565,13 +572,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
                     }
                 }
             }
+            // Ok, we've found a worthy address!
+            ka.last_sampled = Some(time);
 
-            if !self.connected.contains(&ip) {
-                debug_assert!(self.last_idle.is_some());
-                ka.last_sampled = Some(time);
-
-                return Some((ka.addr.clone(), ka.source));
-            }
+            return Some((ka.addr.clone(), ka.source));
         }
 
         None
@@ -848,6 +852,24 @@ mod tests {
         assert!(addrmgr.sample(services).is_some());
         assert!(addrmgr.sample(services).is_none());
         assert!(addrmgr.is_exhausted());
+
+        // If a peer has been attempted and then disconnected, it is not available
+        // for sampling, even when the disconnect reason is transient.
+        addrmgr.insert(
+            [(
+                time,
+                Address::new(&net::SocketAddr::from(([55, 55, 55, 55], 8333)), services),
+            )],
+            source,
+        );
+        addrmgr.sample(services);
+        addrmgr.peer_attempted(&([55, 55, 55, 55], 8333).into(), LocalTime::now());
+        addrmgr.peer_connected(&([55, 55, 55, 55], 8333).into(), LocalTime::now());
+        addrmgr.peer_disconnected(
+            &([55, 55, 55, 55], 8333).into(),
+            DisconnectReason::PeerTimeout("timeout"),
+        );
+        assert!(addrmgr.sample(services).is_none());
     }
 
     #[test]
