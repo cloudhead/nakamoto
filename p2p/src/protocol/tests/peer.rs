@@ -147,7 +147,12 @@ impl Peer<TestProtocol> {
         ));
         let peers = peers
             .into_iter()
-            .map(|(addr, src, srvs)| (addr.ip(), KnownAddress::new(Address::new(&addr, srvs), src)))
+            .map(|(addr, src, srvs)| {
+                (
+                    addr.ip(),
+                    KnownAddress::new(Address::new(&addr, srvs), src, None),
+                )
+            })
             .collect();
 
         let store = store::Memory::new(headers);

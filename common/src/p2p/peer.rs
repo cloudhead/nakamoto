@@ -55,7 +55,11 @@ pub trait Store {
                     for addr in addrs {
                         self.insert(
                             addr.ip(),
-                            KnownAddress::new(Address::new(&addr, ServiceFlags::NONE), source),
+                            KnownAddress::new(
+                                Address::new(&addr, ServiceFlags::NONE),
+                                source,
+                                None,
+                            ),
                         );
                     }
                 }
@@ -209,14 +213,14 @@ pub struct KnownAddress {
 
 impl KnownAddress {
     /// Create a new known address.
-    pub fn new(addr: Address, source: Source) -> Self {
+    pub fn new(addr: Address, source: Source, last_active: Option<LocalTime>) -> Self {
         Self {
             addr,
             source,
             last_success: None,
             last_attempt: None,
             last_sampled: None,
-            last_active: None,
+            last_active,
         }
     }
 

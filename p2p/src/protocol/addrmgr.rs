@@ -196,8 +196,10 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
             let ip = range.iter().nth(ix).expect("index must be present");
             let ka = self.peers.get(&ip).expect("address must exist");
 
-            // TODO: Use time last active instead of `0`.
-            addrs.push((0, ka.addr.clone()));
+            addrs.push((
+                ka.last_active.map(|t| t.block_time()).unwrap_or_default(),
+                ka.addr.clone(),
+            ));
         }
         self.upstream.send_addresses(*from, addrs);
     }
@@ -406,8 +408,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         addrs: impl IntoIterator<Item = (BlockTime, Address)>,
         source: Source,
     ) {
-        // TODO: Store timestamp.
-        for (_, addr) in addrs {
+        for (last_active, addr) in addrs {
             // Ignore addresses that don't have the required services.
             if !addr.services.has(self.cfg.required_services) {
                 continue;
@@ -434,11 +435,17 @@ impl<P: Store, U: Events> AddressManager<P, U> {
                 continue;
             }
 
+            let last_active = if last_active == 0 {
+                None
+            } else {
+                Some(LocalTime::from_block_time(last_active))
+            };
+
             // Record the address, and ignore addresses we already know.
             // Note that this should never overwrite an existing address.
             if !self
                 .peers
-                .insert(ip, KnownAddress::new(addr.clone(), source))
+                .insert(ip, KnownAddress::new(addr.clone(), source, last_active))
             {
                 continue;
             }
