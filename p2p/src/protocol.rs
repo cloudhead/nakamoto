@@ -615,7 +615,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         let cmd = msg.cmd();
 
         if msg.magic != self.network.magic() {
-            // TODO: Needs test.
             return self.disconnect(addr, DisconnectReason::PeerMagic(msg.magic));
         }
 

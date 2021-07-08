@@ -183,6 +183,28 @@ fn test_inv_getheaders() {
 }
 
 #[test]
+fn test_bad_magic() {
+    let rng = fastrand::Rng::new();
+    let network = Network::Mainnet;
+    let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
+    let remote: PeerId = ([241, 19, 44, 18], 8333).into();
+
+    peer.connect_addr(&remote, Link::Outbound);
+    peer.step(Input::Received(
+        remote,
+        RawNetworkMessage {
+            magic: 999,
+            payload: NetworkMessage::Ping(1),
+        },
+    ));
+
+    peer.upstream
+        .try_iter()
+        .find(|o| matches!(o, Out::Disconnect(addr, DisconnectReason::PeerMagic(_)) if addr == &remote))
+        .expect("peer should be disconnected");
+}
+
+#[test]
 fn test_maintain_connections() {
     let rng = fastrand::Rng::new();
     let network = Network::Mainnet;
