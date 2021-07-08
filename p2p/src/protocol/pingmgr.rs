@@ -127,7 +127,7 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
         self.upstream.pong(addr, nonce);
     }
 
-    pub fn received_pong(&mut self, addr: PeerId, nonce: u64, now: LocalTime) {
+    pub fn received_pong(&mut self, addr: PeerId, nonce: u64, now: LocalTime) -> bool {
         if let Some(peer) = self.peers.get_mut(&addr) {
             match peer.state {
                 State::AwaitingPong {
@@ -137,11 +137,14 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
                     if nonce == last_nonce {
                         peer.record_latency(now - since);
                         peer.state = State::Idle { since: now };
+
+                        return true;
                     }
                 }
                 // Unsolicited or redundant `pong`. Ignore.
                 State::Idle { .. } => {}
             }
         }
+        false
     }
 }

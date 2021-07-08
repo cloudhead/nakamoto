@@ -220,6 +220,13 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         }
     }
 
+    /// Called when a peer signaled activity.
+    pub fn peer_active(&mut self, addr: net::SocketAddr, time: LocalTime) {
+        if let Some(ka) = self.peers.get_mut(&addr.ip()) {
+            ka.last_active = Some(time);
+        }
+    }
+
     /// Called when a peer connection is attempted.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr, time: LocalTime) {
         // We're only interested in connection attempts for addresses we keep track of.

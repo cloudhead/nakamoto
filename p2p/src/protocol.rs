@@ -672,7 +672,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.pingmgr.received_ping(addr, nonce);
             }
             NetworkMessage::Pong(nonce) => {
-                self.pingmgr.received_pong(addr, nonce, now);
+                if self.pingmgr.received_pong(addr, nonce, now) {
+                    self.addrmgr.peer_active(addr, now);
+                }
             }
             NetworkMessage::Headers(headers) => {
                 match self
