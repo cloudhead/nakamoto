@@ -539,6 +539,41 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///
     /// ```
     pub fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
+        self.sample_with(|ka: &KnownAddress| {
+            if !ka.addr.services.has(services) {
+                match ka.source {
+                    Source::Dns => {
+                        // If we've negotiated with this peer and it hasn't signaled the
+                        // required services, we know not to return it.
+                        // The reason we check this is that DNS-sourced addresses don't include
+                        // service information, so we can only know once negotiated.
+                        if ka.last_success.is_some() {
+                            return false;
+                        }
+                    }
+                    Source::Imported => {
+                        // We expect that imported addresses will always include the correct
+                        // service information. Hence, if this one doesn't have the necessary
+                        // services, it's safe to skip.
+                        return false;
+                    }
+                    Source::Peer(_) => {
+                        // Peer-sourced addresses come with service information. It's safe to
+                        // skip this address if it doesn't have the required services.
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+    }
+
+    /// Sample an address using the provided predicate. Only returns addresses which are `true`
+    /// according to the predicate.
+    pub fn sample_with(
+        &mut self,
+        predicate: impl Fn(&KnownAddress) -> bool,
+    ) -> Option<(Address, Source)> {
         if self.is_empty() {
             return None;
         }
@@ -575,29 +610,9 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             if self.connected.contains(&ip) {
                 continue;
             }
-            if !ka.addr.services.has(services) {
-                match ka.source {
-                    Source::Dns => {
-                        // If we've negotiated with this peer and it hasn't signaled the
-                        // required services, we know not to return it.
-                        // The reason we check this is that DNS-sourced addresses don't include
-                        // service information, so we can only know once negotiated.
-                        if ka.last_success.is_some() {
-                            continue;
-                        }
-                    }
-                    Source::Imported => {
-                        // We expect that imported addresses will always include the correct
-                        // service information. Hence, if this one doesn't have the necessary
-                        // services, it's safe to skip.
-                        continue;
-                    }
-                    Source::Peer(_) => {
-                        // Peer-sourced addresses come with service information. It's safe to
-                        // skip this address if it doesn't have the required services.
-                        continue;
-                    }
-                }
+            // If the provided filter doesn't pass, keep looking.
+            if !predicate(&ka) {
+                continue;
             }
             // Ok, we've found a worthy address!
             ka.last_sampled = Some(time);
