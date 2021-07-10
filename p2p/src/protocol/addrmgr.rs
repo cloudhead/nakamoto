@@ -342,7 +342,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
     /// Whether there are any peers known to the address manager.
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.peers.is_empty() || self.address_ranges.is_empty()
     }
 
     /// Clear the address manager of all peers.
@@ -526,7 +526,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///
     /// ```
     pub fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
-        if self.is_empty() || self.address_ranges.is_empty() {
+        if self.is_empty() {
             return None;
         }
         // Keep track of the addresses we've visited, to make sure we don't
