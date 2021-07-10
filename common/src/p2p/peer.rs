@@ -297,21 +297,25 @@ impl KnownAddress {
         let last_success = match obj.get("last_success") {
             Some(Value::Null) => None,
             Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
+            None => None,
             _ => return Err(serde::Error),
         };
         let last_attempt = match obj.get("last_attempt") {
             Some(Value::Null) => None,
             Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
+            None => None,
             _ => return Err(serde::Error),
         };
         let last_sampled = match obj.get("last_sampled") {
             Some(Value::Null) => None,
             Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
+            None => None,
             _ => return Err(serde::Error),
         };
         let last_active = match obj.get("last_active") {
             Some(Value::Null) => None,
             Some(Value::Number(Number::U64(n))) => Some(LocalTime::from_block_time(*n as u32)),
+            None => None,
             _ => return Err(serde::Error),
         };
         let source = match obj.get("source") {
