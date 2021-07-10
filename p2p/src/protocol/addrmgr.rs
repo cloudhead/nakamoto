@@ -377,21 +377,22 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///
     /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
     /// use nakamoto_common::p2p::peer::Source;
-    /// use nakamoto_common::block::BlockTime;
+    /// use nakamoto_common::block::time::LocalTime;
     ///
     /// let cfg = Config::default();
     /// let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
+    /// let time = LocalTime::now().block_time();
     ///
     /// addrmgr.insert(vec![
     ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([211, 48, 99, 4], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([241, 44, 12, 5], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (BlockTime::default(), a)), Source::Dns);
+    /// ].into_iter().map(|a| (time, a)), Source::Dns);
     ///
     /// assert_eq!(addrmgr.len(), 3);
     ///
     /// addrmgr.insert(std::iter::once(
-    ///     (BlockTime::default(), Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE))
+    ///     (time, Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE))
     /// ), Source::Dns);
     ///
     /// assert_eq!(addrmgr.len(), 3, "already known addresses are ignored");
@@ -399,7 +400,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// addrmgr.clear();
     /// addrmgr.insert(vec![
     ///     Address::new(&([255, 255, 255, 255], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (BlockTime::default(), a)), Source::Dns);
+    /// ].into_iter().map(|a| (time, a)), Source::Dns);
     ///
     /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
     /// ```
@@ -411,6 +412,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         for (last_active, addr) in addrs {
             // Ignore addresses that don't have the required services.
             if !addr.services.has(self.cfg.required_services) {
+                continue;
+            }
+            // Ignore addresses that don't have a "last active" time.
+            if last_active == 0 {
                 continue;
             }
 
@@ -471,7 +476,6 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///
     /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
     /// use nakamoto_common::p2p::peer::Source;
-    /// use nakamoto_common::block::BlockTime;
     /// use nakamoto_common::block::time::{LocalDuration, LocalTime};
     ///
     /// let cfg = Config::default();
@@ -490,7 +494,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///     Address::new(&([111, 8, 161, 73], 8333).into(), ServiceFlags::NONE),
     /// ];
     /// addrmgr.insert(
-    ///     adversary_addrs.iter().cloned().map(|a| (BlockTime::default(), a)), Source::Dns);
+    ///     adversary_addrs.iter().cloned().map(|a| (time.block_time(), a)), Source::Dns);
     ///
     /// // Safe addresses, controlled by non-adversarial peers.
     /// let safe_addrs = vec![
@@ -500,7 +504,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///     Address::new(&([99, 129, 2, 15], 8333).into(), ServiceFlags::NONE),
     /// ];
     /// addrmgr.insert(
-    ///     safe_addrs.iter().cloned().map(|a| (BlockTime::default(), a)), Source::Dns);
+    ///     safe_addrs.iter().cloned().map(|a| (time.block_time(), a)), Source::Dns);
     ///
     /// // Keep track of how many times we pick a safe vs. an adversary-controlled address.
     /// let mut adversary = 0;
@@ -748,19 +752,19 @@ mod tests {
     fn test_known_addresses() {
         let mut addrmgr =
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
-        let time = BlockTime::default();
+        let time = LocalTime::now();
         let source = Source::Dns;
         let services = ServiceFlags::NETWORK;
 
-        addrmgr.initialize(LocalTime::now());
+        addrmgr.initialize(time);
         addrmgr.insert(
             [
                 (
-                    time,
+                    time.block_time(),
                     Address::new(&([33, 33, 33, 33], 8333).into(), services),
                 ),
                 (
-                    time,
+                    time.block_time(),
                     Address::new(&([44, 44, 44, 44], 8333).into(), services),
                 ),
             ],
@@ -772,15 +776,19 @@ mod tests {
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_none());
         assert!(ka.last_attempt.is_none());
-        assert!(ka.last_active.is_none());
+        assert!(ka.last_active.is_some());
         assert!(ka.last_sampled.is_none());
+        assert_eq!(
+            ka.last_active,
+            Some(LocalTime::from_block_time(time.block_time()))
+        );
 
         addrmgr.peer_attempted(&addr, LocalTime::now());
 
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_none());
         assert!(ka.last_attempt.is_some());
-        assert!(ka.last_active.is_none());
+        assert!(ka.last_active.is_some());
         assert!(ka.last_sampled.is_none());
 
         // When a peer is connected, it is not yet considered a "success".
@@ -789,7 +797,7 @@ mod tests {
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_none());
         assert!(ka.last_attempt.is_some());
-        assert!(ka.last_active.is_none());
+        assert!(ka.last_active.is_some());
         assert!(ka.last_sampled.is_none());
 
         // Only when it is negotiated is it a "success".
@@ -800,6 +808,7 @@ mod tests {
         assert!(ka.last_attempt.is_some());
         assert!(ka.last_active.is_some());
         assert!(ka.last_sampled.is_none());
+        assert_eq!(ka.last_active, ka.last_success);
 
         let (sampled, _) = addrmgr.sample(services).unwrap();
         assert_eq!(
@@ -809,7 +818,7 @@ mod tests {
         let ka = addrmgr.peers.get(&[44, 44, 44, 44].into()).unwrap();
         assert!(ka.last_success.is_none());
         assert!(ka.last_attempt.is_none());
-        assert!(ka.last_active.is_none());
+        assert!(ka.last_active.is_some());
         assert!(ka.last_sampled.is_some());
     }
 
@@ -817,14 +826,14 @@ mod tests {
     fn test_is_exhausted() {
         let mut addrmgr =
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
-        let time = BlockTime::default();
+        let time = LocalTime::now();
         let source = Source::Dns;
         let services = ServiceFlags::NETWORK;
 
         addrmgr.initialize(LocalTime::now());
         addrmgr.insert(
             [(
-                time,
+                time.block_time(),
                 Address::new(&net::SocketAddr::from(([33, 33, 33, 33], 8333)), services),
             )],
             source,
@@ -837,7 +846,7 @@ mod tests {
 
         addrmgr.insert(
             [(
-                time,
+                time.block_time(),
                 Address::new(&net::SocketAddr::from(([44, 44, 44, 44], 8333)), services),
             )],
             source,
@@ -871,7 +880,7 @@ mod tests {
         // for sampling, even when the disconnect reason is transient.
         addrmgr.insert(
             [(
-                time,
+                time.block_time(),
                 Address::new(&net::SocketAddr::from(([55, 55, 55, 55], 8333)), services),
             )],
             source,
@@ -892,13 +901,13 @@ mod tests {
         // not to connect to it.
         let mut addrmgr =
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
-        let time = BlockTime::default();
+        let time = LocalTime::now();
         let source = Source::Dns;
         let services = ServiceFlags::NETWORK;
         let addr: &net::SocketAddr = &([33, 33, 33, 33], 8333).into();
 
         addrmgr.initialize(LocalTime::now());
-        addrmgr.insert([(time, Address::new(addr, services))], source);
+        addrmgr.insert([(time.block_time(), Address::new(addr, services))], source);
 
         let (sampled, _) = addrmgr.sample(services).unwrap();
         assert_eq!(sampled.socket_addr().ok(), Some(*addr));
@@ -913,7 +922,7 @@ mod tests {
         // Receive from a new peer the same address we just disconnected from.
         addrmgr.received_addr(
             ([99, 99, 99, 99], 8333).into(),
-            vec![(time, Address::new(addr, services))],
+            vec![(time.block_time(), Address::new(addr, services))],
         );
         // It should not be returned from `sample`.
         assert!(addrmgr.sample(services).is_none());
@@ -937,7 +946,7 @@ mod tests {
                 upstream,
             )
         };
-        let time = BlockTime::default();
+        let time = LocalTime::now();
         let services = ServiceFlags::NETWORK;
         let mut addrs = vec![];
 
@@ -945,11 +954,11 @@ mod tests {
             addrs.push([96 + i as u8, 96 + i as u8, 96, 96]);
         }
 
-        addrmgr.initialize(LocalTime::now());
+        addrmgr.initialize(time);
         addrmgr.insert(
             addrs.iter().map(|a| {
                 (
-                    time,
+                    time.block_time(),
                     Address::new(&net::SocketAddr::from((*a, 8333)), services),
                 )
             }),
@@ -974,7 +983,7 @@ mod tests {
     #[test]
     fn test_max_range_size() {
         let services = ServiceFlags::NONE;
-        let time = BlockTime::default();
+        let time = LocalTime::now();
 
         let mut addrmgr =
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
@@ -982,7 +991,7 @@ mod tests {
         for i in 0..MAX_RANGE_SIZE + 1 {
             addrmgr.insert(
                 iter::once((
-                    time,
+                    time.block_time(),
                     Address::new(
                         &([111, 111, (i / u8::MAX as usize) as u8, i as u8], 8333).into(),
                         services,
@@ -999,7 +1008,7 @@ mod tests {
 
         addrmgr.insert(
             iter::once((
-                time,
+                time.block_time(),
                 Address::new(&([129, 44, 12, 2], 8333).into(), services),
             )),
             Source::Dns,

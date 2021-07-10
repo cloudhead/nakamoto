@@ -210,6 +210,7 @@ fn test_maintain_connections() {
     let network = Network::Mainnet;
     let port = network.port();
     let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
+    let time = alice.time.block_time();
 
     let peers: Vec<PeerId> = vec![
         ([88, 88, 88, 1], 8333).into(),
@@ -236,7 +237,7 @@ fn test_maintain_connections() {
         alice
             .protocol
             .addrmgr
-            .insert(vec![(0, addr)].into_iter(), Source::Dns);
+            .insert(vec![(time, addr)].into_iter(), Source::Dns);
     }
 
     // Disconnect peers and expect connections to peers from address book.
@@ -466,7 +467,7 @@ fn test_handshake_initial_messages() {
     peer.initialize();
     peer.protocol.addrmgr.insert(
         std::iter::once((
-            Default::default(),
+            peer.time.block_time(),
             Address::new(&remote.addr, ServiceFlags::NETWORK),
         )),
         Source::Dns,
@@ -567,7 +568,7 @@ fn test_getaddr() {
     alice.step(Input::Received(
         eve,
         msg.raw(NetworkMessage::Addr(vec![(
-            0,
+            alice.time.block_time(),
             Address::new(&toto, ServiceFlags::NETWORK),
         )])),
     ));
@@ -659,14 +660,15 @@ fn prop_addrs(seed: u64) {
     let jon: PeerId = ([14, 48, 141, 57], 8333).into();
 
     let msg = message::Builder::new(network);
+    let time = alice.time.block_time();
 
     // Let alice know about these amazing peers.
     alice.step(Input::Received(
         bob,
         msg.raw(NetworkMessage::Addr(vec![
-            (0, Address::new(&jak, ServiceFlags::NETWORK)),
-            (0, Address::new(&jim, ServiceFlags::NETWORK)),
-            (0, Address::new(&jon, ServiceFlags::NETWORK)),
+            (time, Address::new(&jak, ServiceFlags::NETWORK)),
+            (time, Address::new(&jim, ServiceFlags::NETWORK)),
+            (time, Address::new(&jon, ServiceFlags::NETWORK)),
         ])),
     ));
 
