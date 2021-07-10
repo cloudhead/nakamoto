@@ -381,18 +381,19 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     ///
     /// let cfg = Config::default();
     /// let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
-    /// let time = LocalTime::now().block_time();
+    /// let time = LocalTime::now();
     ///
+    /// addrmgr.initialize(time);
     /// addrmgr.insert(vec![
     ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([211, 48, 99, 4], 8333).into(), ServiceFlags::NONE),
     ///     Address::new(&([241, 44, 12, 5], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (time, a)), Source::Dns);
+    /// ].into_iter().map(|a| (time.block_time(), a)), Source::Dns);
     ///
     /// assert_eq!(addrmgr.len(), 3);
     ///
     /// addrmgr.insert(std::iter::once(
-    ///     (time, Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE))
+    ///     (time.block_time(), Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE))
     /// ), Source::Dns);
     ///
     /// assert_eq!(addrmgr.len(), 3, "already known addresses are ignored");
@@ -400,7 +401,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// addrmgr.clear();
     /// addrmgr.insert(vec![
     ///     Address::new(&([255, 255, 255, 255], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (time, a)), Source::Dns);
+    /// ].into_iter().map(|a| (time.block_time(), a)), Source::Dns);
     ///
     /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
     /// ```
@@ -409,6 +410,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         addrs: impl IntoIterator<Item = (BlockTime, Address)>,
         source: Source,
     ) {
+        let time = self
+            .last_idle
+            .expect("AddressManager::insert: manager must be initialized before inserting");
+
         for (last_active, addr) in addrs {
             // Ignore addresses that don't have the required services.
             if !addr.services.has(self.cfg.required_services) {
@@ -416,6 +421,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             }
             // Ignore addresses that don't have a "last active" time.
             if last_active == 0 {
+                continue;
+            }
+            // Ignore addresses that are too far into the future.
+            if LocalTime::from_block_time(last_active) > time + LocalDuration::from_mins(60) {
                 continue;
             }
 
@@ -987,6 +996,7 @@ mod tests {
 
         let mut addrmgr =
             AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
+        addrmgr.initialize(time);
 
         for i in 0..MAX_RANGE_SIZE + 1 {
             addrmgr.insert(
