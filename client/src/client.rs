@@ -32,7 +32,7 @@ use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
-use nakamoto_p2p::protocol::{Command, Protocol};
+use nakamoto_p2p::protocol::{Command, GetBlockError, Protocol};
 
 pub use nakamoto_p2p::event::{self, Event};
 pub use nakamoto_p2p::reactor::Reactor;
@@ -457,10 +457,13 @@ where
         Ok(receive.recv()?)
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
-        self.command(Command::GetBlock(*hash))?;
+    fn get_block(&self, hash: &BlockHash) -> Result<net::SocketAddr, handle::Error> {
+        let (transmit, receive) = chan::bounded::<Result<net::SocketAddr, GetBlockError>>(1);
+        self.command(Command::GetBlock(*hash, transmit))?;
 
-        Ok(())
+        receive
+            .recv()?
+            .map_err(|e| handle::Error::Command(Box::new(e)))
     }
 
     fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {

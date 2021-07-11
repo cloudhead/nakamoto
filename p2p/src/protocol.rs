@@ -47,6 +47,8 @@ use nakamoto_common::block::{BlockTime, Transaction};
 use nakamoto_common::network::{self, Network};
 use nakamoto_common::p2p::peer;
 
+use thiserror::Error;
+
 /// Peer-to-peer protocol version.
 /// For now, we only support `70012`, due to lacking `sendcmpct` support.
 pub const PROTOCOL_VERSION: u32 = 70012;
@@ -96,7 +98,7 @@ pub enum Command {
     /// Get the tip of the active chain.
     GetTip(chan::Sender<(Height, BlockHeader)>),
     /// Get a block from the active chain.
-    GetBlock(BlockHash),
+    GetBlock(BlockHash, chan::Sender<Result<PeerId, GetBlockError>>),
     /// Get block filters.
     GetFilters(Range<Height>),
     /// Broadcast to outbound peers.
@@ -118,6 +120,14 @@ pub enum Command {
     SubmitTransaction(Transaction),
     /// Shutdown the protocol.
     Shutdown,
+}
+
+/// An error resulting from the [`Command::GetBlock`].
+#[derive(Error, Debug)]
+pub enum GetBlockError {
+    /// Not connected to the Bitcoin network.
+    #[error("not connected to any peers")]
+    NotConnected,
 }
 
 /// A protocol input event, parametrized over the network message type.
@@ -903,10 +913,17 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
 
                     self.spvmgr.get_cfilters(range, &self.tree);
                 }
-                Command::GetBlock(hash) => {
-                    self.query(NetworkMessage::GetData(vec![Inventory::Block(hash)]), |p| {
-                        p.services.has(ServiceFlags::NETWORK)
-                    });
+                Command::GetBlock(hash, reply) => {
+                    let peer = self
+                        .query(NetworkMessage::GetData(vec![Inventory::Block(hash)]), |p| {
+                            p.services.has(ServiceFlags::NETWORK)
+                        });
+
+                    if let Some(peer) = peer {
+                        reply.send(Ok(peer)).ok();
+                    } else {
+                        reply.send(Err(GetBlockError::NotConnected)).ok();
+                    }
                 }
                 Command::SubmitTransaction(tx) => {
                     debug!(target: self.target, "Received command: SubmitTransaction(..)");

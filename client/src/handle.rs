@@ -20,6 +20,9 @@ pub enum Error {
     /// The command channel disconnected.
     #[error("command channel disconnected")]
     Disconnected,
+    /// The command returned an error.
+    #[error("command failed")]
+    Command(Box<dyn std::error::Error>),
     /// The operation timed out.
     #[error("the operation timed out")]
     Timeout,
@@ -54,7 +57,7 @@ pub trait Handle: Sized + Send + Sync {
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<(Height, BlockHeader), Error>;
     /// Get a full block from the network.
-    fn get_block(&self, hash: &BlockHash) -> Result<(), Error>;
+    fn get_block(&self, hash: &BlockHash) -> Result<net::SocketAddr, Error>;
     /// Get compact filters from the network.
     fn get_filters(&self, range: Range<Height>) -> Result<(), Error>;
     /// Subscribe to blocks received.
