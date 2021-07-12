@@ -100,7 +100,7 @@ pub enum Command {
     /// Get a block from the active chain.
     GetBlock(BlockHash, chan::Sender<Result<PeerId, GetBlockError>>),
     /// Get block filters.
-    GetFilters(Range<Height>),
+    GetFilters(Range<Height>, chan::Sender<Result<(), GetFiltersError>>),
     /// Broadcast to outbound peers.
     Broadcast(NetworkMessage),
     /// Send a message to a random peer.
@@ -125,10 +125,12 @@ pub enum Command {
 /// An error resulting from the [`Command::GetBlock`].
 #[derive(Error, Debug)]
 pub enum GetBlockError {
-    /// Not connected to the Bitcoin network.
-    #[error("not connected to any peers")]
+    /// Not connected to any peer with the required services.
+    #[error("not connected to any peer with the required services")]
     NotConnected,
 }
+
+pub use spvmgr::GetFiltersError;
 
 /// A protocol input event, parametrized over the network message type.
 /// These are input events generated outside of the protocol.
@@ -907,11 +909,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
 
                     reply.send((height, header)).ok();
                 }
-                Command::GetFilters(range) => {
+                Command::GetFilters(range, reply) => {
                     debug!(target: self.target,
                         "Received command: GetFilters({}..{})", range.start, range.end);
 
-                    self.spvmgr.get_cfilters(range, &self.tree);
+                    let result = self.spvmgr.get_cfilters(range, &self.tree);
+                    reply.send(result).ok();
                 }
                 Command::GetBlock(hash, reply) => {
                     let peer = self

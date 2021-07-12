@@ -471,9 +471,12 @@ where
             !range.is_empty(),
             "client::Handle::get_filters: range cannot be empty"
         );
-        self.command(Command::GetFilters(range))?;
+        let (transmit, receive) = chan::bounded(1);
+        self.command(Command::GetFilters(range, transmit))?;
 
-        Ok(())
+        receive
+            .recv()?
+            .map_err(|e| handle::Error::Command(Box::new(e)))
     }
 
     fn blocks(&self) -> chan::Receiver<(Block, Height)> {

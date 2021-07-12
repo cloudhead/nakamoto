@@ -28,10 +28,10 @@ pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 pub const REQUIRED_SERVICES: ServiceFlags = ServiceFlags::COMPACT_FILTERS;
 
 /// Maximum filter headers to be expected in a message.
-const MAX_MESSAGE_CFHEADERS: usize = 2000;
+pub const MAX_MESSAGE_CFHEADERS: usize = 2000;
 
 /// Maximum filters to be expected in a message.
-const MAX_MESSAGE_CFILTERS: usize = 1000;
+pub const MAX_MESSAGE_CFILTERS: usize = 1000;
 
 /// An error originating in the SPV manager.
 #[derive(Error, Debug)]
@@ -174,6 +174,17 @@ pub trait Events {
     fn event(&self, event: Event);
 }
 
+/// An error from attempting to get compact filters.
+#[derive(Error, Debug)]
+pub enum GetFiltersError {
+    /// The specified range is invalid, eg. it is out of bounds.
+    #[error("the specified range is invalid")]
+    InvalidRange,
+    /// Not connected to any compact filter peer.
+    #[error("not connected to any peer with compact filters support")]
+    NotConnected,
+}
+
 /// SPV manager configuration.
 #[derive(Debug)]
 pub struct Config {
@@ -253,11 +264,14 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
 
     /// Send a `getcfilters` message to a random peer.
     ///
-    /// *Panics if there are no peers available.*
-    ///
-    pub fn get_cfilters<T: BlockTree>(&mut self, range: Range<Height>, tree: &T) {
+    /// If the range is greater than [`MAX_MESSAGE_CFILTERS`], requests filters from multiple
+    /// peers.
+    pub fn get_cfilters<T: BlockTree>(
+        &mut self,
+        range: Range<Height>,
+        tree: &T,
+    ) -> Result<(), GetFiltersError> {
         // TODO: Consolidate this code with the `get_cfheaders` code.
-        // TODO: Should buffer the request for when new peers connect.
         if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
             let iter = HeightIterator {
                 start: range.start,
@@ -268,16 +282,18 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
                 let ix = self.rng.usize(..peers.len());
                 let peer = *peers.get(ix).unwrap(); // Can't fail.
 
-                // TODO: Return an error instead.
-                let stop_hash = tree.get_block_by_height(r.end - 1).unwrap().block_hash();
+                let stop_hash = tree
+                    .get_block_by_height(r.end - 1)
+                    .ok_or(GetFiltersError::InvalidRange)?
+                    .block_hash();
                 let timeout = self.config.request_timeout;
 
                 self.upstream
                     .get_cfilters(*peer, r.start, stop_hash, timeout);
             }
+            Ok(())
         } else {
-            // TODO: Return an error instead.
-            panic!("{}: called without any available peers!", source!());
+            Err(GetFiltersError::NotConnected)
         }
     }
 

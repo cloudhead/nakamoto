@@ -317,9 +317,6 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
             )
         }
 
-        // TODO: The address manager currently may return duplicates if the address book is small
-        // and we requested more addresses than it has.
-
         for (addr, source) in addresses {
             // TODO: Support Tor?
             if let Ok(sockaddr) = addr.socket_addr() {
