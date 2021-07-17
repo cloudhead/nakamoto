@@ -309,13 +309,17 @@ impl<E: event::Publisher> Reactor<net::TcpStream, E> {
                             self.connecting.insert(addr);
                             self.inputs.push_back(Input::Connecting { addr });
                         }
+                        Err(Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
+                            // Ignore. We are already establishing a connection through
+                            // this socket.
+                        }
                         Err(err) => {
-                            // TODO: We should send an input here telling the protocol
-                            // that this connection failed.
-                            // This should also be updated in the simulator.
-                            self.inputs.push_back(Input::Tick);
-
                             error!("{}: Connection error: {}", addr, err.to_string());
+
+                            self.inputs.push_back(Input::Disconnected(
+                                addr,
+                                DisconnectReason::ConnectionError(err.to_string()),
+                            ));
                         }
                     }
                 }
@@ -437,6 +441,9 @@ fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
     match sock.connect(&(*addr).into()) {
         Ok(()) => {}
         Err(e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
+        Err(e) if e.raw_os_error() == Some(libc::EALREADY) => {
+            return Err(io::Error::from(io::ErrorKind::AlreadyExists).into())
+        }
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
         Err(e) => return Err(e.into()),
     }
