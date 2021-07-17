@@ -6,6 +6,7 @@ pub mod client;
 pub mod error;
 pub mod handle;
 pub mod peer;
+pub mod txnmgr;
 
 pub use client::*;
 

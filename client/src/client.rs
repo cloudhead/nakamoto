@@ -1,5 +1,6 @@
 //! Core nakamoto client functionality. Wraps all the other modules under a unified
 //! interface.
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
 use std::fs;
@@ -8,6 +9,8 @@ use std::net;
 use std::net::SocketAddr;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::RwLock;
 use std::time::{self, SystemTime};
 
 use bitcoin::Txid;
@@ -37,7 +40,7 @@ use nakamoto_p2p::protocol::{Command, Protocol};
 
 pub use nakamoto_p2p::event::{self, Event};
 pub use nakamoto_p2p::reactor::Reactor;
-use p2p::protocol::txnmgr::TransactionStatus;
+use p2p::PeerId;
 
 use crate::error::Error;
 use crate::handle;
@@ -150,7 +153,7 @@ pub struct Client<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    transactions: event::Subscriber<(Txid, TransactionStatus)>,
+    transactions: Arc<RwLock<HashMap<Txid, (Transaction, HashSet<PeerId>, Height)>>>,
 
     reactor: R,
 }
@@ -179,13 +182,12 @@ impl<R: Reactor<Publisher>> Client<R> {
             None
         });
 
-        let (transactions_pub, transactions) = event::broadcast(|e| return None);
+        let transactions = Arc::new(RwLock::new(HashMap::new()));
 
         let publisher = Publisher::new()
             .register(event_pub)
             .register(blocks_pub)
-            .register(filters_pub)
-            .register(transactions_pub);
+            .register(filters_pub);
 
         let reactor = R::new(publisher, commands)?;
 
@@ -394,9 +396,11 @@ pub struct Handle<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    transactions: event::Subscriber<(Txid, TransactionStatus)>,
     waker: R::Waker,
     timeout: time::Duration,
+
+    /// Transactions store.
+    pub transactions: Arc<RwLock<HashMap<Txid, (Transaction, HashSet<PeerId>, Height)>>>,
 }
 
 impl<R: Reactor<Publisher>> Clone for Handle<R>
@@ -491,10 +495,6 @@ where
         self.filters.subscribe()
     }
 
-    fn transactions(&self) -> chan::Receiver<(bitcoin::Txid, TransactionStatus)> {
-        self.transactions.subscribe()
-    }
-
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {
         self._command(cmd)
     }
@@ -561,12 +561,6 @@ where
 
     fn import_addresses(&self, addrs: Vec<Address>) -> Result<(), handle::Error> {
         self.command(Command::ImportAddresses(addrs))?;
-
-        Ok(())
-    }
-
-    fn submit_transaction(&self, tx: Transaction) -> Result<(), handle::Error> {
-        self.command(Command::SubmitTransaction(tx))?;
 
         Ok(())
     }

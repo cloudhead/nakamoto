@@ -2,18 +2,20 @@
 //! protocol instance.
 use std::net;
 use std::ops::Range;
+use std::sync::PoisonError;
 
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::Address;
 use crossbeam_channel as chan;
-use nakamoto_p2p::protocol::txnmgr::TransactionStatus;
 use thiserror::Error;
 
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
-use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height};
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
+
+use crate::txnmgr;
 
 /// An error resulting from a handle method.
 #[derive(Error, Debug)]
@@ -27,6 +29,9 @@ pub enum Error {
     /// An I/O error occured.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+    /// A transaction error occured.
+    #[error(transparent)]
+    Transaction(txnmgr::Error),
 }
 
 impl From<chan::RecvError> for Error {
@@ -50,6 +55,12 @@ impl<T> From<chan::SendError<T>> for Error {
     }
 }
 
+impl<T> From<PoisonError<T>> for Error {
+    fn from(_: PoisonError<T>) -> Self {
+        txnmgr::Error::Lock.into()
+    }
+}
+
 /// A handle for communicating with a node process.
 pub trait Handle: Sized + Send + Sync {
     /// Get the tip of the chain.
@@ -62,8 +73,6 @@ pub trait Handle: Sized + Send + Sync {
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
-    /// Subscribe to sent transaction status.
-    fn transactions(&self) -> chan::Receiver<(Txid, TransactionStatus)>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Broadcast a message to all *outbound* peers.
@@ -75,8 +84,6 @@ pub trait Handle: Sized + Send + Sync {
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, Error>;
     /// Disconnect from the designated peer address.
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), Error>;
-    /// Submit a transaction to the network.
-    fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
     /// Import block headers into the node.
     /// This may cause the node to broadcast header or inventory messages to its peers.
     fn import_headers(

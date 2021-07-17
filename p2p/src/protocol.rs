@@ -1,5 +1,6 @@
 //! Bitcoin protocol state machine.
 #![warn(missing_docs)]
+use bitcoin::Txid;
 use crossbeam_channel as chan;
 use log::*;
 
@@ -10,7 +11,6 @@ pub mod peermgr;
 pub mod pingmgr;
 pub mod spvmgr;
 pub mod syncmgr;
-pub mod txnmgr;
 
 #[cfg(test)]
 mod tests;
@@ -115,8 +115,10 @@ pub enum Command {
     ),
     /// Import addresses into the address book.
     ImportAddresses(Vec<Address>),
-    /// Submit a transaction to the network.
-    SubmitTransaction(Transaction),
+    /// Broadcast a transaction `inv` to the network.
+    BroadcastTransactionInv(Txid, chan::Sender<Vec<PeerId>>),
+    /// Submit a transaction to a peer.
+    SubmitTransaction(PeerId, Transaction),
     /// Shutdown the protocol.
     Shutdown,
 }
@@ -569,6 +571,24 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         }
     }
 
+    /// Send a message to all connected peers. Returns their peer ids.
+    fn broadcast<Q>(&self, msg: NetworkMessage, mut f: Q) -> Vec<PeerId>
+    where
+        Q: FnMut(&peermgr::Peer) -> bool,
+    {
+        let peers = self
+            .peermgr
+            .outbound()
+            .filter(|p| f(*p))
+            .collect::<Vec<_>>();
+
+        for peer in &peers {
+            self.upstream.message(peer.address(), msg.clone());
+        }
+
+        peers.iter().map(|p| p.address()).collect()
+    }
+
     fn tick(&mut self, local_time: LocalTime) {
         // The local time is set from outside the protocol.
         self.clock.set_local_time(local_time);
@@ -751,8 +771,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             NetworkMessage::GetAddr => {
                 self.addrmgr.received_getaddr(&addr);
             }
-            NetworkMessage::GetData(inv) => {
-                (*self.hooks.on_getdata)(addr, inv, &self.upstream);
+            NetworkMessage::GetData(invs) => {
+                (*self.hooks.on_getdata)(addr, invs, &self.upstream);
             }
             _ => {
                 debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);
@@ -908,10 +928,18 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                         p.services.has(ServiceFlags::NETWORK)
                     });
                 }
-                Command::SubmitTransaction(tx) => {
-                    debug!(target: self.target, "Received command: SubmitTransaction(..)");
+                Command::BroadcastTransactionInv(tx_id, transmit) => {
+                    debug!(target: self.target, "Received command: BroadcastTransactionInv(..)");
 
-                    self.query(NetworkMessage::Tx(tx), |p| p.relay);
+                    let peers = self.broadcast(
+                        NetworkMessage::Inv(vec![Inventory::Transaction(tx_id)]),
+                        |p| p.relay,
+                    );
+
+                    transmit.send(peers).ok();
+                }
+                Command::SubmitTransaction(peer, txn) => {
+                    self.upstream.message(peer, NetworkMessage::Tx(txn));
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);
