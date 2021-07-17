@@ -7,6 +7,7 @@ use std::time;
 
 pub use nakamoto_client::client::{self, Client, Config, Network};
 pub use nakamoto_client::error::Error;
+pub use nakamoto_client::Domain;
 
 pub mod logger;
 
@@ -19,6 +20,7 @@ pub fn run(
     connect: &[net::SocketAddr],
     listen: &[net::SocketAddr],
     root: Option<PathBuf>,
+    domains: &[Domain],
     network: Network,
 ) -> Result<(), Error> {
     let mut cfg = Config {
@@ -29,6 +31,7 @@ pub fn run(
             listen.to_vec()
         },
         connect: connect.to_vec(),
+        domains: domains.to_vec(),
         timeout: time::Duration::from_secs(30),
         ..Config::default()
     };

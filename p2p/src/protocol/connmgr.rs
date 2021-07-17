@@ -8,6 +8,7 @@ use bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::collections::HashMap;
 use nakamoto_common::p2p::peer::{AddressSource, Source};
+use nakamoto_common::p2p::Domain;
 
 use super::channel::{Disconnect, SetTimeout};
 use crate::protocol::{DisconnectReason, Link, PeerId, Timeout};
@@ -68,6 +69,8 @@ pub struct Config {
     pub max_inbound_peers: usize,
     /// Peer addresses that should always be retried.
     pub retry: Vec<net::SocketAddr>,
+    /// Supported communication domains.
+    pub domains: Vec<Domain>,
     /// Peer services required.
     pub required_services: ServiceFlags,
     /// Peer services preferred. We try to maintain as many
@@ -81,6 +84,7 @@ impl Default for Config {
             target_outbound_peers: TARGET_OUTBOUND_PEERS,
             max_inbound_peers: MAX_INBOUND_PEERS,
             retry: vec![],
+            domains: Domain::all(),
             required_services: ServiceFlags::NONE,
             preferred_services: ServiceFlags::NONE,
         }
@@ -186,6 +190,10 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     /// Connect to a peer.
     pub fn connect(&mut self, addr: &PeerId) -> bool {
         if !self.is_disconnected(addr) {
+            return false;
+        }
+        // Don't allow connections to unsupported domains.
+        if !self.config.domains.contains(&Domain::for_address(addr)) {
             return false;
         }
         self.peers.insert(*addr, Peer::Connecting);

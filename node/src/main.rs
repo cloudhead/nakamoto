@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use argh::FromArgs;
 
 use nakamoto_client::client::Network;
-use nakamoto_node::logger;
+use nakamoto_node::{logger, Domain};
 
 #[derive(FromArgs)]
 /// A Bitcoin light client.
@@ -20,6 +20,14 @@ pub struct Options {
     /// use the bitcoin test network (default: false)
     #[argh(switch)]
     pub testnet: bool,
+
+    /// only connect to IPv4 addresses (default: false)
+    #[argh(switch, short = '4')]
+    pub ipv4: bool,
+
+    /// only connect to IPv6 addresses (default: false)
+    #[argh(switch, short = '6')]
+    pub ipv6: bool,
 
     /// log level (default: info)
     #[argh(option, default = "log::Level::Info")]
@@ -47,8 +55,18 @@ fn main() {
         Network::Mainnet
     };
 
-    if let Err(err) = nakamoto_node::run(&opts.connect, &opts.listen, opts.root, network) {
-        log::error!("Exiting: {}", err);
+    let domains = if opts.ipv4 && opts.ipv6 {
+        vec![Domain::IPV4, Domain::IPV6]
+    } else if opts.ipv4 {
+        vec![Domain::IPV4]
+    } else if opts.ipv6 {
+        vec![Domain::IPV6]
+    } else {
+        vec![Domain::IPV4, Domain::IPV6]
+    };
+
+    if let Err(e) = nakamoto_node::run(&opts.connect, &opts.listen, opts.root, &domains, network) {
+        log::error!("Exiting: {}", e);
         std::process::exit(1);
     }
 }

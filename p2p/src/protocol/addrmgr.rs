@@ -11,6 +11,7 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::BlockTime;
 use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::p2p::peer::{AddressSource, KnownAddress, Source, Store};
+use nakamoto_common::p2p::Domain;
 
 use super::channel::SetTimeout;
 use super::{DisconnectReason, Link, PeerId};
@@ -138,12 +139,15 @@ impl<P: Store, U> AddressManager<P, U> {
 pub struct Config {
     /// Services required from peers.
     pub required_services: ServiceFlags,
+    /// Communication domains we're interested in.
+    pub domains: Vec<Domain>,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             required_services: ServiceFlags::NONE,
+            domains: Domain::all(),
         }
     }
 }
@@ -427,10 +431,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             if LocalTime::from_block_time(last_active) > time + LocalDuration::from_mins(60) {
                 continue;
             }
-
+            // Ignore addresses from unsupported domains.
             let net_addr = match addr.socket_addr() {
-                Ok(a) => a,
-                Err(_) => continue,
+                Ok(a) if self.cfg.domains.contains(&Domain::for_address(&a)) => a,
+                _ => continue,
             };
             let ip = net_addr.ip();
 
@@ -583,6 +587,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         let time = self
             .last_idle
             .expect("AddressManager::sample: manager must be initialized before sampling");
+        let domains = &self.cfg.domains;
 
         while visited.len() < self.peers.len() {
             // First select a random address range.
@@ -597,6 +602,16 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             let ka = self.peers.get_mut(&ip).expect("address must exist");
 
             visited.insert(ip);
+
+            // If the address domain is unsupported, skip it.
+            // Nb. this currently skips Tor addresses too.
+            if !ka
+                .addr
+                .socket_addr()
+                .map_or(false, |a| domains.contains(&Domain::for_address(&a)))
+            {
+                continue;
+            }
 
             // If the address was already attempted unsuccessfully, skip it.
             if ka.last_attempt.is_some() && ka.last_success.is_none() {

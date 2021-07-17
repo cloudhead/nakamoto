@@ -25,6 +25,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::p2p::peer::{Source, Store as _};
 
 pub use nakamoto_common::network::Network;
+pub use nakamoto_common::p2p::Domain;
 
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
@@ -50,6 +51,8 @@ pub struct Config {
     pub network: Network,
     /// Peers to connect to.
     pub connect: Vec<net::SocketAddr>,
+    /// Network domains to connect to.
+    pub domains: Vec<Domain>,
     /// Target number of outbound peers to connect to.
     pub target_outbound_peers: usize,
     /// Maximum number of inbound peers supported.
@@ -102,6 +105,7 @@ impl Default for Config {
             listen: vec![([0, 0, 0, 0], 0).into()],
             network: Network::default(),
             connect: Vec::new(),
+            domains: Domain::all(),
             timeout: time::Duration::from_secs(60),
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
             target_outbound_peers: p2p::protocol::connmgr::TARGET_OUTBOUND_PEERS,
@@ -318,6 +322,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             params: self.config.network.params(),
             target: self.config.name,
             connect: self.config.connect,
+            domains: self.config.domains,
             target_outbound_peers: self.config.target_outbound_peers,
             max_inbound_peers: self.config.max_inbound_peers,
             services: self.config.services,
@@ -343,6 +348,7 @@ impl<R: Reactor<Publisher>> Client<R> {
         let cfg = p2p::protocol::Config {
             services: self.config.services,
             hooks: self.config.hooks,
+            domains: self.config.domains,
             ..p2p::protocol::Config::from(
                 self.config.name,
                 self.config.network,

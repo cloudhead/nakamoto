@@ -45,7 +45,7 @@ use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::block::{BlockTime, Transaction};
 use nakamoto_common::network::{self, Network};
-use nakamoto_common::p2p::peer;
+use nakamoto_common::p2p::{peer, Domain};
 
 use thiserror::Error;
 
@@ -368,6 +368,8 @@ pub struct Config {
     pub network: network::Network,
     /// Peers to connect to.
     pub connect: Vec<net::SocketAddr>,
+    /// Supported communication domains.
+    pub domains: Vec<Domain>,
     /// Services offered by our peer.
     pub services: ServiceFlags,
     /// Required peer services.
@@ -398,6 +400,7 @@ impl Default for Config {
             network: network::Network::Mainnet,
             params: Params::new(network::Network::Mainnet.into()),
             connect: Vec::new(),
+            domains: Domain::all(),
             services: ServiceFlags::NONE,
             required_services: ServiceFlags::NETWORK,
             whitelist: Whitelist::default(),
@@ -474,6 +477,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         let Config {
             network,
             connect,
+            domains,
             services,
             whitelist,
             protocol_version,
@@ -504,6 +508,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 target_outbound_peers,
                 max_inbound_peers,
                 retry: connect,
+                domains: domains.clone(),
                 required_services,
                 // Include services required by all sub-protocols.
                 preferred_services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
@@ -530,7 +535,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             upstream.clone(),
         );
         let addrmgr = AddressManager::new(
-            addrmgr::Config { required_services },
+            addrmgr::Config {
+                required_services,
+                domains,
+            },
             rng.clone(),
             peers,
             upstream.clone(),
