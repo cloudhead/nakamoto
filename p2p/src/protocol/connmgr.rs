@@ -75,6 +75,18 @@ pub struct Config {
     pub preferred_services: ServiceFlags,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            target_outbound_peers: TARGET_OUTBOUND_PEERS,
+            max_inbound_peers: MAX_INBOUND_PEERS,
+            retry: vec![],
+            required_services: ServiceFlags::NONE,
+            preferred_services: ServiceFlags::NONE,
+        }
+    }
+}
+
 /// A connected peer.
 #[derive(Debug)]
 enum Peer {
