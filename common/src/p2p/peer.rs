@@ -353,6 +353,24 @@ pub trait AddressSource {
     fn iter(&mut self, services: ServiceFlags) -> Box<dyn Iterator<Item = (Address, Source)> + '_>;
 }
 
+/// Functions and traits useful for testing.
+pub mod test {
+    use super::*;
+
+    impl AddressSource for std::collections::VecDeque<(Address, Source)> {
+        fn sample(&mut self, _services: ServiceFlags) -> Option<(Address, Source)> {
+            self.pop_front()
+        }
+
+        fn iter(
+            &mut self,
+            _services: ServiceFlags,
+        ) -> Box<dyn Iterator<Item = (Address, Source)> + '_> {
+            Box::new(std::collections::VecDeque::drain(self, ..))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

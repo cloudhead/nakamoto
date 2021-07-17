@@ -271,13 +271,17 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
 
         Events::event(&self.upstream, Event::Disconnected(*addr));
 
+        // If an outbound peer disconnected, we should make sure to maintain
+        // our target outbound connection count.
         let previous = self.peers.insert(*addr, Peer::Disconnected);
-        if let Some(Peer::Connected { link, .. }) = previous {
-            // If an outbound peer disconnected, we should make sure to maintain
-            // our target outbound connection count.
-            if link.is_outbound() {
+        match previous {
+            Some(Peer::Connected { link, .. }) if link.is_outbound() => {
                 self.maintain_connections(addrs);
             }
+            Some(Peer::Connecting) => {
+                self.maintain_connections(addrs);
+            }
+            _ => {}
         }
     }
 
@@ -362,5 +366,62 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     fn _disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
         self.peers.insert(addr, Peer::Disconnecting);
         self.upstream.disconnect(addr, reason);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bitcoin::network::address::Address;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn test_disconnects() {
+        let cfg = Config::default();
+        let rng = fastrand::Rng::with_seed(1);
+        let time = LocalTime::now();
+
+        let services = ServiceFlags::NETWORK;
+        let local = ([99, 99, 99, 99], 9999).into();
+        let remote1 = ([124, 43, 110, 1], 8333).into();
+        let remote2 = ([124, 43, 110, 2], 8333).into();
+        let remote3 = ([124, 43, 110, 3], 8333).into();
+
+        let mut addrs = VecDeque::new();
+        let mut connmgr: ConnectionManager<_, VecDeque<_>> = ConnectionManager::new((), cfg, rng);
+
+        connmgr.initialize(time, &mut addrs);
+        connmgr.connect(&remote1);
+
+        assert_eq!(connmgr.connecting_peers().next(), Some(&remote1));
+        assert_eq!(connmgr.outbound_peers().next(), None);
+
+        connmgr.peer_connected(remote1, local, Link::Outbound, time);
+
+        assert_eq!(connmgr.connecting_peers().next(), None);
+        assert_eq!(connmgr.outbound_peers().next(), Some(&remote1));
+
+        // Disconnect remote#1 after it has connected.
+        addrs.push_back((Address::new(&remote2, services), Source::Dns));
+        connmgr.peer_disconnected(&remote1, &mut addrs);
+
+        assert!(connmgr.is_disconnected(&remote1));
+        assert_eq!(connmgr.outbound_peers().next(), None);
+        assert_eq!(
+            connmgr.connecting_peers().next(),
+            Some(&remote2),
+            "Disconnection triggers a new connection to remote#2"
+        );
+
+        // Disconnect remote#2 while still connecting.
+        addrs.push_back((Address::new(&remote3, services), Source::Dns));
+        connmgr.peer_disconnected(&remote2, &mut addrs);
+
+        assert!(connmgr.is_disconnected(&remote2));
+        assert_eq!(
+            connmgr.connecting_peers().next(),
+            Some(&remote3),
+            "Disconnection triggers a new connection to remote#3"
+        );
     }
 }

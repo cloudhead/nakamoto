@@ -84,6 +84,10 @@ impl Disconnect for Channel {
     }
 }
 
+impl Disconnect for () {
+    fn disconnect(&self, _addr: net::SocketAddr, _reason: DisconnectReason) {}
+}
+
 /// The ability to set timeouts.
 pub trait SetTimeout {
     /// Set a timeout. Returns the unique timeout identifier.
@@ -120,6 +124,10 @@ impl connmgr::Connect for Channel {
     }
 }
 
+impl connmgr::Connect for () {
+    fn connect(&self, _addr: net::SocketAddr, _timeout: LocalDuration) {}
+}
+
 impl connmgr::Events for Channel {
     fn event(&self, event: connmgr::Event) {
         match event {
@@ -132,6 +140,10 @@ impl connmgr::Events for Channel {
         }
         self.event(Event::ConnManager(event));
     }
+}
+
+impl connmgr::Events for () {
+    fn event(&self, _event: connmgr::Event) {}
 }
 
 impl addrmgr::Events for Channel {
