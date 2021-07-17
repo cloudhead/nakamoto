@@ -424,11 +424,11 @@ fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
     fallible! { Error::Io(io::ErrorKind::Other.into()) };
 
     let domain = if addr.is_ipv4() {
-        Domain::ipv4()
+        Domain::IPV4
     } else {
-        Domain::ipv6()
+        Domain::IPV6
     };
-    let sock = Socket::new(domain, Type::stream(), None)?;
+    let sock = Socket::new(domain, Type::STREAM, None)?;
 
     sock.set_read_timeout(Some(READ_TIMEOUT))?;
     sock.set_write_timeout(Some(WRITE_TIMEOUT))?;
@@ -440,7 +440,7 @@ fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
         Err(e) => return Err(e.into()),
     }
-    Ok(sock.into_tcp_stream())
+    Ok(sock.into())
 }
 
 // Listen for connections on the given address.
