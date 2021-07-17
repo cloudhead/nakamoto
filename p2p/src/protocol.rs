@@ -831,7 +831,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                 self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr, reason);
-                self.connmgr.peer_disconnected(&addr, &mut self.addrmgr);
+                self.connmgr
+                    .peer_disconnected(&addr, &mut self.addrmgr, local_time);
                 self.pingmgr.peer_disconnected(&addr);
                 self.peermgr.peer_disconnected(&addr);
             }
@@ -866,7 +867,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                     debug!(target: self.target, "Received command: Connect({})", addr);
 
                     self.peermgr.whitelist(addr);
-                    self.connmgr.connect(&addr);
+                    self.connmgr.connect(&addr, local_time);
                 }
                 Command::Disconnect(addr) => {
                     debug!(target: self.target, "Received command: Disconnect({})", addr);

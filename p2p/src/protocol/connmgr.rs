@@ -15,7 +15,7 @@ use crate::protocol::{DisconnectReason, Link, PeerId, Timeout};
 
 /// Time to wait for a new connection.
 /// TODO: Should be in config.
-pub const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(3);
+pub const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(6);
 /// Time to wait until idle.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
 /// Target number of concurrent outbound peer connections.
@@ -94,7 +94,10 @@ impl Default for Config {
 /// A connected peer.
 #[derive(Debug)]
 enum Peer {
-    Connecting,
+    Connecting {
+        /// Time the connection was attempted.
+        time: LocalTime,
+    },
     Connected {
         /// Remote peer address.
         address: net::SocketAddr,
@@ -142,7 +145,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Initialize the connection manager. Must be called once.
-    pub fn initialize(&mut self, _time: LocalTime, addrs: &mut A) {
+    pub fn initialize(&mut self, time: LocalTime, addrs: &mut A) {
         let retry = self
             .config
             .retry
@@ -152,10 +155,10 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
             .collect::<Vec<_>>();
 
         for addr in retry {
-            self.connect(&addr);
+            self.connect(&addr, time);
         }
         self.upstream.set_timeout(IDLE_TIMEOUT);
-        self.maintain_connections(addrs);
+        self.maintain_connections(addrs, time);
     }
 
     /// Check whether a peer is connected.
@@ -176,7 +179,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     pub fn is_connecting(&self, addr: &PeerId) -> bool {
         self.peers
             .get(addr)
-            .map_or(false, |p| matches!(p, Peer::Connecting))
+            .map_or(false, |p| matches!(p, Peer::Connecting { .. }))
     }
 
     /// Check whether a peer is connected via an inbound link.
@@ -188,7 +191,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Connect to a peer.
-    pub fn connect(&mut self, addr: &PeerId) -> bool {
+    pub fn connect(&mut self, addr: &PeerId, time: LocalTime) -> bool {
         if !self.is_disconnected(addr) {
             return false;
         }
@@ -196,7 +199,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         if !self.config.domains.contains(&Domain::for_address(addr)) {
             return false;
         }
-        self.peers.insert(*addr, Peer::Connecting);
+        self.peers.insert(*addr, Peer::Connecting { time });
         self.upstream.connect(*addr, CONNECTION_TIMEOUT);
 
         true
@@ -273,7 +276,12 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Call when a peer disconnected.
-    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr, addrs: &mut A) {
+    pub fn peer_disconnected(
+        &mut self,
+        addr: &net::SocketAddr,
+        addrs: &mut A,
+        local_time: LocalTime,
+    ) {
         debug_assert!(self.peers.contains_key(addr));
         debug_assert!(!self.is_disconnected(&addr));
 
@@ -284,21 +292,26 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         let previous = self.peers.insert(*addr, Peer::Disconnected);
         match previous {
             Some(Peer::Connected { link, .. }) if link.is_outbound() => {
-                self.maintain_connections(addrs);
+                self.maintain_connections(addrs, local_time);
             }
-            Some(Peer::Connecting) => {
-                self.maintain_connections(addrs);
+            Some(Peer::Connecting { .. }) => {
+                self.maintain_connections(addrs, local_time);
             }
             _ => {}
         }
     }
 
     /// Call when we recevied a tick.
-    pub fn received_tick(&mut self, local_time: LocalTime, addrs: &mut A) {
-        if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.maintain_connections(addrs);
+    pub fn received_tick(&mut self, now: LocalTime, addrs: &mut A) {
+        // Disconnect all peers that have been idle for too long.
+        for addr in self.idle_peers(now).collect::<Vec<_>>() {
+            self._disconnect(addr, DisconnectReason::PeerTimeout("connection"));
+        }
+
+        if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
+            self.maintain_connections(addrs, now);
             self.upstream.set_timeout(IDLE_TIMEOUT);
-            self.last_idle = Some(local_time);
+            self.last_idle = Some(now);
         }
     }
 
@@ -322,18 +335,13 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     pub fn connecting_peers(&self) -> impl Iterator<Item = &PeerId> {
         self.peers
             .iter()
-            .filter(|(_, p)| matches!(p, Peer::Connecting))
+            .filter(|(_, p)| matches!(p, Peer::Connecting { .. }))
             .map(|(addr, _)| addr)
     }
 
     /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_connections(&mut self, addrs: &mut A) {
-        let current = self.outbound().count()
-            + self
-                .peers
-                .values()
-                .filter(|p| matches!(p, Peer::Connecting))
-                .count();
+    fn maintain_connections(&mut self, addrs: &mut A, local_time: LocalTime) {
+        let current = self.outbound().count() + self.connecting_peers().count();
         let target = self.config.target_outbound_peers;
         let delta = target - current;
 
@@ -356,7 +364,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
                 // connections.
                 debug_assert!(!self.is_connected(&sockaddr));
 
-                if self.connect(&sockaddr) {
+                if self.connect(&sockaddr, local_time) {
                     self.upstream.event(Event::Connecting(sockaddr, source));
                 }
             }
@@ -375,6 +383,18 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         self.peers.insert(addr, Peer::Disconnecting);
         self.upstream.disconnect(addr, reason);
     }
+
+    /// Peers that have been idle longer than [`CONNECTION_TIMEOUT`].
+    fn idle_peers(&self, now: LocalTime) -> impl Iterator<Item = PeerId> + '_ {
+        self.peers.iter().filter_map(move |(addr, p)| {
+            if let Peer::Connecting { time } = p {
+                if now - *time >= CONNECTION_TIMEOUT {
+                    return Some(*addr);
+                }
+            }
+            None
+        })
+    }
 }
 
 #[cfg(test)]
@@ -382,6 +402,39 @@ mod tests {
     use super::*;
     use bitcoin::network::address::Address;
     use std::collections::VecDeque;
+
+    #[test]
+    fn test_connect_timeout() {
+        let cfg = Config::default();
+        let rng = fastrand::Rng::with_seed(1);
+        let mut time = LocalTime::now();
+
+        let remote = ([124, 43, 110, 1], 8333).into();
+
+        let mut addrs = VecDeque::new();
+        let mut connmgr: ConnectionManager<_, VecDeque<_>> = ConnectionManager::new((), cfg, rng);
+
+        connmgr.initialize(time, &mut addrs);
+        connmgr.connect(&remote, time);
+
+        assert_eq!(connmgr.connecting_peers().next(), Some(&remote));
+        assert_eq!(connmgr.connecting_peers().count(), 1);
+
+        time.elapse(LocalDuration::from_secs(1));
+        connmgr.received_tick(time, &mut addrs);
+
+        assert_eq!(connmgr.connecting_peers().next(), Some(&remote));
+
+        // After the timeout has elapsed, the peer should be disconnected.
+        time.elapse(CONNECTION_TIMEOUT);
+        connmgr.received_tick(time, &mut addrs);
+
+        assert_eq!(connmgr.connecting_peers().next(), None);
+        assert!(matches!(
+            connmgr.peers.get(&remote),
+            Some(Peer::Disconnecting)
+        ));
+    }
 
     #[test]
     fn test_disconnects() {
@@ -399,7 +452,7 @@ mod tests {
         let mut connmgr: ConnectionManager<_, VecDeque<_>> = ConnectionManager::new((), cfg, rng);
 
         connmgr.initialize(time, &mut addrs);
-        connmgr.connect(&remote1);
+        connmgr.connect(&remote1, time);
 
         assert_eq!(connmgr.connecting_peers().next(), Some(&remote1));
         assert_eq!(connmgr.outbound_peers().next(), None);
@@ -411,7 +464,7 @@ mod tests {
 
         // Disconnect remote#1 after it has connected.
         addrs.push_back((Address::new(&remote2, services), Source::Dns));
-        connmgr.peer_disconnected(&remote1, &mut addrs);
+        connmgr.peer_disconnected(&remote1, &mut addrs, time);
 
         assert!(connmgr.is_disconnected(&remote1));
         assert_eq!(connmgr.outbound_peers().next(), None);
@@ -423,7 +476,7 @@ mod tests {
 
         // Disconnect remote#2 while still connecting.
         addrs.push_back((Address::new(&remote3, services), Source::Dns));
-        connmgr.peer_disconnected(&remote2, &mut addrs);
+        connmgr.peer_disconnected(&remote2, &mut addrs, time);
 
         assert!(connmgr.is_disconnected(&remote2));
         assert_eq!(
