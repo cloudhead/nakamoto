@@ -6,7 +6,7 @@ use std::net;
 use bitcoin::network::constants::ServiceFlags;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
-use nakamoto_common::collections::HashMap;
+use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::p2p::peer::{AddressSource, Source};
 use nakamoto_common::p2p::Domain;
 
@@ -345,28 +345,28 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         let target = self.config.target_outbound_peers;
         let delta = target - current;
 
-        let mut addresses: Vec<_> = addrs
-            .iter(self.config.preferred_services)
-            .take(delta)
-            .collect();
-        if addresses.len() < delta {
-            addresses.extend(
-                addrs
-                    .iter(self.config.required_services)
-                    .take(delta - addresses.len()),
-            )
-        }
+        // Keep track of new addresses we're connecting to, and loop until
+        // we've connected to enough addresses.
+        let mut connecting = HashSet::with_hasher(self.rng.clone().into());
 
-        for (addr, source) in addresses {
-            // TODO: Support Tor?
-            if let Ok(sockaddr) = addr.socket_addr() {
-                // TODO: Remove this assertion once address manager no longer cares about
-                // connections.
-                debug_assert!(!self.is_connected(&sockaddr));
+        while connecting.len() < delta {
+            if let Some((addr, source)) = addrs
+                .sample(self.config.preferred_services)
+                .or_else(|| addrs.sample(self.config.required_services))
+            {
+                if let Ok(sockaddr) = addr.socket_addr() {
+                    // TODO: Remove this assertion once address manager no longer cares about
+                    // connections.
+                    debug_assert!(!self.is_connected(&sockaddr));
 
-                if self.connect(&sockaddr, local_time) {
-                    self.upstream.event(Event::Connecting(sockaddr, source));
+                    if self.connect(&sockaddr, local_time) {
+                        connecting.insert(sockaddr);
+                        self.upstream.event(Event::Connecting(sockaddr, source));
+                    }
                 }
+            } else {
+                // We're completely out of addresses, give up.
+                break;
             }
         }
     }
