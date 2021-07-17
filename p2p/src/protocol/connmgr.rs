@@ -7,7 +7,7 @@ use bitcoin::network::constants::ServiceFlags;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::collections::HashMap;
-use nakamoto_common::p2p::peer::{self, AddressSource, Source};
+use nakamoto_common::p2p::peer::{AddressSource, Source};
 
 use super::channel::{Disconnect, SetTimeout};
 use crate::protocol::{DisconnectReason, Link, PeerId, Timeout};
@@ -126,7 +126,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Initialize the connection manager. Must be called once.
-    pub fn initialize<S: peer::Store>(&mut self, _time: LocalTime, addrs: &mut A) {
+    pub fn initialize(&mut self, _time: LocalTime, addrs: &mut A) {
         let retry = self
             .config
             .retry
@@ -136,10 +136,10 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
             .collect::<Vec<_>>();
 
         for addr in retry {
-            self.connect::<S>(&addr);
+            self.connect(&addr);
         }
         self.upstream.set_timeout(IDLE_TIMEOUT);
-        self.maintain_connections::<S>(addrs);
+        self.maintain_connections(addrs);
     }
 
     /// Check whether a peer is connected.
@@ -172,7 +172,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Connect to a peer.
-    pub fn connect<S: peer::Store>(&mut self, addr: &PeerId) -> bool {
+    pub fn connect(&mut self, addr: &PeerId) -> bool {
         if !self.is_disconnected(addr) {
             return false;
         }
@@ -253,7 +253,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Call when a peer disconnected.
-    pub fn peer_disconnected<S: peer::Store>(&mut self, addr: &net::SocketAddr, addrs: &mut A) {
+    pub fn peer_disconnected(&mut self, addr: &net::SocketAddr, addrs: &mut A) {
         debug_assert!(self.peers.contains_key(addr));
         debug_assert!(!self.is_disconnected(&addr));
 
@@ -264,15 +264,15 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
             // If an outbound peer disconnected, we should make sure to maintain
             // our target outbound connection count.
             if link.is_outbound() {
-                self.maintain_connections::<S>(addrs);
+                self.maintain_connections(addrs);
             }
         }
     }
 
     /// Call when we recevied a tick.
-    pub fn received_tick<S: peer::Store>(&mut self, local_time: LocalTime, addrs: &mut A) {
+    pub fn received_tick(&mut self, local_time: LocalTime, addrs: &mut A) {
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.maintain_connections::<S>(addrs);
+            self.maintain_connections(addrs);
             self.upstream.set_timeout(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
@@ -303,7 +303,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
     }
 
     /// Attempt to maintain a certain number of outbound peers.
-    fn maintain_connections<S: peer::Store>(&mut self, addrs: &mut A) {
+    fn maintain_connections(&mut self, addrs: &mut A) {
         let current = self.outbound().count()
             + self
                 .peers
@@ -332,7 +332,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
                 // connections.
                 debug_assert!(!self.is_connected(&sockaddr));
 
-                if self.connect::<S>(&sockaddr) {
+                if self.connect(&sockaddr) {
                     self.upstream.event(Event::Connecting(sockaddr, source));
                 }
             }

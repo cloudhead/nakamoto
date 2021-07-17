@@ -789,7 +789,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
         self.clock.set_local_time(time);
         self.addrmgr.initialize(time);
         self.syncmgr.initialize(time, &self.tree);
-        self.connmgr.initialize::<P>(time, &mut self.addrmgr);
+        self.connmgr.initialize(time, &mut self.addrmgr);
         self.spvmgr.initialize(time, &self.tree);
     }
 
@@ -823,8 +823,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                 self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr, reason);
-                self.connmgr
-                    .peer_disconnected::<P>(&addr, &mut self.addrmgr);
+                self.connmgr.peer_disconnected(&addr, &mut self.addrmgr);
                 self.pingmgr.peer_disconnected(&addr);
                 self.peermgr.peer_disconnected(&addr);
             }
@@ -859,7 +858,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                     debug!(target: self.target, "Received command: Connect({})", addr);
 
                     self.peermgr.whitelist(addr);
-                    self.connmgr.connect::<P>(&addr);
+                    self.connmgr.connect(&addr);
                 }
                 Command::Disconnect(addr) => {
                     debug!(target: self.target, "Received command: Disconnect({})", addr);
@@ -942,8 +941,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
             Input::Tick => {
                 trace!(target: self.target, "Received tick");
 
-                self.connmgr
-                    .received_tick::<P>(local_time, &mut self.addrmgr);
+                self.connmgr.received_tick(local_time, &mut self.addrmgr);
                 self.syncmgr.received_tick(local_time, &self.tree);
                 self.pingmgr.received_tick(local_time);
                 self.addrmgr.received_tick(local_time);
