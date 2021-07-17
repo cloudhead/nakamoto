@@ -79,7 +79,7 @@ pub trait Disconnect {
 
 impl Disconnect for Channel {
     fn disconnect(&self, addr: net::SocketAddr, reason: DisconnectReason) {
-        info!(target: self.target, "{}: Disconnecting: {}", addr, reason);
+        debug!(target: self.target, "{}: Disconnecting: {}", addr, reason);
         self.push(Out::Disconnect(addr, reason));
     }
 }
@@ -119,7 +119,7 @@ impl addrmgr::SyncAddresses for Channel {
 
 impl connmgr::Connect for Channel {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
-        debug!(target: self.target, "[conn] {}: Connecting..", addr);
+        info!(target: self.target, "[conn] {}: Connecting..", addr);
         self.push(Out::Connect(addr, timeout));
     }
 }
@@ -132,7 +132,7 @@ impl connmgr::Events for Channel {
     fn event(&self, event: connmgr::Event) {
         match event {
             connmgr::Event::Connected(_, Link::Outbound) => {
-                info!(target: self.target, "{}", &event)
+                info!(target: self.target, "[conn] {}", &event)
             }
             _ => {
                 debug!(target: self.target, "[conn] {}", &event);

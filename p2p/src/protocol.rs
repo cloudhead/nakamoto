@@ -826,7 +826,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
                     .peer_connected(addr, local_addr, link, height, local_time);
             }
             Input::Disconnected(addr, reason) => {
-                info!(target: self.target, "{}: Disconnected: {}", addr, reason);
+                info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
 
                 self.spvmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
