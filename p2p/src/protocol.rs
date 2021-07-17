@@ -597,26 +597,28 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             } else {
                 0.
             };
-            let peers = self.connmgr.outbound_peers().count();
+            let outbound = self.connmgr.outbound_peers().count();
+            let inbound = self.connmgr.inbound_peers().count();
+            let connecting = self.connmgr.connecting_peers().count();
             let target = self.connmgr.config.target_outbound_peers;
+            let max_inbound = self.connmgr.config.max_inbound_peers;
+            let addresses = self.addrmgr.len();
 
             // TODO: Add cache sizes on disk
             // TODO: Add protocol state(s)
             // TODO: Trim block hash
             // TODO: Add average headers/s or bandwidth
-            // TODO: Add address book size
-            // TODO: Add "connecting" peers
-            // TODO: Add inbound peer count
 
-            log::info!(
-                "tip = {tip}, height = {height}/{best} ({sync:.1}%), outbound = {peers}/{target}",
-                tip = tip,
-                height = height,
-                best = best,
-                sync = sync,
-                peers = peers,
-                target = target,
-            );
+            let mut msg = Vec::new();
+
+            msg.push(format!("tip = {}", tip));
+            msg.push(format!("height = {}/{} ({:.1}%)", height, best, sync));
+            msg.push(format!("inbound = {}/{}", inbound, max_inbound));
+            msg.push(format!("outbound = {}/{}", outbound, target));
+            msg.push(format!("connecting = {}/{}", connecting, target));
+            msg.push(format!("addresses = {}", addresses));
+
+            log::info!("{}", msg.join(", "));
 
             self.last_tick = local_time;
         }

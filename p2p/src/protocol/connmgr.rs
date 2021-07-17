@@ -294,6 +294,14 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
             .map(|(addr, _)| addr)
     }
 
+    /// Returns connecting peers.
+    pub fn connecting_peers(&self) -> impl Iterator<Item = &PeerId> {
+        self.peers
+            .iter()
+            .filter(|(_, p)| matches!(p, Peer::Connecting))
+            .map(|(addr, _)| addr)
+    }
+
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections<S: peer::Store>(&mut self, addrs: &mut A) {
         let current = self.outbound().count()
