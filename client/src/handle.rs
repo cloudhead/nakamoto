@@ -12,6 +12,7 @@ use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_p2p::protocol::Command;
+use nakamoto_p2p::protocol::Peer;
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 
 /// An error resulting from a handle method.
@@ -66,8 +67,17 @@ pub trait Handle: Sized + Send + Sync {
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
-    /// Broadcast a message to all *outbound* peers.
-    fn broadcast(&self, msg: NetworkMessage) -> Result<(), Error>;
+    /// Broadcast a message to peers matching the predicate.
+    ///
+    /// To only broadcast to peers that have completed the handshake, filter
+    /// using [`Peer::is_negotiated`].
+    ///
+    /// To only broadcast to outbound peers, use [`Peer::is_outbound`].
+    fn broadcast(
+        &self,
+        msg: NetworkMessage,
+        predicate: fn(Peer) -> bool,
+    ) -> Result<Vec<net::SocketAddr>, Error>;
     /// Send a message to a random *outbound* peer. Return the chosen
     /// peer or nothing if no peer was available.
     fn query(&self, msg: NetworkMessage) -> Result<Option<net::SocketAddr>, Error>;

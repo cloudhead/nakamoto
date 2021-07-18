@@ -26,6 +26,7 @@ use nakamoto_common::p2p::peer::{Source, Store as _};
 
 pub use nakamoto_common::network::Network;
 pub use nakamoto_common::p2p::Domain;
+pub use nakamoto_p2p::protocol::Peer;
 
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
@@ -497,8 +498,15 @@ where
         self._command(cmd)
     }
 
-    fn broadcast(&self, msg: NetworkMessage) -> Result<(), handle::Error> {
-        self.command(Command::Broadcast(msg))
+    fn broadcast(
+        &self,
+        msg: NetworkMessage,
+        predicate: fn(Peer) -> bool,
+    ) -> Result<Vec<net::SocketAddr>, handle::Error> {
+        let (transmit, receive) = chan::bounded(1);
+        self.command(Command::Broadcast(msg, predicate, transmit))?;
+
+        Ok(receive.recv()?)
     }
 
     fn query(&self, msg: NetworkMessage) -> Result<Option<net::SocketAddr>, handle::Error> {

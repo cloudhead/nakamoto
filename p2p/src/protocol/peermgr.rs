@@ -120,7 +120,7 @@ enum PeerState {
 
 /// A peer connection. Peers that haven't yet sent their `version` message are stored as
 /// connections.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Connection {
     /// Remote peer address.
     pub addr: net::SocketAddr,
@@ -133,7 +133,7 @@ pub struct Connection {
 }
 
 /// A peer with connection and protocol information.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Peer {
     /// Connection information.
     pub conn: Connection,
@@ -165,6 +165,11 @@ impl Peer {
     /// Check whether the peer has successfully negotiated.
     pub fn is_negotiated(&self) -> bool {
         matches!(self.state, PeerState::Negotiated { .. })
+    }
+
+    /// Check whether the peer is outbound.
+    pub fn is_outbound(&self) -> bool {
+        self.conn.link.is_outbound()
     }
 }
 
@@ -201,7 +206,7 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
     pub fn outbound(&self) -> impl Iterator<Item = &Peer> + Clone {
         self.peers
             .values()
-            .filter(|p| p.is_negotiated() && p.conn.link.is_outbound())
+            .filter(|p| p.is_negotiated() && p.is_outbound())
     }
 
     /// Iterator over peers that have at least sent their `version` message.

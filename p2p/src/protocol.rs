@@ -101,8 +101,8 @@ pub enum Command {
     GetBlock(BlockHash, chan::Sender<Result<PeerId, GetBlockError>>),
     /// Get block filters.
     GetFilters(Range<Height>, chan::Sender<Result<(), GetFiltersError>>),
-    /// Broadcast to outbound peers.
-    Broadcast(NetworkMessage),
+    /// Broadcast to peers matching the predicate.
+    Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
     /// Send a message to a random peer.
     Query(NetworkMessage, chan::Sender<Option<net::SocketAddr>>),
     /// Connect to a peer.
@@ -130,6 +130,7 @@ pub enum GetBlockError {
     NotConnected,
 }
 
+pub use peermgr::Peer;
 pub use spvmgr::GetFiltersError;
 
 /// A protocol input event, parametrized over the network message type.
@@ -879,12 +880,17 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
 
                     reply.send(self.query(msg, |_| true)).ok();
                 }
-                Command::Broadcast(msg) => {
+                Command::Broadcast(msg, predicate, reply) => {
                     debug!(target: self.target, "Received command: Broadcast({:?})", msg);
 
-                    for peer in self.peermgr.outbound() {
-                        self.upstream.message(peer.address(), msg.clone());
+                    let mut peers = Vec::new();
+                    for peer in self.peermgr.peers() {
+                        if predicate(peer.clone()) {
+                            peers.push(peer.address());
+                            self.upstream.message(peer.address(), msg.clone());
+                        }
                     }
+                    reply.send(peers).ok();
                 }
                 Command::ImportHeaders(headers, reply) => {
                     debug!(target: self.target, "Received command: ImportHeaders(..)");
