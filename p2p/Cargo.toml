@@ -21,8 +21,8 @@ nonempty = "0.5"
 microserde = "0.1"
 
 [dev-dependencies]
-nakamoto-test = { path = "../test" }
-nakamoto-chain = { path = "../chain" }
+nakamoto-test = { version = "0.2.0", path = "../test" }
+nakamoto-chain = { version = "0.2.0", path = "../chain" }
 tempfile = "3"
 quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }
 quickcheck_macros = "0.9"
