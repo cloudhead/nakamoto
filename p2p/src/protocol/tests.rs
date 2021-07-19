@@ -3,8 +3,20 @@ pub mod peer;
 pub mod simulator;
 
 use std::iter;
+use std::net;
+use std::ops::Range;
+use std::sync::Arc;
 
-use super::*;
+use log::*;
+
+use super::{addrmgr, connmgr, peermgr, pingmgr, spvmgr, syncmgr};
+use super::{
+    chan, message, AdjustedTime, BlockHash, BlockHeader, BlockTree as _, Command, Config,
+    DisconnectReason, Event, HashSet, Height, Input, Link, LocalDuration, LocalTime, Network,
+    NetworkMessage, Out, PeerId, RawNetworkMessage, ServiceFlags, VersionMessage,
+};
+use super::{PROTOCOL_VERSION, USER_AGENT};
+
 use peer::{Peer, PeerDummy};
 use simulator::{Options, Simulation};
 
@@ -14,13 +26,24 @@ use bitcoin_hashes::hex::FromHex;
 
 use quickcheck_macros::quickcheck;
 
+use nakamoto_chain::block::cache::BlockCache;
+use nakamoto_chain::block::store;
+
+use nakamoto_common::collections::HashMap;
+use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_common::p2p::peer::Source;
+
+use nakamoto_test::block::cache::model;
+use nakamoto_test::BITCOIN_HEADERS;
 
 #[allow(unused_imports)]
 use nakamoto_test::logger;
-use nakamoto_test::BITCOIN_HEADERS;
 
-use crate::protocol::{connmgr, pingmgr};
+pub type Protocol = super::Protocol<
+    BlockCache<store::Memory<BlockHeader>>,
+    model::FilterCache,
+    HashMap<net::IpAddr, KnownAddress>,
+>;
 
 fn payload(o: Out) -> Option<(net::SocketAddr, NetworkMessage)> {
     match o {

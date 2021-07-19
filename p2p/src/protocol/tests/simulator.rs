@@ -207,10 +207,7 @@ impl Simulation {
     }
 
     /// Initialize peers.
-    pub fn initialize<'a, M: 'a + Machine>(
-        &self,
-        peers: impl IntoIterator<Item = &'a mut super::Peer<M>>,
-    ) {
+    pub fn initialize<'a>(&self, peers: impl IntoIterator<Item = &'a mut super::Peer<Protocol>>) {
         for peer in peers.into_iter() {
             peer.initialize();
         }
@@ -219,9 +216,9 @@ impl Simulation {
     /// Process one scheduled input from the inbox, using the provided peers.
     /// This function should be called until it returns `false`, or some desired state is reached.
     /// Returns `true` if there are more messages to process.
-    pub fn step<'a, M: 'a + Machine + Debug>(
+    pub fn step<'a>(
         &mut self,
-        peers: impl IntoIterator<Item = &'a mut super::Peer<M>>,
+        peers: impl IntoIterator<Item = &'a mut super::Peer<Protocol>>,
     ) -> bool {
         let mut nodes = HashMap::with_hasher(self.rng.clone().into());
         for peer in peers.into_iter() {

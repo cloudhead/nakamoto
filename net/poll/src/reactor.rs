@@ -4,12 +4,14 @@ use bitcoin::network::message::RawNetworkMessage;
 
 use crossbeam_channel as chan;
 
+use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::block::tree::BlockTree;
+use nakamoto_common::p2p::peer;
 
 use nakamoto_p2p::error::Error;
 use nakamoto_p2p::event::{self, Event};
-use nakamoto_p2p::protocol::Machine;
-use nakamoto_p2p::protocol::{Command, DisconnectReason, Input, Link, Out};
+use nakamoto_p2p::protocol::{Command, DisconnectReason, Input, Link, Out, Protocol};
 
 use log::*;
 
@@ -104,10 +106,13 @@ impl<E: event::Publisher> nakamoto_p2p::reactor::Reactor<E> for Reactor<net::Tcp
     }
 
     /// Run the given protocol with the reactor.
-    fn run<F, M>(&mut self, listen_addrs: &[net::SocketAddr], machine: F) -> Result<(), Error>
+    fn run<B, T: BlockTree, F: Filters, P: peer::Store>(
+        &mut self,
+        listen_addrs: &[net::SocketAddr],
+        builder: B,
+    ) -> Result<(), Error>
     where
-        F: FnOnce(chan::Sender<Out>) -> M,
-        M: Machine,
+        B: FnOnce(chan::Sender<Out>) -> Protocol<T, F, P>,
     {
         let listener = if listen_addrs.is_empty() {
             None
@@ -127,7 +132,7 @@ impl<E: event::Publisher> nakamoto_p2p::reactor::Reactor<E> for Reactor<net::Tcp
         info!("Initializing protocol..");
 
         let (tx, rx) = chan::unbounded();
-        let mut protocol = machine(tx);
+        let mut protocol = builder(tx);
         let local_time = SystemTime::now().into();
 
         protocol.initialize(local_time);

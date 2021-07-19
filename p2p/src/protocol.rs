@@ -316,15 +316,7 @@ impl fmt::Debug for Hooks {
 
 ///////////////////////////////////////////////////////////////////////////////////////////////
 
-/// A generic state machine. The peer-to-peer protocol implements this trait.
-pub trait Machine {
-    /// Initialize the state machine. Called once before any event is sent to the state machine.
-    fn initialize(&mut self, time: LocalTime);
-    /// Process the next input and advance the state machine by one step.
-    fn step(&mut self, input: Input, local_time: LocalTime);
-}
-
-/// An instantiation of `Protocol`, for the Bitcoin P2P network. Parametrized over the
+/// An instance of the Bitcoin P2P network protocol. Parametrized over the
 /// block-tree and compact filter store.
 #[derive(Debug)]
 pub struct Protocol<T, F, P> {
@@ -792,9 +784,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     }
 }
 
-impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
+impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     /// Initialize the protocol. Called once before any event is sent to the state machine.
-    fn initialize(&mut self, time: LocalTime) {
+    pub fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.addrmgr.initialize(time);
         self.syncmgr.initialize(time, &self.tree);
@@ -803,7 +795,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Machine for Protocol<T, F, P> {
     }
 
     /// Process the next input and advance the state machine by one step.
-    fn step(&mut self, input: Input, local_time: LocalTime) {
+    pub fn step(&mut self, input: Input, local_time: LocalTime) {
         self.tick(local_time);
 
         match input {

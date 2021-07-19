@@ -15,14 +15,6 @@ use nakamoto_common::p2p::peer::KnownAddress;
 
 use nakamoto_test::block::cache::model;
 
-use crate::protocol::Protocol;
-
-type TestProtocol = Protocol<
-    BlockCache<store::Memory<BlockHeader>>,
-    model::FilterCache,
-    HashMap<net::IpAddr, KnownAddress>,
->;
-
 pub struct PeerDummy {
     pub addr: PeerId,
     pub height: Height,
@@ -67,8 +59,8 @@ impl PeerDummy {
 }
 
 #[derive(Debug)]
-pub struct Peer<M: Machine> {
-    pub protocol: M,
+pub struct Peer<P> {
+    pub protocol: P,
     pub upstream: chan::Receiver<Out>,
     pub time: LocalTime,
     pub addr: PeerId,
@@ -77,7 +69,7 @@ pub struct Peer<M: Machine> {
     initialized: bool,
 }
 
-impl<M: Machine> Peer<M> {
+impl Peer<Protocol> {
     pub fn step(&mut self, input: Input) {
         self.initialize();
         self.protocol.step(input, self.time)
@@ -97,7 +89,7 @@ impl<M: Machine> Peer<M> {
     }
 }
 
-impl Peer<TestProtocol> {
+impl Peer<Protocol> {
     pub fn new(
         name: &'static str,
         ip: impl Into<net::IpAddr>,
@@ -274,7 +266,7 @@ impl Peer<TestProtocol> {
 
 /// Create a network of nodes of the given size.
 /// Populates their respective address books so that they can connect with each other on startup.
-pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<TestProtocol>> {
+pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Protocol>> {
     assert!(size <= 10);
 
     let mut addrs = HashSet::with_hasher(rng.clone().into());
