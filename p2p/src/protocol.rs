@@ -117,8 +117,8 @@ pub enum Command {
     ),
     /// Import addresses into the address book.
     ImportAddresses(Vec<Address>),
-    /// Submit a transaction to the network.
-    SubmitTransaction(Transaction),
+    /// Submit transactions to the network.
+    SubmitTransactions(Vec<Transaction>, chan::Sender<Vec<PeerId>>),
     /// Shutdown the protocol.
     Shutdown,
 }
@@ -183,7 +183,7 @@ pub enum Out {
     Disconnect(PeerId, DisconnectReason),
     /// Set a timeout.
     SetTimeout(Timeout),
-    /// An event has occured.
+    /// An event has occurred.
     Event(Event),
     /// Shutdown protocol.
     Shutdown,
@@ -301,6 +301,19 @@ impl Mempool {
     pub fn new() -> Self {
         Self {
             txs: HashMap::new(),
+        }
+    }
+
+    /// Remove a transaction from the mempool. This should be used when the transaction is
+    /// confirmed.
+    pub fn remove(&mut self, txid: &Txid) -> Option<Transaction> {
+        self.txs.remove(txid)
+    }
+
+    /// Add an unconfirmed transaction to the mempool.
+    pub fn insert(&mut self, txs: impl IntoIterator<Item = (Txid, Transaction)>) {
+        for (k, v) in txs {
+            self.txs.insert(k, v);
         }
     }
 }
@@ -586,10 +599,26 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         }
     }
 
-    /// Send a message to a random peer. Returns the peer id.
-    fn query<Q>(&self, msg: NetworkMessage, mut f: Q) -> Option<PeerId>
+    /// Send a message to a all peers matching the predicate.
+    fn broadcast<Q>(&self, msg: NetworkMessage, predicate: Q) -> Vec<PeerId>
     where
-        Q: FnMut(&peermgr::Peer) -> bool,
+        Q: Fn(&peermgr::Peer) -> bool,
+    {
+        let mut peers = Vec::new();
+
+        for peer in self.peermgr.peers() {
+            if predicate(peer) {
+                peers.push(peer.address());
+                self.upstream.message(peer.address(), msg.clone());
+            }
+        }
+        peers
+    }
+
+    /// Send a message to a random outbound peer. Returns the peer id.
+    fn query<Q>(&self, msg: NetworkMessage, f: Q) -> Option<PeerId>
+    where
+        Q: Fn(&peermgr::Peer) -> bool,
     {
         let peers = self
             .peermgr
@@ -923,13 +952,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 Command::Broadcast(msg, predicate, reply) => {
                     debug!(target: self.target, "Received command: Broadcast({:?})", msg);
 
-                    let mut peers = Vec::new();
-                    for peer in self.peermgr.peers() {
-                        if predicate(peer.clone()) {
-                            peers.push(peer.address());
-                            self.upstream.message(peer.address(), msg.clone());
-                        }
-                    }
+                    let peers = self.broadcast(msg, |p| predicate(p.clone()));
                     reply.send(peers).ok();
                 }
                 Command::ImportHeaders(headers, reply) => {
@@ -984,10 +1007,29 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         reply.send(Err(GetBlockError::NotConnected)).ok();
                     }
                 }
-                Command::SubmitTransaction(tx) => {
-                    debug!(target: self.target, "Received command: SubmitTransaction(..)");
+                Command::SubmitTransactions(txs, reply) => {
+                    debug!(target: self.target, "Received command: SubmitTransactions(..)");
 
-                    self.query(NetworkMessage::Tx(tx), |p| p.relay);
+                    let mut invs = Vec::with_capacity(txs.len());
+                    let mut unconfirmed = Vec::with_capacity(txs.len());
+
+                    for tx in txs {
+                        let txid = tx.txid();
+
+                        invs.push(Inventory::Transaction(txid));
+                        unconfirmed.push((txid, tx));
+                    }
+
+                    // TODO: For BIP 339 support, we can send a `WTx` inventory here.
+                    let peers =
+                        self.broadcast(NetworkMessage::Inv(invs), |p| p.relay && p.is_negotiated());
+
+                    self.mempool
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(unconfirmed);
+
+                    reply.send(peers).ok();
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);

@@ -85,8 +85,8 @@ pub trait Handle: Sized + Send + Sync {
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, Error>;
     /// Disconnect from the designated peer address.
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), Error>;
-    /// Submit a transaction to the network.
-    fn submit_transaction(&self, tx: Transaction) -> Result<(), Error>;
+    /// Submit transactions to the network.
+    fn submit_transactions(&self, txs: Vec<Transaction>) -> Result<Vec<net::SocketAddr>, Error>;
     /// Import block headers into the node.
     /// This may cause the node to broadcast header or inventory messages to its peers.
     fn import_headers(

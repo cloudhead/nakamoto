@@ -577,10 +577,14 @@ where
         Ok(())
     }
 
-    fn submit_transaction(&self, tx: Transaction) -> Result<(), handle::Error> {
-        self.command(Command::SubmitTransaction(tx))?;
+    fn submit_transactions(
+        &self,
+        txs: Vec<Transaction>,
+    ) -> Result<Vec<net::SocketAddr>, handle::Error> {
+        let (transmit, receive) = chan::bounded(1);
+        self.command(Command::SubmitTransactions(txs, transmit))?;
 
-        Ok(())
+        Ok(receive.recv()?)
     }
 
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
