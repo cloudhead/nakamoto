@@ -27,8 +27,8 @@ use crate::event::Event;
 use std::fmt::{self, Debug};
 use std::net;
 use std::ops::Range;
-use std::sync::Arc;
-use std::{collections::HashSet, net::SocketAddr};
+use std::sync::{Arc, Mutex};
+use std::{collections::HashMap, collections::HashSet, net::SocketAddr};
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -38,6 +38,7 @@ use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_filter::GetCFilters;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::Address;
+use bitcoin::Txid;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
@@ -281,6 +282,29 @@ mod message {
     }
 }
 
+/// Transaction Mempool.
+///
+/// Keeps track of unconfirmed transactions.
+///
+/// The mempool is shared between the client and the protocol.  The client's responsibility is to
+/// remove transactions that have been included in blocks, while the protocol adds transactions
+/// that were submitted by the client.
+///
+/// The protocol also uses the mempool to respond to `getdata` messages received from peers.
+#[derive(Debug)]
+pub struct Mempool {
+    txs: HashMap<Txid, Transaction>,
+}
+
+impl Mempool {
+    /// Create a new, empty mempool.
+    pub fn new() -> Self {
+        Self {
+            txs: HashMap::new(),
+        }
+    }
+}
+
 /// Holds functions that are used to hook into or alter protocol behavior.
 #[derive(Clone)]
 pub struct Hooks {
@@ -340,6 +364,9 @@ pub struct Protocol<T, F, P> {
     spvmgr: SpvManager<F, Upstream>,
     /// Peer manager.
     peermgr: PeerManager<Upstream>,
+    /// Transaction mempool. Stores unconfirmed transactions submitted by
+    /// the client.
+    mempool: Arc<Mutex<Mempool>>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
@@ -462,6 +489,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         tree: T,
         filters: F,
         peers: P,
+        mempool: Arc<Mutex<Mempool>>,
         clock: AdjustedTime<PeerId>,
         rng: fastrand::Rng,
         config: Config,
@@ -544,6 +572,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             target,
             params,
             clock,
+            mempool,
             addrmgr,
             syncmgr,
             connmgr,
@@ -766,8 +795,27 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             NetworkMessage::GetAddr => {
                 self.addrmgr.received_getaddr(&addr);
             }
-            NetworkMessage::GetData(inv) => {
-                (*self.hooks.on_getdata)(addr, inv, &self.upstream);
+            NetworkMessage::GetData(invs) => {
+                // Don't panic if the lock is poisoned -- it may be held by a non-critical thread.
+                let mempool = self.mempool.lock().unwrap_or_else(|e| e.into_inner());
+
+                for inv in &invs {
+                    match inv {
+                        // NOTE: Normally, we would handle non-witness inventory requests differently
+                        // than witness inventories, but the `bitcoin` crate doesn't allow us to
+                        // omit the witness data, hence we treat them equally here.
+                        Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
+                            if let Some(tx) = mempool.txs.get(txid) {
+                                self.upstream.message(addr, NetworkMessage::Tx(tx.clone()));
+                            }
+                        }
+                        Inventory::WTx(_wtxid) => {
+                            // TODO: This should be filled in as part of BIP 339 support.
+                        }
+                        _ => {}
+                    }
+                }
+                (*self.hooks.on_getdata)(addr, invs, &self.upstream);
             }
             _ => {
                 debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);

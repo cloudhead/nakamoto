@@ -8,6 +8,7 @@ use std::net;
 use std::net::SocketAddr;
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use std::time::{self, SystemTime};
 
 use crossbeam_channel as chan;
@@ -32,7 +33,7 @@ use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
-use nakamoto_p2p::protocol::{self, Link};
+use nakamoto_p2p::protocol::{self, Link, Mempool};
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
 use nakamoto_p2p::protocol::{Command, GetBlockError, Protocol};
 
@@ -153,6 +154,7 @@ pub struct Client<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
+    mempool: Arc<Mutex<Mempool>>,
 
     reactor: R,
 }
@@ -187,11 +189,13 @@ impl<R: Reactor<Publisher>> Client<R> {
             .register(filters_pub);
 
         let reactor = R::new(publisher, commands)?;
+        let mempool = Arc::new(Mutex::new(Mempool::new()));
 
         Ok(Self {
             events,
             handle,
             reactor,
+            mempool,
             config,
             blocks,
             filters,
@@ -318,6 +322,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             log::info!("{} seeds added to address book", peers.len());
         }
 
+        let mempool = self.mempool.clone();
         let cfg = p2p::protocol::Config {
             network: self.config.network,
             params: self.config.network.params(),
@@ -332,7 +337,7 @@ impl<R: Reactor<Publisher>> Client<R> {
         };
 
         self.reactor.run(&listen, move |upstream| {
-            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
+            Protocol::new(cache, filters, peers, mempool, clock, rng, cfg, upstream)
         })?;
 
         Ok(())
@@ -364,11 +369,12 @@ impl<R: Reactor<Publisher>> Client<R> {
         let local_time = SystemTime::now().into();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
+        let mempool = self.mempool.clone();
 
         log::info!("{} peer(s) found..", peers.len());
 
         self.reactor.run(&self.config.listen, |upstream| {
-            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
+            Protocol::new(cache, filters, peers, mempool, clock, rng, cfg, upstream)
         })?;
 
         Ok(())

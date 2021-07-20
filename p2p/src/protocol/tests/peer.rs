@@ -1,5 +1,7 @@
 use super::*;
 
+use std::sync::Mutex;
+
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::Address;
 
@@ -14,6 +16,8 @@ use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::p2p::peer::KnownAddress;
 
 use nakamoto_test::block::cache::model;
+
+use crate::protocol::Mempool;
 
 pub struct PeerDummy {
     pub addr: PeerId,
@@ -65,6 +69,7 @@ pub struct Peer<P> {
     pub time: LocalTime,
     pub addr: PeerId,
     pub cfg: Config,
+    pub mempool: Arc<Mutex<Mempool>>,
 
     initialized: bool,
 }
@@ -153,10 +158,21 @@ impl Peer<Protocol> {
 
         let (tx, rx) = chan::unbounded();
         let addr = (ip.into(), network.port()).into();
-        let protocol = Protocol::new(tree, filters, peers, clock, rng, cfg.clone(), tx);
+        let mempool = Arc::new(Mutex::new(Mempool::new()));
+        let protocol = Protocol::new(
+            tree,
+            filters,
+            peers,
+            mempool.clone(),
+            clock,
+            rng,
+            cfg.clone(),
+            tx,
+        );
 
         Self {
             protocol,
+            mempool,
             upstream: rx,
             time,
             addr,
