@@ -94,7 +94,7 @@ fn test_full_sync() {
     let hash = headers.last().unwrap().block_hash();
 
     // Ensure all peers are connected to misha,
-    // so that misha can send effectively send blocks to
+    // so that misha can effectively send blocks to
     // all peers on time.
     handle.wait_for_peers(2, Services::Chain).unwrap();
 

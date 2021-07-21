@@ -24,6 +24,7 @@ pub struct PeerDummy {
     pub height: Height,
     pub services: ServiceFlags,
     pub protocol_version: u32,
+    pub relay: bool,
     pub time: LocalTime,
 }
 
@@ -42,6 +43,7 @@ impl PeerDummy {
             addr,
             height,
             services,
+            relay: false,
             protocol_version: PROTOCOL_VERSION,
             time,
         }
@@ -57,7 +59,7 @@ impl PeerDummy {
             nonce,
             user_agent: USER_AGENT.to_owned(),
             start_height: self.height as i32,
-            relay: false,
+            relay: self.relay,
         }
     }
 }
@@ -188,6 +190,7 @@ impl Peer<Protocol> {
                 height: 144,
                 protocol_version: self.protocol.protocol_version,
                 services: self.protocol.peermgr.config.required_services,
+                relay: false,
                 time: self.time,
             },
             link,
