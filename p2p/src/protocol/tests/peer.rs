@@ -201,6 +201,19 @@ impl Peer<Protocol> {
         self.protocol.step(Input::Command(cmd), self.time);
     }
 
+    pub fn receive(&mut self, remote: net::SocketAddr, payload: NetworkMessage) {
+        self.protocol.step(
+            Input::Received(
+                remote,
+                RawNetworkMessage {
+                    magic: self.protocol.network.magic(),
+                    payload,
+                },
+            ),
+            self.time,
+        );
+    }
+
     pub fn connect(&mut self, remote: &PeerDummy, link: Link) {
         self.initialize();
 

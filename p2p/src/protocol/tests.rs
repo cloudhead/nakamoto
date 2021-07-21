@@ -34,6 +34,7 @@ use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_common::p2p::peer::Source;
 
 use nakamoto_test::block::cache::model;
+use nakamoto_test::block::gen;
 use nakamoto_test::BITCOIN_HEADERS;
 
 #[allow(unused_imports)]
@@ -823,4 +824,57 @@ fn sim_connect_to_peers() {
         "Desired state took too long to reach: {}",
         simulator.elapsed()
     );
+}
+
+#[test]
+fn test_submit_transactions() {
+    let network = Network::Mainnet;
+    let time = LocalTime::now();
+
+    let mut rng = fastrand::Rng::new();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng.clone());
+
+    // Relay peer.
+    let remote1 = PeerDummy {
+        addr: ([88, 88, 88, 88], 8333).into(),
+        height: 144,
+        protocol_version: alice.protocol.protocol_version,
+        services: ServiceFlags::NETWORK,
+        relay: true,
+        time,
+    };
+    // Non-relay peer.
+    let remote2 = PeerDummy {
+        addr: ([99, 99, 99, 99], 8333).into(),
+        relay: false,
+        ..remote1
+    };
+
+    alice.connect(&remote1, Link::Outbound);
+    assert!(alice.protocol.peermgr.outbound().next().unwrap().relay);
+
+    let (transmit, receive) = chan::bounded(1);
+    let tx = gen::transaction(&mut rng);
+    let inventory = vec![Inventory::Transaction(tx.txid())];
+    alice.connect(&remote2, Link::Outbound);
+    alice.command(Command::SubmitTransactions(vec![tx], transmit));
+
+    let remotes = receive.recv().unwrap();
+    assert_eq!(remotes, vec![remote1.addr]);
+
+    alice
+        .upstream
+        .try_iter()
+        .filter_map(payload)
+        .find(|(peer, msg)| msg == &NetworkMessage::Inv(inventory.clone()) && peer == &remote1.addr)
+        .expect("Alice sends an `inv` message");
+
+    alice.time.elapse(LocalDuration::from_secs(30));
+    alice.receive(remote1.addr, NetworkMessage::GetData(inventory));
+    alice
+        .upstream
+        .try_iter()
+        .filter_map(payload)
+        .find(|(_, msg)| matches!(msg, NetworkMessage::Tx(_)))
+        .expect("Alice responds to `getdata` with a `tx` message");
 }
