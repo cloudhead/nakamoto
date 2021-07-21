@@ -389,6 +389,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             timeout: self.config.timeout,
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
+            mempool: self.mempool.clone(),
         }
     }
 }
@@ -399,6 +400,7 @@ pub struct Handle<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
+    mempool: Arc<Mutex<Mempool>>,
     waker: R::Waker,
     timeout: time::Duration,
 }
@@ -413,6 +415,7 @@ where
             commands: self.commands.clone(),
             events: self.events.clone(),
             filters: self.filters.clone(),
+            mempool: self.mempool.clone(),
             timeout: self.timeout,
             waker: self.waker.clone(),
         }
@@ -498,6 +501,10 @@ where
 
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)> {
         self.filters.subscribe()
+    }
+
+    fn mempool(&self) -> Arc<Mutex<Mempool>> {
+        self.mempool.clone()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {

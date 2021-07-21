@@ -2,6 +2,7 @@
 //! protocol instance.
 use std::net;
 use std::ops::Range;
+use std::sync::{Arc, Mutex};
 
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::Address;
@@ -11,8 +12,7 @@ use thiserror::Error;
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
-use nakamoto_p2p::protocol::Command;
-use nakamoto_p2p::protocol::Peer;
+use nakamoto_p2p::protocol::{Command, Mempool, Peer};
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 
 /// An error resulting from a handle method.
@@ -65,6 +65,8 @@ pub trait Handle: Sized + Send + Sync {
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
+    /// Get the client's transaction mempool.
+    fn mempool(&self) -> Arc<Mutex<Mempool>>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Broadcast a message to peers matching the predicate.
