@@ -10,7 +10,7 @@ use crossbeam_channel as chan;
 
 use bitcoin::network::address::Address;
 use bitcoin::network::message::NetworkMessage;
-use bitcoin::network::message_blockdata::GetHeadersMessage;
+use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 use bitcoin::network::message_network::VersionMessage;
 
@@ -21,7 +21,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 use crate::protocol::{DisconnectReason, Event, Out, PeerId};
 
 use super::network::Network;
-use super::{addrmgr, connmgr, message, peermgr, pingmgr, spvmgr, syncmgr, Link, Locators};
+use super::{addrmgr, connmgr, invmgr, message, peermgr, pingmgr, spvmgr, syncmgr, Link, Locators};
 
 /// Used to construct a protocol output.
 #[derive(Debug, Clone)]
@@ -270,6 +270,16 @@ impl spvmgr::SyncFilters for Channel {
 
     fn send_cfilter(&self, addr: PeerId, cfilter: CFilter) {
         self.message(addr, NetworkMessage::CFilter(cfilter));
+    }
+}
+
+impl invmgr::Inventories for Channel {
+    fn inv(&self, addr: PeerId, inventories: Vec<Inventory>) {
+        self.message(addr, NetworkMessage::Inv(inventories));
+    }
+
+    fn getdata(&self, addr: PeerId, inventories: Vec<Inventory>) {
+        self.message(addr, NetworkMessage::GetData(inventories));
     }
 }
 

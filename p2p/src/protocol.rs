@@ -7,6 +7,7 @@ use nonempty::NonEmpty;
 pub mod addrmgr;
 pub mod channel;
 pub mod connmgr;
+pub mod invmgr;
 pub mod peermgr;
 pub mod pingmgr;
 pub mod spvmgr;
@@ -18,6 +19,7 @@ mod tests;
 use addrmgr::AddressManager;
 use channel::Channel;
 use connmgr::ConnectionManager;
+use invmgr::InventoryManager;
 use peermgr::PeerManager;
 use pingmgr::PingManager;
 use spvmgr::SpvManager;
@@ -388,6 +390,8 @@ pub struct Protocol<T, F, P> {
     spvmgr: SpvManager<F, Upstream>,
     /// Peer manager.
     peermgr: PeerManager<Upstream>,
+    /// Inventory manager.
+    invmgr: InventoryManager<Upstream>,
     /// Transaction mempool. Stores unconfirmed transactions submitted by
     /// the client.
     mempool: Arc<Mutex<Mempool>>,
@@ -588,6 +592,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             peers,
             upstream.clone(),
         );
+        let invmgr = InventoryManager::new(rng.clone(), upstream.clone());
 
         Self {
             tree,
@@ -603,6 +608,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             pingmgr,
             spvmgr,
             peermgr,
+            invmgr,
             last_tick: LocalTime::default(),
             rng,
             upstream,
@@ -750,6 +756,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         &self.clock,
                         &self.tree,
                     );
+                    self.invmgr
+                        .peer_negotiated(peer.address(), peer.services, peer.relay);
                 }
             }
             NetworkMessage::Ping(nonce) => {
@@ -916,6 +924,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .peer_disconnected(&addr, &mut self.addrmgr, local_time);
                 self.pingmgr.peer_disconnected(&addr);
                 self.peermgr.peer_disconnected(&addr);
+                self.invmgr.peer_disconnected(&addr);
             }
             Input::Received(addr, msg) => {
                 self.upstream
@@ -1007,10 +1016,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     reply.send(result).ok();
                 }
                 Command::GetBlock(hash, reply) => {
-                    let peer = self
-                        .query(NetworkMessage::GetData(vec![Inventory::Block(hash)]), |p| {
-                            p.services.has(ServiceFlags::NETWORK)
-                        });
+                    let peer = self.invmgr.get(Inventory::Block(hash), |p| {
+                        p.services.has(ServiceFlags::NETWORK)
+                    });
 
                     if let Some(peer) = peer {
                         reply.send(Ok(peer)).ok();
@@ -1032,8 +1040,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     }
 
                     // TODO: For BIP 339 support, we can send a `WTx` inventory here.
-                    let peers =
-                        self.broadcast(NetworkMessage::Inv(invs), |p| p.relay && p.is_negotiated());
+                    let peers = self.invmgr.broadcast(invs, |p| p.relay);
 
                     self.mempool
                         .lock()
