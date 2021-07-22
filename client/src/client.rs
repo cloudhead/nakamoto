@@ -478,9 +478,7 @@ where
         let (transmit, receive) = chan::bounded::<Result<net::SocketAddr, CommandError>>(1);
         self.command(Command::GetBlock(*hash, transmit))?;
 
-        receive
-            .recv()?
-            .map_err(|e| handle::Error::Command(Box::new(e)))
+        receive.recv()?.map_err(handle::Error::Command)
     }
 
     fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {
@@ -491,9 +489,7 @@ where
         let (transmit, receive) = chan::bounded(1);
         self.command(Command::GetFilters(range, transmit))?;
 
-        receive
-            .recv()?
-            .map_err(|e| handle::Error::Command(Box::new(e)))
+        receive.recv()?.map_err(handle::Error::GetFilters)
     }
 
     fn blocks(&self) -> chan::Receiver<(Block, Height)> {
@@ -592,9 +588,7 @@ where
         let (transmit, receive) = chan::bounded(1);
         self.command(Command::SubmitTransactions(txs, transmit))?;
 
-        receive
-            .recv()?
-            .map_err(|e| handle::Error::Command(Box::new(e)))
+        receive.recv()?.map_err(handle::Error::Command)
     }
 
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>

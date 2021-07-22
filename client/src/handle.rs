@@ -13,7 +13,7 @@ use thiserror::Error;
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
-use nakamoto_p2p::protocol::{Command, Mempool, Peer};
+use nakamoto_p2p::protocol::{Command, CommandError, GetFiltersError, Mempool, Peer};
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 
 /// An error resulting from a handle method.
@@ -23,8 +23,11 @@ pub enum Error {
     #[error("command channel disconnected")]
     Disconnected,
     /// The command returned an error.
-    #[error("command failed")]
-    Command(Box<dyn std::error::Error + Send + Sync + 'static>),
+    #[error("command failed: {0}")]
+    Command(#[from] CommandError),
+    /// Failed to fetch filters.
+    #[error("failed to get filters: {0}")]
+    GetFilters(#[from] GetFiltersError),
     /// The operation timed out.
     #[error("the operation timed out")]
     Timeout,
