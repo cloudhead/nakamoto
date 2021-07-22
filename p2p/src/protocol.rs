@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 use crossbeam_channel as chan;
 use log::*;
+use nonempty::NonEmpty;
 
 pub mod addrmgr;
 pub mod channel;
@@ -99,7 +100,7 @@ pub enum Command {
     /// Get the tip of the active chain.
     GetTip(chan::Sender<(Height, BlockHeader)>),
     /// Get a block from the active chain.
-    GetBlock(BlockHash, chan::Sender<Result<PeerId, GetBlockError>>),
+    GetBlock(BlockHash, chan::Sender<Result<PeerId, CommandError>>),
     /// Get block filters.
     GetFilters(Range<Height>, chan::Sender<Result<(), GetFiltersError>>),
     /// Broadcast to peers matching the predicate.
@@ -118,14 +119,17 @@ pub enum Command {
     /// Import addresses into the address book.
     ImportAddresses(Vec<Address>),
     /// Submit transactions to the network.
-    SubmitTransactions(Vec<Transaction>, chan::Sender<Vec<PeerId>>),
+    SubmitTransactions(
+        Vec<Transaction>,
+        chan::Sender<Result<NonEmpty<PeerId>, CommandError>>,
+    ),
     /// Shutdown the protocol.
     Shutdown,
 }
 
-/// An error resulting from the [`Command::GetBlock`].
+/// A generic error resulting from processing a [`Command`].
 #[derive(Error, Debug)]
-pub enum GetBlockError {
+pub enum CommandError {
     /// Not connected to any peer with the required services.
     #[error("not connected to any peer with the required services")]
     NotConnected,
@@ -310,8 +314,15 @@ impl Mempool {
         self.txs.remove(txid)
     }
 
+    /// Check if the mempool contains a specific transaction.
+    pub fn contains(&self, txid: &Txid) -> bool {
+        self.txs.contains_key(txid)
+    }
+
+    // PRIVATE METHODS /////////////////////////////////////////////////////////
+
     /// Add an unconfirmed transaction to the mempool.
-    pub fn insert(&mut self, txs: impl IntoIterator<Item = (Txid, Transaction)>) {
+    fn insert(&mut self, txs: impl IntoIterator<Item = (Txid, Transaction)>) {
         for (k, v) in txs {
             self.txs.insert(k, v);
         }
@@ -1004,7 +1015,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     if let Some(peer) = peer {
                         reply.send(Ok(peer)).ok();
                     } else {
-                        reply.send(Err(GetBlockError::NotConnected)).ok();
+                        reply.send(Err(CommandError::NotConnected)).ok();
                     }
                 }
                 Command::SubmitTransactions(txs, reply) => {
@@ -1029,7 +1040,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         .unwrap_or_else(|e| e.into_inner())
                         .insert(unconfirmed);
 
-                    reply.send(peers).ok();
+                    if let Some(peers) = NonEmpty::from_vec(peers) {
+                        reply.send(Ok(peers)).ok();
+                    } else {
+                        reply.send(Err(CommandError::NotConnected)).ok();
+                    }
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);

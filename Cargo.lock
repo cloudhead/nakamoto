@@ -262,6 +262,7 @@ dependencies = [
  "nakamoto-net-poll",
  "nakamoto-p2p",
  "nakamoto-test",
+ "nonempty",
  "tempfile",
  "thiserror",
 ]

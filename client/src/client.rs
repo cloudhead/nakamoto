@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{self, SystemTime};
 
 use crossbeam_channel as chan;
+use nonempty::NonEmpty;
 
 use nakamoto_chain::block::{store, Block};
 use nakamoto_chain::filter;
@@ -35,7 +36,7 @@ use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::protocol::{self, Link, Mempool};
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
-use nakamoto_p2p::protocol::{Command, GetBlockError, Protocol};
+use nakamoto_p2p::protocol::{Command, CommandError, Protocol};
 
 pub use nakamoto_p2p::event::{self, Event};
 pub use nakamoto_p2p::reactor::Reactor;
@@ -474,7 +475,7 @@ where
     }
 
     fn get_block(&self, hash: &BlockHash) -> Result<net::SocketAddr, handle::Error> {
-        let (transmit, receive) = chan::bounded::<Result<net::SocketAddr, GetBlockError>>(1);
+        let (transmit, receive) = chan::bounded::<Result<net::SocketAddr, CommandError>>(1);
         self.command(Command::GetBlock(*hash, transmit))?;
 
         receive
@@ -587,11 +588,13 @@ where
     fn submit_transactions(
         &self,
         txs: Vec<Transaction>,
-    ) -> Result<Vec<net::SocketAddr>, handle::Error> {
+    ) -> Result<NonEmpty<net::SocketAddr>, handle::Error> {
         let (transmit, receive) = chan::bounded(1);
         self.command(Command::SubmitTransactions(txs, transmit))?;
 
-        Ok(receive.recv()?)
+        receive
+            .recv()?
+            .map_err(|e| handle::Error::Command(Box::new(e)))
     }
 
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>

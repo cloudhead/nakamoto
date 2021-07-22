@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::Address;
 use crossbeam_channel as chan;
+use nonempty::NonEmpty;
 use thiserror::Error;
 
 use nakamoto_common::block::filter::BlockFilter;
@@ -88,7 +89,13 @@ pub trait Handle: Sized + Send + Sync {
     /// Disconnect from the designated peer address.
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), Error>;
     /// Submit transactions to the network.
-    fn submit_transactions(&self, txs: Vec<Transaction>) -> Result<Vec<net::SocketAddr>, Error>;
+    ///
+    /// Returns the peer(s) the transaction was announced to, or an error
+    /// if no peers were found.
+    fn submit_transactions(
+        &self,
+        txs: Vec<Transaction>,
+    ) -> Result<NonEmpty<net::SocketAddr>, Error>;
     /// Import block headers into the node.
     /// This may cause the node to broadcast header or inventory messages to its peers.
     fn import_headers(

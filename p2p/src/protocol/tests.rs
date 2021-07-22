@@ -855,12 +855,14 @@ fn test_submit_transactions() {
 
     let (transmit, receive) = chan::bounded(1);
     let tx = gen::transaction(&mut rng);
-    let inventory = vec![Inventory::Transaction(tx.txid())];
+    let txid = tx.txid();
+    let inventory = vec![Inventory::Transaction(txid)];
     alice.connect(&remote2, Link::Outbound);
     alice.command(Command::SubmitTransactions(vec![tx], transmit));
 
-    let remotes = receive.recv().unwrap();
-    assert_eq!(remotes, vec![remote1.addr]);
+    let remotes = receive.recv().unwrap().unwrap();
+    assert_eq!(Vec::from(remotes), vec![remote1.addr]);
+    assert!(alice.protocol.mempool.lock().unwrap().contains(&txid));
 
     alice
         .upstream
