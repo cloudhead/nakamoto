@@ -846,23 +846,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             NetworkMessage::GetData(invs) => {
                 // Don't panic if the lock is poisoned -- it may be held by a non-critical thread.
                 let mempool = self.mempool.lock().unwrap_or_else(|e| e.into_inner());
+                self.invmgr.received_getdata(addr, &invs, &mempool);
 
-                for inv in &invs {
-                    match inv {
-                        // NOTE: Normally, we would handle non-witness inventory requests differently
-                        // than witness inventories, but the `bitcoin` crate doesn't allow us to
-                        // omit the witness data, hence we treat them equally here.
-                        Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
-                            if let Some(tx) = mempool.txs.get(txid) {
-                                self.upstream.message(addr, NetworkMessage::Tx(tx.clone()));
-                            }
-                        }
-                        Inventory::WTx(_wtxid) => {
-                            // TODO: This should be filled in as part of BIP 339 support.
-                        }
-                        _ => {}
-                    }
-                }
                 (*self.hooks.on_getdata)(addr, invs, &self.upstream);
             }
             _ => {

@@ -13,6 +13,7 @@ use bitcoin::network::message::NetworkMessage;
 use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
 use bitcoin::network::message_network::VersionMessage;
+use bitcoin::Transaction;
 
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::tree::ImportResult;
@@ -280,6 +281,10 @@ impl invmgr::Inventories for Channel {
 
     fn getdata(&self, addr: PeerId, inventories: Vec<Inventory>) {
         self.message(addr, NetworkMessage::GetData(inventories));
+    }
+
+    fn tx(&self, addr: PeerId, tx: Transaction) {
+        self.message(addr, NetworkMessage::Tx(tx));
     }
 }
 

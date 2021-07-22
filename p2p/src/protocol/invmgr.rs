@@ -1,10 +1,12 @@
 //! Inventory manager.
 //! Takes care of sending and fetching inventories.
 use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
+use bitcoin::Transaction;
+
 use nakamoto_common::collections::HashMap;
 
 use super::channel::SetTimeout;
-use super::PeerId;
+use super::{Mempool, PeerId};
 
 /// The ability to send and receive inventory data.
 pub trait Inventories {
@@ -12,6 +14,8 @@ pub trait Inventories {
     fn inv(&self, addr: PeerId, inventories: Vec<Inventory>);
     /// Sends a `getdata` message to a peer.
     fn getdata(&self, addr: PeerId, inventories: Vec<Inventory>);
+    /// Sends a `tx` message to a peer.
+    fn tx(&self, addr: PeerId, tx: Transaction);
 }
 
 /// Inventory manager peer.
@@ -49,6 +53,26 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
     /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, id: &PeerId) {
         self.peers.remove(id);
+    }
+
+    /// Called when a `getdata` is received from a peer.
+    pub fn received_getdata(&mut self, addr: PeerId, invs: &[Inventory], mempool: &Mempool) {
+        for inv in invs {
+            match inv {
+                // NOTE: Normally, we would handle non-witness inventory requests differently
+                // than witness inventories, but the `bitcoin` crate doesn't allow us to
+                // omit the witness data, hence we treat them equally here.
+                Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
+                    if let Some(tx) = mempool.txs.get(txid) {
+                        self.upstream.tx(addr, tx.clone());
+                    }
+                }
+                Inventory::WTx(_wtxid) => {
+                    // TODO: This should be filled in as part of BIP 339 support.
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Broadcast inventories to all matching peers. Retries if necessary.
