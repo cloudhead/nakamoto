@@ -201,6 +201,24 @@ impl Peer<Protocol> {
         self.protocol.step(Input::Command(cmd), self.time);
     }
 
+    pub fn outputs(&mut self) -> impl Iterator<Item = Out> + '_ {
+        self.upstream.try_iter()
+    }
+
+    pub fn messages(&mut self) -> impl Iterator<Item = (PeerId, NetworkMessage)> + '_ {
+        self.upstream.try_iter().filter_map(|o| match o {
+            Out::Message(a, m) => Some((a, m.payload)),
+            _ => None,
+        })
+    }
+
+    pub fn events(&mut self) -> impl Iterator<Item = Event> + '_ {
+        self.upstream.try_iter().filter_map(|o| match o {
+            Out::Event(e) => Some(e),
+            _ => None,
+        })
+    }
+
     pub fn receive(&mut self, remote: net::SocketAddr, payload: NetworkMessage) {
         self.protocol.step(
             Input::Received(

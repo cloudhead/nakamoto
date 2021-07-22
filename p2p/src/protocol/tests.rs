@@ -46,20 +46,6 @@ pub type Protocol = super::Protocol<
     HashMap<net::IpAddr, KnownAddress>,
 >;
 
-fn payload(o: Out) -> Option<(net::SocketAddr, NetworkMessage)> {
-    match o {
-        Out::Message(a, m) => Some((a, m.payload)),
-        _ => None,
-    }
-}
-
-fn event(o: Out) -> Option<Event> {
-    match o {
-        Out::Event(e) => Some(e),
-        _ => None,
-    }
-}
-
 mod setup {
     use super::*;
 
@@ -148,8 +134,7 @@ fn test_idle_disconnect() {
     peer.time.elapse(pingmgr::PING_INTERVAL);
 
     peer.tick();
-    peer.upstream
-        .try_iter()
+    peer.outputs()
         .find(|o| {
             matches!(o, Out::Message(
                 addr,
@@ -165,8 +150,7 @@ fn test_idle_disconnect() {
 
     // Peer now decides to disconnect remote.
     peer.tick();
-    peer.upstream
-        .try_iter()
+    peer.outputs()
         .find(|o| {
             matches!(o, Out::Disconnect(
                 addr,
@@ -195,13 +179,10 @@ fn test_inv_getheaders() {
         msg.raw(NetworkMessage::Inv(vec![Inventory::Block(hash)])),
     ));
 
-    peer.upstream
-        .try_iter()
-        .filter_map(payload)
+    peer.messages()
         .find(|o| matches!(o, (_, NetworkMessage::GetHeaders(_))))
         .expect("a `getheaders` message should be returned");
-    peer.upstream
-        .try_iter()
+    peer.outputs()
         .find(|o| matches!(o, Out::SetTimeout(_)))
         .expect("a timer should be returned");
 }
@@ -222,8 +203,7 @@ fn test_bad_magic() {
         },
     ));
 
-    peer.upstream
-        .try_iter()
+    peer.outputs()
         .find(|o| matches!(o, Out::Disconnect(addr, DisconnectReason::PeerMagic(_)) if addr == &remote))
         .expect("peer should be disconnected");
 }
@@ -272,8 +252,7 @@ fn test_maintain_connections() {
         ));
 
         let addr = alice
-            .upstream
-            .try_iter()
+            .outputs()
             .find_map(|o| match o {
                 Out::Connect(addr, _) => Some(addr),
                 _ => None,
@@ -319,9 +298,7 @@ fn test_getheaders_retry() {
 
     // The first time we ask for headers, we ask the peer who sent us the `inv` message.
     let (addr, _) = alice
-        .upstream
-        .try_iter()
-        .filter_map(payload)
+        .messages()
         .find(|(_, m)| matches!(m, NetworkMessage::GetHeaders(_)))
         .expect("Alice asks the first peer for headers");
     assert_eq!(addr, peers[0]);
@@ -334,9 +311,7 @@ fn test_getheaders_retry() {
         alice.tick();
 
         let (addr, _) = alice
-            .upstream
-            .try_iter()
-            .filter_map(payload)
+            .messages()
             .find(|(_, m)| matches!(m, NetworkMessage::GetHeaders(_)))
             .expect("Alice asks the next peer for headers");
 
@@ -362,14 +337,13 @@ fn test_handshake_version_timeout() {
             local_addr: peer.addr,
             link: *link,
         });
-        peer.upstream
-            .try_iter()
+        peer.outputs()
             .find(|o| matches!(o, Out::SetTimeout(_)))
             .expect("a timer should be returned");
 
         peer.time.elapse(peermgr::HANDSHAKE_TIMEOUT);
         peer.tick();
-        peer.upstream.try_iter().find(
+        peer.outputs().find(
             |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote)
         ).expect("peer should disconnect when no `version` is received");
 
@@ -401,14 +375,13 @@ fn test_handshake_verack_timeout() {
                 payload: NetworkMessage::Version(remote.version(peer.addr, 0)),
             },
         ));
-        peer.upstream
-            .try_iter()
+        peer.outputs()
             .find(|o| matches!(o, Out::SetTimeout(_)))
             .expect("a timer should be returned");
 
         peer.time.elapse(LocalDuration::from_secs(60));
         peer.tick();
-        peer.upstream.try_iter().find(
+        peer.outputs().find(
             |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote.addr)
         ).expect("peer should disconnect if no `verack` is received");
 
@@ -451,8 +424,7 @@ fn test_handshake_version_hook() {
             }),
         },
     ));
-    peer.upstream
-        .try_iter()
+    peer.outputs()
         .find(|o| matches!(o, Out::Disconnect(a, DisconnectReason::Other("craig is not satoshi")) if *a == craig.addr))
         .expect("peer should disconnect when the 'on_version' hook returns an error");
 
@@ -471,9 +443,7 @@ fn test_handshake_version_hook() {
             }),
         },
     ));
-    peer.upstream
-        .try_iter()
-        .filter_map(payload)
+    peer.messages()
         .find(|m| matches!(m, (a, NetworkMessage::Verack) if *a == satoshi.addr))
         .expect("peer should send a 'verack' message back");
 }
@@ -518,11 +488,7 @@ fn test_handshake_initial_messages() {
         },
     ));
 
-    let msgs = peer
-        .upstream
-        .try_iter()
-        .filter_map(payload)
-        .collect::<Vec<_>>();
+    let msgs = peer.messages().collect::<Vec<_>>();
 
     assert!(msgs.contains(&(remote.addr, NetworkMessage::SendHeaders)));
     assert!(msgs.contains(&(remote.addr, NetworkMessage::GetAddr)));
@@ -539,8 +505,7 @@ fn test_connection_error() {
     let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
 
     peer.step(Input::Command(Command::Connect(remote.addr)));
-    peer.upstream
-        .try_iter()
+    peer.outputs()
         .find(|o| matches!(o, Out::Connect(addr, _) if *addr == remote.addr))
         .expect("Alice should try to connect to remote");
     peer.step(Input::Connecting { addr: remote.addr });
@@ -572,18 +537,14 @@ fn test_getaddr() {
 
     // Alice is unable to connect to a new peer because our address book is exhausted.
     alice
-        .upstream
-        .try_iter()
-        .filter_map(event)
+        .events()
         .find(|e| matches!(e, Event::AddrManager(addrmgr::Event::AddressBookExhausted)))
         .expect("Alice should emit `AddressBookExhausted`");
 
     // When we receive a timeout, we fetch new addresses, since our addresses have been exhausted.
     alice.tick();
     alice
-        .upstream
-        .try_iter()
-        .filter_map(payload)
+        .messages()
         .find(|msg| matches!(msg, (_, NetworkMessage::GetAddr)))
         .expect("Alice should send `getaddr`");
 
@@ -602,8 +563,7 @@ fn test_getaddr() {
     alice.tick();
 
     alice
-        .upstream
-        .try_iter()
+        .outputs()
         .find(|o| matches!(o, Out::Connect(addr, _) if addr == &toto))
         .expect("Alice tries to connect to Toto");
 }
@@ -626,9 +586,7 @@ fn test_stale_tip() {
             .unwrap()])),
     ));
     alice
-        .upstream
-        .try_iter()
-        .filter_map(payload)
+        .messages()
         .find(|(_, msg)| matches!(msg, NetworkMessage::GetHeaders(_)))
         .expect("Alice sends a `getheaders` message");
 
@@ -640,9 +598,7 @@ fn test_stale_tip() {
     alice.time.elapse(syncmgr::TIP_STALE_DURATION);
     alice.tick();
     alice
-        .upstream
-        .try_iter()
-        .filter_map(event)
+        .events()
         .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))))
         .expect("Alice emits a `StaleTipDetected` event");
 
@@ -663,9 +619,7 @@ fn test_stale_tip() {
     alice.tick();
     // Chain update should be stale this time.
     alice
-        .upstream
-        .try_iter()
-        .filter_map(event)
+        .events()
         .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))))
         .expect("Alice emits a `StaleTipDetected` event");
 }
@@ -699,9 +653,7 @@ fn prop_addrs(seed: u64) {
     // Let's query Alice to see if she has these addresses.
     alice.step(Input::Received(bob, msg.raw(NetworkMessage::GetAddr)));
     let (_, msg) = alice
-        .upstream
-        .try_iter()
-        .filter_map(payload)
+        .messages()
         .find(|o| matches!(o, (_, NetworkMessage::Addr(_))))
         .expect("peer should respond with `addr`");
 
@@ -750,8 +702,7 @@ fn prop_connect_timeout(seed: u64) {
     alice.protocol.initialize(alice.time);
 
     let result = alice
-        .upstream
-        .try_iter()
+        .outputs()
         .filter(|o| matches!(o, Out::Connect(_, _)))
         .collect::<Vec<_>>();
 
@@ -777,7 +728,7 @@ fn prop_connect_timeout(seed: u64) {
     alice.time.elapse(connmgr::IDLE_TIMEOUT);
     alice.tick();
 
-    assert!(alice.upstream.try_iter().all(|o| match o {
+    assert!(alice.outputs().all(|o| match o {
         Out::Connect(addr, _) => !attempted.contains(&addr),
         _ => true,
     }));
@@ -865,18 +816,14 @@ fn test_submit_transactions() {
     assert!(alice.protocol.mempool.lock().unwrap().contains(&txid));
 
     alice
-        .upstream
-        .try_iter()
-        .filter_map(payload)
+        .messages()
         .find(|(peer, msg)| msg == &NetworkMessage::Inv(inventory.clone()) && peer == &remote1.addr)
         .expect("Alice sends an `inv` message");
 
     alice.time.elapse(LocalDuration::from_secs(30));
     alice.receive(remote1.addr, NetworkMessage::GetData(inventory));
     alice
-        .upstream
-        .try_iter()
-        .filter_map(payload)
+        .messages()
         .find(|(_, msg)| matches!(msg, NetworkMessage::Tx(_)))
         .expect("Alice responds to `getdata` with a `tx` message");
 }
