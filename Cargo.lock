@@ -358,6 +358,7 @@ dependencies = [
  "nakamoto-common",
  "nakamoto-net-poll",
  "nakamoto-p2p",
+ "thiserror",
 ]
 
 [[package]]

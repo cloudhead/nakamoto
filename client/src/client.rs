@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{self, SystemTime};
 
-use crossbeam_channel as chan;
-use nonempty::NonEmpty;
+pub use crossbeam_channel as chan;
+pub use nonempty::NonEmpty;
 
 use nakamoto_chain::block::{store, Block};
 use nakamoto_chain::filter;
@@ -28,17 +28,17 @@ use nakamoto_common::p2p::peer::{Source, Store as _};
 
 pub use nakamoto_common::network::Network;
 pub use nakamoto_common::p2p::Domain;
-pub use nakamoto_p2p::protocol::Peer;
 
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
-use nakamoto_p2p::protocol::{self, Link, Mempool};
+use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
 use nakamoto_p2p::protocol::{Command, CommandError, Protocol};
 
 pub use nakamoto_p2p::event::{self, Event};
+pub use nakamoto_p2p::protocol::{Mempool, Peer};
 pub use nakamoto_p2p::reactor::Reactor;
 
 use crate::error::Error;
