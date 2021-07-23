@@ -1,4 +1,9 @@
-#![allow(missing_docs)]
+//! Ping manager.
+//!
+//! Detects dead peer connections and responds to peer `ping` messages.
+//!
+//! *Implementation of BIP 0031.*
+//!
 use std::collections::VecDeque;
 use std::net;
 
@@ -20,8 +25,11 @@ pub const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 /// Maximum number of latencies recorded per peer.
 const MAX_RECORDED_LATENCIES: usize = 64;
 
+/// The ability to send `ping` and `pong` messages.
 pub trait Ping {
+    /// Send a `ping` message.
     fn ping(&self, addr: net::SocketAddr, nonce: u64) -> &Self;
+    /// Send a `pong` message.
     fn pong(&self, addr: net::SocketAddr, nonce: u64) -> &Self;
 }
 
@@ -54,6 +62,7 @@ impl Peer {
     }
 }
 
+/// Detects dead peer connections.
 #[derive(Debug)]
 pub struct PingManager<U> {
     peers: HashMap<PeerId, Peer>,
@@ -64,6 +73,7 @@ pub struct PingManager<U> {
 }
 
 impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
+    /// Create a new ping manager.
     pub fn new(ping_timeout: LocalDuration, rng: fastrand::Rng, upstream: U) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
 
@@ -75,6 +85,7 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
         }
     }
 
+    /// Called when a peer is negotiated.
     pub fn peer_negotiated(&mut self, address: PeerId, now: LocalTime) {
         let nonce = self.rng.u64(..);
 
@@ -89,14 +100,20 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
         );
     }
 
+    /// Called when a peer is disconnected.
     pub fn peer_disconnected(&mut self, addr: &PeerId) {
         self.peers.remove(addr);
     }
 
+    /// Called when a tick is received.
     pub fn received_tick(&mut self, now: LocalTime) {
         for peer in self.peers.values_mut() {
             match peer.state {
                 State::AwaitingPong { since, .. } => {
+                    // TODO: By using nonces we should be able to overlap ping messages.
+                    // This would allow us to only disconnect a peer after N ping messages
+                    // are sent in a row with no reply.
+                    //
                     // A ping was sent and we're waiting for a `pong`. If too much
                     // time has passed, we consider this peer dead, and disconnect
                     // from them.
@@ -123,10 +140,12 @@ impl<U: Ping + SetTimeout + Disconnect> PingManager<U> {
         }
     }
 
+    /// Called when a `ping` is received.
     pub fn received_ping(&mut self, addr: PeerId, nonce: u64) {
         self.upstream.pong(addr, nonce);
     }
 
+    /// Called when a `pong` is received.
     pub fn received_pong(&mut self, addr: PeerId, nonce: u64, now: LocalTime) -> bool {
         if let Some(peer) = self.peers.get_mut(&addr) {
             match peer.state {
