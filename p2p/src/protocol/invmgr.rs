@@ -2,11 +2,21 @@
 //! Takes care of sending and fetching inventories.
 use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
 use bitcoin::Transaction;
+use bitcoin_hashes::sha256d;
 
-use nakamoto_common::collections::HashMap;
+// TODO: Timeout should be configurable
+// TODO: Handle mempool confirmations
+// TODO: Add max retries
+// TODO: Add exponential back-off
+
+use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::collections::{HashMap, HashSet};
 
 use super::channel::SetTimeout;
 use super::{Mempool, PeerId};
+
+/// Time between re-broadcasts of inventories.
+pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
 
 /// The ability to send and receive inventory data.
 pub trait Inventories {
@@ -25,12 +35,20 @@ pub struct Peer {
     pub relay: bool,
     /// Peer announced services.
     pub services: ServiceFlags,
+
+    /// Inventories we are attempting to send to this peer.
+    outbox: HashSet<sha256d::Hash>,
+    /// Last time we attempted to send inventories to this peer.
+    last_attempt: Option<LocalTime>,
 }
 
 /// Inventory manager state.
 #[derive(Debug)]
 pub struct InventoryManager<U> {
     peers: HashMap<PeerId, Peer>,
+    /// Inventories.
+    inventories: HashMap<sha256d::Hash, Inventory>,
+    timeout: LocalDuration,
     rng: fastrand::Rng,
     upstream: U,
 }
@@ -40,19 +58,55 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),
+            inventories: HashMap::with_hasher(rng.clone().into()),
+            timeout: REBROADCAST_TIMEOUT,
             rng,
             upstream,
         }
     }
 
     /// Called when a peer is negotiated.
-    pub fn peer_negotiated(&mut self, id: PeerId, services: ServiceFlags, relay: bool) {
-        self.peers.insert(id, Peer { services, relay });
+    pub fn peer_negotiated(&mut self, addr: PeerId, services: ServiceFlags, relay: bool) {
+        // Add existing inventories to this peer's outbox so that they are announced.
+        let mut outbox = HashSet::with_hasher(self.rng.clone().into());
+        for inv in self.inventories.keys() {
+            outbox.insert(*inv);
+        }
+        self.reschedule();
+        self.peers.insert(
+            addr,
+            Peer {
+                services,
+                relay,
+                outbox,
+                last_attempt: None,
+            },
+        );
     }
 
     /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, id: &PeerId) {
         self.peers.remove(id);
+    }
+
+    /// Called when we receive a tick.
+    pub fn received_tick(&mut self, time: LocalTime) {
+        for (addr, peer) in &mut self.peers {
+            let elapsed = time - peer.last_attempt.unwrap_or_default();
+
+            if elapsed >= self.timeout && !peer.outbox.is_empty() {
+                // TODO: Test this - we shouldn't be sending too many inventories even if
+                // we tick often.
+                peer.last_attempt = Some(time);
+
+                let mut invs = Vec::with_capacity(peer.outbox.len());
+                for inv in &peer.outbox {
+                    invs.push(self.inventories[inv]);
+                }
+                self.upstream.inv(*addr, invs);
+                self.upstream.set_timeout(self.timeout);
+            }
+        }
     }
 
     /// Called when a `getdata` is received from a peer.
@@ -64,7 +118,18 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 // omit the witness data, hence we treat them equally here.
                 Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
                     if let Some(tx) = mempool.txs.get(txid) {
+                        debug_assert!(self.inventories.contains_key(&txid.as_hash()));
+
                         self.upstream.tx(addr, tx.clone());
+                    }
+                    // Since we received a `getdata` from the peer, it means it received our
+                    // inventory broadcast and we no longer need to send it.
+                    if let Some(peer) = self.peers.get_mut(&addr) {
+                        peer.outbox.remove(&txid.as_hash());
+
+                        if peer.outbox.is_empty() {
+                            peer.last_attempt = None;
+                        }
                     }
                 }
                 Inventory::WTx(_wtxid) => {
@@ -75,20 +140,31 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
         }
     }
 
-    /// Broadcast inventories to all matching peers. Retries if necessary.
-    pub fn broadcast<P>(&mut self, inv: Vec<Inventory>, predicate: P) -> Vec<PeerId>
-    where
-        P: Fn(&Peer) -> bool,
-    {
-        let mut peers = Vec::new();
+    /// Announce inventories to all matching peers. Retries if necessary.
+    pub fn announce(&mut self, inv: Vec<Inventory>) -> Vec<PeerId> {
+        // All peers we are sending inventories to.
+        let mut addrs = Vec::new();
 
-        for (addr, peer) in &self.peers {
-            if predicate(peer) {
-                peers.push(*addr);
-                self.upstream.inv(*addr, inv.clone());
+        // Insert each inventory into the peer outboxes and keep a local copy for re-broadcasting
+        // later.
+        for i in inv.iter().cloned() {
+            match i {
+                Inventory::Transaction(txid) => {
+                    self.inventories.insert(txid.as_hash(), i);
+
+                    for (addr, peer) in self.peers.iter_mut().filter(|(_, p)| p.relay) {
+                        peer.outbox.insert(txid.as_hash());
+                        addrs.push(*addr);
+                    }
+                }
+                _ => {
+                    todo!()
+                }
             }
         }
-        peers
+        self.reschedule();
+
+        addrs
     }
 
     /// Get data from one of the matching peers. Retries if necessary.
@@ -113,5 +189,11 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
             }
             _ => None,
         }
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+
+    fn reschedule(&self) {
+        self.upstream.set_timeout(LocalDuration::from_secs(1));
     }
 }

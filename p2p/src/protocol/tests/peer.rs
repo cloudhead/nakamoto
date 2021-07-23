@@ -190,7 +190,7 @@ impl Peer<Protocol> {
                 height: 144,
                 protocol_version: self.protocol.protocol_version,
                 services: self.protocol.peermgr.config.required_services,
-                relay: false,
+                relay: true,
                 time: self.time,
             },
             link,
@@ -230,6 +230,10 @@ impl Peer<Protocol> {
             ),
             self.time,
         );
+    }
+
+    pub fn drain(&mut self) {
+        self.upstream.try_iter().for_each(drop);
     }
 
     pub fn connect(&mut self, remote: &PeerDummy, link: Link) {

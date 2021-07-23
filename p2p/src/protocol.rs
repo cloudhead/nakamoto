@@ -1025,7 +1025,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     }
 
                     // TODO: For BIP 339 support, we can send a `WTx` inventory here.
-                    let peers = self.invmgr.broadcast(invs, |p| p.relay);
+                    let peers = self.invmgr.announce(invs);
 
                     self.mempool
                         .lock()
@@ -1051,6 +1051,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.addrmgr.received_tick(local_time);
                 self.peermgr.received_tick(local_time);
                 self.spvmgr.received_tick(local_time, &self.tree);
+                self.invmgr.received_tick(local_time);
             }
         };
     }

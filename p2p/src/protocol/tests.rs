@@ -815,6 +815,7 @@ fn test_submit_transactions() {
     assert_eq!(Vec::from(remotes), vec![remote1.addr]);
     assert!(alice.protocol.mempool.lock().unwrap().contains(&txid));
 
+    alice.tick();
     alice
         .messages()
         .find(|(peer, msg)| msg == &NetworkMessage::Inv(inventory.clone()) && peer == &remote1.addr)
@@ -826,4 +827,199 @@ fn test_submit_transactions() {
         .messages()
         .find(|(_, msg)| matches!(msg, NetworkMessage::Tx(_)))
         .expect("Alice responds to `getdata` with a `tx` message");
+}
+
+/// Should rebroadcast `inv` when no `getdata` is received.
+/// Should rebroadcast when a new peer connects.
+#[test]
+fn test_inv_rebroadcast() {
+    let network = Network::Mainnet;
+
+    let mut rng = fastrand::Rng::new();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng.clone());
+
+    let remote1 = ([88, 88, 88, 88], 8333).into();
+    let remote2 = ([99, 99, 99, 99], 8333).into();
+    let tx1 = gen::transaction(&mut rng);
+    let tx2 = gen::transaction(&mut rng);
+    let (transmit, _) = chan::unbounded();
+
+    alice.connect_addr(&remote1, Link::Outbound);
+    alice.command(Command::SubmitTransactions(vec![tx1, tx2], transmit));
+    alice.tick(); // Broadcasting doesn't happen immediately
+    alice
+        .messages()
+        .find(|m| {
+            matches! {
+                m, (addr, NetworkMessage::Inv(inv))
+                if inv.len() == 2 && addr == &remote1
+            }
+        })
+        .expect("Alice sends an initial `inv`");
+
+    alice.outputs().count(); // Drain outputs
+    alice.connect_addr(&remote2, Link::Outbound); // A new peer connects
+    alice.tick(); // No delay until invs are sent to it
+    alice
+        .messages()
+        .find(|m| matches!(m, (a, NetworkMessage::Inv(_)) if a == &remote2))
+        .expect("Alice sends a first `inv` message to the new peer");
+
+    // Let some time pass.
+    alice.drain();
+    alice.time.elapse(LocalDuration::from_mins(5));
+    alice.tick();
+
+    let msgs = alice
+        .messages()
+        .filter(|m| matches!(m, (_, NetworkMessage::Inv(_))))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        msgs.len(),
+        2,
+        "Two `inv` messages are sent, one for each peer"
+    );
+
+    msgs.iter()
+        .find(|(addr, _)| addr == &remote1)
+        .expect("Alice sends a second `inv` message to the first peer");
+    msgs.iter()
+        .find(|(addr, _)| addr == &remote2)
+        .expect("Alice sends a second `inv` message to the second peer");
+
+    // Let some more time pass.
+    alice.time.elapse(LocalDuration::from_mins(5));
+    alice.tick();
+    alice
+        .messages()
+        .find(|m| {
+            matches! {
+                m, (addr, NetworkMessage::Inv(_))
+                if addr == &remote1
+            }
+        })
+        .expect("Alice sends a third `inv` message to the first peer");
+}
+
+#[test]
+fn test_inv_partial_broadcast() {
+    let network = Network::Mainnet;
+    let msg = message::Builder::new(network);
+
+    let mut rng = fastrand::Rng::new();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng.clone());
+
+    let remote1 = ([88, 88, 88, 88], 8333).into();
+    let remote2 = ([99, 99, 99, 99], 8333).into();
+    let tx1 = gen::transaction(&mut rng);
+    let tx2 = gen::transaction(&mut rng);
+    let (transmit, _) = chan::unbounded();
+
+    alice.connect_addr(&remote1, Link::Outbound);
+    alice.connect_addr(&remote2, Link::Outbound);
+    alice.command(Command::SubmitTransactions(
+        vec![tx1.clone(), tx2.clone()],
+        transmit,
+    ));
+    alice.tick();
+
+    // The first peer asks only for the first inventory item.
+    alice.time.elapse(LocalDuration::from_secs(3));
+    alice.step(Input::Received(
+        remote1,
+        msg.raw(NetworkMessage::GetData(vec![Inventory::Transaction(
+            tx1.txid(),
+        )])),
+    ));
+    // The second peer asks only for the second inventory item.
+    alice.step(Input::Received(
+        remote2,
+        msg.raw(NetworkMessage::GetData(vec![Inventory::Transaction(
+            tx2.txid(),
+        )])),
+    ));
+
+    let messages = alice.messages().collect::<Vec<_>>();
+    messages
+        .iter()
+        .find(|(addr, msg)| {
+            if let NetworkMessage::Tx(tx) = msg {
+                return addr == &remote1 && tx.txid() == tx1.txid();
+            }
+            false
+        })
+        .expect("Alice responds with only the requested inventory to peer#1");
+    messages
+        .iter()
+        .find(|(addr, msg)| {
+            if let NetworkMessage::Tx(tx) = msg {
+                return addr == &remote2 && tx.txid() == tx2.txid();
+            }
+            false
+        })
+        .expect("Alice responds with only the requested inventory to peer#2");
+
+    // Time passes.
+    alice.drain();
+    alice.time.elapse(LocalDuration::from_mins(5));
+    alice.tick();
+
+    let messages = alice.messages().collect::<Vec<_>>();
+    messages
+        .iter()
+        .find(|m| {
+            matches! {
+                m, (addr, NetworkMessage::Inv(inv))
+                if inv.first() == Some(&Inventory::Transaction(tx2.txid())) && addr == &remote1
+            }
+        })
+        .expect("Alice re-sends the missing inv to peer#1");
+    messages
+        .iter()
+        .find(|m| {
+            matches! {
+                m, (addr, NetworkMessage::Inv(inv))
+                if inv.first() == Some(&Inventory::Transaction(tx1.txid())) && addr == &remote2
+            }
+        })
+        .expect("Alice re-sends the missing inv to peer#2");
+
+    // Now the peers ask for the remaining inventories.
+    alice.step(Input::Received(
+        remote1,
+        msg.raw(NetworkMessage::GetData(vec![Inventory::Transaction(
+            tx2.txid(),
+        )])),
+    ));
+    alice.step(Input::Received(
+        remote2,
+        msg.raw(NetworkMessage::GetData(vec![Inventory::Transaction(
+            tx1.txid(),
+        )])),
+    ));
+
+    // More time passes.
+    alice.drain();
+    alice.time.elapse(LocalDuration::from_mins(5));
+    alice.tick();
+
+    assert_eq!(
+        alice
+            .messages()
+            .filter(|(_, m)| matches!(m, NetworkMessage::Inv(_)))
+            .count(),
+        0,
+        "Alice has nothing more to send"
+    )
+}
+
+#[test]
+fn test_transaction_mempool_rebroadcast() {
+    // TODO: Should check mempool to rebroadcast.
+}
+
+#[test]
+fn test_getdata_retry() {
+    // TODO: Should retry getting blocks
 }
