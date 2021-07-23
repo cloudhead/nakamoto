@@ -11,6 +11,7 @@ use bitcoin_hashes::sha256d;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::collections::{HashMap, HashSet};
+use nakamoto_common::source;
 
 use super::channel::SetTimeout;
 use super::{Mempool, PeerId};
@@ -157,8 +158,17 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                         addrs.push(*addr);
                     }
                 }
-                _ => {
-                    todo!()
+                Inventory::WTx(_) => {
+                    panic!("{}: BIP 339 is not yet supported", source!());
+                }
+                Inventory::WitnessTransaction(_) => {
+                    panic!(
+                        "{}: witness transaction inventories are only used in `getdata`",
+                        source!()
+                    );
+                }
+                other => {
+                    panic!("{}: {:?} is not supported", source!(), other);
                 }
             }
         }
