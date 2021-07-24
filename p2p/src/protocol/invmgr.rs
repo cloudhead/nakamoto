@@ -17,6 +17,9 @@ use super::{Mempool, PeerId};
 /// Time between re-broadcasts of inventories.
 pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
 
+/// Time between idles.
+pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
+
 /// The ability to send and receive inventory data.
 pub trait Inventories {
     /// Sends an `inv` message to a peer.
@@ -51,6 +54,7 @@ pub struct InventoryManager<U> {
     /// Inventories.
     inventories: HashMap<Txid, Inventory>,
 
+    last_tick: Option<LocalTime>,
     rng: fastrand::Rng,
     upstream: U,
 }
@@ -62,6 +66,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
             peers: HashMap::with_hasher(rng.clone().into()),
             inventories: HashMap::with_hasher(rng.clone().into()),
             timeout: REBROADCAST_TIMEOUT,
+            last_tick: None,
             rng,
             upstream,
         }
@@ -103,7 +108,10 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
 
     /// Called when we receive a tick.
     pub fn received_tick(&mut self, time: LocalTime, mempool: &Mempool) {
-        {
+        // Rate-limit how much we run this code.
+        if time - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
+            self.last_tick = Some(time);
+
             // Prune inventories. Anything that isn't in the mempool should no longer be tracked
             // by the inventory manager.
             let mut remove = Vec::new();

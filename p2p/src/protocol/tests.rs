@@ -1040,6 +1040,7 @@ fn test_mempool_inv_pruning() {
         let mut mempool = alice.protocol.mempool.lock().unwrap();
         mempool.remove(&tx2.txid());
     }
+    alice.time.elapse(LocalDuration::from_mins(1));
     alice.tick();
 
     assert!(alice.protocol.invmgr.contains(&tx1.txid()));
@@ -1049,6 +1050,7 @@ fn test_mempool_inv_pruning() {
         let mut mempool = alice.protocol.mempool.lock().unwrap();
         mempool.remove(&tx1.txid());
     }
+    alice.time.elapse(LocalDuration::from_mins(1));
     alice.tick();
 
     assert!(alice.protocol.invmgr.is_empty());
