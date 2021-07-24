@@ -1015,6 +1015,46 @@ fn test_inv_partial_broadcast() {
 }
 
 #[test]
+fn test_mempool_inv_pruning() {
+    let network = Network::Mainnet;
+
+    let mut rng = fastrand::Rng::new();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng.clone());
+
+    let remote = ([88, 88, 88, 88], 8333).into();
+    let tx1 = gen::transaction(&mut rng);
+    let tx2 = gen::transaction(&mut rng);
+    let (transmit, _) = chan::unbounded();
+
+    alice.connect_addr(&remote, Link::Outbound);
+    alice.command(Command::SubmitTransactions(
+        vec![tx1.clone(), tx2.clone()],
+        transmit,
+    ));
+    alice.tick();
+
+    assert!(alice.protocol.invmgr.contains(&tx1.txid()));
+    assert!(alice.protocol.invmgr.contains(&tx2.txid()));
+
+    {
+        let mut mempool = alice.protocol.mempool.lock().unwrap();
+        mempool.remove(&tx2.txid());
+    }
+    alice.tick();
+
+    assert!(alice.protocol.invmgr.contains(&tx1.txid()));
+    assert!(!alice.protocol.invmgr.contains(&tx2.txid()));
+
+    {
+        let mut mempool = alice.protocol.mempool.lock().unwrap();
+        mempool.remove(&tx1.txid());
+    }
+    alice.tick();
+
+    assert!(alice.protocol.invmgr.is_empty());
+}
+
+#[test]
 fn test_transaction_mempool_rebroadcast() {
     // TODO: Should check mempool to rebroadcast.
 }

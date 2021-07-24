@@ -44,10 +44,13 @@ pub struct Peer {
 /// Inventory manager state.
 #[derive(Debug)]
 pub struct InventoryManager<U> {
+    /// Peer map.
     peers: HashMap<PeerId, Peer>,
+    /// Timeout used for retrying broadcasts.
+    timeout: LocalDuration,
     /// Inventories.
     inventories: HashMap<Txid, Inventory>,
-    timeout: LocalDuration,
+
     rng: fastrand::Rng,
     upstream: U,
 }
@@ -62,6 +65,16 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
             rng,
             upstream,
         }
+    }
+
+    /// Check whether the inventory is empty.
+    pub fn is_empty(&self) -> bool {
+        self.inventories.is_empty()
+    }
+
+    /// Check if the inventory contains the given transaction.
+    pub fn contains(&self, txid: &Txid) -> bool {
+        self.inventories.contains_key(txid)
     }
 
     /// Called when a peer is negotiated.
