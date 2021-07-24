@@ -40,8 +40,22 @@ pub struct Peer {
 
     /// Inventories we are attempting to send to this peer.
     outbox: HashSet<Txid>,
+    /// Number of times we attempted to send inventories to this peer.
+    attempts: usize,
     /// Last time we attempted to send inventories to this peer.
     last_attempt: Option<LocalTime>,
+}
+
+impl Peer {
+    fn attempted(&mut self, time: LocalTime) {
+        self.last_attempt = Some(time);
+        self.attempts += 1;
+    }
+
+    fn reset(&mut self) {
+        self.last_attempt = None;
+        self.attempts = 0;
+    }
 }
 
 /// Inventory manager state.
@@ -94,6 +108,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
             addr,
             Peer {
                 services,
+                attempts: 0,
                 relay,
                 outbox,
                 last_attempt: None,
@@ -137,7 +152,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
             if elapsed >= self.timeout && !peer.outbox.is_empty() {
                 // TODO: Test this - we shouldn't be sending too many inventories even if
                 // we tick often.
-                peer.last_attempt = Some(time);
+                peer.attempted(time);
 
                 let mut invs = Vec::with_capacity(peer.outbox.len());
                 for inv in &peer.outbox {
@@ -168,7 +183,8 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                         peer.outbox.remove(txid);
 
                         if peer.outbox.is_empty() {
-                            peer.last_attempt = None;
+                            // Reset retry state.
+                            peer.reset();
                         }
                     }
                 }
