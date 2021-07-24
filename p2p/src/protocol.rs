@@ -1045,13 +1045,15 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             Input::Tick => {
                 trace!(target: self.target, "Received tick");
 
+                let mempool = self.mempool.lock().unwrap_or_else(|e| e.into_inner());
+
+                self.invmgr.received_tick(local_time, &mempool);
                 self.connmgr.received_tick(local_time, &mut self.addrmgr);
                 self.syncmgr.received_tick(local_time, &self.tree);
                 self.pingmgr.received_tick(local_time);
                 self.addrmgr.received_tick(local_time);
                 self.peermgr.received_tick(local_time);
                 self.spvmgr.received_tick(local_time, &self.tree);
-                self.invmgr.received_tick(local_time);
             }
         };
     }

@@ -1,8 +1,7 @@
 //! Inventory manager.
 //! Takes care of sending and fetching inventories.
 use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
-use bitcoin::Transaction;
-use bitcoin_hashes::sha256d;
+use bitcoin::{Transaction, Txid};
 
 // TODO: Timeout should be configurable
 // TODO: Handle mempool confirmations
@@ -38,7 +37,7 @@ pub struct Peer {
     pub services: ServiceFlags,
 
     /// Inventories we are attempting to send to this peer.
-    outbox: HashSet<sha256d::Hash>,
+    outbox: HashSet<Txid>,
     /// Last time we attempted to send inventories to this peer.
     last_attempt: Option<LocalTime>,
 }
@@ -48,7 +47,7 @@ pub struct Peer {
 pub struct InventoryManager<U> {
     peers: HashMap<PeerId, Peer>,
     /// Inventories.
-    inventories: HashMap<sha256d::Hash, Inventory>,
+    inventories: HashMap<Txid, Inventory>,
     timeout: LocalDuration,
     rng: fastrand::Rng,
     upstream: U,
@@ -91,7 +90,27 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
     }
 
     /// Called when we receive a tick.
-    pub fn received_tick(&mut self, time: LocalTime) {
+    pub fn received_tick(&mut self, time: LocalTime, mempool: &Mempool) {
+        {
+            // Prune inventories. Anything that isn't in the mempool should no longer be tracked
+            // by the inventory manager.
+            let mut remove = Vec::new();
+
+            for txid in self.inventories.keys() {
+                if !mempool.contains(txid) {
+                    remove.push(*txid);
+                }
+            }
+
+            for txid in remove {
+                self.inventories.remove(&txid);
+
+                for peer in self.peers.values_mut() {
+                    peer.outbox.remove(&txid);
+                }
+            }
+        }
+
         for (addr, peer) in &mut self.peers {
             let elapsed = time - peer.last_attempt.unwrap_or_default();
 
@@ -119,14 +138,14 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 // omit the witness data, hence we treat them equally here.
                 Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
                     if let Some(tx) = mempool.txs.get(txid) {
-                        debug_assert!(self.inventories.contains_key(&txid.as_hash()));
+                        debug_assert!(self.inventories.contains_key(txid));
 
                         self.upstream.tx(addr, tx.clone());
                     }
                     // Since we received a `getdata` from the peer, it means it received our
                     // inventory broadcast and we no longer need to send it.
                     if let Some(peer) = self.peers.get_mut(&addr) {
-                        peer.outbox.remove(&txid.as_hash());
+                        peer.outbox.remove(txid);
 
                         if peer.outbox.is_empty() {
                             peer.last_attempt = None;
@@ -151,10 +170,10 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
         for i in inv.iter().cloned() {
             match i {
                 Inventory::Transaction(txid) => {
-                    self.inventories.insert(txid.as_hash(), i);
+                    self.inventories.insert(txid, i);
 
                     for (addr, peer) in self.peers.iter_mut().filter(|(_, p)| p.relay) {
-                        peer.outbox.insert(txid.as_hash());
+                        peer.outbox.insert(txid);
                         addrs.push(*addr);
                     }
                 }
