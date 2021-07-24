@@ -4,7 +4,6 @@ use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
 use bitcoin::{Transaction, Txid};
 
 // TODO: Timeout should be configurable
-// TODO: Handle mempool confirmations
 // TODO: Add max retries
 // TODO: Add exponential back-off
 
@@ -72,7 +71,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
         for inv in self.inventories.keys() {
             outbox.insert(*inv);
         }
-        self.reschedule();
+        self.schedule_tick();
         self.peers.insert(
             addr,
             Peer {
@@ -191,7 +190,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 }
             }
         }
-        self.reschedule();
+        self.schedule_tick();
 
         addrs
     }
@@ -222,7 +221,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
 
     ////////////////////////////////////////////////////////////////////////////
 
-    fn reschedule(&self) {
+    fn schedule_tick(&self) {
         self.upstream.set_timeout(LocalDuration::from_secs(1));
     }
 }
