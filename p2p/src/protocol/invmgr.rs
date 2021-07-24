@@ -4,18 +4,21 @@ use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
 use bitcoin::{Transaction, Txid};
 
 // TODO: Timeout should be configurable
-// TODO: Add max retries
 // TODO: Add exponential back-off
+// TODO: Do we need to handle re-orgs?
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::source;
 
-use super::channel::SetTimeout;
-use super::{Mempool, PeerId};
+use super::channel::{Disconnect, SetTimeout};
+use super::{DisconnectReason, Mempool, PeerId};
 
 /// Time between re-broadcasts of inventories.
 pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
+
+/// Maximum number of attempts to send inventories to a peer.
+pub const MAX_ATTEMPTS: usize = 3;
 
 /// Time between idles.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
@@ -73,7 +76,7 @@ pub struct InventoryManager<U> {
     upstream: U,
 }
 
-impl<U: Inventories + SetTimeout> InventoryManager<U> {
+impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     /// Create a new inventory manager.
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         Self {
@@ -146,12 +149,21 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
             }
         }
 
+        let mut disconnect = Vec::new();
         for (addr, peer) in &mut self.peers {
             let elapsed = time - peer.last_attempt.unwrap_or_default();
 
+            // Peer timeout.
             if elapsed >= self.timeout && !peer.outbox.is_empty() {
-                // TODO: Test this - we shouldn't be sending too many inventories even if
-                // we tick often.
+                // If we've already reached the maximum number of attempts, just disconnect
+                // the peer and move on to the next.
+                if peer.attempts >= MAX_ATTEMPTS {
+                    disconnect.push(*addr);
+                    continue;
+                }
+
+                // ... Another attempt ...
+
                 peer.attempted(time);
 
                 let mut invs = Vec::with_capacity(peer.outbox.len());
@@ -161,6 +173,12 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 self.upstream.inv(*addr, invs);
                 self.upstream.set_timeout(self.timeout);
             }
+        }
+
+        for addr in disconnect {
+            self.peers.remove(&addr);
+            self.upstream
+                .disconnect(addr, DisconnectReason::PeerTimeout("inv"));
         }
     }
 
@@ -260,5 +278,101 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
 
     fn schedule_tick(&self) {
         self.upstream.set_timeout(LocalDuration::from_secs(1));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use crate::protocol::channel::{chan, Channel};
+    use crate::protocol::{Network, Out, PROTOCOL_VERSION};
+
+    use nakamoto_test::block::gen;
+
+    #[test]
+    fn test_rebroadcast_timeout() {
+        let network = Network::Mainnet;
+        let (sender, receiver) = chan::unbounded::<Out>();
+        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+
+        let mut rng = fastrand::Rng::with_seed(1);
+        let mut mempool = Mempool::new();
+
+        let time = LocalTime::now();
+        let tx = gen::transaction(&mut rng);
+
+        let mut invmgr = InventoryManager::new(rng, upstream);
+
+        mempool.insert(vec![(tx.txid(), tx.clone())]);
+
+        invmgr.peer_negotiated(([88, 88, 88, 88], 8333).into(), ServiceFlags::NETWORK, true);
+        invmgr.announce(vec![Inventory::Transaction(tx.txid())]);
+        invmgr.received_tick(time, &mempool);
+
+        assert_eq!(
+            receiver
+                .try_iter()
+                .filter(|o| matches!(o, Out::Message(_, _)))
+                .count(),
+            1
+        );
+
+        invmgr.received_tick(time, &mempool);
+        assert_eq!(receiver.try_iter().count(), 0, "Timeout hasn't lapsed");
+    }
+
+    #[test]
+    fn test_max_attemps() {
+        let network = Network::Mainnet;
+        let (sender, receiver) = chan::unbounded::<Out>();
+        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+
+        let mut rng = fastrand::Rng::with_seed(1);
+        let mut time = LocalTime::now();
+        let mut mempool = Mempool::new();
+
+        let remote = ([88, 88, 88, 88], 8333).into();
+        let tx = gen::transaction(&mut rng);
+
+        let mut invmgr = InventoryManager::new(rng, upstream);
+
+        mempool.insert(vec![(tx.txid(), tx.clone())]);
+
+        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
+        invmgr.announce(vec![Inventory::Transaction(tx.txid())]);
+
+        // We attempt to broadcast up to `MAX_ATTEMPTS` times.
+        for _ in 0..MAX_ATTEMPTS {
+            invmgr.received_tick(time, &mempool);
+            receiver
+                .try_iter()
+                .find(|o| {
+                    matches!(
+                        o,
+                        Out::Message(
+                            _,
+                            RawNetworkMessage {
+                                payload: NetworkMessage::Inv(_),
+                                ..
+                            }
+                        )
+                    )
+                })
+                .expect("Inventory is announced");
+
+            time.elapse(REBROADCAST_TIMEOUT);
+        }
+
+        // The next time we time out, we disconnect the peer.
+        invmgr.received_tick(time, &mempool);
+        receiver
+            .try_iter()
+            .find(|o| matches!(o, Out::Disconnect(addr, _) if addr == &remote))
+            .expect("Peer is disconnected");
+
+        assert!(invmgr.contains(&tx.txid()));
+        assert!(invmgr.peers.is_empty());
     }
 }

@@ -43,4 +43,4 @@ pub mod protocol;
 pub mod reactor;
 pub use bitcoin;
 
-pub use protocol::PeerId;
+pub use protocol::{Link, PeerId};

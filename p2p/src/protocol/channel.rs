@@ -6,7 +6,7 @@
 use log::*;
 use std::net;
 
-use crossbeam_channel as chan;
+pub use crossbeam_channel as chan;
 
 use bitcoin::network::address::Address;
 use bitcoin::network::message::NetworkMessage;
