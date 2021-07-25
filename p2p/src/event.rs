@@ -37,19 +37,26 @@ pub trait Publisher: Send + Sync {
 }
 
 /// An event publisher.
-pub struct Broadcast<T> {
+pub struct Broadcast<E, T> {
     subscribers: Arc<Mutex<Vec<chan::Sender<T>>>>,
-    filter: Box<dyn Fn(Event) -> Option<T> + Send + Sync>,
+    filter: Box<dyn Fn(E) -> Option<T> + Send + Sync>,
 }
 
-impl<T: Clone + Send + Sync> Publisher for Broadcast<T> {
-    /// Publish a message to all subscribers.
-    fn publish(&self, event: Event) {
+impl<E, T: Clone> Broadcast<E, T> {
+    /// Broadcast an event to all subscribers.
+    pub fn broadcast(&self, event: E) {
         let mut subs = self.subscribers.lock().unwrap();
 
         if let Some(msg) = (self.filter)(event) {
             subs.retain(|s| s.try_send(msg.clone()).is_ok());
         }
+    }
+}
+
+impl<T: Clone + Send + Sync> Publisher for Broadcast<Event, T> {
+    /// Publish a message to all subscribers.
+    fn publish(&self, event: Event) {
+        self.broadcast(event)
     }
 }
 
@@ -71,9 +78,9 @@ impl<T> Subscriber<T> {
 }
 
 /// Create a new broadcast channel.
-pub fn broadcast<T>(
-    filter: impl Fn(Event) -> Option<T> + Send + Sync + 'static,
-) -> (Broadcast<T>, Subscriber<T>) {
+pub fn broadcast<E, T>(
+    filter: impl Fn(E) -> Option<T> + Send + Sync + 'static,
+) -> (Broadcast<E, T>, Subscriber<T>) {
     let subscribers = Arc::new(Mutex::new(Vec::new()));
     (
         Broadcast {
