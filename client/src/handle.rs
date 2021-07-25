@@ -58,7 +58,7 @@ impl<T> From<chan::SendError<T>> for Error {
 }
 
 /// A handle for communicating with a node process.
-pub trait Handle: Sized + Send + Sync {
+pub trait Handle: Sized + Send + Sync + Clone {
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<(Height, BlockHeader), Error>;
     /// Get a full block from the network.

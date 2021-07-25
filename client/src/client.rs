@@ -41,9 +41,9 @@ pub use nakamoto_p2p::event::{self, Event};
 pub use nakamoto_p2p::protocol::{Mempool, Peer};
 pub use nakamoto_p2p::reactor::Reactor;
 
-use crate::error::Error;
-use crate::handle;
-use crate::peer;
+pub use crate::error::Error;
+pub use crate::handle;
+pub use crate::peer;
 
 /// Client configuration.
 #[derive(Debug, Clone)]
