@@ -162,7 +162,11 @@ impl<E: event::Publisher> nakamoto_p2p::reactor::Reactor<E> for Reactor<net::Tcp
                 self.timeouts.len()
             );
 
-            let timeout = self.timeouts.next().unwrap_or(WAIT_TIMEOUT).into();
+            let timeout = self
+                .timeouts
+                .next(SystemTime::now())
+                .unwrap_or(WAIT_TIMEOUT)
+                .into();
             let result = self.sources.wait_timeout(&mut events, timeout); // Blocking.
             let local_time = SystemTime::now().into();
 
