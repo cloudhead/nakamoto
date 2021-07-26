@@ -75,8 +75,10 @@ pub enum Event {
     FilterHeadersImported {
         /// New filter header chain height.
         height: Height,
+        /// Block hash corresponding to the tip of the filter header chain.
+        block_hash: BlockHash,
     },
-    /// Started syncing filters with a peer.
+    /// Started syncing filter headers with a peer.
     Syncing {
         /// The remote peer.
         peer: PeerId,
@@ -90,7 +92,7 @@ pub enum Event {
         /// Reason for cancellation.
         reason: &'static str,
     },
-    /// Finished syncing filters up to the specified height.
+    /// Finished syncing filter headers up to the specified height.
     Synced(Height),
     /// A peer has timed out responding to a filter request.
     TimedOut(PeerId),
@@ -114,7 +116,7 @@ impl std::fmt::Display for Event {
                     height, block_hash, from
                 )
             }
-            Event::FilterHeadersImported { height } => {
+            Event::FilterHeadersImported { height, .. } => {
                 write!(fmt, "Imported filter header(s) up to height = {}", height,)
             }
             Event::Synced(height) => {
@@ -323,8 +325,9 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             return Ok(self.filters.height());
         }
 
+        let stop_hash = msg.stop_hash;
         let start_height = self.filters.height();
-        let stop_height = if let Some((height, _)) = tree.get_block(&msg.stop_hash) {
+        let stop_height = if let Some((height, _)) = tree.get_block(&stop_hash) {
             height
         } else {
             return Err(Error::InvalidMessage {
@@ -333,7 +336,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             });
         };
 
-        if self.inflight.remove(&msg.stop_hash).is_none() {
+        if self.inflight.remove(&stop_hash).is_none() {
             return Err(Error::Ignored {
                 from,
                 msg: "cfheaders: unsolicited message",
@@ -377,7 +380,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         self.filters
             .import_headers(headers)
             .map(|height| {
-                self.upstream.event(Event::FilterHeadersImported { height });
+                self.upstream.event(Event::FilterHeadersImported {
+                    height,
+                    block_hash: stop_hash,
+                });
                 assert!(height <= tree.height());
 
                 if height == tree.height() {
