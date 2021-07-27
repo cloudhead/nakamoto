@@ -360,6 +360,13 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
             });
         }
 
+        if count == 0 {
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfheaders: empty header list",
+            });
+        }
+
         if (stop_height - start_height) as usize != count {
             return Err(Error::InvalidMessage {
                 from,
