@@ -20,6 +20,7 @@ use thiserror::Error;
 
 use bitcoin::{OutPoint, Transaction, TxOut, Txid};
 
+use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_p2p as p2p;
 
@@ -211,19 +212,7 @@ impl<H: client::handle::Handle> Client<H> {
                 }
                 recv(filters) -> msg => {
                     if let Ok((filter, block_hash, height)) = msg {
-                        let watchlist = self.handle.watchlist.lock()?;
-
-                        match self.filtermgr.process(filter, block_hash, height, &watchlist) {
-                            Ok(matches) => if matches {
-                                log::info!("Filter matched at height {}", height);
-                                log::info!("Fetching block {}", block_hash);
-
-                                self.blockmgr.get(block_hash)?;
-                            },
-                            Err(_err) => {
-                                // TODO: Peer sent us an invalid filter!
-                            }
-                        }
+                        self.process_filter(filter, block_hash, height)?;
                     } else {
                         todo!()
                     }
@@ -231,7 +220,7 @@ impl<H: client::handle::Handle> Client<H> {
                 recv(blocks) -> msg => {
                     if let Ok((block, height)) = msg {
                         let watchlist = self.handle.watchlist.lock()?;
-                        self.blockmgr.process(
+                        self.blockmgr.block_received(
                             block,
                             height,
                             &mut self.utxos,
@@ -259,8 +248,36 @@ impl<H: client::handle::Handle> Client<H> {
     // PRIVATE METHODS /////////////////////////////////////////////////////////
 
     /// Process client event.
-    fn process_event(&mut self, _event: client::Event) {
-        todo!()
+    fn process_event(&mut self, event: client::Event) {
+        use p2p::protocol::spvmgr;
+
+        if let client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
+            height,
+            block_hash,
+        }) = event
+        {
+            self.filtermgr.headers_imported(height, block_hash).unwrap();
+        }
+    }
+
+    fn process_filter(
+        &mut self,
+        filter: BlockFilter,
+        block_hash: BlockHash,
+        height: Height,
+    ) -> Result<(), Error> {
+        self.filtermgr.filter_received(filter, block_hash, height);
+
+        // TODO: Deal with unwrap.
+
+        let watchlist = self.handle.watchlist.lock()?;
+        while let Some((block_hash, height)) = self.filtermgr.process(&watchlist).unwrap() {
+            log::info!("Filter matched at height {}", height);
+            log::info!("Fetching block {}", block_hash);
+
+            self.blockmgr.get(block_hash)?;
+        }
+        Ok(())
     }
 
     /// Process user command.

@@ -40,7 +40,7 @@ impl<H: client::handle::Handle> BlockManager<H> {
         Ok(())
     }
 
-    pub fn process(
+    pub fn block_received(
         &mut self,
         block: Block,
         height: Height,
