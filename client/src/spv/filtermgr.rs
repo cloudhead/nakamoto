@@ -80,7 +80,7 @@ impl<H: client::handle::Handle> FilterManager<H> {
 
         self.client.get_filters(range.clone())?;
         self.remaining.extend(range);
-        self.header_height = height;
+        self.header_height = height + 1;
 
         Ok(())
     }
