@@ -18,7 +18,7 @@ use std::{fmt, net, time};
 
 use thiserror::Error;
 
-use bitcoin::{OutPoint, Transaction, TxOut, Txid};
+use bitcoin::{Block, OutPoint, Transaction, TxOut, Txid};
 
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::{BlockHash, Height};
@@ -104,6 +104,7 @@ impl<'a> From<PoisonError<MutexGuard<'a, Watchlist>>> for Error {
 }
 
 #[allow(missing_docs)]
+#[derive(Debug, Clone)]
 pub enum Command {
     Rescan {
         from: Option<Height>,
@@ -219,14 +220,7 @@ impl<H: client::handle::Handle> Client<H> {
                 }
                 recv(blocks) -> msg => {
                     if let Ok((block, height)) = msg {
-                        let watchlist = self.handle.watchlist.lock()?;
-                        self.blockmgr.block_received(
-                            block,
-                            height,
-                            &mut self.utxos,
-                            &watchlist,
-                            &self.publisher,
-                        )?;
+                        self.process_block(block, height)?;
                     } else {
                         todo!()
                     }
@@ -249,6 +243,8 @@ impl<H: client::handle::Handle> Client<H> {
 
     /// Process client event.
     fn process_event(&mut self, event: client::Event) {
+        log::debug!("Received event: {:?}", event);
+
         use p2p::protocol::spvmgr;
 
         if let client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
@@ -266,6 +262,8 @@ impl<H: client::handle::Handle> Client<H> {
         block_hash: BlockHash,
         height: Height,
     ) -> Result<(), Error> {
+        log::debug!("Received filter for block height {}", height);
+
         self.filtermgr.filter_received(filter, block_hash, height);
 
         // TODO: Deal with unwrap.
@@ -280,8 +278,18 @@ impl<H: client::handle::Handle> Client<H> {
         Ok(())
     }
 
+    fn process_block(&mut self, block: Block, height: Height) -> Result<(), Error> {
+        log::debug!("Received block {} at height {}", block.block_hash(), height);
+
+        let watchlist = self.handle.watchlist.lock()?;
+        self.blockmgr
+            .block_received(block, height, &mut self.utxos, &watchlist, &self.publisher)
+    }
+
     /// Process user command.
     fn process_command(&mut self, command: Command) {
+        log::debug!("Received command: {:?}", command);
+
         match command {
             Command::Rescan { .. } => {}
             Command::Submit { .. } => {}
