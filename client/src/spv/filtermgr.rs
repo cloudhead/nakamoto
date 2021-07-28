@@ -74,10 +74,9 @@ impl<H: client::handle::Handle> FilterManager<H> {
         height: Height,
         _block_hash: BlockHash,
     ) -> Result<(), Error> {
-        debug_assert!(height > self.header_height);
+        debug_assert!(height >= self.header_height);
 
-        // Nb. Range end is non-exclusive.
-        let range = self.header_height..height + 1;
+        let range = self.header_height..=height;
 
         self.client.get_filters(range.clone())?;
         self.remaining.extend(range);

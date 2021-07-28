@@ -28,7 +28,7 @@ use crate::event::Event;
 
 use std::fmt::{self, Debug};
 use std::net;
-use std::ops::Range;
+use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 use std::{collections::HashMap, collections::HashSet, net::SocketAddr};
 
@@ -104,7 +104,10 @@ pub enum Command {
     /// Get a block from the active chain.
     GetBlock(BlockHash, chan::Sender<Result<PeerId, CommandError>>),
     /// Get block filters.
-    GetFilters(Range<Height>, chan::Sender<Result<(), GetFiltersError>>),
+    GetFilters(
+        RangeInclusive<Height>,
+        chan::Sender<Result<(), GetFiltersError>>,
+    ),
     /// Broadcast to peers matching the predicate.
     Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
     /// Send a message to a random peer.
@@ -995,7 +998,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
                 Command::GetFilters(range, reply) => {
                     debug!(target: self.target,
-                        "Received command: GetFilters({}..{})", range.start, range.end);
+                        "Received command: GetFilters({}...{})", range.start(), range.end());
 
                     let result = self.spvmgr.get_cfilters(range, &self.tree);
                     reply.send(result).ok();

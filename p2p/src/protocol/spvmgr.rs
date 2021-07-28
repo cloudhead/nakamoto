@@ -3,7 +3,7 @@
 //! Manages BIP 157/8 compact block filter sync.
 //!
 
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 use thiserror::Error;
 
@@ -270,14 +270,14 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
     /// peers.
     pub fn get_cfilters<T: BlockTree>(
         &mut self,
-        range: Range<Height>,
+        range: RangeInclusive<Height>,
         tree: &T,
     ) -> Result<(), GetFiltersError> {
         // TODO: Consolidate this code with the `get_cfheaders` code.
         if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
             let iter = HeightIterator {
-                start: range.start,
-                stop: range.end,
+                start: *range.start(),
+                stop: *range.end() + 1,
                 step: MAX_MESSAGE_CFILTERS as Height,
             };
             for r in iter {

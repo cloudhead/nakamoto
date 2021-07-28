@@ -1,7 +1,7 @@
 //! Node handles are created from nodes by users of the library, to communicate with the underlying
 //! protocol instance.
 use std::net;
-use std::ops::Range;
+use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex};
 
 use bitcoin::network::constants::ServiceFlags;
@@ -64,7 +64,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Get a full block from the network.
     fn get_block(&self, hash: &BlockHash) -> Result<net::SocketAddr, Error>;
     /// Get compact filters from the network.
-    fn get_filters(&self, range: Range<Height>) -> Result<(), Error>;
+    fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), Error>;
     /// Subscribe to blocks received.
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.

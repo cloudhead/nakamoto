@@ -99,16 +99,20 @@ impl<H: Handle> Wallet<H> {
             log::info!("Waiting for height {}", options.genesis);
 
             self.client.wait_for_height(options.genesis)?;
-            options.genesis..options.genesis + 1
+            options.genesis..=options.genesis
         } else {
-            options.genesis..height + 1
+            options.genesis..=height
         };
-        let count = (range.end - range.start) as usize;
+        let count = 1 + (range.end() - range.start()) as usize;
 
         let blocks_recv = self.client.blocks();
         let filters_recv = self.client.filters();
 
-        log::info!("Fetching filters in range {}..{}", range.start, range.end);
+        log::info!(
+            "Fetching filters in range {}...{}",
+            range.start(),
+            range.end()
+        );
         self.client.get_filters(range)?;
 
         let mut filter_height = options.genesis;

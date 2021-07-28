@@ -6,7 +6,7 @@ use std::fs;
 use std::io;
 use std::net;
 use std::net::SocketAddr;
-use std::ops::Range;
+use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{self, SystemTime};
@@ -481,7 +481,7 @@ where
         receive.recv()?.map_err(handle::Error::Command)
     }
 
-    fn get_filters(&self, range: Range<Height>) -> Result<(), handle::Error> {
+    fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), handle::Error> {
         assert!(
             !range.is_empty(),
             "client::Handle::get_filters: range cannot be empty"
