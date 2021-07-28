@@ -5,14 +5,13 @@ use std::sync::Mutex;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::Address;
 
-use nonempty::NonEmpty;
-
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_common::block::filter::{FilterHash, FilterHeader};
 use nakamoto_common::block::store::Genesis;
 use nakamoto_common::block::BlockHeader;
 use nakamoto_common::collections::{HashMap, HashSet};
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;
 
 use nakamoto_test::block::cache::model;

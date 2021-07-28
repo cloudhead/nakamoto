@@ -1,9 +1,9 @@
 //! Ephemeral storage backend for blocks.
-use nonempty::NonEmpty;
 
 use nakamoto_common::block::store::{Error, Genesis, Store};
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Network;
+use nakamoto_common::nonempty::NonEmpty;
 
 /// In-memory block store.
 #[derive(Debug, Clone)]

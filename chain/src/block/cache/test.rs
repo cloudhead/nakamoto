@@ -3,6 +3,7 @@ use super::BlockCache;
 use nakamoto_common::block::time::{AdjustedTime, Clock, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockTime, Height, Target};
+use nakamoto_common::nonempty::NonEmpty;
 
 use nakamoto_test::block;
 use nakamoto_test::block::cache::model;
@@ -14,7 +15,6 @@ use std::iter;
 use std::net;
 use std::sync::{Arc, RwLock};
 
-use nonempty::NonEmpty;
 use quickcheck as qc;
 use quickcheck::{Arbitrary, Gen, QuickCheck};
 use quickcheck_macros::quickcheck;

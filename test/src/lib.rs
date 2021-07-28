@@ -4,14 +4,13 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use nonempty::NonEmpty;
-
 use bitcoin::blockdata::constants;
 use bitcoin::consensus::encode::Decodable;
 
 use lazy_static::*;
 
 use nakamoto_common::block::BlockHeader;
+use nakamoto_common::nonempty::NonEmpty;
 
 lazy_static! {
     pub static ref BITCOIN_HEADERS: NonEmpty<BlockHeader> = {

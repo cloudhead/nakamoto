@@ -7,12 +7,12 @@ use std::sync::{Arc, Mutex};
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::Address;
 use crossbeam_channel as chan;
-use nonempty::NonEmpty;
 use thiserror::Error;
 
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::protocol::{Command, CommandError, GetFiltersError, Mempool, Peer};
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 

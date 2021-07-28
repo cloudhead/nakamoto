@@ -15,8 +15,6 @@ use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::network::constants::Network;
 
-use nonempty::NonEmpty;
-
 use nakamoto_common::block::tree::{self, BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::{
     self,
@@ -25,6 +23,7 @@ use nakamoto_common::block::{
     time::{self, Clock},
     Bits, BlockTime, Height, Work,
 };
+use nakamoto_common::nonempty::NonEmpty;
 
 /// A block that is being stored by the block cache.
 #[derive(Debug, Clone, Copy)]

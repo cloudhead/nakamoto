@@ -12,7 +12,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{self, SystemTime};
 
 pub use crossbeam_channel as chan;
-pub use nonempty::NonEmpty;
 
 use nakamoto_chain::block::{store, Block};
 use nakamoto_chain::filter;
@@ -24,6 +23,7 @@ use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::{Source, Store as _};
 
 pub use nakamoto_common::network::Network;

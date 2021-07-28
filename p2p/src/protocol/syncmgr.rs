@@ -5,8 +5,6 @@
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use nonempty::NonEmpty;
-
 use bitcoin::consensus::params::Params;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_blockdata::Inventory;
@@ -17,6 +15,7 @@ use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::HashMap;
+use nakamoto_common::nonempty::NonEmpty;
 
 use super::channel::{Disconnect, SetTimeout};
 use super::{DisconnectReason, Link, Locators, PeerId, Timeout};

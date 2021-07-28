@@ -2,7 +2,6 @@
 #![warn(missing_docs)]
 use crossbeam_channel as chan;
 use log::*;
-use nonempty::NonEmpty;
 
 pub mod addrmgr;
 pub mod channel;
@@ -49,6 +48,7 @@ use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::block::{BlockTime, Transaction};
 use nakamoto_common::network::{self, Network};
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::{peer, Domain};
 
 use thiserror::Error;

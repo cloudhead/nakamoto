@@ -4,8 +4,6 @@
 use std::io;
 use std::ops::Range;
 
-use nonempty::NonEmpty;
-
 use bitcoin::consensus::{encode, Decodable, Encodable};
 
 pub use nakamoto_common::block::filter::{
@@ -16,6 +14,7 @@ pub use nakamoto_common::block::store::Store;
 use nakamoto_common::block::store::Genesis;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Network;
+use nakamoto_common::nonempty::NonEmpty;
 
 use crate::filter::store;
 

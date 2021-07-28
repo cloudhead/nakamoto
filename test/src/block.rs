@@ -26,10 +26,9 @@ pub mod gen {
 
     use bitcoin_hashes::{hash160, Hash as _};
 
-    use nonempty::NonEmpty;
-
     use nakamoto_common::block::filter::{BlockFilter, FilterHash, FilterHeader};
     use nakamoto_common::block::*;
+    use nakamoto_common::nonempty::NonEmpty;
 
     /// Generates a random transaction.
     pub fn transaction(rng: &mut fastrand::Rng) -> Transaction {

@@ -7,10 +7,9 @@ use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader
 use nakamoto_common::block::iter::Iter;
 use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::Height;
+use nakamoto_common::nonempty::NonEmpty;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
-
-use nonempty::NonEmpty;
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::hash_types::BlockHash;

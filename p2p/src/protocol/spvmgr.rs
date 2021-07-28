@@ -5,7 +5,6 @@
 
 use std::ops::Range;
 
-use nonempty::NonEmpty;
 use thiserror::Error;
 
 use bitcoin::network::constants::ServiceFlags;
@@ -16,6 +15,7 @@ use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::HashMap;
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::source;
 
 use super::channel::SetTimeout;

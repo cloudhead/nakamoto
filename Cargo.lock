@@ -256,7 +256,6 @@ dependencies = [
  "log",
  "nakamoto-common",
  "nakamoto-test",
- "nonempty",
  "quickcheck",
  "quickcheck_macros",
  "rand",
@@ -278,7 +277,6 @@ dependencies = [
  "nakamoto-net-poll",
  "nakamoto-p2p",
  "nakamoto-test",
- "nonempty",
  "tempfile",
  "thiserror",
 ]
@@ -341,7 +339,6 @@ dependencies = [
  "nakamoto-chain",
  "nakamoto-common",
  "nakamoto-test",
- "nonempty",
  "quickcheck",
  "quickcheck_macros",
  "tempfile",
@@ -360,7 +357,6 @@ dependencies = [
  "lazy_static",
  "log",
  "nakamoto-common",
- "nonempty",
 ]
 
 [[package]]
@@ -381,9 +377,9 @@ dependencies = [
 
 [[package]]
 name = "nonempty"
-version = "0.5.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ff7ac1e5ea23db6d61ad103e91864675049644bf47c35912336352fa4e9c109"
+checksum = "e9e591e719385e6ebaeb5ce5d3887f7d5676fceca6411d1925ccc95745f3d6f7"
 
 [[package]]
 name = "num-integer"
