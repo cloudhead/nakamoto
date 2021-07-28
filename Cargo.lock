@@ -277,6 +277,8 @@ dependencies = [
  "nakamoto-net-poll",
  "nakamoto-p2p",
  "nakamoto-test",
+ "quickcheck",
+ "quickcheck_macros",
  "tempfile",
  "thiserror",
 ]

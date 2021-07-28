@@ -1,3 +1,6 @@
+#[cfg(test)]
+pub mod mock;
+
 use std::collections::HashMap;
 use std::net;
 use std::thread;

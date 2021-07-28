@@ -1,4 +1,5 @@
 //! SPV client.
+#![allow(clippy::manual_range_contains)]
 
 #[allow(missing_docs)]
 pub mod blockmgr;
@@ -113,6 +114,7 @@ pub enum Command {
     Submit {
         transactions: Vec<Transaction>,
     },
+    Shutdown,
 }
 
 #[allow(missing_docs)]
@@ -194,6 +196,8 @@ impl<H: client::handle::Handle> Client<H> {
         let blocks = self.client.blocks();
         let filters = self.client.filters();
 
+        log::debug!("Starting SPV client event loop..");
+
         loop {
             chan::select! {
                 recv(events) -> event => {
@@ -206,6 +210,9 @@ impl<H: client::handle::Handle> Client<H> {
                 }
                 recv(self.control) -> command => {
                     if let Ok(command) = command {
+                        if let Command::Shutdown = command {
+                            return Ok(());
+                        }
                         self.process_command(command);
                     } else {
                         todo!()
@@ -293,6 +300,83 @@ impl<H: client::handle::Handle> Client<H> {
         match command {
             Command::Rescan { .. } => {}
             Command::Submit { .. } => {}
+            Command::Shutdown => {
+                // This command must be handled before this function is called.
+                unreachable! {}
+            }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::thread;
+
+    use quickcheck::TestResult;
+    use quickcheck_macros::quickcheck;
+
+    use nakamoto_test::block::gen;
+    use nakamoto_test::logger;
+
+    use super::p2p::protocol::spvmgr;
+    use super::*;
+
+    use crate::tests::mock;
+
+    #[quickcheck]
+    #[ignore]
+    fn prop_filter_headers_imported(birth: Height, count: Height) -> TestResult {
+        if count < 1 || count > 16 {
+            return TestResult::discard();
+        }
+        logger::init(log::Level::Debug);
+
+        let mut rng = fastrand::Rng::with_seed(1);
+        let genesis = gen::genesis(&mut rng);
+        let chain = gen::blockchain(genesis, birth + count + count, &mut rng);
+
+        let config = Config { genesis: birth };
+        let client = mock::Client::default();
+        let spv = super::Client::new(client.handle(), config);
+        let handle = spv.handle();
+        let t = thread::spawn(|| spv.run().unwrap());
+
+        // The filter header chain has advanced by `count`.
+        let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
+            height: birth + count,
+            block_hash: chain[(birth + count) as usize].block_hash(),
+        });
+        client.events.send(event).unwrap();
+
+        // We expect the client to fetch the corresponding filters from the network,
+        // including the birth height.
+        match client.commands.recv().unwrap() {
+            client::Command::GetFilters(range, reply) => {
+                assert_eq!(range, birth..=birth + count);
+                reply.send(Ok(())).unwrap();
+            }
+            _ => panic!("expected `GetFilters` command"),
+        }
+
+        // The filter header chain has advanced by some more.
+        let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
+            height: birth + count + count,
+            block_hash: chain[(birth + count + count) as usize].block_hash(),
+        });
+        client.events.send(event).unwrap();
+
+        // We expect the client to fetch the corresponding filters from the network.
+        match client.commands.recv().unwrap() {
+            client::Command::GetFilters(range, reply) => {
+                assert_eq!(range, birth + count + 1..=birth + count + count);
+                reply.send(Ok(())).unwrap();
+            }
+            _ => panic!("expected `GetFilters` command"),
+        }
+        // Shutdown.
+        handle.commands.send(Command::Shutdown).ok();
+        t.join().unwrap();
+
+        TestResult::passed()
     }
 }

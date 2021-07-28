@@ -14,7 +14,9 @@ pub struct FilterManager<H> {
     remaining: HashSet<Height>,
     /// Filters waiting to be processed.
     pending: HashMap<Height, (BlockFilter, BlockHash)>,
-    /// Current height of the filter header chain.
+    /// Next height of the filter header chain.
+    /// When no filter headers have ever been received, this is `0`.
+    /// Represents the height of the next filter header expected.
     header_height: Height,
     /// Height of the last processed compact filter.
     filter_height: Height,
