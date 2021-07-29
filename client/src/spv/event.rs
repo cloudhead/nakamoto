@@ -10,7 +10,7 @@ use super::TxStatus;
 #[derive(Debug, Clone)]
 pub enum Event {
     /// A block was discovered that extends the main chain, and its transactions
-    /// where scanned. This event usually precedes [`super::TxStatus`] events.
+    /// where scanned. This event usually precedes [`Event::TxStatusChanged`] events.
     BlockConnected {
         hash: BlockHash,
         height: Height,
