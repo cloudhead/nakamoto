@@ -53,6 +53,18 @@ impl Genesis for FilterHash {
     }
 }
 
+/// Genesis implementation for `bitcoin`'s `BlockFilter`.
+impl Genesis for BlockFilter {
+    fn genesis(network: Network) -> Self {
+        let genesis = network.genesis_block();
+
+        BlockFilter::new_script_filter(&genesis, |_| {
+            panic!("{}: genesis block should have no inputs", source!())
+        })
+        .unwrap()
+    }
+}
+
 /// Represents objects that can store block headers.
 pub trait Store {
     /// The type of header used in the store.

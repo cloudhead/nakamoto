@@ -11,7 +11,6 @@ pub use bitcoin::util::bip158::BlockFilter;
 use super::Height;
 use crate::block::store::{self, Genesis};
 use crate::network::Network;
-use crate::source;
 
 impl Genesis for FilterHeader {
     /// Filter header for the genesis block.
@@ -32,12 +31,7 @@ impl Genesis for FilterHeader {
     /// );
     /// ```
     fn genesis(network: Network) -> Self {
-        let genesis = network.genesis_block();
-        let filter = BlockFilter::new_script_filter(&genesis, |_| {
-            panic!("{}: genesis block should have no inputs", source!())
-        })
-        .unwrap();
-
+        let filter = BlockFilter::genesis(network);
         filter.filter_header(&FilterHeader::default())
     }
 }
