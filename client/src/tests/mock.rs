@@ -7,6 +7,7 @@ use nakamoto_chain::filter::BlockFilter;
 
 use nakamoto_common::block::tree::{self, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
 
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
@@ -22,6 +23,7 @@ use crate::handle::{self, Handle};
 
 pub struct Client {
     // Used by tests.
+    pub network: Network,
     pub mempool: Arc<Mutex<Mempool>>,
     pub events: chan::Sender<Event>,
     pub blocks: chan::Sender<(Block, Height)>,
@@ -38,6 +40,7 @@ pub struct Client {
 impl Client {
     pub fn handle(&self) -> TestHandle {
         TestHandle {
+            network: self.network,
             mempool: self.mempool.clone(),
             events: self.events_.clone(),
             blocks: self.blocks_.clone(),
@@ -55,6 +58,7 @@ impl Default for Client {
         let (commands_, commands) = chan::unbounded();
 
         Self {
+            network: Network::default(),
             events,
             events_,
             blocks,
@@ -70,6 +74,7 @@ impl Default for Client {
 
 #[derive(Clone)]
 pub struct TestHandle {
+    network: Network,
     mempool: Arc<Mutex<Mempool>>,
     events: chan::Receiver<Event>,
     blocks: chan::Receiver<(Block, Height)>,
@@ -78,6 +83,10 @@ pub struct TestHandle {
 }
 
 impl Handle for TestHandle {
+    fn network(&self) -> Network {
+        self.network
+    }
+
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
         unimplemented!()
     }

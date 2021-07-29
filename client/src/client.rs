@@ -384,6 +384,7 @@ impl<R: Reactor<Publisher>> Client<R> {
     /// Create a new handle to communicate with the client.
     pub fn handle(&self) -> Handle<R> {
         Handle {
+            network: self.config.network,
             events: self.events.clone(),
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
@@ -397,6 +398,7 @@ impl<R: Reactor<Publisher>> Client<R> {
 
 /// An instance of [`handle::Handle`] for [`Client`].
 pub struct Handle<R: Reactor<Publisher>> {
+    network: Network,
     commands: chan::Sender<Command>,
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
@@ -412,6 +414,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
+            network: self.network,
             blocks: self.blocks.clone(),
             commands: self.commands.clone(),
             events: self.events.clone(),
@@ -467,6 +470,10 @@ impl<R: Reactor<Publisher>> handle::Handle for Handle<R>
 where
     R::Waker: Sync,
 {
+    fn network(&self) -> Network {
+        self.network
+    }
+
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
         let (transmit, receive) = chan::bounded::<(Height, BlockHeader)>(1);
         self.command(Command::GetTip(transmit))?;

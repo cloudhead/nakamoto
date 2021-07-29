@@ -12,6 +12,7 @@ use thiserror::Error;
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::protocol::{Command, CommandError, GetFiltersError, Mempool, Peer};
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
@@ -59,6 +60,8 @@ impl<T> From<chan::SendError<T>> for Error {
 
 /// A handle for communicating with a node process.
 pub trait Handle: Sized + Send + Sync + Clone {
+    /// Get the Bitcoin network the client is configured for.
+    fn network(&self) -> Network;
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<(Height, BlockHeader), Error>;
     /// Get a full block from the network.
