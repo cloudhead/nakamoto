@@ -19,10 +19,11 @@ pub struct BlockManager<H: client::handle::Handle> {
 
     client: H,
     mempool: Arc<Mutex<Mempool>>,
+    watchlist: Arc<Mutex<Watchlist>>,
 }
 
 impl<H: client::handle::Handle> BlockManager<H> {
-    pub fn new(height: Height, client: H) -> Self {
+    pub fn new(height: Height, client: H, watchlist: Arc<Mutex<Watchlist>>) -> Self {
         let mempool = client.mempool();
 
         Self {
@@ -30,6 +31,7 @@ impl<H: client::handle::Handle> BlockManager<H> {
             height,
             client,
             mempool,
+            watchlist,
         }
     }
 
@@ -45,7 +47,6 @@ impl<H: client::handle::Handle> BlockManager<H> {
         block: Block,
         height: Height,
         utxos: &mut Utxos,
-        watchlist: &Watchlist,
         events: &p2p::event::Broadcast<Event, Event>,
     ) -> Result<(), Error> {
         let hash = block.block_hash();
@@ -76,6 +77,7 @@ impl<H: client::handle::Handle> BlockManager<H> {
             }
 
             // Look for outputs.
+            let watchlist = self.watchlist.lock()?;
             for (vout, output) in tx.output.iter().enumerate() {
                 // Received coin.
                 if watchlist.contains(&output) {

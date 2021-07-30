@@ -36,6 +36,9 @@ pub enum Event {
         height: Height,
         value: u64,
     },
+    /// Compact filters have been synced and processed up to this point.
+    /// This should match the output of the [`super::handle::Handle::tip`] method.
+    Synced { height: Height, block: BlockHash },
 }
 
 impl fmt::Display for Event {
@@ -64,6 +67,7 @@ impl fmt::Display for Event {
                 transaction.txid(),
                 block
             ),
+            Self::Synced { height, .. } => write!(fmt, "filters synced up to height {}", height),
         }
     }
 }

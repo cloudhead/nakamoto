@@ -7,6 +7,7 @@ use std::collections::{HashMap, HashSet};
 use bitcoin::{Address, Script, ScriptHash, TxOut};
 
 #[allow(dead_code)]
+#[derive(Debug)]
 pub struct Watchlist {
     addresses: HashMap<Script, Address>,
     scripts: HashSet<ScriptHash>,
@@ -28,6 +29,10 @@ impl Watchlist {
             return true;
         }
         false
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.addresses.is_empty() && self.scripts.is_empty()
     }
 
     pub fn contains(&self, txout: &TxOut) -> bool {

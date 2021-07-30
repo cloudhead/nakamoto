@@ -164,16 +164,16 @@ impl<H: client::handle::Handle> Client<H> {
         let (commands, control) = chan::unbounded::<Command>();
         let mempool = client.mempool();
         let timeout = time::Duration::from_secs(9);
+        let height = config.genesis;
         let watchlist = Arc::new(Mutex::new(Watchlist::new()));
+        let blockmgr = BlockManager::new(height, client.clone(), watchlist.clone());
+        let filtermgr = FilterManager::new(height, client.clone(), watchlist.clone());
         let handle = Handle {
             commands,
             subscriber,
             timeout,
             watchlist,
         };
-        let height = config.genesis;
-        let blockmgr = BlockManager::new(height, client.clone());
-        let filtermgr = FilterManager::new(height, client.clone());
         let utxos = Utxos::new();
 
         Self {
@@ -275,8 +275,7 @@ impl<H: client::handle::Handle> Client<H> {
 
         // TODO: Deal with unwrap.
 
-        let watchlist = self.handle.watchlist.lock()?;
-        while let Some((block_hash, height)) = self.filtermgr.process(&watchlist).unwrap() {
+        while let Some((block_hash, height)) = self.filtermgr.process().unwrap() {
             log::info!("Filter matched at height {}", height);
             log::info!("Fetching block {}", block_hash);
 
@@ -288,9 +287,8 @@ impl<H: client::handle::Handle> Client<H> {
     fn process_block(&mut self, block: Block, height: Height) -> Result<(), Error> {
         log::debug!("Received block {} at height {}", block.block_hash(), height);
 
-        let watchlist = self.handle.watchlist.lock()?;
         self.blockmgr
-            .block_received(block, height, &mut self.utxos, &watchlist, &self.publisher)
+            .block_received(block, height, &mut self.utxos, &self.publisher)
     }
 
     /// Process user command.
@@ -308,6 +306,44 @@ impl<H: client::handle::Handle> Client<H> {
     }
 }
 
+/// Properties of the [`TxManager`] we'd like to test.
+///
+/// 1. The final output is invariant to the order in which `block` and `cfilter` messages are
+///    received.
+///
+///    Rationale: Blocks and compact filters are often fetched from multiple peers in parallel.
+///    Hence, it's important that the system be able to handle out-of-order receipt of this data,
+///    and that it not affect the final outcome, eg. the balance of the UTXOs.
+///
+/// 2. The final output is invariant to the granularity of the the filter header chain updates.
+///
+///    Rationale: Filter header updates are received via the `cfheaders` message. These messages
+///    can carry anywhere between 1 and [`nakamoto_p2p::protocol::spvmgr::MAX_MESSAGE_CFHEADERS`]
+///    headers. The system should handle many small messages the same way as it handles a few
+///    large ones.
+///
+/// 3. The final output is invariant to chain re-orgs.
+///
+///    Rationale: Chain re-organizations happen, and filters can be invalidated. The final output
+///    of the system should always match the main chain at any given point in time.
+///
+/// 4. The final output is always a function of the input.
+///
+///    Rationale: Irrespective to how the system converges towards its final state, the final output
+///    should always match the given input.
+///
+/// 5. The commands `watch_address`, `unwatch_address`, `watch_scripts`, `unwatch_scripts`,
+///    `submit` are idempotent.
+///
+/// 6. The `rescan` command is always a no-op if the start of the range is equal or greater
+///    than the current synced height plus one.
+///
+///    Rationale: Any re-scans for future blocks are equivalent to the default behavior of
+///    scanning incoming blocks as they come.
+///
+/// 7. The system is *injective*, in the sense that for every input there is a unique, distinct
+///    output.
+///
 #[cfg(test)]
 mod tests {
     use std::thread;
@@ -325,15 +361,25 @@ mod tests {
 
     #[quickcheck]
     #[ignore]
-    fn prop_filter_headers_imported(birth: Height, count: Height) -> TestResult {
-        if count < 1 || count > 16 {
+    fn prop_filter_headers_imported(birth: Height, count: Height, seed: u64) -> TestResult {
+        if count < 1 || count > 8 {
             return TestResult::discard();
         }
         logger::init(log::Level::Debug);
 
-        let mut rng = fastrand::Rng::with_seed(1);
+        let mut rng = fastrand::Rng::with_seed(seed);
         let genesis = gen::genesis(&mut rng);
         let chain = gen::blockchain(genesis, birth + count + count, &mut rng);
+
+        let mut filters = Vec::with_capacity(count as usize);
+        for h in birth..=count + count {
+            filters.push((
+                gen::cfilter(&chain[h as usize]),
+                chain[h as usize].block_hash(),
+                h,
+            ));
+        }
+        rng.shuffle(&mut filters); // Filters are received out of order
 
         let config = Config { genesis: birth };
         let client = mock::Client::default();
@@ -352,7 +398,10 @@ mod tests {
         // including the birth height.
         match client.commands.recv().unwrap() {
             client::Command::GetFilters(range, reply) => {
-                assert_eq!(range, birth..=birth + count);
+                // We don't expect the genesis filter to be fetched.
+                let start = birth.max(1);
+
+                assert_eq!(range, start..=birth + count);
                 reply.send(Ok(())).unwrap();
             }
             _ => panic!("expected `GetFilters` command"),
@@ -373,6 +422,7 @@ mod tests {
             }
             _ => panic!("expected `GetFilters` command"),
         }
+
         // Shutdown.
         handle.commands.send(Command::Shutdown).ok();
         t.join().unwrap();

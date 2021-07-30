@@ -1,8 +1,12 @@
 use std::collections::{HashMap, HashSet};
+use std::iter::FromIterator;
+use std::ops::Range;
+use std::sync::{Arc, Mutex};
 
 use bitcoin::util::bip158;
 
 use nakamoto_chain::filter::BlockFilter;
+use nakamoto_chain::store::Genesis as _;
 use nakamoto_common::block::{BlockHash, Height};
 
 use crate::client;
@@ -14,25 +18,52 @@ pub struct FilterManager<H> {
     remaining: HashSet<Height>,
     /// Filters waiting to be processed.
     pending: HashMap<Height, (BlockFilter, BlockHash)>,
-    /// Next height of the filter header chain.
-    /// When no filter headers have ever been received, this is `0`.
-    /// Represents the height of the next filter header expected.
-    header_height: Height,
-    /// Height of the last processed compact filter.
-    filter_height: Height,
+    /// Range of blocks we are currently syncing.
+    ///
+    /// The start of the range is the oldest block we are syncing, while the end of the range
+    /// is the youngest block we know of.
+    ///
+    /// The range start is updated when filters are processed, while the range end is updated
+    /// when filter *headers* are processed.
+    ///
+    /// When the range is empty, it means we are all caught up, and there are no *known* blocks,
+    /// from the perspective of the filter manager that have not had their filters processed.
+    sync: Range<Height>,
     /// Client handle.
     client: H,
+    watchlist: Arc<Mutex<Watchlist>>,
 }
 
 impl<H: client::handle::Handle> FilterManager<H> {
-    pub fn new(height: Height, client: H) -> Self {
+    /// Create a new filter manager, given a block height, client handle and watchlist.
+    /// The height should be the starting height from which filters should be synced and
+    /// processed.
+    pub fn new(start: Height, client: H, watchlist: Arc<Mutex<Watchlist>>) -> Self {
+        // If we're starting from genesis, preload the `pending` set with the filter for the
+        // genesis block. The next time `process` is called, the filter will be matched.
+        let (sync, pending) = if start == 0 {
+            let network = client.network();
+            let filter = BlockFilter::genesis(network);
+            let pending = HashMap::from_iter(vec![(0, (filter, network.genesis_hash()))]);
+
+            // Since the genesis is "known", we consider its header synced and thus set the
+            // end of the range to be the following block.
+            (start..start + 1, pending)
+        } else {
+            (start..start, HashMap::new())
+        };
+
         Self {
             remaining: HashSet::new(),
-            header_height: height,
-            filter_height: height,
-            pending: HashMap::new(),
+            sync,
+            pending,
             client,
+            watchlist,
         }
+    }
+
+    pub fn is_synced(&self) -> bool {
+        self.sync.is_empty()
     }
 
     pub fn filter_received(&mut self, filter: BlockFilter, block_hash: BlockHash, height: Height) {
@@ -46,17 +77,19 @@ impl<H: client::handle::Handle> FilterManager<H> {
     /// processes it and returns the result of trying to match it with the watchlist.
     ///
     /// Returns nothing if there was no match or filter to process.
-    pub fn process(
-        &mut self,
-        watchlist: &Watchlist,
-    ) -> Result<Option<(BlockHash, Height)>, bip158::Error> {
+    pub fn process(&mut self) -> Result<Option<(BlockHash, Height)>, bip158::Error> {
+        assert!(self.sync.end >= self.sync.start);
         // TODO: For BIP32 wallets, add one more address to check, if the
         // matching one was the highest-index one.
-        let height = self.filter_height + 1; // Next height to process.
+        let height = self.sync.start; // Next height to process.
 
         if let Some((filter, block_hash)) = self.pending.remove(&height) {
-            self.filter_height = height;
+            self.sync.start = height + 1;
 
+            let watchlist = self.watchlist.lock().unwrap();
+            if watchlist.is_empty() {
+                return Ok(None);
+            }
             if filter.match_any(&block_hash, &mut watchlist.iter())? {
                 return Ok(Some((block_hash, height)));
             }
@@ -76,14 +109,27 @@ impl<H: client::handle::Handle> FilterManager<H> {
         height: Height,
         _block_hash: BlockHash,
     ) -> Result<(), Error> {
-        debug_assert!(height >= self.header_height);
+        assert!(height >= self.sync.end);
+        assert!(self.sync.end >= self.sync.start);
 
-        let range = self.header_height..=height;
+        let range = self.sync.end..=height;
 
         self.client.get_filters(range.clone())?;
         self.remaining.extend(range);
-        self.header_height = height + 1;
+        self.sync.end = height + 1;
 
         Ok(())
     }
+
+    pub fn get_filters() {}
 }
+
+/// Invariants.
+///
+/// 1. The `remaining` and `pending` sets, which represent filters waiting to be received or
+///    processed should always only contain heights within the `sync` range.
+///
+/// 2. When `pending` and `remaining` are empty, so should the `sync` range, and vice-versa.
+///
+#[cfg(test)]
+mod tests {}
