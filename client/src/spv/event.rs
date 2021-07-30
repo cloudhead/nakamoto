@@ -36,8 +36,8 @@ pub enum Event {
         height: Height,
         value: u64,
     },
-    /// Compact filters have been synced and processed up to this point.
-    /// This should match the output of the [`super::handle::Handle::tip`] method.
+    /// Compact filters have been synced and processed up to this point and matching blocks have
+    /// been scanned.  This should match the output of the [`super::handle::Handle::tip`] method.
     Synced { height: Height, block: BlockHash },
 }
 

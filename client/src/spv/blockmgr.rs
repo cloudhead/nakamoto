@@ -51,7 +51,10 @@ impl<H: client::handle::Handle> BlockManager<H> {
     ) -> Result<(), Error> {
         let hash = block.block_hash();
 
-        self.remaining.remove(&hash);
+        if !self.remaining.remove(&hash) {
+            log::info!("Received unexpected block {} ({})", height, hash);
+            return Ok(());
+        }
 
         log::info!(
             "Received block {} (remaining={})",
@@ -96,6 +99,12 @@ impl<H: client::handle::Handle> BlockManager<H> {
                 }
             }
         }
+
+        events.broadcast(Event::Synced {
+            height,
+            block: hash,
+        });
+
         Ok(())
     }
 }

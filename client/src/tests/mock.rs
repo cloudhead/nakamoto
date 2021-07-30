@@ -38,6 +38,13 @@ pub struct Client {
 }
 
 impl Client {
+    pub fn new(network: Network) -> Self {
+        Self {
+            network,
+            ..Self::default()
+        }
+    }
+
     pub fn handle(&self) -> TestHandle {
         TestHandle {
             network: self.network,

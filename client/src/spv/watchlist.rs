@@ -4,13 +4,13 @@
 //!
 use std::collections::{HashMap, HashSet};
 
-use bitcoin::{Address, Script, ScriptHash, TxOut};
+use bitcoin::{Address, Script, TxOut};
 
 #[allow(dead_code)]
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Watchlist {
     addresses: HashMap<Script, Address>,
-    scripts: HashSet<ScriptHash>,
+    scripts: HashSet<Script>,
 }
 
 impl Watchlist {
@@ -21,14 +21,14 @@ impl Watchlist {
         }
     }
 
-    pub fn insert_address(&mut self, address: Address) -> bool {
-        use std::collections::hash_map::Entry;
+    pub fn insert_script(&mut self, script: Script) -> bool {
+        self.scripts.insert(script)
+    }
 
-        if let Entry::Vacant(e) = self.addresses.entry(address.script_pubkey()) {
-            e.insert(address);
-            return true;
-        }
-        false
+    pub fn insert_address(&mut self, address: Address) -> bool {
+        self.addresses
+            .insert(address.script_pubkey(), address)
+            .is_none()
     }
 
     pub fn is_empty(&self) -> bool {
