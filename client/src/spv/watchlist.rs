@@ -31,7 +31,16 @@ impl Watchlist {
         self.scripts.insert(script)
     }
 
+    pub fn insert_transaction(&mut self, _tx: &Transaction) -> bool {
+        // TODO: Insert tx outputs/inputs?
+        todo!()
+    }
+
+    /// Tracks incoming and outgoing coins to and from this address.
     pub fn insert_address(&mut self, address: Address) -> bool {
+        // Since incoming coins are outgoing coins that spend *to* this address, and
+        // outgoing coins are incoming coins that spend *from* this address, we only
+        // need to track one output per address.
         self.addresses
             .insert(address.script_pubkey(), address)
             .is_none()
@@ -46,7 +55,10 @@ impl Watchlist {
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
-        self.addresses.keys().map(|k| k.as_bytes())
+        self.addresses
+            .keys()
+            .chain(self.scripts.iter())
+            .map(|k| k.as_bytes())
     }
 
     pub fn match_filter(
