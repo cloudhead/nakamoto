@@ -87,10 +87,7 @@ impl<H: client::handle::Handle> FilterManager<H> {
             self.sync.start = height + 1;
 
             let watchlist = self.watchlist.lock().unwrap();
-            if watchlist.is_empty() {
-                return Ok(None);
-            }
-            if filter.match_any(&block_hash, &mut watchlist.iter())? {
+            if watchlist.matches(&filter, &block_hash)? {
                 return Ok(Some((block_hash, height)));
             }
         }

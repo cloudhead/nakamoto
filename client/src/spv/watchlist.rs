@@ -4,7 +4,11 @@
 //!
 use std::collections::{HashMap, HashSet};
 
+use bitcoin::util::bip158;
+use bitcoin::BlockHash;
 use bitcoin::{Address, Script, TxOut};
+
+use nakamoto_chain::filter::BlockFilter;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -41,6 +45,20 @@ impl Watchlist {
 
     pub fn iter(&self) -> impl Iterator<Item = &[u8]> {
         self.addresses.keys().map(|k| k.as_bytes())
+    }
+
+    pub fn matches(
+        &self,
+        filter: &BlockFilter,
+        block_hash: &BlockHash,
+    ) -> Result<bool, bip158::Error> {
+        if self.is_empty() {
+            return Ok(false);
+        }
+        if filter.match_any(&block_hash, &mut self.iter())? {
+            return Ok(true);
+        }
+        Ok(false)
     }
 }
 
