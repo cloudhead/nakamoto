@@ -14,7 +14,6 @@ use crate::spv::{Error, TxStatus, Utxos, Watchlist};
 pub struct BlockManager<H: client::handle::Handle> {
     pub remaining: BTreeMap<Height, BlockHash>,
     pub pending: BTreeMap<Height, Block>,
-    pub height: Height,
 
     client: H,
     mempool: Arc<Mutex<Mempool>>,
@@ -23,18 +22,12 @@ pub struct BlockManager<H: client::handle::Handle> {
 }
 
 impl<H: client::handle::Handle> BlockManager<H> {
-    pub fn new(
-        height: Height,
-        client: H,
-        utxos: Arc<Mutex<Utxos>>,
-        watchlist: Arc<Mutex<Watchlist>>,
-    ) -> Self {
+    pub fn new(client: H, utxos: Arc<Mutex<Utxos>>, watchlist: Arc<Mutex<Watchlist>>) -> Self {
         let mempool = client.mempool();
 
         Self {
             remaining: BTreeMap::new(),
             pending: BTreeMap::new(),
-            height,
             client,
             mempool,
             watchlist,
@@ -114,7 +107,6 @@ impl<H: client::handle::Handle> BlockManager<H> {
                     height,
                     block: hash,
                 });
-                self.height = height;
             }
         }
         Ok(())

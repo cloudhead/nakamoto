@@ -252,7 +252,7 @@ impl<H: client::handle::Handle> Client<H> {
         let height = config.genesis;
         let watchlist = Arc::new(Mutex::new(watchlist));
         let utxos = Arc::new(Mutex::new(Utxos::new()));
-        let blockmgr = BlockManager::new(height, client.clone(), utxos.clone(), watchlist.clone());
+        let blockmgr = BlockManager::new(client.clone(), utxos.clone(), watchlist.clone());
         let filtermgr = FilterManager::new(height, client.clone(), watchlist.clone());
         let handle = Handle {
             commands,
