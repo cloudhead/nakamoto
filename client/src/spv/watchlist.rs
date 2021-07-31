@@ -6,9 +6,11 @@ use std::collections::{HashMap, HashSet};
 
 use bitcoin::util::bip158;
 use bitcoin::BlockHash;
-use bitcoin::{Address, Script, TxOut};
+use bitcoin::{Address, OutPoint, Script, Transaction, TxOut};
 
 use nakamoto_chain::filter::BlockFilter;
+
+use super::Utxos;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
@@ -47,7 +49,7 @@ impl Watchlist {
         self.addresses.keys().map(|k| k.as_bytes())
     }
 
-    pub fn matches(
+    pub fn match_filter(
         &self,
         filter: &BlockFilter,
         block_hash: &BlockHash,
@@ -59,6 +61,29 @@ impl Watchlist {
             return Ok(true);
         }
         Ok(false)
+    }
+
+    pub fn match_transaction(&self, tx: &Transaction, utxos: &mut Utxos) {
+        // Look for outputs.
+        for (vout, output) in tx.output.iter().enumerate() {
+            // Received coin.
+            if self.contains(&output) {
+                let txid = tx.txid();
+                let outpoint = OutPoint {
+                    txid,
+                    vout: vout as u32,
+                };
+                utxos.insert(outpoint, output.clone());
+                log::info!("Unspent output found (balance={})", utxos.balance());
+            }
+        }
+        // Look for inputs.
+        for input in tx.input.iter() {
+            // Spent coin.
+            if utxos.remove(&input.previous_output).is_some() {
+                log::info!("Spent output found (balance={})", utxos.balance())
+            }
+        }
     }
 }
 

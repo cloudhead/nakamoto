@@ -4,8 +4,6 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
-use bitcoin::OutPoint;
-
 use nakamoto_common::block::{Block, BlockHash, Height};
 use nakamoto_p2p as p2p;
 
@@ -62,7 +60,7 @@ impl<H: client::handle::Handle> BlockManager<H> {
             self.remaining.len()
         );
 
-        for tx in block.txdata.iter() {
+        for tx in &block.txdata {
             let txid = tx.txid();
 
             // Attempt to remove confirmed transaction from mempool.
@@ -79,25 +77,8 @@ impl<H: client::handle::Handle> BlockManager<H> {
                 });
             }
 
-            // Look for outputs.
-            let watchlist = self.watchlist.lock()?;
-            for (vout, output) in tx.output.iter().enumerate() {
-                // Received coin.
-                if watchlist.contains(&output) {
-                    let outpoint = OutPoint {
-                        txid,
-                        vout: vout as u32,
-                    };
-                    utxos.insert(outpoint, output.clone());
-                }
-            }
-            // Look for inputs.
-            for input in tx.input.iter() {
-                // Spent coin.
-                if utxos.remove(&input.previous_output).is_some() {
-                    // TODO
-                }
-            }
+            // Look for matching transaction data, and update the UTXO set.
+            self.watchlist.lock()?.match_transaction(tx, utxos);
         }
 
         events.broadcast(Event::Synced {

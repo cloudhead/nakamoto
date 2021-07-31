@@ -1,5 +1,5 @@
 //! SPV client.
-#![allow(clippy::manual_range_contains)]
+#![allow(clippy::manual_range_contains, clippy::new_without_default)]
 
 #[allow(missing_docs)]
 pub mod blockmgr;
@@ -14,6 +14,7 @@ pub mod handle;
 pub mod watchlist;
 
 use std::collections::HashMap;
+use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::{fmt, net, time};
 
@@ -32,7 +33,38 @@ use crate::client::{self, chan, Mempool};
 use event::Event;
 use watchlist::Watchlist;
 
-type Utxos = HashMap<OutPoint, TxOut>;
+#[allow(missing_docs)]
+pub struct Utxos {
+    map: HashMap<OutPoint, TxOut>,
+}
+
+impl Deref for Utxos {
+    type Target = HashMap<OutPoint, TxOut>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.map
+    }
+}
+
+impl DerefMut for Utxos {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.map
+    }
+}
+
+impl Utxos {
+    /// Create a new empty UTXO set.
+    pub fn new() -> Self {
+        Self {
+            map: HashMap::new(),
+        }
+    }
+
+    /// Calculate the balance of all UTXOs.
+    pub fn balance(&self) -> u64 {
+        self.map.values().map(|u| u.value).sum()
+    }
+}
 
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
@@ -453,7 +485,7 @@ mod tests {
             let filter = gen::cfilter(&chain[h]);
             let block_hash = chain[h].block_hash();
 
-            if watchlist.matches(&filter, &block_hash).unwrap() {
+            if watchlist.match_filter(&filter, &block_hash).unwrap() {
                 matching.insert(block_hash);
             }
             filters.push((filter, block_hash, h as Height));
