@@ -359,7 +359,7 @@ impl<H: client::handle::Handle> Client<H> {
             log::info!("Filter matched for block #{}", height);
             log::info!("Fetching block #{} ({})", height, block_hash);
 
-            self.blockmgr.get(block_hash)?;
+            self.blockmgr.get(block_hash, height)?;
         }
 
         // TODO: We should better define what "Synced" means, and have this only in
@@ -380,9 +380,8 @@ impl<H: client::handle::Handle> Client<H> {
 
         log::debug!("Received block {} at height {}", block_hash, height);
 
-        // TODO: Should be able to handle out-of-order blocks.
-        self.blockmgr
-            .block_received(block, height, &self.publisher)?;
+        self.blockmgr.block_received(block, height, &self.publisher);
+        self.blockmgr.process(&self.publisher)?;
 
         Ok(())
     }
@@ -578,6 +577,7 @@ mod tests {
 
         log::info!(target: "test", "Waiting for client to fetch matching blocks..");
 
+        let mut requested = Vec::new();
         while !matching.is_empty() {
             log::info!(target: "test", "Blocks remaining to fetch: {}", matching.len());
 
@@ -587,21 +587,24 @@ mod tests {
                         log::info!("Client matched false-positive {}", hash);
                     }
                     reply.send(Ok(remote)).unwrap();
-
-                    // TODO: Send out-of-order.
-                    let (height, blk) = chain
-                        .iter()
-                        .enumerate()
-                        .find(|(_, blk)| blk.block_hash() == hash)
-                        .unwrap();
-
-                    log::info!(target: "test", "Sending block #{} to client", height);
-                    client.blocks.send((blk.clone(), height as Height)).unwrap();
+                    requested.push(hash);
                 }
                 _ => panic!("expected `GetBlock` command"),
             }
         }
         log::info!(target: "test", "All matching blocks have been fetched");
+
+        rng.shuffle(&mut requested);
+        for hash in requested {
+            let (height, blk) = chain
+                .iter()
+                .enumerate()
+                .find(|(_, blk)| blk.block_hash() == hash)
+                .unwrap();
+
+            log::info!(target: "test", "Sending block #{} to client", height);
+            client.blocks.send((blk.clone(), height as Height)).unwrap();
+        }
         log::info!(target: "test", "Checking matches..");
 
         // Shutdown.
