@@ -406,7 +406,6 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::logger;
 
-    use super::handle::Handle as _;
     use super::p2p::protocol::spvmgr;
     use super::*;
 
@@ -435,30 +434,38 @@ mod tests {
 
         // Build watchlist.
         let mut watchlist = Watchlist::new();
-        let mut matching = HashSet::new();
         for (h, blk) in chain.iter().enumerate().skip(birth as usize) {
             // Randomly pick certain blocks.
             if rng.bool() {
                 // Randomly pick a transaction and add its output to the watchlist.
                 let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
                 watchlist.insert_script(tx.output[0].script_pubkey.clone());
-                matching.insert(blk.block_hash());
 
                 log::info!(target: "test", "Marking block #{} ({})", h, blk.block_hash());
             }
         }
-        log::info!(target: "test", "Marked {} blocks for matching", matching.len());
 
+        // Construct list of filters to send to client, as well as set of matching block hashes,
+        // including false-positives.
         let mut filters = Vec::with_capacity((count + count) as usize);
+        let mut matching = HashSet::new();
         for h in birth as usize..chain.len() {
-            filters.push((gen::cfilter(&chain[h]), chain[h].block_hash(), h as Height));
+            let filter = gen::cfilter(&chain[h]);
+            let block_hash = chain[h].block_hash();
+
+            if watchlist.matches(&filter, &block_hash).unwrap() {
+                matching.insert(block_hash);
+            }
+            filters.push((filter, block_hash, h as Height));
         }
         rng.shuffle(&mut filters); // Filters are received out of order
+
+        log::info!(target: "test", "Marked {} blocks for matching", matching.len());
 
         let config = Config { genesis: birth };
         let client = mock::Client::new(network);
         let spv = super::Client::new(client.handle(), watchlist, config);
-        let mut handle = spv.handle();
+        let handle = spv.handle();
         let t = thread::spawn(|| spv.run().unwrap());
 
         // The filter header chain has advanced by `count`.
@@ -503,43 +510,29 @@ mod tests {
         }
 
         log::info!(target: "test", "Waiting for client to fetch matching blocks..");
-        let events = handle.events();
 
-        loop {
+        while !matching.is_empty() {
             log::info!(target: "test", "Blocks remaining to fetch: {}", matching.len());
 
-            chan::select! {
-                recv(client.commands) -> cmd => {
-                    match cmd.unwrap() {
-                        client::Command::GetBlock(hash, reply) => {
-                            if !matching.remove(&hash) {
-                                log::info!("Client matched false-positive {}", hash);
-                            }
-                            reply.send(Ok(remote)).unwrap();
+            match client.commands.recv().unwrap() {
+                client::Command::GetBlock(hash, reply) => {
+                    if !matching.remove(&hash) {
+                        log::info!("Client matched false-positive {}", hash);
+                    }
+                    reply.send(Ok(remote)).unwrap();
 
-                            // TODO: Send out-of-order.
-                            log::info!(target: "test", "Sending requested block to client");
-                            let (height, blk) = chain
-                                .iter()
-                                .enumerate()
-                                .find(|(_, blk)| blk.block_hash() == hash)
-                                .unwrap();
-                            client.blocks.send((blk.clone(), height as Height)).unwrap();
-                        }
-                        _ => panic!("expected `GetBlock` command"),
-                    }
+                    // TODO: Send out-of-order.
+                    log::info!(target: "test", "Sending requested block to client");
+                    let (height, blk) = chain
+                        .iter()
+                        .enumerate()
+                        .find(|(_, blk)| blk.block_hash() == hash)
+                        .unwrap();
+                    client.blocks.send((blk.clone(), height as Height)).unwrap();
                 }
-                recv(events) -> event => {
-                    if let Event::Synced { height, .. } = event.unwrap() {
-                        if height == chain.len() as Height - 1 {
-                            break;
-                        }
-                    }
-                }
-                default(time::Duration::from_secs(3)) => panic!("Client timed out"),
+                _ => panic!("expected `GetBlock` command"),
             }
         }
-        assert!(matching.is_empty(), "Client requested all matching blocks");
 
         // TODO: Check UTXOs and matches.
 
