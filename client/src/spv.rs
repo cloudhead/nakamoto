@@ -274,7 +274,6 @@ impl<H: client::handle::Handle> Client<H> {
 
         log::debug!("Starting SPV client event loop..");
 
-        let mut shutdown: Option<chan::Sender<()>> = None;
         loop {
             chan::select! {
                 recv(events) -> event => {
@@ -288,8 +287,15 @@ impl<H: client::handle::Handle> Client<H> {
                 recv(self.control) -> command => {
                     if let Ok(command) = command {
                         if let Command::Shutdown(reply) = command {
-                            shutdown = Some(reply);
-                            continue;
+                            // Drain incoming block queue before shutting down.
+                            // We don't drain the other channels, as they may create
+                            // more work.
+                            for (blk, h) in blocks.try_iter() {
+                                self.process_block(blk, h)?;
+                            }
+                            reply.send(()).ok();
+
+                            return Ok(());
                         }
                         self.process_command(command);
                     } else {
@@ -308,16 +314,6 @@ impl<H: client::handle::Handle> Client<H> {
                         self.process_block(block, height)?;
                     } else {
                         todo!()
-                    }
-                }
-                default => {
-                    if let Some(shutdown) = shutdown {
-                        assert!(blocks.is_empty());
-                        assert!(filters.is_empty());
-
-                        shutdown.send(()).ok();
-
-                        return Ok(());
                     }
                 }
             }
