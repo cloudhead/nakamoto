@@ -77,21 +77,20 @@ impl<H: client::handle::Handle> FilterManager<H> {
     /// processes it and returns the result of trying to match it with the watchlist.
     ///
     /// Returns nothing if there was no match or filter to process.
-    pub fn process(&mut self) -> Result<Option<(BlockHash, Height)>, bip158::Error> {
+    pub fn process(&mut self) -> Result<Vec<(BlockHash, Height)>, bip158::Error> {
         assert!(self.sync.end >= self.sync.start);
         // TODO: For BIP32 wallets, add one more address to check, if the
         // matching one was the highest-index one.
-        let height = self.sync.start; // Next height to process.
+        let mut matches = Vec::new();
 
-        if let Some((filter, block_hash)) = self.pending.remove(&height) {
-            self.sync.start = height + 1;
-
+        while let Some((filter, block_hash)) = self.pending.remove(&self.sync.start) {
             let watchlist = self.watchlist.lock().unwrap();
             if watchlist.match_filter(&filter, &block_hash)? {
-                return Ok(Some((block_hash, height)));
+                matches.push((block_hash, self.sync.start));
             }
+            self.sync.start += 1;
         }
-        Ok(None)
+        Ok(matches)
     }
 
     /// Called when filter headers were successfully imported.

@@ -342,7 +342,8 @@ impl<H: client::handle::Handle> Client<H> {
 
         // TODO: Deal with unwrap.
 
-        while let Some((block_hash, height)) = self.filtermgr.process().unwrap() {
+        let matches = self.filtermgr.process().unwrap();
+        for (block_hash, height) in matches {
             log::info!("Filter matched for block #{}", height);
             log::info!("Fetching block #{} ({})", height, block_hash);
 
@@ -357,6 +358,7 @@ impl<H: client::handle::Handle> Client<H> {
                 block: block_hash,
             });
         }
+        log::debug!("Finished processing filter for block #{}", height);
 
         Ok(())
     }
@@ -445,8 +447,11 @@ mod tests {
 
     #[ignore]
     #[quickcheck]
-    fn prop_filter_headers_imported(birth: Height, count: Height, seed: u64) -> TestResult {
-        if count < 1 || count > 8 {
+    fn prop_filter_headers_imported(birth: Height, count: usize, seed: u64) -> TestResult {
+        if count < 1 || count > 16 {
+            return TestResult::discard();
+        }
+        if birth >= count as Height {
             return TestResult::discard();
         }
         logger::init(log::Level::Debug);
@@ -454,14 +459,17 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(seed);
         let network = Network::Regtest;
         let genesis = network.genesis_block();
-        let chain = gen::blockchain(genesis, birth + count + count, &mut rng);
+        let chain = gen::blockchain(genesis, count as Height + 1, &mut rng);
         let remote = ([99, 99, 99, 99], 8333).into();
+        let delta = chain.tail.len() - birth as usize;
 
         log::info!(
             target: "test",
-            "Test case with chain height of {} and birth height of {}",
+            "--- Test case with chain length of {}, height of {} and birth height of {} (delta={}) ---",
+            chain.len(),
             chain.len() - 1,
             birth,
+            delta,
         );
 
         // Build watchlist.
@@ -479,7 +487,7 @@ mod tests {
 
         // Construct list of filters to send to client, as well as set of matching block hashes,
         // including false-positives.
-        let mut filters = Vec::with_capacity((count + count) as usize);
+        let mut filters = Vec::with_capacity(count);
         let mut matching = HashSet::new();
         for h in birth as usize..chain.len() {
             let filter = gen::cfilter(&chain[h]);
@@ -500,40 +508,49 @@ mod tests {
         let handle = spv.handle();
         let t = thread::spawn(|| spv.run().unwrap());
 
-        // The filter header chain has advanced by `count`.
-        let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
-            height: birth + count,
-            block_hash: chain[(birth + count) as usize].block_hash(),
-        });
-        client.events.send(event).unwrap();
+        // Split the filter headers in random chunks to be received by the client.
+        let mut chunks = Vec::new();
+        {
+            let mut remaining = delta;
 
-        // We expect the client to fetch the corresponding filters from the network,
-        // including the birth height.
-        match client.commands.recv().unwrap() {
-            client::Command::GetFilters(range, reply) => {
-                // We don't expect the genesis filter to be fetched.
-                let start = birth.max(1);
-
-                assert_eq!(range, start..=birth + count);
-                reply.send(Ok(())).unwrap();
+            while remaining > 0 {
+                let count = rng.usize(1..=remaining);
+                chunks.push(count);
+                remaining -= count;
             }
-            _ => panic!("expected `GetFilters` command"),
         }
 
-        // The filter header chain has advanced by some more.
-        let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
-            height: birth + count + count,
-            block_hash: chain[(birth + count + count) as usize].block_hash(),
-        });
-        client.events.send(event).unwrap();
+        log::info!(
+            "Splitting filter headers into {} chunk(s): {:?}",
+            chunks.len(),
+            chunks
+        );
 
-        // We expect the client to fetch the corresponding filters from the network.
-        match client.commands.recv().unwrap() {
-            client::Command::GetFilters(range, reply) => {
-                assert_eq!(range, birth + count + 1..=birth + count + count);
-                reply.send(Ok(())).unwrap();
+        // Send the filter headers to the client in chunks.
+        {
+            let mut height = birth;
+
+            for chunk in chunks {
+                let tip = height + chunk as Height;
+
+                // The filter header chain has advanced by `chunk`.
+                let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
+                    height: tip,
+                    block_hash: chain[tip as usize].block_hash(),
+                });
+                client.events.send(event).unwrap();
+
+                // We expect the client to fetch the corresponding filters from the network,
+                // including the birth height.
+                match client.commands.recv().unwrap() {
+                    client::Command::GetFilters(range, reply) => {
+                        assert_eq!(*range.end(), tip);
+                        reply.send(Ok(())).unwrap();
+                    }
+                    _ => panic!("expected `GetFilters` command"),
+                }
+                height = tip;
             }
-            _ => panic!("expected `GetFilters` command"),
         }
 
         log::info!(target: "test", "Sending requested filters to client..");
