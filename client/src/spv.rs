@@ -34,6 +34,7 @@ use event::Event;
 use watchlist::Watchlist;
 
 #[allow(missing_docs)]
+#[derive(Debug, Clone)]
 pub struct Utxos {
     map: HashMap<OutPoint, TxOut>,
 }
@@ -146,7 +147,7 @@ pub enum Command {
     Submit {
         transactions: Vec<Transaction>,
     },
-    Shutdown,
+    Shutdown(chan::Sender<()>),
 }
 
 #[allow(missing_docs)]
@@ -155,6 +156,7 @@ pub struct Handle {
     subscriber: p2p::event::Subscriber<Event>,
     timeout: time::Duration,
     watchlist: Arc<Mutex<Watchlist>>,
+    utxos: Arc<Mutex<Utxos>>,
 }
 
 impl Clone for Handle {
@@ -164,6 +166,7 @@ impl Clone for Handle {
             subscriber: self.subscriber.clone(),
             timeout: self.timeout,
             watchlist: self.watchlist.clone(),
+            utxos: self.utxos.clone(),
         }
     }
 }
@@ -201,6 +204,13 @@ impl handle::Handle for Handle {
     fn unwatch_scripts(scripts: impl Iterator<Item = bitcoin::ScriptHash>) {
         todo!()
     }
+
+    fn shutdown(&self) -> Result<(), handle::Error> {
+        let (sender, recvr) = chan::bounded(1);
+        self.commands.send(Command::Shutdown(sender)).ok();
+
+        Ok(recvr.recv()?)
+    }
 }
 
 #[allow(missing_docs)]
@@ -216,7 +226,6 @@ pub struct Client<H: client::handle::Handle> {
     publisher: p2p::event::Broadcast<Event, Event>,
     control: chan::Receiver<Command>,
     mempool: Arc<Mutex<Mempool>>,
-    utxos: Utxos,
     config: Config,
     height: Height,
 
@@ -233,21 +242,21 @@ impl<H: client::handle::Handle> Client<H> {
         let timeout = time::Duration::from_secs(9);
         let height = config.genesis;
         let watchlist = Arc::new(Mutex::new(watchlist));
-        let blockmgr = BlockManager::new(height, client.clone(), watchlist.clone());
+        let utxos = Arc::new(Mutex::new(Utxos::new()));
+        let blockmgr = BlockManager::new(height, client.clone(), utxos.clone(), watchlist.clone());
         let filtermgr = FilterManager::new(height, client.clone(), watchlist.clone());
         let handle = Handle {
             commands,
             subscriber,
             timeout,
             watchlist,
+            utxos,
         };
-        let utxos = Utxos::new();
 
         Self {
             client,
             handle,
             mempool,
-            utxos,
             publisher,
             control,
             config,
@@ -265,6 +274,7 @@ impl<H: client::handle::Handle> Client<H> {
 
         log::debug!("Starting SPV client event loop..");
 
+        let mut shutdown: Option<chan::Sender<()>> = None;
         loop {
             chan::select! {
                 recv(events) -> event => {
@@ -277,8 +287,9 @@ impl<H: client::handle::Handle> Client<H> {
                 }
                 recv(self.control) -> command => {
                     if let Ok(command) = command {
-                        if let Command::Shutdown = command {
-                            return Ok(());
+                        if let Command::Shutdown(reply) = command {
+                            shutdown = Some(reply);
+                            continue;
                         }
                         self.process_command(command);
                     } else {
@@ -299,13 +310,18 @@ impl<H: client::handle::Handle> Client<H> {
                         todo!()
                     }
                 }
+                default => {
+                    if let Some(shutdown) = shutdown {
+                        assert!(blocks.is_empty());
+                        assert!(filters.is_empty());
+
+                        shutdown.send(()).ok();
+
+                        return Ok(());
+                    }
+                }
             }
         }
-    }
-
-    /// Calculate the balance of all UTXOs.
-    pub fn balance(&self) -> u64 {
-        self.utxos.values().map(|u| u.value).sum()
     }
 
     /// Create a new handle to the SPV client.
@@ -370,7 +386,7 @@ impl<H: client::handle::Handle> Client<H> {
 
         // TODO: Should be able to handle out-of-order blocks.
         self.blockmgr
-            .block_received(block, height, &mut self.utxos, &self.publisher)?;
+            .block_received(block, height, &self.publisher)?;
 
         Ok(())
     }
@@ -382,7 +398,7 @@ impl<H: client::handle::Handle> Client<H> {
         match command {
             Command::Rescan { .. } => {}
             Command::Submit { .. } => {}
-            Command::Shutdown => {
+            Command::Shutdown(_) => {
                 // This command must be handled before this function is called.
                 unreachable! {}
             }
@@ -440,6 +456,7 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::logger;
 
+    use super::handle::Handle as _;
     use super::p2p::protocol::spvmgr;
     use super::*;
 
@@ -474,14 +491,17 @@ mod tests {
 
         // Build watchlist.
         let mut watchlist = Watchlist::new();
+        let mut balance = 0;
         for (h, blk) in chain.iter().enumerate().skip(birth as usize) {
             // Randomly pick certain blocks.
             if rng.bool() {
                 // Randomly pick a transaction and add its output to the watchlist.
                 let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
                 watchlist.insert_script(tx.output[0].script_pubkey.clone());
+                balance += tx.output[0].value;
 
-                log::info!(target: "test", "Marking block #{} ({})", h, blk.block_hash());
+                log::info!(target: "test",
+                    "Marking txid {} block #{} ({})", tx.txid(), h, blk.block_hash());
             }
         }
 
@@ -500,12 +520,14 @@ mod tests {
         }
         rng.shuffle(&mut filters); // Filters are received out of order
 
-        log::info!(target: "test", "Marked {} blocks for matching", matching.len());
+        log::info!(target: "test", "Marked {} block(s) for matching", matching.len());
+        log::info!(target: "test", "Transaction balance is {}", balance);
 
         let config = Config { genesis: birth };
         let client = mock::Client::new(network);
         let spv = super::Client::new(client.handle(), watchlist, config);
         let handle = spv.handle();
+
         let t = thread::spawn(|| spv.run().unwrap());
 
         // Split the filter headers in random chunks to be received by the client.
@@ -571,23 +593,27 @@ mod tests {
                     reply.send(Ok(remote)).unwrap();
 
                     // TODO: Send out-of-order.
-                    log::info!(target: "test", "Sending requested block to client");
                     let (height, blk) = chain
                         .iter()
                         .enumerate()
                         .find(|(_, blk)| blk.block_hash() == hash)
                         .unwrap();
+
+                    log::info!(target: "test", "Sending block #{} to client", height);
                     client.blocks.send((blk.clone(), height as Height)).unwrap();
                 }
                 _ => panic!("expected `GetBlock` command"),
             }
         }
-
-        // TODO: Check UTXOs and matches.
+        log::info!(target: "test", "All matching blocks have been fetched");
+        log::info!(target: "test", "Checking matches..");
 
         // Shutdown.
-        handle.commands.send(Command::Shutdown).ok();
+        handle.shutdown().ok();
         t.join().unwrap();
+
+        assert_eq!(balance, handle.utxos.lock().unwrap().balance());
+        log::info!(target: "test", "--- Balance of {} matched ---", balance);
 
         TestResult::passed()
     }

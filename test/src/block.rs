@@ -77,7 +77,7 @@ pub mod gen {
         let script_pubkey = Script::new_p2pkh(&pkh);
 
         TxOut {
-            value: rng.u64(1..),
+            value: rng.u64(1..100_000_000),
             script_pubkey,
         }
     }

@@ -52,6 +52,7 @@ impl Watchlist {
 
     pub fn contains(&self, txout: &TxOut) -> bool {
         self.addresses.contains_key(&txout.script_pubkey)
+            || self.scripts.contains(&txout.script_pubkey)
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &[u8]> {

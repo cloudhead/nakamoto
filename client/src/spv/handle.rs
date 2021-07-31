@@ -63,4 +63,6 @@ pub trait Handle {
     fn unwatch_address(address: &Address);
     /// Stop watching scripts.
     fn unwatch_scripts(scripts: impl Iterator<Item = ScriptHash>);
+    /// Shutdown the transaction manager. Blocks until ongoing tasks have completed.
+    fn shutdown(&self) -> Result<(), Error>;
 }

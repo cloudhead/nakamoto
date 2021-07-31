@@ -18,10 +18,16 @@ pub struct BlockManager<H: client::handle::Handle> {
     client: H,
     mempool: Arc<Mutex<Mempool>>,
     watchlist: Arc<Mutex<Watchlist>>,
+    utxos: Arc<Mutex<Utxos>>,
 }
 
 impl<H: client::handle::Handle> BlockManager<H> {
-    pub fn new(height: Height, client: H, watchlist: Arc<Mutex<Watchlist>>) -> Self {
+    pub fn new(
+        height: Height,
+        client: H,
+        utxos: Arc<Mutex<Utxos>>,
+        watchlist: Arc<Mutex<Watchlist>>,
+    ) -> Self {
         let mempool = client.mempool();
 
         Self {
@@ -30,6 +36,7 @@ impl<H: client::handle::Handle> BlockManager<H> {
             client,
             mempool,
             watchlist,
+            utxos,
         }
     }
 
@@ -44,7 +51,6 @@ impl<H: client::handle::Handle> BlockManager<H> {
         &mut self,
         block: Block,
         height: Height,
-        utxos: &mut Utxos,
         events: &p2p::event::Broadcast<Event, Event>,
     ) -> Result<(), Error> {
         let hash = block.block_hash();
@@ -55,7 +61,7 @@ impl<H: client::handle::Handle> BlockManager<H> {
         }
 
         log::info!(
-            "Received block {} (remaining={})",
+            "Received block #{} (remaining={})",
             height,
             self.remaining.len()
         );
@@ -78,7 +84,8 @@ impl<H: client::handle::Handle> BlockManager<H> {
             }
 
             // Look for matching transaction data, and update the UTXO set.
-            self.watchlist.lock()?.match_transaction(tx, utxos);
+            let mut utxos = self.utxos.lock().unwrap();
+            self.watchlist.lock()?.match_transaction(tx, &mut utxos);
         }
 
         events.broadcast(Event::Synced {
