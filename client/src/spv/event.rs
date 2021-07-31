@@ -38,7 +38,7 @@ pub enum Event {
     },
     /// Compact filters have been synced and processed up to this point and matching blocks have
     /// been scanned.  This should match the output of the [`super::handle::Handle::tip`] method.
-    Synced { height: Height, block: BlockHash },
+    Synced { height: Height },
 }
 
 impl fmt::Display for Event {

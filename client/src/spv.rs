@@ -217,7 +217,7 @@ impl handle::Handle for Handle {
         todo!()
     }
 
-    fn shutdown(&self) -> Result<(), handle::Error> {
+    fn shutdown(self) -> Result<(), handle::Error> {
         let (sender, recvr) = chan::bounded(1);
         self.commands.send(Command::Shutdown(sender)).ok();
 
@@ -329,6 +329,13 @@ impl<H: client::handle::Handle> Client<H> {
                     }
                 }
             }
+
+            if let Some(height) = self.filtermgr.height() {
+                if height > self.height && self.blockmgr.is_synced() {
+                    self.publisher.broadcast(Event::Synced { height });
+                    self.height = height;
+                }
+            }
         }
     }
 
@@ -372,15 +379,6 @@ impl<H: client::handle::Handle> Client<H> {
             log::info!("Fetching block #{} ({})", height, block_hash);
 
             self.blockmgr.get(block_hash, height)?;
-        }
-
-        // TODO: We should better define what "Synced" means, and have this only in
-        // one place, eg. in the main loop.
-        if self.blockmgr.remaining.is_empty() && self.filtermgr.is_synced() {
-            self.publisher.broadcast(Event::Synced {
-                height,
-                block: block_hash,
-            });
         }
         log::debug!("Finished processing filter for block #{}", height);
 

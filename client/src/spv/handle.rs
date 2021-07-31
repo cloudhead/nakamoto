@@ -64,5 +64,5 @@ pub trait Handle {
     /// Stop watching scripts.
     fn unwatch_scripts(scripts: impl Iterator<Item = ScriptHash>);
     /// Shutdown the transaction manager. Blocks until ongoing tasks have completed.
-    fn shutdown(&self) -> Result<(), Error>;
+    fn shutdown(self) -> Result<(), Error>;
 }

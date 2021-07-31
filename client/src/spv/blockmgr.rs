@@ -42,6 +42,10 @@ impl<H: client::handle::Handle> BlockManager<H> {
         Ok(())
     }
 
+    pub fn is_synced(&self) -> bool {
+        self.remaining.is_empty() && self.pending.is_empty()
+    }
+
     pub fn block_received(
         &mut self,
         block: Block,
@@ -72,7 +76,7 @@ impl<H: client::handle::Handle> BlockManager<H> {
         // filters.
         //
         // Therefore, we make sure that there is no earlier block in the set that is to be
-        // downlaoed (`remaining`), since all blocks in the `pending` set are first added
+        // downloaded (`remaining`), since all blocks in the `pending` set are first added
         // to the `remaining` set, and the `remaining` set is updated in-order.
         while let Some(height) = self.pending.keys().next().cloned() {
             // If an earlier block remains to be downloaded, don't do anything.
@@ -81,6 +85,8 @@ impl<H: client::handle::Handle> BlockManager<H> {
             }
             if let Some(block) = self.pending.remove(&height) {
                 let hash = block.block_hash();
+
+                log::debug!("Processing block #{}", height);
 
                 for tx in &block.txdata {
                     let txid = tx.txid();
@@ -103,10 +109,6 @@ impl<H: client::handle::Handle> BlockManager<H> {
                     let mut utxos = self.utxos.lock()?;
                     self.watchlist.lock()?.match_transaction(tx, &mut utxos);
                 }
-                events.broadcast(Event::Synced {
-                    height,
-                    block: hash,
-                });
             }
         }
         Ok(())

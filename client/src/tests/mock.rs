@@ -195,6 +195,6 @@ impl Handle for TestHandle {
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {
-        unimplemented!()
+        self.command(Command::Shutdown)
     }
 }

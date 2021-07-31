@@ -66,6 +66,12 @@ impl<H: client::handle::Handle> FilterManager<H> {
         self.sync.is_empty()
     }
 
+    pub fn height(&self) -> Option<Height> {
+        // The sync start height is not the "synced" height, but rather the height currently being
+        // synced. Thus, we subtract one from it.
+        self.sync.start.checked_sub(1)
+    }
+
     pub fn filter_received(&mut self, filter: BlockFilter, block_hash: BlockHash, height: Height) {
         self.remaining.remove(&height);
         self.pending.insert(height, (filter, block_hash));

@@ -36,13 +36,14 @@
 //! 7. The system is *injective*, in the sense that for every input there is a unique, distinct
 //!    output.
 //!
-use std::collections::HashSet;
+use std::net;
 use std::thread;
 
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
 
 use nakamoto_common::network::Network;
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;
 
@@ -50,38 +51,133 @@ use super::handle::Handle as _;
 use super::p2p::protocol::spvmgr;
 use super::*;
 
+use crate::handle::Handle as _;
 use crate::tests::mock;
 
-#[quickcheck]
-fn prop_client_side_filtering(birth: Height, count: usize, seed: u64) -> TestResult {
-    if count < 1 || count > 16 {
-        return TestResult::discard();
+struct TestNode {
+    height: Height,
+    peer: Height,
+    client: mock::Client,
+    chain: NonEmpty<Block>,
+    address: net::SocketAddr,
+    rng: fastrand::Rng,
+}
+
+impl TestNode {
+    fn new(client: mock::Client, height: Height, mut rng: fastrand::Rng) -> Self {
+        let genesis = client.network.genesis_block();
+        let chain = gen::blockchain(genesis, height, &mut rng);
+        let address = ([99, 99, 99, 99], 8333).into();
+        let peer = 0;
+
+        Self {
+            height,
+            peer,
+            client,
+            chain,
+            address,
+            rng,
+        }
     }
-    if birth >= count as Height {
+
+    fn run(mut self) {
+        let mut requested_blocks: Vec<BlockHash> = Vec::new();
+        let mut requested_filters: Vec<Height> = Vec::new();
+
+        loop {
+            chan::select! {
+                recv(self.client.commands) -> cmd => {
+                    match cmd.unwrap() {
+                        client::Command::GetFilters(range, reply) => {
+                            requested_filters.extend(range);
+                            self.rng.shuffle(&mut requested_filters);
+                            reply.send(Ok(())).unwrap();
+                        }
+                        client::Command::GetBlock(hash, reply) => {
+                            requested_blocks.push(hash);
+                            self.rng.shuffle(&mut requested_blocks);
+                            reply.send(Ok(self.address)).unwrap();
+                        }
+                        client::Command::Shutdown => {
+                            break;
+                        }
+                        other => {
+                            panic!("TestNode::run: unexpected command: {:?}", other);
+                        }
+                    }
+                }
+                default => {
+                    if self.peer < self.height {
+                        log::info!(target: "test", "Sending filter headers to client..");
+
+                        let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
+                            height: self.height,
+                            block_hash: self.chain[self.height as usize].block_hash(),
+                        });
+                        self.client.events.send(event).unwrap();
+                        self.peer = self.height;
+                    }
+
+                    if !requested_filters.is_empty() {
+                        log::info!(target: "test", "Sending requested filters to client..");
+
+                        // Construct list of filters to send to client, as well as set of matching
+                        // block hashes, including false-positives.
+                        let count = self.rng.usize(1..=requested_filters.len());
+                        for _ in 0..count {
+                            let h = requested_filters.pop().unwrap();
+                            let filter = gen::cfilter(&self.chain[h as usize]);
+                            let block_hash = self.chain[h as usize].block_hash();
+
+                            log::info!(target: "test", "Sending filter #{} to client", h);
+                            self.client.filters.send((filter, block_hash, h as Height)).unwrap();
+                        }
+                    }
+                    if !requested_blocks.is_empty() {
+                        log::info!(target: "test", "Sending requested blocks to client..");
+
+                        let count = self.rng.usize(1..=requested_blocks.len());
+                        for _ in 0..count {
+                            let hash = requested_blocks.pop().unwrap();
+                            let (height, blk) = self.chain
+                                .iter()
+                                .enumerate()
+                                .find(|(_, blk)| blk.block_hash() == hash)
+                                .unwrap();
+
+                            log::info!(target: "test", "Sending block #{} to client", height);
+                            self.client.blocks.send((blk.clone(), height as Height)).unwrap();
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[quickcheck]
+fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestResult {
+    if height < 1 || height > 24 || birth >= height {
         return TestResult::discard();
     }
     logger::init(log::Level::Debug);
 
-    let mut rng = fastrand::Rng::with_seed(seed);
-    let network = Network::Regtest;
-    let genesis = network.genesis_block();
-    let chain = gen::blockchain(genesis, count as Height + 1, &mut rng);
-    let remote = ([99, 99, 99, 99], 8333).into();
-    let delta = chain.tail.len() - birth as usize;
-
     log::info!(
         target: "test",
-        "--- Test case with chain length of {}, height of {} and birth height of {} (delta={}) ---",
-        chain.len(),
-        chain.len() - 1,
+        "--- Test case with chain height of {} and birth height of {} ---",
+        height,
         birth,
-        delta,
     );
+
+    let mc = mock::Client::new(Network::Regtest);
+    let client = mc.handle();
+    let rng = fastrand::Rng::with_seed(seed);
+    let node = TestNode::new(mc, height, rng.clone());
 
     // Build watchlist.
     let mut watchlist = Watchlist::new();
     let mut balance = 0;
-    for (h, blk) in chain.iter().enumerate().skip(birth as usize) {
+    for (h, blk) in node.chain.iter().enumerate().skip(birth as usize) {
         // Randomly pick certain blocks.
         if rng.bool() {
             // Randomly pick a transaction and add its output to the watchlist.
@@ -93,120 +189,34 @@ fn prop_client_side_filtering(birth: Height, count: usize, seed: u64) -> TestRes
                 "Marking txid {} block #{} ({})", tx.txid(), h, blk.block_hash());
         }
     }
-
-    // Construct list of filters to send to client, as well as set of matching block hashes,
-    // including false-positives.
-    let mut filters = Vec::with_capacity(count);
-    let mut matching = HashSet::new();
-    for h in birth as usize..chain.len() {
-        let filter = gen::cfilter(&chain[h]);
-        let block_hash = chain[h].block_hash();
-
-        if watchlist.match_filter(&filter, &block_hash).unwrap() {
-            matching.insert(block_hash);
-        }
-        filters.push((filter, block_hash, h as Height));
-    }
-    rng.shuffle(&mut filters); // Filters are received out of order
-
-    log::info!(target: "test", "Marked {} block(s) for matching", matching.len());
     log::info!(target: "test", "Transaction balance is {}", balance);
 
     let config = Config { genesis: birth };
-    let client = mock::Client::new(network);
-    let spv = super::Client::new(client.handle(), watchlist, config);
-    let handle = spv.handle();
+    let spv = super::Client::new(node.client.handle(), watchlist, config);
+    let mut handle = spv.handle();
+    let events = handle.events();
 
     let t = thread::spawn(|| spv.run().unwrap());
+    let n = thread::spawn(|| node.run());
 
-    // Split the filter headers in random chunks to be received by the client.
-    let mut chunks = Vec::new();
-    {
-        let mut remaining = delta;
+    loop {
+        if let Event::Synced { height: synced } = events.recv().unwrap() {
+            log::info!(target: "test", "Synced {}/{}", synced, height);
 
-        while remaining > 0 {
-            let count = rng.usize(1..=remaining);
-            chunks.push(count);
-            remaining -= count;
-        }
-    }
-
-    log::info!(
-        "Splitting filter headers into {} chunk(s): {:?}",
-        chunks.len(),
-        chunks
-    );
-
-    // Send the filter headers to the client in chunks.
-    {
-        let mut height = birth;
-
-        for chunk in chunks {
-            let tip = height + chunk as Height;
-
-            // The filter header chain has advanced by `chunk`.
-            let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
-                height: tip,
-                block_hash: chain[tip as usize].block_hash(),
-            });
-            client.events.send(event).unwrap();
-
-            // We expect the client to fetch the corresponding filters from the network,
-            // including the birth height.
-            match client.commands.recv().unwrap() {
-                client::Command::GetFilters(range, reply) => {
-                    assert_eq!(*range.end(), tip);
-                    reply.send(Ok(())).unwrap();
-                }
-                _ => panic!("expected `GetFilters` command"),
+            if synced == height {
+                break;
             }
-            height = tip;
         }
     }
-
-    log::info!(target: "test", "Sending requested filters to client..");
-    for filter in filters {
-        client.filters.send(filter).unwrap();
-    }
-
-    log::info!(target: "test", "Waiting for client to fetch matching blocks..");
-
-    let mut requested = Vec::new();
-    while !matching.is_empty() {
-        log::info!(target: "test", "Blocks remaining to fetch: {}", matching.len());
-
-        match client.commands.recv().unwrap() {
-            client::Command::GetBlock(hash, reply) => {
-                if !matching.remove(&hash) {
-                    log::info!("Client matched false-positive {}", hash);
-                }
-                reply.send(Ok(remote)).unwrap();
-                requested.push(hash);
-            }
-            _ => panic!("expected `GetBlock` command"),
-        }
-    }
-    log::info!(target: "test", "All matching blocks have been fetched");
-
-    rng.shuffle(&mut requested);
-    for hash in requested {
-        let (height, blk) = chain
-            .iter()
-            .enumerate()
-            .find(|(_, blk)| blk.block_hash() == hash)
-            .unwrap();
-
-        log::info!(target: "test", "Sending block #{} to client", height);
-        client.blocks.send((blk.clone(), height as Height)).unwrap();
-    }
-    log::info!(target: "test", "Checking matches..");
+    log::info!(target: "test", "Finished syncing");
+    assert_eq!(balance, handle.utxos.lock().unwrap().balance());
 
     // Shutdown.
-    handle.shutdown().ok();
-    t.join().unwrap();
+    handle.shutdown().unwrap();
+    client.shutdown().unwrap();
 
-    assert_eq!(balance, handle.utxos.lock().unwrap().balance());
-    log::info!(target: "test", "--- Balance of {} matched ---", balance);
+    t.join().unwrap();
+    n.join().unwrap();
 
     TestResult::passed()
 }
