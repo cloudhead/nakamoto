@@ -115,6 +115,9 @@ impl fmt::Display for TxStatus {
 #[allow(missing_docs)]
 #[derive(Error, Debug)]
 pub enum Error {
+    #[error("utxo lock is poisoned")]
+    Utxos,
+
     #[error("mempool lock is poisoned")]
     Mempool,
 
@@ -134,6 +137,12 @@ impl<'a> From<PoisonError<MutexGuard<'a, Mempool>>> for Error {
 impl<'a> From<PoisonError<MutexGuard<'a, Watchlist>>> for Error {
     fn from(_: PoisonError<MutexGuard<'a, Watchlist>>) -> Self {
         Self::Watchlist
+    }
+}
+
+impl<'a> From<PoisonError<MutexGuard<'a, Utxos>>> for Error {
+    fn from(_: PoisonError<MutexGuard<'a, Utxos>>) -> Self {
+        Self::Utxos
     }
 }
 

@@ -107,7 +107,7 @@ impl<H: client::handle::Handle> BlockManager<H> {
                     }
 
                     // Look for matching transaction data, and update the UTXO set.
-                    let mut utxos = self.utxos.lock().unwrap();
+                    let mut utxos = self.utxos.lock()?;
                     self.watchlist.lock()?.match_transaction(tx, &mut utxos);
                 }
                 events.broadcast(Event::Synced {
