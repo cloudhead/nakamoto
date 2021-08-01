@@ -155,6 +155,37 @@ impl TestNode {
     }
 }
 
+mod utils {
+    use super::*;
+
+    pub fn populate_watchlist(
+        watchlist: &mut Watchlist,
+        birth: Height,
+        chain: &NonEmpty<Block>,
+        rng: &mut fastrand::Rng,
+    ) -> u64 {
+        let mut balance = 0;
+        for (h, blk) in chain.iter().enumerate().skip(birth as usize) {
+            // Randomly pick certain blocks.
+            if rng.bool() {
+                // Randomly pick a transaction and add its output to the watchlist.
+                let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
+                watchlist.insert_script(tx.output[0].script_pubkey.clone());
+                balance += tx.output[0].value;
+
+                log::debug!(
+                    target: "test",
+                    "Marking txid {} block #{} ({})",
+                    tx.txid(),
+                    h,
+                    blk.block_hash()
+                );
+            }
+        }
+        balance
+    }
+}
+
 #[quickcheck]
 fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestResult {
     if height < 1 || height > 24 || birth >= height {
@@ -171,24 +202,12 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
 
     let mc = mock::Client::new(Network::Regtest);
     let client = mc.handle();
-    let rng = fastrand::Rng::with_seed(seed);
+    let mut rng = fastrand::Rng::with_seed(seed);
     let node = TestNode::new(mc, height, rng.clone());
 
     // Build watchlist.
     let mut watchlist = Watchlist::new();
-    let mut balance = 0;
-    for (h, blk) in node.chain.iter().enumerate().skip(birth as usize) {
-        // Randomly pick certain blocks.
-        if rng.bool() {
-            // Randomly pick a transaction and add its output to the watchlist.
-            let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
-            watchlist.insert_script(tx.output[0].script_pubkey.clone());
-            balance += tx.output[0].value;
-
-            log::info!(target: "test",
-                "Marking txid {} block #{} ({})", tx.txid(), h, blk.block_hash());
-        }
-    }
+    let balance = utils::populate_watchlist(&mut watchlist, birth, &node.chain, &mut rng);
     log::info!(target: "test", "Transaction balance is {}", balance);
 
     let config = Config { genesis: birth };
