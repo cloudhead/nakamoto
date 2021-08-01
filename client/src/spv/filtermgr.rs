@@ -111,8 +111,12 @@ impl<H: client::handle::Handle> FilterManager<H> {
         height: Height,
         _block_hash: BlockHash,
     ) -> Result<(), Error> {
-        assert!(height >= self.sync.end);
         assert!(self.sync.end >= self.sync.start);
+
+        // Ignore if we're already synced passed this point.
+        if height < self.sync.end {
+            return Ok(());
+        }
 
         let range = self.sync.end..=height;
 
