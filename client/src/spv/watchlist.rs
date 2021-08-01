@@ -31,11 +31,6 @@ impl Watchlist {
         self.scripts.extend(scripts)
     }
 
-    pub fn insert_transaction(&mut self, _tx: &Transaction) -> bool {
-        // TODO: Insert tx outputs/inputs?
-        todo!()
-    }
-
     /// Tracks incoming and outgoing coins to and from this address.
     pub fn insert_address(&mut self, address: Address) -> bool {
         // Since incoming coins are outgoing coins that spend *to* this address, and

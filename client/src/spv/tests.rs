@@ -263,7 +263,7 @@ fn prop_event_ordering(birth: Height, height: Height, seed: u64) -> TestResult {
     let balance = utils::populate_watchlist(&mut watchlist, birth, &node.chain, &mut rng);
 
     let config = Config { genesis: birth };
-    let txmgr = TxManager::new(node.client.handle(), watchlist, config);
+    let txmgr = Client::new(node.client.handle(), watchlist, config);
     let mut handle = txmgr.handle();
     let events = handle.events();
 

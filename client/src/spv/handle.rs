@@ -1,7 +1,9 @@
+use std::net;
 use std::ops::RangeBounds;
 
 use bitcoin::{Address, BlockHash, Script, Transaction};
 use nakamoto_common::block::Height;
+use nakamoto_common::nonempty::NonEmpty;
 
 use super::event::Event;
 use crate::client::chan;
@@ -46,7 +48,10 @@ pub trait Handle {
     /// To track sync progress, the [`Event::Synced`] event may be used instead.
     fn tip(&self) -> Result<(Height, BlockHash), Error>;
     /// Submit transactions to the network.
-    fn submit(&mut self, txs: impl IntoIterator<Item = Transaction>);
+    fn submit(
+        &mut self,
+        txs: impl IntoIterator<Item = Transaction>,
+    ) -> Result<NonEmpty<net::SocketAddr>, Error>;
     /// Subscribe to SPV-related events.
     fn events(&mut self) -> chan::Receiver<Event>;
     /// Rescan the blockchain for matching addresses and outputs.

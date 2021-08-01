@@ -27,6 +27,7 @@ use bitcoin::{Block, OutPoint, Transaction, TxOut, Txid};
 
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::{BlockHash, Height};
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p as p2p;
 
 use blockmgr::BlockManager;
@@ -156,9 +157,7 @@ pub enum Command {
         from: Option<Height>,
         to: Option<Height>,
     },
-    Submit {
-        transactions: Vec<Transaction>,
-    },
+    Submit(Vec<Transaction>, chan::Sender<NonEmpty<net::SocketAddr>>),
     Shutdown(chan::Sender<()>),
 }
 
@@ -193,8 +192,17 @@ impl handle::Handle for Handle {
         self.subscriber.subscribe()
     }
 
-    fn submit(&mut self, txs: impl IntoIterator<Item = Transaction>) {
-        todo!()
+    fn submit(
+        &mut self,
+        txs: impl IntoIterator<Item = Transaction>,
+    ) -> Result<NonEmpty<net::SocketAddr>, handle::Error> {
+        let (transmit, receive) = chan::bounded(1);
+        self.commands.send(Command::Submit(
+            txs.into_iter().collect::<Vec<_>>(),
+            transmit,
+        ))?;
+
+        receive.recv().map_err(handle::Error::from)
     }
 
     fn rescan(&mut self, range: impl std::ops::RangeBounds<Height>) {
