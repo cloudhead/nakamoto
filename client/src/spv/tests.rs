@@ -333,3 +333,34 @@ fn prop_event_ordering(birth: Height, height: Height, seed: u64) -> TestResult {
 
     TestResult::passed()
 }
+
+#[test]
+fn test_tx_status_ordering() {
+    assert!(
+        TxStatus::Unconfirmed
+            < TxStatus::Acknowledged {
+                peer: ([0, 0, 0, 0], 0).into()
+            }
+    );
+    assert!(
+        TxStatus::Acknowledged {
+            peer: ([0, 0, 0, 0], 0).into()
+        } < TxStatus::Confirmed {
+            height: 0,
+            block: BlockHash::default(),
+        }
+    );
+    assert!(
+        TxStatus::Confirmed {
+            height: 0,
+            block: BlockHash::default(),
+        } < TxStatus::Reverted
+    );
+    assert!(
+        TxStatus::Reverted
+            < TxStatus::Stale {
+                replaced_by: Default::default(),
+                block: BlockHash::default()
+            }
+    );
+}

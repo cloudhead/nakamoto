@@ -71,7 +71,7 @@ impl Utxos {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum TxStatus {
     /// This is the initial state of a transaction after it has been announced by the
     /// client.
