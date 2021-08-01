@@ -157,7 +157,10 @@ pub enum Command {
         from: Bound<Height>,
         to: Bound<Height>,
     },
-    Submit(Vec<Transaction>, chan::Sender<NonEmpty<net::SocketAddr>>),
+    Submit(
+        Vec<Transaction>,
+        chan::Sender<Result<NonEmpty<net::SocketAddr>, client::CommandError>>,
+    ),
     Shutdown(chan::Sender<()>),
 }
 
@@ -202,7 +205,9 @@ impl handle::Handle for Handle {
             transmit,
         ))?;
 
-        receive.recv().map_err(handle::Error::from)
+        let peers = receive.recv()??;
+
+        Ok(peers)
     }
 
     fn rescan(&mut self, range: impl std::ops::RangeBounds<Height>) -> Result<(), handle::Error> {
@@ -343,7 +348,7 @@ impl<H: client::handle::Handle> Client<H> {
 
                             return Ok(());
                         }
-                        self.process_command(command);
+                        self.process_command(command)?;
                     } else {
                         todo!()
                     }
@@ -431,20 +436,22 @@ impl<H: client::handle::Handle> Client<H> {
     }
 
     /// Process user command.
-    fn process_command(&mut self, command: Command) {
+    fn process_command(&mut self, command: Command) -> Result<(), Error> {
         log::debug!("Received command: {:?}", command);
 
         match command {
             Command::Rescan { .. } => {
                 todo!();
             }
-            Command::Submit { .. } => {
-                todo!();
+            Command::Submit(txs, channel) => {
+                self.client
+                    .command(client::Command::SubmitTransactions(txs, channel))?;
             }
             Command::Shutdown(_) => {
                 // This command must be handled before this function is called.
                 unreachable! {}
             }
         }
+        Ok(())
     }
 }

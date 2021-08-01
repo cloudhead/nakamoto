@@ -6,7 +6,7 @@ use nakamoto_common::block::Height;
 use nakamoto_common::nonempty::NonEmpty;
 
 use super::event::Event;
-use crate::client::chan;
+use crate::client::{self, chan};
 
 use thiserror::Error;
 
@@ -16,6 +16,8 @@ pub enum Error {
     Disconnected,
     #[error("the operation timed out")]
     Timeout,
+    #[error("client command error: {0}")]
+    Client(#[from] client::CommandError),
 }
 
 impl From<chan::RecvError> for Error {

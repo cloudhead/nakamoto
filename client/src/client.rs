@@ -33,12 +33,12 @@ use nakamoto_p2p as p2p;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
+use nakamoto_p2p::protocol::Protocol;
 use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
-use nakamoto_p2p::protocol::{CommandError, Protocol};
 
 pub use nakamoto_p2p::event::{self, Event};
-pub use nakamoto_p2p::protocol::{Command, Mempool, Peer};
+pub use nakamoto_p2p::protocol::{Command, CommandError, Mempool, Peer};
 pub use nakamoto_p2p::reactor::Reactor;
 
 pub use crate::error::Error;
