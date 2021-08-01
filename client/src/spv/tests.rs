@@ -110,12 +110,13 @@ impl TestNode {
                     if self.peer < self.height {
                         log::info!(target: "test", "Sending filter headers to client..");
 
+                        let height = self.rng.u64(self.peer + 1..=self.height);
                         let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
-                            height: self.height,
-                            block_hash: self.chain[self.height as usize].block_hash(),
+                            height,
+                            block_hash: self.chain[height as usize].block_hash(),
                         });
                         self.client.events.send(event).unwrap();
-                        self.peer = self.height;
+                        self.peer = height;
                     }
 
                     if !requested_filters.is_empty() {
