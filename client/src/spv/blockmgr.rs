@@ -109,6 +109,11 @@ impl<H: client::handle::Handle> BlockManager<H> {
                     let mut utxos = self.utxos.lock()?;
                     self.watchlist.lock()?.match_transaction(tx, &mut utxos);
                 }
+                events.broadcast(Event::BlockProcessed {
+                    block,
+                    height,
+                    hash,
+                });
             }
         }
         Ok(())

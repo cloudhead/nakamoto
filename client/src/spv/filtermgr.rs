@@ -8,8 +8,10 @@ use bitcoin::util::bip158;
 use nakamoto_chain::filter::BlockFilter;
 use nakamoto_chain::store::Genesis as _;
 use nakamoto_common::block::{BlockHash, Height};
+use nakamoto_p2p as p2p;
 
 use crate::client;
+use crate::spv::event::Event;
 use crate::spv::{Error, Watchlist};
 
 #[allow(dead_code)]
@@ -83,7 +85,10 @@ impl<H: client::handle::Handle> FilterManager<H> {
     /// processes it and returns the result of trying to match it with the watchlist.
     ///
     /// Returns nothing if there was no match or filter to process.
-    pub fn process(&mut self) -> Result<Vec<(BlockHash, Height)>, bip158::Error> {
+    pub fn process(
+        &mut self,
+        events: &p2p::event::Broadcast<Event, Event>,
+    ) -> Result<Vec<(BlockHash, Height)>, bip158::Error> {
         assert!(self.sync.end >= self.sync.start);
         // TODO: For BIP32 wallets, add one more address to check, if the
         // matching one was the highest-index one.
@@ -91,9 +96,16 @@ impl<H: client::handle::Handle> FilterManager<H> {
 
         while let Some((filter, block_hash)) = self.pending.remove(&self.sync.start) {
             let watchlist = self.watchlist.lock().unwrap();
-            if watchlist.match_filter(&filter, &block_hash)? {
+            let matched = watchlist.match_filter(&filter, &block_hash)?;
+
+            if matched {
                 matches.push((block_hash, self.sync.start));
             }
+            events.broadcast(Event::FilterProcessed {
+                block: block_hash,
+                height: self.sync.start,
+                matched,
+            });
             self.sync.start += 1;
         }
         Ok(matches)

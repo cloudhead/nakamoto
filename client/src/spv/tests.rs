@@ -185,6 +185,13 @@ mod utils {
         }
         balance
     }
+
+    pub fn is_sorted<T>(data: &[T]) -> bool
+    where
+        T: Ord,
+    {
+        data.windows(2).all(|w| w[0] <= w[1])
+    }
 }
 
 #[quickcheck]
@@ -230,6 +237,92 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     }
     log::info!(target: "test", "Finished syncing");
     assert_eq!(balance, handle.utxos.lock().unwrap().balance());
+
+    // Shutdown.
+    handle.shutdown().unwrap();
+    client.shutdown().unwrap();
+
+    t.join().unwrap();
+    n.join().unwrap();
+
+    TestResult::passed()
+}
+
+#[ignore]
+#[quickcheck]
+fn prop_event_ordering(birth: Height, height: Height, seed: u64) -> TestResult {
+    if !(24..48).contains(&height) || birth >= height || birth == 0 {
+        return TestResult::discard();
+    }
+
+    let mc = mock::Client::new(Network::Regtest);
+    let client = mc.handle();
+    let mut rng = fastrand::Rng::with_seed(seed);
+    let node = TestNode::new(mc, height, rng.clone());
+    let mut watchlist = Watchlist::new();
+
+    let balance = utils::populate_watchlist(&mut watchlist, birth, &node.chain, &mut rng);
+
+    let config = Config { genesis: birth };
+    let txmgr = TxManager::new(node.client.handle(), watchlist, config);
+    let mut handle = txmgr.handle();
+    let events = handle.events();
+
+    let t = thread::spawn(|| txmgr.run().unwrap());
+    let n = thread::spawn(|| node.run());
+
+    let mut received = vec![];
+    let mut done = false;
+
+    while !done {
+        let event = events.recv().unwrap();
+        if let Event::Synced { height: synced } = event {
+            if synced == height {
+                done = true;
+            }
+        }
+        received.push(event.clone());
+    }
+    log::info!(target: "test", "Finished syncing");
+
+    let synced = received
+        .iter()
+        .filter_map(|e| {
+            if let Event::Synced { height } = e {
+                Some(height)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let filter_processed = received
+        .iter()
+        .filter_map(|e| {
+            if let Event::FilterProcessed { height, .. } = e {
+                Some(height)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    let block_processed = received
+        .iter()
+        .filter_map(|e| {
+            if let Event::BlockProcessed { height, .. } = e {
+                Some(height)
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    assert!(balance == 0 || !block_processed.is_empty());
+    assert!(!filter_processed.is_empty());
+    assert!(!synced.is_empty());
+
+    assert!(utils::is_sorted(&synced));
+    assert!(utils::is_sorted(&filter_processed));
+    assert!(utils::is_sorted(&block_processed));
 
     // Shutdown.
     handle.shutdown().unwrap();

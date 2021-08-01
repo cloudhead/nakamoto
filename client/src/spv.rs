@@ -227,6 +227,7 @@ impl handle::Handle for Handle {
 
 #[allow(missing_docs)]
 pub struct Config {
+    // TODO: Handle genesis that is further than chain tip.
     genesis: Height,
 }
 
@@ -373,7 +374,7 @@ impl<H: client::handle::Handle> Client<H> {
 
         // TODO: Deal with unwrap.
 
-        let matches = self.filtermgr.process().unwrap();
+        let matches = self.filtermgr.process(&self.publisher).unwrap();
         for (block_hash, height) in matches {
             log::info!("Filter matched for block #{}", height);
             log::info!("Fetching block #{} ({})", height, block_hash);
