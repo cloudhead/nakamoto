@@ -9,17 +9,26 @@ use super::TxStatus;
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// A block was discovered that extends the main chain, and its transactions
-    /// where scanned. This event usually precedes [`Event::TxStatusChanged`] events.
-    BlockConnected {
-        hash: BlockHash,
-        height: Height,
-        block: Block,
-    },
+    /// A block was discovered that extends the main chain.
+    BlockConnected { hash: BlockHash, height: Height },
     /// One of the blocks of the main chain was disconnected, due to a re-org.
     /// These events will fire from the latest block to the earliest.
     /// Mark all transactions belonging to this block as *unconfirmed*.
     BlockDisconnected { hash: BlockHash },
+    /// A block's transactions where scanned for matching inputs and outputs.
+    /// This event usually precedes [`Event::TxStatusChanged`] events.
+    BlockProcessed {
+        hash: BlockHash,
+        height: Height,
+        block: Block,
+    },
+    /// A filter was processed. If it matched any of the scripts in the watchlist,
+    /// the corresponding block was scheduled for download.
+    FilterProcessed {
+        block: BlockHash,
+        height: Height,
+        matched: bool,
+    },
     /// The status of a transaction has changed.
     TxStatusChanged { txid: Txid, status: TxStatus },
     /// A transaction output has been redeemed in a block. One of the registered UTXOs was spent.
@@ -44,10 +53,22 @@ pub enum Event {
 impl fmt::Display for Event {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::BlockConnected { hash, height, .. } => {
+            Self::BlockConnected { hash, height } => {
                 write!(fmt, "block {} connected at height {}", hash, height)
             }
             Self::BlockDisconnected { hash } => write!(fmt, "block {} disconnected", hash),
+            Self::BlockProcessed { hash, height, .. } => {
+                write!(fmt, "block {} processed at height {}", hash, height)
+            }
+            Self::FilterProcessed {
+                height, matched, ..
+            } => {
+                write!(
+                    fmt,
+                    "filter processed at height {} (match={})",
+                    height, matched
+                )
+            }
             Self::TxStatusChanged { txid, status } => {
                 write!(fmt, "transaction {} status changed: {}", txid, status)
             }
