@@ -17,7 +17,7 @@ pub mod watchlist;
 mod tests;
 
 use std::collections::HashMap;
-use std::ops::{Deref, DerefMut};
+use std::ops::{Bound, Deref, DerefMut};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::{fmt, net, time};
 
@@ -154,8 +154,8 @@ impl<'a> From<PoisonError<MutexGuard<'a, Utxos>>> for Error {
 #[derive(Debug, Clone)]
 pub enum Command {
     Rescan {
-        from: Option<Height>,
-        to: Option<Height>,
+        from: Bound<Height>,
+        to: Bound<Height>,
     },
     Submit(Vec<Transaction>, chan::Sender<NonEmpty<net::SocketAddr>>),
     Shutdown(chan::Sender<()>),
@@ -205,8 +205,21 @@ impl handle::Handle for Handle {
         receive.recv().map_err(handle::Error::from)
     }
 
-    fn rescan(&mut self, range: impl std::ops::RangeBounds<Height>) {
-        todo!()
+    fn rescan(&mut self, range: impl std::ops::RangeBounds<Height>) -> Result<(), handle::Error> {
+        // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
+        let from = match range.start_bound() {
+            Bound::Included(n) => Bound::Included(*n),
+            Bound::Excluded(n) => Bound::Included(*n),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        let to = match range.end_bound() {
+            Bound::Included(n) => Bound::Included(*n),
+            Bound::Excluded(n) => Bound::Included(*n),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        self.commands
+            .send(Command::Rescan { from, to })
+            .map_err(handle::Error::from)
     }
 
     fn watch_address(&self, address: bitcoin::Address) -> bool {
@@ -422,8 +435,12 @@ impl<H: client::handle::Handle> Client<H> {
         log::debug!("Received command: {:?}", command);
 
         match command {
-            Command::Rescan { .. } => {}
-            Command::Submit { .. } => {}
+            Command::Rescan { .. } => {
+                todo!();
+            }
+            Command::Submit { .. } => {
+                todo!();
+            }
             Command::Shutdown(_) => {
                 // This command must be handled before this function is called.
                 unreachable! {}

@@ -55,7 +55,7 @@ pub trait Handle {
     /// Subscribe to SPV-related events.
     fn events(&mut self) -> chan::Receiver<Event>;
     /// Rescan the blockchain for matching addresses and outputs.
-    fn rescan(&mut self, range: impl RangeBounds<Height>);
+    fn rescan(&mut self, range: impl RangeBounds<Height>) -> Result<(), Error>;
     /// Watch an address.
     ///
     /// Returns `true` if the address was added to the watch list.
