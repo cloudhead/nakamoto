@@ -334,6 +334,46 @@ fn prop_event_ordering(birth: Height, height: Height, seed: u64) -> TestResult {
 }
 
 #[test]
+fn test_client_dropped() {
+    let mc = mock::Client::new(Network::Regtest);
+    let client = mc.handle();
+    let rng = fastrand::Rng::with_seed(1);
+    let node = TestNode::new(mc, 42, rng);
+    let watchlist = Watchlist::new();
+    let config = Config { genesis: 0 };
+    let txmgr = TxManager::new(node.client.handle(), watchlist, config);
+
+    let t = thread::spawn(|| txmgr.run());
+    let n = thread::spawn(|| node.run());
+
+    client.shutdown().unwrap();
+    n.join().unwrap();
+
+    assert!(matches!(t.join().unwrap(), Err(Error::Disconnected)));
+}
+
+#[test]
+fn test_handle_shutdown() {
+    let mc = mock::Client::new(Network::Regtest);
+    let client = mc.handle();
+    let rng = fastrand::Rng::with_seed(1);
+    let node = TestNode::new(mc, 42, rng);
+    let watchlist = Watchlist::new();
+    let config = Config { genesis: 0 };
+    let txmgr = TxManager::new(node.client.handle(), watchlist, config);
+    let handle = txmgr.handle();
+
+    let t = thread::spawn(|| txmgr.run());
+    let n = thread::spawn(|| node.run());
+
+    handle.shutdown().unwrap();
+    assert_eq!(t.join().unwrap().ok(), Some(()));
+
+    client.shutdown().unwrap();
+    n.join().unwrap();
+}
+
+#[test]
 fn test_tx_status_ordering() {
     assert!(
         TxStatus::Unconfirmed

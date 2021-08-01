@@ -130,6 +130,9 @@ pub enum Error {
 
     #[error("client handle error: {0}")]
     Client(#[from] client::handle::Error),
+
+    #[error("client channel is disconnected")]
+    Disconnected,
 }
 
 impl<'a> From<PoisonError<MutexGuard<'a, Mempool>>> for Error {
@@ -279,12 +282,18 @@ pub struct Config {
 #[allow(dead_code)]
 pub struct Client<H: client::handle::Handle> {
     client: H,
-    handle: Handle,
     publisher: p2p::event::Broadcast<Event, Event>,
     control: chan::Receiver<Command>,
     mempool: Arc<Mutex<Mempool>>,
     config: Config,
     height: Height,
+
+    // Attributes accessible via a [`Handle`].
+    commands: chan::Sender<Command>,
+    subscriber: p2p::event::Subscriber<Event>,
+    timeout: time::Duration,
+    watchlist: Arc<Mutex<Watchlist>>,
+    utxos: Arc<Mutex<Utxos>>,
 
     blockmgr: BlockManager<H>,
     filtermgr: FilterManager<H>,
@@ -302,22 +311,19 @@ impl<H: client::handle::Handle> Client<H> {
         let utxos = Arc::new(Mutex::new(Utxos::new()));
         let blockmgr = BlockManager::new(client.clone(), utxos.clone(), watchlist.clone());
         let filtermgr = FilterManager::new(height, client.clone(), watchlist.clone());
-        let handle = Handle {
-            commands,
-            subscriber,
-            timeout,
-            watchlist,
-            utxos,
-        };
 
         Self {
             client,
-            handle,
             mempool,
             publisher,
             control,
             config,
             height,
+            commands,
+            subscriber,
+            timeout,
+            watchlist,
+            utxos,
             blockmgr,
             filtermgr,
         }
@@ -336,9 +342,14 @@ impl<H: client::handle::Handle> Client<H> {
                 recv(events) -> event => {
                     // Forward to event subscribers.
                     if let Ok(event) = event {
-                        self.process_event(event);
+                        // TODO: Think about how other errors might be handled.
+                        if let Err(Error::Disconnected) = self.process_event(event) {
+                            return Err(Error::Disconnected);
+                        }
                     } else {
-                        todo!()
+                        // If the events channel disconnects, it means our backing client
+                        // is gone, and there's no point in continuing.
+                        return Err(Error::Disconnected);
                     }
                 }
                 recv(self.control) -> command => {
@@ -347,21 +358,25 @@ impl<H: client::handle::Handle> Client<H> {
                             break;
                         }
                     } else {
-                        todo!()
+                        unreachable! {
+                            // There is no way for this to happen, since `self` holds one of the
+                            // [`chan::Sender`] references, the channel cannot disconnect
+                            // unless this loop exits.
+                        }
                     }
                 }
                 recv(filters) -> msg => {
                     if let Ok((filter, block_hash, height)) = msg {
                         self.process_filter(filter, block_hash, height)?;
                     } else {
-                        todo!()
+                        return Err(Error::Disconnected);
                     }
                 }
                 recv(blocks) -> msg => {
                     if let Ok((block, height)) = msg {
                         self.process_block(block, height)?;
                     } else {
-                        todo!()
+                        return Err(Error::Disconnected);
                     }
                 }
             }
@@ -378,13 +393,19 @@ impl<H: client::handle::Handle> Client<H> {
 
     /// Create a new handle to the SPV client.
     pub fn handle(&self) -> Handle {
-        self.handle.clone()
+        Handle {
+            commands: self.commands.clone(),
+            subscriber: self.subscriber.clone(),
+            timeout: self.timeout,
+            watchlist: self.watchlist.clone(),
+            utxos: self.utxos.clone(),
+        }
     }
 
     // PRIVATE METHODS /////////////////////////////////////////////////////////
 
     /// Process client event.
-    fn process_event(&mut self, event: client::Event) {
+    fn process_event(&mut self, event: client::Event) -> Result<(), Error> {
         log::debug!("Received event: {:?}", event);
 
         use p2p::protocol::spvmgr;
@@ -394,8 +415,9 @@ impl<H: client::handle::Handle> Client<H> {
             block_hash,
         }) = event
         {
-            self.filtermgr.headers_imported(height, block_hash).unwrap();
+            self.filtermgr.headers_imported(height, block_hash)?;
         }
+        Ok(())
     }
 
     fn process_filter(
