@@ -151,6 +151,12 @@ impl<'a> From<PoisonError<MutexGuard<'a, Utxos>>> for Error {
 }
 
 #[allow(missing_docs)]
+pub enum ControlFlow {
+    Break,
+    Continue,
+}
+
+#[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub enum Command {
     Rescan {
@@ -337,18 +343,9 @@ impl<H: client::handle::Handle> Client<H> {
                 }
                 recv(self.control) -> command => {
                     if let Ok(command) = command {
-                        if let Command::Shutdown(reply) = command {
-                            // Drain incoming block queue before shutting down.
-                            // We don't drain the other channels, as they may create
-                            // more work.
-                            for (blk, h) in blocks.try_iter() {
-                                self.process_block(blk, h)?;
-                            }
-                            reply.send(()).ok();
-
-                            return Ok(());
+                        if let ControlFlow::Break = self.process_command(command, &blocks)? {
+                            break;
                         }
-                        self.process_command(command)?;
                     } else {
                         todo!()
                     }
@@ -376,6 +373,7 @@ impl<H: client::handle::Handle> Client<H> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Create a new handle to the SPV client.
@@ -436,7 +434,11 @@ impl<H: client::handle::Handle> Client<H> {
     }
 
     /// Process user command.
-    fn process_command(&mut self, command: Command) -> Result<(), Error> {
+    fn process_command(
+        &mut self,
+        command: Command,
+        blocks: &chan::Receiver<(Block, Height)>,
+    ) -> Result<ControlFlow, Error> {
         log::debug!("Received command: {:?}", command);
 
         match command {
@@ -447,11 +449,18 @@ impl<H: client::handle::Handle> Client<H> {
                 self.client
                     .command(client::Command::SubmitTransactions(txs, channel))?;
             }
-            Command::Shutdown(_) => {
-                // This command must be handled before this function is called.
-                unreachable! {}
+            Command::Shutdown(reply) => {
+                // Drain incoming block queue before shutting down.
+                // We don't drain the other channels, as they may create
+                // more work.
+                for (blk, h) in blocks.try_iter() {
+                    self.process_block(blk, h)?;
+                }
+                reply.send(()).ok();
+
+                return Ok(ControlFlow::Break);
             }
         }
-        Ok(())
+        Ok(ControlFlow::Continue)
     }
 }
