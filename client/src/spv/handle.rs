@@ -1,6 +1,6 @@
 use std::ops::RangeBounds;
 
-use bitcoin::{Address, BlockHash, ScriptHash, Transaction};
+use bitcoin::{Address, BlockHash, Script, Transaction};
 use nakamoto_common::block::Height;
 
 use super::event::Event;
@@ -54,15 +54,15 @@ pub trait Handle {
     /// Watch an address.
     ///
     /// Returns `true` if the address was added to the watch list.
-    fn watch_address(address: Address) -> bool;
+    fn watch_address(&self, address: Address) -> bool;
     /// Watch scripts.
     ///
     /// Returns `true` if the script was added to the watch list.
-    fn watch_scripts(scripts: impl IntoIterator<Item = ScriptHash>) -> bool;
+    fn watch_scripts(&self, scripts: impl IntoIterator<Item = Script>);
     /// Stop watching an address.
-    fn unwatch_address(address: &Address);
+    fn unwatch_address(&self, address: &Address) -> bool;
     /// Stop watching scripts.
-    fn unwatch_scripts(scripts: impl Iterator<Item = ScriptHash>);
+    fn unwatch_scripts<'a>(&self, scripts: impl IntoIterator<Item = &'a Script> + 'a);
     /// Shutdown the transaction manager. Blocks until ongoing tasks have completed.
     fn shutdown(self) -> Result<(), Error>;
 }

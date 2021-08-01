@@ -27,8 +27,8 @@ impl Watchlist {
         }
     }
 
-    pub fn insert_script(&mut self, script: Script) -> bool {
-        self.scripts.insert(script)
+    pub fn insert_scripts(&mut self, scripts: impl IntoIterator<Item = Script>) {
+        self.scripts.extend(scripts)
     }
 
     pub fn insert_transaction(&mut self, _tx: &Transaction) -> bool {
@@ -44,6 +44,16 @@ impl Watchlist {
         self.addresses
             .insert(address.script_pubkey(), address)
             .is_none()
+    }
+
+    pub fn remove_address(&mut self, address: &Address) -> bool {
+        self.addresses.remove(&address.script_pubkey()).is_some()
+    }
+
+    pub fn remove_scripts<'a>(&mut self, scripts: impl IntoIterator<Item = &'a Script> + 'a) {
+        for script in scripts {
+            self.scripts.remove(&script);
+        }
     }
 
     pub fn is_empty(&self) -> bool {

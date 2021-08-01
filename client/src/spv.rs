@@ -201,20 +201,32 @@ impl handle::Handle for Handle {
         todo!()
     }
 
-    fn watch_address(address: bitcoin::Address) -> bool {
-        todo!()
+    fn watch_address(&self, address: bitcoin::Address) -> bool {
+        self.watchlist
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert_address(address)
     }
 
-    fn watch_scripts(scripts: impl IntoIterator<Item = bitcoin::ScriptHash>) -> bool {
-        todo!()
+    fn watch_scripts(&self, scripts: impl IntoIterator<Item = bitcoin::Script>) {
+        self.watchlist
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert_scripts(scripts)
     }
 
-    fn unwatch_address(address: &bitcoin::Address) {
-        todo!()
+    fn unwatch_address(&self, address: &bitcoin::Address) -> bool {
+        self.watchlist
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove_address(address)
     }
 
-    fn unwatch_scripts(scripts: impl Iterator<Item = bitcoin::ScriptHash>) {
-        todo!()
+    fn unwatch_scripts<'a>(&self, scripts: impl IntoIterator<Item = &'a bitcoin::Script> + 'a) {
+        self.watchlist
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove_scripts(scripts)
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {

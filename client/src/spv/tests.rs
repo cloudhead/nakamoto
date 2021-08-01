@@ -36,8 +36,7 @@
 //! 7. The system is *injective*, in the sense that for every input there is a unique, distinct
 //!    output.
 //!
-use std::net;
-use std::thread;
+use std::{iter, net, thread};
 
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
@@ -171,7 +170,7 @@ mod utils {
             if rng.bool() {
                 // Randomly pick a transaction and add its output to the watchlist.
                 let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
-                watchlist.insert_script(tx.output[0].script_pubkey.clone());
+                watchlist.insert_scripts(iter::once(tx.output[0].script_pubkey.clone()));
                 balance += tx.output[0].value;
 
                 log::debug!(
