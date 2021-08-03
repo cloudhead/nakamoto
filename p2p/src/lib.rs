@@ -7,14 +7,14 @@
 //! * [`SyncManager`][syncmgr]: handles block header sync
 //! * [`ConnectionManager`][connmgr]: handles peer connections
 //! * [`PingManager`][pingmgr]: handles pings and pongs
-//! * [`SpvManager`][spvmgr]: handles compact filter sync
+//! * [`FilterManager`][cbfmgr]: handles compact block filter sync
 //! * [`PeerManager`][peermgr]: handles peer handshake
 //!
 //! [addrmgr]: crate::protocol::addrmgr::AddressManager
 //! [syncmgr]: crate::protocol::syncmgr::SyncManager
 //! [connmgr]: crate::protocol::connmgr::ConnectionManager
 //! [pingmgr]: crate::protocol::pingmgr::PingManager
-//! [spvmgr]: crate::protocol::spvmgr::SpvManager
+//! [cbfmgr]: crate::protocol::cbfmgr::FilterManager
 //! [peermgr]: crate::protocol::peermgr::PeerManager
 //!
 //! Nakamoto's implementation of the peer-to-peer protocol(s) is *I/O-free*. The

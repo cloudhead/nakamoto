@@ -110,7 +110,7 @@ impl Peer<Protocol> {
             target: name,
             // We don't actually have the required services, but we pretend to
             // for testing purposes.
-            services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
+            services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
             ..Config::default()
         };
         Self::config(ip, headers, cfheaders, peers, cfg, rng)
@@ -349,7 +349,7 @@ pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Pr
             (
                 a,
                 Source::Dns,
-                spvmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
+                cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
             )
         })
         .collect::<Vec<_>>();
@@ -376,7 +376,7 @@ pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Pr
                 // These nodes don't need to try connecting to other nodes.
                 target_outbound_peers: 0,
                 // These are full nodes.
-                services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
+                services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
                 ..Config::default()
             };
             Peer::config(addr.ip(), vec![], vec![], peers, cfg, rng.clone())

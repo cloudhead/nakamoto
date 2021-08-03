@@ -35,7 +35,7 @@ use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::protocol::Protocol;
 use nakamoto_p2p::protocol::{self, Link};
-use nakamoto_p2p::protocol::{connmgr, peermgr, spvmgr, syncmgr};
+use nakamoto_p2p::protocol::{cbfmgr, connmgr, peermgr, syncmgr};
 
 pub use nakamoto_p2p::event::{self, Event};
 pub use nakamoto_p2p::protocol::{Command, CommandError, Mempool, Peer};
@@ -172,7 +172,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             None
         });
         let (filters_pub, filters) = event::broadcast(|e| {
-            if let Event::SpvManager(spvmgr::Event::FilterReceived {
+            if let Event::FilterManager(cbfmgr::Event::FilterReceived {
                 filter,
                 block_hash,
                 height,

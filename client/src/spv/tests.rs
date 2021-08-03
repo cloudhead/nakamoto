@@ -10,7 +10,7 @@
 //! 2. The final output is invariant to the granularity of the the filter header chain updates.
 //!
 //!    Rationale: Filter header updates are received via the `cfheaders` message. These messages
-//!    can carry anywhere between 1 and [`nakamoto_p2p::protocol::spvmgr::MAX_MESSAGE_CFHEADERS`]
+//!    can carry anywhere between 1 and [`nakamoto_p2p::protocol::cbfmgr::MAX_MESSAGE_CFHEADERS`]
 //!    headers. The system should handle many small messages the same way as it handles a few
 //!    large ones.
 //!
@@ -47,7 +47,7 @@ use nakamoto_test::block::gen;
 use nakamoto_test::logger;
 
 use super::handle::Handle as _;
-use super::p2p::protocol::spvmgr;
+use super::p2p::protocol::cbfmgr;
 use super::*;
 
 use crate::handle::Handle as _;
@@ -110,7 +110,7 @@ impl TestNode {
                         log::info!(target: "test", "Sending filter headers to client..");
 
                         let height = self.rng.u64(self.peer + 1..=self.height);
-                        let event = client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
+                        let event = client::Event::FilterManager(cbfmgr::Event::FilterHeadersImported {
                             height,
                             block_hash: self.chain[height as usize].block_hash(),
                         });

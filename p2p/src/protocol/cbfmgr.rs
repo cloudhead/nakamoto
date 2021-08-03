@@ -1,8 +1,7 @@
-//! Simple Payment Verification (SPV) Manager.
+//! Compact Block Filter Manager.
 //!
 //! Manages BIP 157/8 compact block filter sync.
 //!
-
 use std::ops::{Range, RangeInclusive};
 
 use thiserror::Error;
@@ -24,7 +23,7 @@ use super::{Link, PeerId, Timeout};
 /// Idle timeout.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 
-/// Services required from peers for SPV functionality.
+/// Services required from peers for BIP 158 functionality.
 pub const REQUIRED_SERVICES: ServiceFlags = ServiceFlags::COMPACT_FILTERS;
 
 /// Maximum filter headers to be expected in a message.
@@ -33,7 +32,7 @@ pub const MAX_MESSAGE_CFHEADERS: usize = 2000;
 /// Maximum filters to be expected in a message.
 pub const MAX_MESSAGE_CFILTERS: usize = 1000;
 
-/// An error originating in the SPV manager.
+/// An error originating in the CBF manager.
 #[derive(Error, Debug)]
 pub enum Error {
     /// The request was ignored. This happens if we're not able to fulfill the request.
@@ -57,7 +56,7 @@ pub enum Error {
     Filters(#[from] filter::Error),
 }
 
-/// An event originating in the SPV manager.
+/// An event originating in the CBF manager.
 #[derive(Debug, Clone)]
 pub enum Event {
     /// Filter was received and validated.
@@ -170,9 +169,9 @@ pub trait SyncFilters {
     fn send_cfilter(&self, addr: PeerId, filter: CFilter);
 }
 
-/// The ability to emit SPV related events.
+/// The ability to emit CBF related events.
 pub trait Events {
-    /// Emit an SPV-related event.
+    /// Emit an CBF-related event.
     fn event(&self, event: Event);
 }
 
@@ -187,7 +186,7 @@ pub enum GetFiltersError {
     NotConnected,
 }
 
-/// SPV manager configuration.
+/// CBF manager configuration.
 #[derive(Debug)]
 pub struct Config {
     /// How long to wait for a response from a peer.
@@ -202,7 +201,7 @@ impl Default for Config {
     }
 }
 
-/// A SPV peer.
+/// A CBF peer.
 #[derive(Debug)]
 struct Peer {
     height: Height,
@@ -211,7 +210,7 @@ struct Peer {
 
 /// A compact block filter manager.
 #[derive(Debug)]
-pub struct SpvManager<F, U> {
+pub struct FilterManager<F, U> {
     config: Config,
     peers: HashMap<PeerId, Peer>,
     filters: F,
@@ -223,7 +222,7 @@ pub struct SpvManager<F, U> {
     rng: fastrand::Rng,
 }
 
-impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
+impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
@@ -239,7 +238,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         }
     }
 
-    /// Initialize the spv manager. Should only be called once.
+    /// Initialize the manager. Should only be called once.
     pub fn initialize<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
         self.idle(now, tree);
     }
@@ -433,10 +432,9 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         let headers = self.filters.get_headers(start_height..stop_height);
         if !headers.is_empty() {
             let hashes = headers.iter().map(|(hash, _)| *hash);
-            let prev_header = self
-                .filters
-                .get_prev_header(start_height)
-                .expect("SpvManager::received_getcfheaders: all headers up to the tip must exist");
+            let prev_header = self.filters.get_prev_header(start_height).expect(
+                "CompactFilterManager::received_getcfheaders: all headers up to the tip must exist",
+            );
 
             self.upstream.send_cfheaders(
                 from,
@@ -499,7 +497,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> SpvManager<F, U> {
         let prev_header = self
             .filters
             .get_prev_header(height)
-            .expect("SpvManager::received_cfilter: all headers up to the tip must exist");
+            .expect("FilterManager::received_cfilter: all headers up to the tip must exist");
         let filter = BlockFilter::new(&msg.filter);
 
         if filter.filter_header(&prev_header) != header {
@@ -721,12 +719,12 @@ mod tests {
         };
         let (sender, _receiver) = chan::unbounded();
 
-        let mut spvmgr = {
+        let mut cbfmgr = {
             let rng = fastrand::Rng::new();
             let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
             let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
 
-            SpvManager::new(Config::default(), rng, cache, upstream)
+            FilterManager::new(Config::default(), rng, cache, upstream)
         };
 
         // Import the headers.
@@ -746,12 +744,12 @@ mod tests {
                     .map(|h| FilterHash::from_hex(h).unwrap())
                     .collect(),
             };
-            spvmgr.inflight.insert(msg.stop_hash, time);
-            spvmgr.received_cfheaders(peer, msg, &tree, time).unwrap();
+            cbfmgr.inflight.insert(msg.stop_hash, time);
+            cbfmgr.received_cfheaders(peer, msg, &tree, time).unwrap();
         }
 
-        assert_eq!(spvmgr.filters.height(), 15);
-        spvmgr.filters.verify(network).unwrap();
+        assert_eq!(cbfmgr.filters.height(), 15);
+        cbfmgr.filters.verify(network).unwrap();
 
         let cfilters = FILTERS
             .iter()
@@ -764,7 +762,7 @@ mod tests {
 
         // Now import the filters.
         for msg in cfilters {
-            spvmgr.received_cfilter(peer, msg, &tree).unwrap();
+            cbfmgr.received_cfilter(peer, msg, &tree).unwrap();
         }
     }
 

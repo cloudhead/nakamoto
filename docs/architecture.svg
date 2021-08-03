@@ -335,13 +335,13 @@
             <div xmlns="http://www.w3.org/1999/xhtml" style="display: flex; align-items: unsafe center; justify-content: unsafe center; width: 131px; height: 1px; padding-top: 575px; margin-left: 71px;">
               <div style="box-sizing: border-box; font-size: 0; text-align: center; ">
                 <div style="display: inline-block; font-size: 12px; color: #FFFFFF; line-height: 1.2; pointer-events: all; white-space: normal; word-wrap: normal; ">
-                  SpvManager
+                  FilterManager
                 </div>
               </div>
             </div>
           </foreignObject>
           <text x="137" y="579" fill="#FFFFFF" font-size="12px" text-anchor="middle">
-            SpvManager
+            FilterManager
           </text>
         </switch>
       </g>

@@ -4,24 +4,24 @@ use crossbeam_channel as chan;
 use log::*;
 
 pub mod addrmgr;
+pub mod cbfmgr;
 pub mod channel;
 pub mod connmgr;
 pub mod invmgr;
 pub mod peermgr;
 pub mod pingmgr;
-pub mod spvmgr;
 pub mod syncmgr;
 
 #[cfg(test)]
 mod tests;
 
 use addrmgr::AddressManager;
+use cbfmgr::FilterManager;
 use channel::Channel;
 use connmgr::ConnectionManager;
 use invmgr::InventoryManager;
 use peermgr::PeerManager;
 use pingmgr::PingManager;
-use spvmgr::SpvManager;
 use syncmgr::SyncManager;
 
 use crate::event::Event;
@@ -140,8 +140,8 @@ pub enum CommandError {
     NotConnected,
 }
 
+pub use cbfmgr::GetFiltersError;
 pub use peermgr::Peer;
-pub use spvmgr::GetFiltersError;
 
 /// A protocol input event, parametrized over the network message type.
 /// These are input events generated outside of the protocol.
@@ -389,8 +389,8 @@ pub struct Protocol<T, F, P> {
     connmgr: ConnectionManager<Upstream, AddressManager<P, Upstream>>,
     /// Ping manager.
     pingmgr: PingManager<Upstream>,
-    /// SPV (Simply Payment Verification) manager.
-    spvmgr: SpvManager<F, Upstream>,
+    /// CBF (Compact Block Filter) manager.
+    cbfmgr: FilterManager<F, Upstream>,
     /// Peer manager.
     peermgr: PeerManager<Upstream>,
     /// Inventory manager.
@@ -563,13 +563,13 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 domains: domains.clone(),
                 required_services,
                 // Include services required by all sub-protocols.
-                preferred_services: syncmgr::REQUIRED_SERVICES | spvmgr::REQUIRED_SERVICES,
+                preferred_services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
             },
             rng.clone(),
         );
         let pingmgr = PingManager::new(ping_timeout, rng.clone(), upstream.clone());
-        let spvmgr = SpvManager::new(
-            spvmgr::Config::default(),
+        let cbfmgr = FilterManager::new(
+            cbfmgr::Config::default(),
             rng.clone(),
             filters,
             upstream.clone(),
@@ -609,7 +609,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             syncmgr,
             connmgr,
             pingmgr,
-            spvmgr,
+            cbfmgr,
             peermgr,
             invmgr,
             last_tick: LocalTime::default(),
@@ -743,7 +743,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         .peer_negotiated(&addr, peer.services, peer.conn.link, now);
                     self.pingmgr.peer_negotiated(peer.address(), now);
                     self.connmgr.peer_negotiated(peer.address(), peer.services);
-                    self.spvmgr.peer_negotiated(
+                    self.cbfmgr.peer_negotiated(
                         peer.address(),
                         peer.height,
                         peer.services,
@@ -781,15 +781,15 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         // By rolling back the filter headers, we will trigger
                         // a re-download of the missing headers, which should result
                         // in us having the new headers.
-                        self.spvmgr.rollback(reverted.len()).unwrap();
-                        self.spvmgr.sync(&self.tree, now);
+                        self.cbfmgr.rollback(reverted.len()).unwrap();
+                        self.cbfmgr.sync(&self.tree, now);
                     }
                     Ok(ImportResult::TipChanged(_, _, _, _)) => {
                         if !self.syncmgr.is_syncing() {
                             // Trigger a filter sync, since we're going to have to catch up on the
                             // new block header(s). This is not required, but reduces latency.
                             // We only do this at the tip of the header chain.
-                            self.spvmgr.sync(&self.tree, now);
+                            self.cbfmgr.sync(&self.tree, now);
                         }
                     }
                     _ => {}
@@ -814,24 +814,24 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .received_inv(addr, inventory, &self.clock, &self.tree);
             }
             NetworkMessage::CFHeaders(msg) => {
-                match self.spvmgr.received_cfheaders(&addr, msg, &self.tree, now) {
-                    Err(spvmgr::Error::InvalidMessage { reason, .. }) => {
+                match self.cbfmgr.received_cfheaders(&addr, msg, &self.tree, now) {
+                    Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
                         self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
                     }
                     _ => {}
                 }
             }
             NetworkMessage::GetCFHeaders(msg) => {
-                match self.spvmgr.received_getcfheaders(&addr, msg, &self.tree) {
-                    Err(spvmgr::Error::InvalidMessage { reason, .. }) => {
+                match self.cbfmgr.received_getcfheaders(&addr, msg, &self.tree) {
+                    Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
                         self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
                     }
                     _ => {}
                 }
             }
             NetworkMessage::CFilter(msg) => {
-                match self.spvmgr.received_cfilter(&addr, msg, &self.tree) {
-                    Err(spvmgr::Error::InvalidMessage { reason, .. }) => {
+                match self.cbfmgr.received_cfilter(&addr, msg, &self.tree) {
+                    Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
                         self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
                     }
                     _ => {}
@@ -875,7 +875,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         self.addrmgr.initialize(time);
         self.syncmgr.initialize(time, &self.tree);
         self.connmgr.initialize(time, &mut self.addrmgr);
-        self.spvmgr.initialize(time, &self.tree);
+        self.cbfmgr.initialize(time, &self.tree);
     }
 
     /// Process the next input and advance the state machine by one step.
@@ -905,7 +905,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             Input::Disconnected(addr, reason) => {
                 info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
 
-                self.spvmgr.peer_disconnected(&addr);
+                self.cbfmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr, reason);
                 self.connmgr
@@ -1000,7 +1000,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     debug!(target: self.target,
                         "Received command: GetFilters({}...{})", range.start(), range.end());
 
-                    let result = self.spvmgr.get_cfilters(range, &self.tree);
+                    let result = self.cbfmgr.get_cfilters(range, &self.tree);
                     reply.send(result).ok();
                 }
                 Command::GetBlock(hash, reply) => {
@@ -1056,7 +1056,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.pingmgr.received_tick(local_time);
                 self.addrmgr.received_tick(local_time);
                 self.peermgr.received_tick(local_time);
-                self.spvmgr.received_tick(local_time, &self.tree);
+                self.cbfmgr.received_tick(local_time, &self.tree);
             }
         };
     }

@@ -408,9 +408,9 @@ impl<H: client::handle::Handle> Client<H> {
     fn process_event(&mut self, event: client::Event) -> Result<(), Error> {
         log::debug!("Received event: {:?}", event);
 
-        use p2p::protocol::spvmgr;
+        use p2p::protocol::cbfmgr;
 
-        if let client::Event::SpvManager(spvmgr::Event::FilterHeadersImported {
+        if let client::Event::FilterManager(cbfmgr::Event::FilterHeadersImported {
             height,
             block_hash,
         }) = event

@@ -22,7 +22,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 use crate::protocol::{DisconnectReason, Event, Out, PeerId};
 
 use super::network::Network;
-use super::{addrmgr, connmgr, invmgr, message, peermgr, pingmgr, spvmgr, syncmgr, Link, Locators};
+use super::{addrmgr, cbfmgr, connmgr, invmgr, message, peermgr, pingmgr, syncmgr, Link, Locators};
 
 /// Used to construct a protocol output.
 #[derive(Debug, Clone)]
@@ -230,7 +230,7 @@ impl peermgr::Handshake for Channel {
 }
 
 #[allow(unused_variables)]
-impl spvmgr::SyncFilters for Channel {
+impl cbfmgr::SyncFilters for Channel {
     fn get_cfheaders(
         &self,
         addr: PeerId,
@@ -288,17 +288,17 @@ impl invmgr::Inventories for Channel {
     }
 }
 
-impl spvmgr::Events for Channel {
-    fn event(&self, event: spvmgr::Event) {
+impl cbfmgr::Events for Channel {
+    fn event(&self, event: cbfmgr::Event) {
         debug!(target: self.target, "[spv] {}", &event);
 
         match event {
-            spvmgr::Event::FilterHeadersImported { height, .. } => {
+            cbfmgr::Event::FilterHeadersImported { height, .. } => {
                 info!(target: self.target, "Filter height = {}", height);
             }
             _ => {}
         }
 
-        self.event(Event::SpvManager(event));
+        self.event(Event::FilterManager(event));
     }
 }

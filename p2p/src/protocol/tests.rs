@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use log::*;
 
-use super::{addrmgr, connmgr, peermgr, pingmgr, spvmgr, syncmgr};
+use super::{addrmgr, cbfmgr, connmgr, peermgr, pingmgr, syncmgr};
 use super::{
     chan, message, AdjustedTime, BlockHash, BlockHeader, BlockTree as _, Command, Config,
     DisconnectReason, Event, HashSet, Height, Input, Link, LocalDuration, LocalTime, Network,
