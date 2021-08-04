@@ -1,21 +1,25 @@
 //! Inventory manager.
 //! Takes care of sending and fetching inventories.
 use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
-use bitcoin::{Transaction, Txid};
+use bitcoin::{Block, BlockHash, Transaction, Txid};
 
 // TODO: Timeout should be configurable
 // TODO: Add exponential back-off
 // TODO: Do we need to handle re-orgs?
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::source;
 
 use super::channel::{Disconnect, SetTimeout};
-use super::{DisconnectReason, Mempool, PeerId};
+use super::{DisconnectReason, Height, Mempool, PeerId};
 
 /// Time between re-broadcasts of inventories.
 pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
+
+/// Time between request retries.
+pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 
 /// Maximum number of attempts to send inventories to a peer.
 pub const MAX_ATTEMPTS: usize = 3;
@@ -31,6 +35,32 @@ pub trait Inventories {
     fn getdata(&self, addr: PeerId, inventories: Vec<Inventory>);
     /// Sends a `tx` message to a peer.
     fn tx(&self, addr: PeerId, tx: Transaction);
+    /// Fire an event.
+    fn event(&self, event: Event);
+}
+
+/// An event emitted by the inventory manager.
+#[derive(Debug, Clone)]
+pub enum Event {
+    /// Block received.
+    BlockReceived {
+        /// Sender.
+        from: PeerId,
+        /// Block.
+        block: Block,
+        /// Block height.
+        height: Height,
+    },
+}
+
+impl std::fmt::Display for Event {
+    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Event::BlockReceived { from, height, .. } => {
+                write!(fmt, "{}: Received block at height {}", from, height)
+            }
+        }
+    }
 }
 
 /// Inventory manager peer.
@@ -47,12 +77,21 @@ pub struct Peer {
     attempts: usize,
     /// Last time we attempted to send inventories to this peer.
     last_attempt: Option<LocalTime>,
+
+    /// Number of times a certain block was requested.
+    #[allow(dead_code)]
+    requests: HashMap<BlockHash, usize>,
 }
 
 impl Peer {
     fn attempted(&mut self, time: LocalTime) {
         self.last_attempt = Some(time);
         self.attempts += 1;
+    }
+
+    #[allow(dead_code)]
+    fn requested(&mut self, hash: BlockHash) {
+        *self.requests.entry(hash).or_default() += 1;
     }
 
     fn reset(&mut self) {
@@ -68,8 +107,12 @@ pub struct InventoryManager<U> {
     peers: HashMap<PeerId, Peer>,
     /// Timeout used for retrying broadcasts.
     timeout: LocalDuration,
-    /// Inventories.
+    /// Inventories sent.
     inventories: HashMap<Txid, Inventory>,
+
+    /// Inventories requested and the time at which they were last requested.
+    /// Only blocks are requested currently.
+    remaining: HashMap<BlockHash, Option<LocalTime>>,
 
     last_tick: Option<LocalTime>,
     rng: fastrand::Rng,
@@ -82,6 +125,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         Self {
             peers: HashMap::with_hasher(rng.clone().into()),
             inventories: HashMap::with_hasher(rng.clone().into()),
+            remaining: HashMap::with_hasher(rng.clone().into()),
             timeout: REBROADCAST_TIMEOUT,
             last_tick: None,
             rng,
@@ -115,6 +159,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                 relay,
                 outbox,
                 last_attempt: None,
+                requests: HashMap::with_hasher(self.rng.clone().into()),
             },
         );
     }
@@ -125,10 +170,10 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     }
 
     /// Called when we receive a tick.
-    pub fn received_tick(&mut self, time: LocalTime, mempool: &Mempool) {
+    pub fn received_tick(&mut self, now: LocalTime, mempool: &Mempool) {
         // Rate-limit how much we run this code.
-        if time - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.last_tick = Some(time);
+        if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
+            self.last_tick = Some(now);
 
             // Prune inventories. Anything that isn't in the mempool should no longer be tracked
             // by the inventory manager.
@@ -149,12 +194,32 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
             }
         }
 
+        // Handle retries annd disconnects.
+        let mut requests = Vec::new();
         let mut disconnect = Vec::new();
-        for (addr, peer) in &mut self.peers {
-            let elapsed = time - peer.last_attempt.unwrap_or_default();
 
-            // Peer timeout.
-            if elapsed >= self.timeout && !peer.outbox.is_empty() {
+        for (addr, peer) in &mut self.peers {
+            // TODO: Disconnect peers from which we requested blocks many times, and who haven't
+            // responded, or at least don't retry the same peer too many times.
+
+            // Schedule inventory requests.
+            let queue = self
+                .remaining
+                .iter_mut()
+                .filter(|(_, t)| now - t.unwrap_or_default() >= REQUEST_TIMEOUT);
+
+            for (block_hash, last_request) in queue {
+                *last_request = Some(now);
+                requests.push(*block_hash);
+            }
+
+            // Peer inventory announce timeout.
+            if !peer.outbox.is_empty() {
+                let elapsed = now - peer.last_attempt.unwrap_or_default();
+                if elapsed < self.timeout {
+                    continue;
+                }
+
                 // If we've already reached the maximum number of attempts, just disconnect
                 // the peer and move on to the next.
                 if peer.attempts >= MAX_ATTEMPTS {
@@ -164,7 +229,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 
                 // ... Another attempt ...
 
-                peer.attempted(time);
+                peer.attempted(now);
 
                 let mut invs = Vec::with_capacity(peer.outbox.len());
                 for inv in &peer.outbox {
@@ -179,6 +244,11 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
             self.peers.remove(&addr);
             self.upstream
                 .disconnect(addr, DisconnectReason::PeerTimeout("inv"));
+        }
+        for block_hash in requests {
+            if let Some(_peer) = self.request(block_hash) {
+                // TODO: Fire event.
+            }
         }
     }
 
@@ -211,6 +281,32 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// Called when a block is received from a peer.
+    pub fn received_block<T: BlockTree>(&mut self, from: &PeerId, block: Block, tree: &T) {
+        let hash = block.block_hash();
+        let from = *from;
+
+        if self.remaining.remove(&hash).is_some() {
+            for peer in self.peers.values_mut() {
+                peer.requests.remove(&hash);
+            }
+
+            if let Some((height, _)) = tree.get_block(&hash) {
+                self.upstream.event(Event::BlockReceived {
+                    from,
+                    block,
+                    height,
+                });
+            } else {
+                // TODO: Handle misbehavior. We assume here that we are never requesting blocks
+                // for which we don't have the header.
+            }
+        } else {
+            // Nb. The remote isn't necessarily sending an unsolicited block here.
+            // We often have to ask multiple peers to get a response.
         }
     }
 
@@ -250,15 +346,30 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         addrs
     }
 
-    /// Get data from one of the matching peers. Retries if necessary.
-    pub fn get<P>(&mut self, inventory: Inventory, predicate: P) -> Option<PeerId>
-    where
-        P: Fn(&Peer) -> bool,
-    {
+    /// Attempt to get a block from the network. Retries if necessary.
+    pub fn get_block(&mut self, hash: BlockHash) {
+        self.schedule_tick();
+        self.remaining.entry(hash).or_insert(None);
+    }
+
+    ////////////////////////////////////////////////////////////////////////////
+
+    fn schedule_tick(&self) {
+        self.upstream.set_timeout(LocalDuration::from_secs(1));
+    }
+
+    /// Request a block from a random peer.
+    fn request(&self, block: BlockHash) -> Option<PeerId> {
         let peers = self
             .peers
             .iter()
-            .filter_map(|(a, p)| if predicate(p) { Some(*a) } else { None })
+            .filter_map(|(a, p)| {
+                if p.services.has(ServiceFlags::NETWORK) {
+                    Some(*a)
+                } else {
+                    None
+                }
+            })
             .collect::<Vec<_>>();
 
         match peers.len() {
@@ -266,18 +377,12 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                 let r = self.rng.usize(..n);
                 let a = peers[r];
 
-                self.upstream.getdata(a, vec![inventory]);
+                self.upstream.getdata(a, vec![Inventory::Block(block)]);
 
                 Some(a)
             }
             _ => None,
         }
-    }
-
-    ////////////////////////////////////////////////////////////////////////////
-
-    fn schedule_tick(&self) {
-        self.upstream.set_timeout(LocalDuration::from_secs(1));
     }
 }
 
@@ -286,10 +391,96 @@ mod tests {
     use super::*;
 
     use crate::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use crate::protocol;
     use crate::protocol::channel::{chan, Channel};
     use crate::protocol::{Network, Out, PROTOCOL_VERSION};
 
+    use nakamoto_common::nonempty::NonEmpty;
+    use nakamoto_test::block::cache::model;
     use nakamoto_test::block::gen;
+    use nakamoto_test::logger;
+
+    fn messages(
+        receiver: &chan::Receiver<Out>,
+    ) -> impl Iterator<Item = (PeerId, NetworkMessage)> + '_ {
+        receiver.try_iter().filter_map(|o| match o {
+            Out::Message(a, m) => Some((a, m.payload)),
+            _ => None,
+        })
+    }
+
+    fn events(receiver: &chan::Receiver<Out>) -> impl Iterator<Item = Event> + '_ {
+        receiver.try_iter().filter_map(|o| match o {
+            Out::Event(protocol::Event::InventoryManager(e)) => Some(e),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn test_get_block() {
+        logger::init(log::Level::Debug);
+
+        let network = Network::Regtest;
+        let (sender, receiver) = chan::unbounded::<Out>();
+        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+
+        let mut rng = fastrand::Rng::new();
+        let mut time = LocalTime::now();
+
+        let mempool = Mempool::new();
+        let genesis = network.genesis_block();
+        let chain = gen::blockchain(genesis, 16, &mut rng);
+        let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
+        let tree = model::Cache::from(headers);
+        let header = tree.get_block_by_height(6).unwrap();
+        let hash = header.block_hash();
+        let inv = vec![Inventory::Block(hash)];
+        let block = chain.iter().find(|b| b.block_hash() == hash).unwrap();
+
+        let mut invmgr = InventoryManager::new(rng.clone(), upstream);
+
+        invmgr.peer_negotiated(([66, 66, 66, 66], 8333).into(), ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(([77, 77, 77, 77], 8333).into(), ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(([88, 88, 88, 88], 8333).into(), ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(([99, 99, 99, 99], 8333).into(), ServiceFlags::NETWORK, true);
+
+        invmgr.get_block(hash);
+
+        let mut requested = HashSet::with_hasher(rng.clone().into());
+        let mut last_request = LocalTime::default();
+
+        loop {
+            time.elapse(LocalDuration::from_secs(rng.u64(10..30)));
+            invmgr.received_tick(time, &mempool);
+            assert!(!invmgr.remaining.is_empty());
+
+            if let Some((addr, _)) = messages(&receiver)
+                .find(|(_, m)| matches!(m, NetworkMessage::GetData(i) if i == &inv))
+            {
+                assert!(
+                    time - last_request >= REQUEST_TIMEOUT,
+                    "Requests are never made within the request timeout"
+                );
+                last_request = time;
+
+                requested.insert(addr);
+                if requested.len() < invmgr.peers.len() {
+                    // We're not done until we've requested all peers.
+                    continue;
+                }
+                invmgr.received_block(&addr, block.clone(), &tree);
+
+                assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
+                events(&receiver)
+                    .find(|e| matches!(e, Event::BlockReceived { .. }))
+                    .expect("An event is emitted when a block is received");
+
+                break;
+            }
+        }
+        invmgr.received_tick(time + REQUEST_TIMEOUT, &mempool);
+        assert_eq!(messages(&receiver).count(), 0, "No more requests are sent");
+    }
 
     #[test]
     fn test_rebroadcast_timeout() {

@@ -7,7 +7,7 @@ use bitcoin::network::message::NetworkMessage;
 use crossbeam_channel as chan;
 
 use crate::protocol::PeerId;
-use crate::protocol::{addrmgr, cbfmgr, connmgr, peermgr, syncmgr};
+use crate::protocol::{addrmgr, cbfmgr, connmgr, invmgr, peermgr, syncmgr};
 
 pub use chan::RecvTimeoutError;
 
@@ -28,6 +28,8 @@ pub enum Event {
     PeerManager(peermgr::Event),
     /// A CBF manager event.
     FilterManager(cbfmgr::Event),
+    /// An inventory manager event.
+    InventoryManager(invmgr::Event),
 }
 
 /// Any type that is able to publish events.

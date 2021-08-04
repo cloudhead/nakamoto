@@ -35,7 +35,7 @@ use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::protocol::Protocol;
 use nakamoto_p2p::protocol::{self, Link};
-use nakamoto_p2p::protocol::{cbfmgr, connmgr, peermgr, syncmgr};
+use nakamoto_p2p::protocol::{cbfmgr, connmgr, invmgr, peermgr, syncmgr};
 
 pub use nakamoto_p2p::event::{self, Event};
 pub use nakamoto_p2p::protocol::{Command, CommandError, Mempool, Peer};
@@ -166,7 +166,7 @@ impl<R: Reactor<Publisher>> Client<R> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(Some);
         let (blocks_pub, blocks) = event::broadcast(|e| {
-            if let Event::SyncManager(syncmgr::Event::BlockReceived(_, block, height)) = e {
+            if let Event::InventoryManager(invmgr::Event::BlockReceived { block, height, .. }) = e {
                 return Some((block, height));
             }
             None
@@ -481,11 +481,10 @@ where
         Ok(receive.recv()?)
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<net::SocketAddr, handle::Error> {
-        let (transmit, receive) = chan::bounded::<Result<net::SocketAddr, CommandError>>(1);
-        self.command(Command::GetBlock(*hash, transmit))?;
+    fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
+        self.command(Command::GetBlock(*hash))?;
 
-        receive.recv()?.map_err(handle::Error::Command)
+        Ok(())
     }
 
     fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), handle::Error> {

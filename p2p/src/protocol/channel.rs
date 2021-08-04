@@ -286,6 +286,11 @@ impl invmgr::Inventories for Channel {
     fn tx(&self, addr: PeerId, tx: Transaction) {
         self.message(addr, NetworkMessage::Tx(tx));
     }
+
+    fn event(&self, event: invmgr::Event) {
+        debug!(target: self.target, "[invmgr] {}", &event);
+        self.event(Event::InventoryManager(event));
+    }
 }
 
 impl cbfmgr::Events for Channel {

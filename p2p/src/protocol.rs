@@ -102,7 +102,7 @@ pub enum Command {
     /// Get the tip of the active chain.
     GetTip(chan::Sender<(Height, BlockHeader)>),
     /// Get a block from the active chain.
-    GetBlock(BlockHash, chan::Sender<Result<PeerId, CommandError>>),
+    GetBlock(BlockHash),
     /// Get block filters.
     GetFilters(
         RangeInclusive<Height>,
@@ -804,7 +804,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .received_getheaders(&addr, (locator_hashes, stop_hash), &self.tree);
             }
             NetworkMessage::Block(block) => {
-                self.syncmgr.received_block(&addr, block, &self.tree);
+                self.invmgr.received_block(&addr, block, &self.tree);
             }
             NetworkMessage::Inv(inventory) => {
                 // Receive an `inv` message. This will happen if we are out of sync with a
@@ -1003,16 +1003,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     let result = self.cbfmgr.get_cfilters(range, &self.tree);
                     reply.send(result).ok();
                 }
-                Command::GetBlock(hash, reply) => {
-                    let peer = self.invmgr.get(Inventory::Block(hash), |p| {
-                        p.services.has(ServiceFlags::NETWORK)
-                    });
-
-                    if let Some(peer) = peer {
-                        reply.send(Ok(peer)).ok();
-                    } else {
-                        reply.send(Err(CommandError::NotConnected)).ok();
-                    }
+                Command::GetBlock(hash) => {
+                    self.invmgr.get_block(hash);
                 }
                 Command::SubmitTransactions(txs, reply) => {
                     debug!(target: self.target, "Received command: SubmitTransactions(..)");

@@ -98,11 +98,10 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<net::SocketAddr, handle::Error> {
-        let (transmit, receive) = chan::bounded(1);
-        self.command(Command::GetBlock(*hash, transmit))?;
+    fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
+        self.command(Command::GetBlock(*hash))?;
 
-        receive.recv()?.map_err(handle::Error::Command)
+        Ok(())
     }
 
     fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), handle::Error> {

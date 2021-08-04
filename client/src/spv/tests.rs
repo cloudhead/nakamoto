@@ -58,6 +58,7 @@ struct TestNode {
     peer: Height,
     client: mock::Client,
     chain: NonEmpty<Block>,
+    #[allow(dead_code)]
     address: net::SocketAddr,
     rng: fastrand::Rng,
 }
@@ -92,10 +93,9 @@ impl TestNode {
                             self.rng.shuffle(&mut requested_filters);
                             reply.send(Ok(())).unwrap();
                         }
-                        client::Command::GetBlock(hash, reply) => {
+                        client::Command::GetBlock(hash) => {
                             requested_blocks.push(hash);
                             self.rng.shuffle(&mut requested_blocks);
-                            reply.send(Ok(self.address)).unwrap();
                         }
                         client::Command::Shutdown => {
                             break;

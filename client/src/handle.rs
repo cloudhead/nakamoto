@@ -65,7 +65,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Get the tip of the chain.
     fn get_tip(&self) -> Result<(Height, BlockHeader), Error>;
     /// Get a full block from the network.
-    fn get_block(&self, hash: &BlockHash) -> Result<net::SocketAddr, Error>;
+    fn get_block(&self, hash: &BlockHash) -> Result<(), Error>;
     /// Get compact filters from the network.
     fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), Error>;
     /// Subscribe to blocks received.
