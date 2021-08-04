@@ -9,7 +9,7 @@ use bitcoin::{Block, BlockHash, Transaction, Txid};
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
-use nakamoto_common::collections::{HashMap, HashSet};
+use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
 
 use super::channel::{Disconnect, SetTimeout};
@@ -104,7 +104,7 @@ impl Peer {
 #[derive(Debug)]
 pub struct InventoryManager<U> {
     /// Peer map.
-    peers: HashMap<PeerId, Peer>,
+    peers: AddressBook<PeerId, Peer>,
     /// Timeout used for retrying broadcasts.
     timeout: LocalDuration,
     /// Inventories sent.
@@ -123,7 +123,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     /// Create a new inventory manager.
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         Self {
-            peers: HashMap::with_hasher(rng.clone().into()),
+            peers: AddressBook::new(rng.clone()),
             inventories: HashMap::with_hasher(rng.clone().into()),
             remaining: HashMap::with_hasher(rng.clone().into()),
             timeout: REBROADCAST_TIMEOUT,
@@ -198,7 +198,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         let mut requests = Vec::new();
         let mut disconnect = Vec::new();
 
-        for (addr, peer) in &mut self.peers {
+        for (addr, peer) in &mut *self.peers {
             // TODO: Disconnect peers from which we requested blocks many times, and who haven't
             // responded, or at least don't retry the same peer too many times.
 
@@ -360,29 +360,12 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 
     /// Request a block from a random peer.
     fn request(&self, block: BlockHash) -> Option<PeerId> {
-        let peers = self
-            .peers
-            .iter()
-            .filter_map(|(a, p)| {
-                if p.services.has(ServiceFlags::NETWORK) {
-                    Some(*a)
-                } else {
-                    None
-                }
+        self.peers
+            .sample_with(|_, p| p.services.has(ServiceFlags::NETWORK))
+            .map(|(addr, _)| {
+                self.upstream.getdata(*addr, vec![Inventory::Block(block)]);
+                *addr
             })
-            .collect::<Vec<_>>();
-
-        match peers.len() {
-            n if n > 0 => {
-                let r = self.rng.usize(..n);
-                let a = peers[r];
-
-                self.upstream.getdata(a, vec![Inventory::Block(block)]);
-
-                Some(a)
-            }
-            _ => None,
-        }
     }
 }
 

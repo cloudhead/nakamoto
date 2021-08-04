@@ -13,8 +13,7 @@ use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
-use nakamoto_common::collections::HashMap;
-use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::source;
 
 use super::channel::SetTimeout;
@@ -212,7 +211,7 @@ struct Peer {
 #[derive(Debug)]
 pub struct FilterManager<F, U> {
     config: Config,
-    peers: HashMap<PeerId, Peer>,
+    peers: AddressBook<PeerId, Peer>,
     filters: F,
     upstream: U,
     /// Last time we idled.
@@ -225,7 +224,7 @@ pub struct FilterManager<F, U> {
 impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
-        let peers = HashMap::with_hasher(rng.clone().into());
+        let peers = AddressBook::new(rng.clone());
 
         Self {
             config,
@@ -272,30 +271,28 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         range: RangeInclusive<Height>,
         tree: &T,
     ) -> Result<(), GetFiltersError> {
-        // TODO: Consolidate this code with the `get_cfheaders` code.
-        if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
-            let iter = HeightIterator {
-                start: *range.start(),
-                stop: *range.end() + 1,
-                step: MAX_MESSAGE_CFILTERS as Height,
-            };
-            for r in iter {
-                let ix = self.rng.usize(..peers.len());
-                let peer = *peers.get(ix).unwrap(); // Can't fail.
-
-                let stop_hash = tree
-                    .get_block_by_height(r.end - 1)
-                    .ok_or(GetFiltersError::InvalidRange)?
-                    .block_hash();
-                let timeout = self.config.request_timeout;
-
-                self.upstream
-                    .get_cfilters(*peer, r.start, stop_hash, timeout);
-            }
-            Ok(())
-        } else {
-            Err(GetFiltersError::NotConnected)
+        if self.peers.is_empty() {
+            return Err(GetFiltersError::NotConnected);
         }
+
+        let iter = HeightIterator {
+            start: *range.start(),
+            stop: *range.end() + 1,
+            step: MAX_MESSAGE_CFILTERS as Height,
+        };
+
+        // TODO: Only ask peers synced to a certain height.
+        for (r, peer) in iter.zip(self.peers.cycle()) {
+            let stop_hash = tree
+                .get_block_by_height(r.end - 1)
+                .ok_or(GetFiltersError::InvalidRange)?
+                .block_hash();
+            let timeout = self.config.request_timeout;
+
+            self.upstream
+                .get_cfilters(*peer, r.start, stop_hash, timeout);
+        }
+        Ok(())
     }
 
     /// Handle a `cfheaders` message from a peer.
@@ -586,10 +583,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         }
 
         // TODO: We should select peers that are caught up to the requested height.
-        if let Some(peers) = NonEmpty::from_vec(self.peers.keys().collect()) {
-            let ix = self.rng.usize(..peers.len());
-            let peer = *peers.get(ix).unwrap(); // Can't fail.
-
+        if let Some((peer, _)) = self.peers.sample() {
             self.upstream.get_cfheaders(
                 *peer,
                 start_height,

@@ -13,7 +13,7 @@ use nakamoto_common::block::store;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
-use nakamoto_common::collections::HashMap;
+use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
 use super::channel::{Disconnect, SetTimeout};
@@ -60,7 +60,6 @@ pub enum OnTimeout {
 /// State of a sync peer.
 #[derive(Debug)]
 struct PeerState {
-    id: PeerId,
     height: Height,
     tip: BlockHash,
     link: Link,
@@ -83,7 +82,7 @@ pub struct Config {
 #[derive(Debug)]
 pub struct SyncManager<U> {
     /// Sync-specific peer state.
-    peers: HashMap<PeerId, PeerState>,
+    peers: AddressBook<PeerId, PeerState>,
     /// Sync manager configuration.
     config: Config,
     /// Last time our tip was updated.
@@ -187,7 +186,7 @@ pub struct SendHeaders {
 impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     /// Create a new sync manager.
     pub fn new(config: Config, rng: fastrand::Rng, upstream: U) -> Self {
-        let peers = HashMap::with_hasher(rng.clone().into());
+        let peers = AddressBook::new(rng.clone());
         let last_tip_update = None;
         let last_peer_sample = None;
         let last_idle = None;
@@ -657,7 +656,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         self.peers.insert(
             id,
             PeerState {
-                id,
                 height,
                 tip,
                 link,
@@ -673,36 +671,17 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         self.peers.remove(id);
     }
 
-    /// Pick a random peer we could sync with using the given locators.
-    fn random_sync_candidate<T: BlockTree>(
-        &self,
-        locators: &[BlockHash],
-        tree: &T,
-    ) -> Option<&PeerState> {
-        let candidates = self
-            .peers
-            .values()
-            .filter(|p| self.is_sync_candidate(p, locators, tree));
-
-        if let Some(peers) = NonEmpty::from_vec(candidates.collect()) {
-            let ix = self.rng.usize(..peers.len());
-
-            return peers.get(ix).cloned();
-        }
-
-        None
-    }
-
     /// Check whether a peer can be synced with using the given locators.
     fn is_sync_candidate<T: BlockTree>(
         &self,
+        addr: &PeerId,
         peer: &PeerState,
         locators: &[BlockHash],
         tree: &T,
     ) -> bool {
         peer.link.is_outbound()
             && peer.height > tree.height()
-            && !self.inflight.contains_key(&peer.id)
+            && !self.inflight.contains_key(addr)
             && peer.last_asked.as_ref().map_or(true, |l| l.0 != locators)
     }
 
@@ -762,9 +741,12 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             return;
         }
 
-        if let Some(peer) = self.random_sync_candidate(&locators.0, tree) {
+        if let Some((addr, _)) = self
+            .peers
+            .sample_with(|a, p| self.is_sync_candidate(a, p, &locators.0, tree))
+        {
             let timeout = self.config.request_timeout;
-            let addr = peer.id;
+            let addr = *addr;
 
             self.request(addr, locators, now, timeout, OnTimeout::Ignore);
             self.upstream.event(Event::Syncing(addr));
@@ -776,7 +758,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     /// Broadcast our best block header to connected peers who don't have it.
     fn broadcast_tip<T: BlockTree>(&mut self, hash: &BlockHash, tree: &T) {
         if let Some((height, best)) = tree.get_block(hash) {
-            for (addr, peer) in &self.peers {
+            for (addr, peer) in &*self.peers {
                 // TODO: Don't broadcast to peer that is currently syncing?
                 if peer.link == Link::Inbound && height > peer.height {
                     self.upstream.send_headers(*addr, vec![*best]);
@@ -790,9 +772,9 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         let locators = tree.locator_hashes(tree.height());
         let addrs = self
             .peers
-            .values()
-            .filter(|p| self.is_sync_candidate(p, &locators, tree))
-            .map(|p| p.id)
+            .iter()
+            .filter(|(a, p)| self.is_sync_candidate(a, p, &locators, tree))
+            .map(|(a, _)| *a)
             .collect::<Vec<_>>();
 
         for addr in addrs {
