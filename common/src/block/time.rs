@@ -52,6 +52,16 @@ impl Default for LocalTime {
     }
 }
 
+impl Clock for LocalTime {
+    fn block_time(&self) -> BlockTime {
+        self.block_time()
+    }
+
+    fn local_time(&self) -> LocalTime {
+        *self
+    }
+}
+
 impl LocalTime {
     /// Construct a local time from the current system time.
     pub fn now() -> Self {
