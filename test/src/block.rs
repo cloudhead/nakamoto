@@ -222,8 +222,8 @@ pub mod gen {
     /// Generates a random filter header chain starting from a parent filter header.
     pub fn cfheaders(
         mut parent: FilterHeader,
-        rng: fastrand::Rng,
-    ) -> impl Iterator<Item = (FilterHash, FilterHeader)> {
+        rng: &'_ mut fastrand::Rng,
+    ) -> impl Iterator<Item = (FilterHash, FilterHeader)> + '_ {
         std::iter::repeat_with(move || {
             let bytes = std::iter::repeat_with(|| rng.u8(..))
                 .take(32)
@@ -235,5 +235,30 @@ pub mod gen {
 
             (hash, header)
         })
+    }
+
+    /// Generate a set of scripts to watch, given a blockchain and birth height.
+    pub fn watchlist<'a>(
+        birth: Height,
+        chain: impl Iterator<Item = &'a Block>,
+        rng: &mut fastrand::Rng,
+    ) -> (Vec<Script>, Vec<Height>, u64) {
+        let mut watchlist = Vec::new();
+        let mut blocks = Vec::new();
+        let mut balance = 0;
+
+        for (h, blk) in chain.enumerate().skip(birth as usize) {
+            // Randomly pick certain blocks.
+            if rng.bool() {
+                // Randomly pick a transaction and add its output to the watchlist.
+                let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
+                let out = &tx.output[rng.usize(0..tx.output.len())];
+
+                watchlist.push(out.script_pubkey.clone());
+                blocks.push(h as Height);
+                balance += out.value;
+            }
+        }
+        (watchlist, blocks, balance)
     }
 }
