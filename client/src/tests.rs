@@ -189,3 +189,35 @@ fn test_multiple_handle_events() {
     )
     .unwrap();
 }
+
+#[test]
+fn test_handle_shutdown() {
+    let cfg = Config::default();
+    let genesis = cfg.network.genesis();
+    let params = cfg.network.params();
+    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let handle = client.handle();
+    let store = store::Memory::new((genesis, vec![]).into());
+    let cache = BlockCache::from(store, params, &[]).unwrap();
+    let filters = FilterCache::from(store::Memory::default()).unwrap();
+    let peers = HashMap::new();
+
+    let th = thread::spawn(|| client.run_with(cache, filters, peers));
+
+    handle.shutdown().unwrap();
+    th.join().unwrap().unwrap();
+}
+
+#[test]
+fn test_client_dropped() {
+    let cfg = Config::default();
+    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let handle = client.handle();
+
+    drop(client);
+
+    assert!(matches!(
+        handle.get_tip(),
+        Err(client::handle::Error::Disconnected)
+    ));
+}

@@ -43,6 +43,7 @@ pub use nakamoto_p2p::reactor::Reactor;
 pub use crate::error::Error;
 pub use crate::handle;
 pub use crate::peer;
+pub use crate::spv;
 
 /// Client configuration.
 #[derive(Debug, Clone)]
@@ -138,8 +139,8 @@ impl Publisher {
 }
 
 impl event::Publisher for Publisher {
-    fn publish(&self, e: Event) {
-        for p in self.publishers.iter() {
+    fn publish(&mut self, e: Event) {
+        for p in self.publishers.iter_mut() {
             p.publish(e.clone());
         }
     }
@@ -154,6 +155,7 @@ pub struct Client<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
+    subscriber: event::Subscriber<spv::Event>,
 
     reactor: R,
 }
@@ -162,14 +164,13 @@ impl<R: Reactor<Publisher>> Client<R> {
     /// Create a new client.
     pub fn new(config: Config) -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
-        let (event_pub, events) = event::broadcast(Some);
-        let (blocks_pub, blocks) = event::broadcast(|e| {
+        let (event_pub, events) = event::broadcast(|e, p| p.emit(e));
+        let (blocks_pub, blocks) = event::broadcast(|e, p| {
             if let Event::InventoryManager(invmgr::Event::BlockProcessed { block, height }) = e {
-                return Some((block, height));
+                p.emit((block, height));
             }
-            None
         });
-        let (filters_pub, filters) = event::broadcast(|e| {
+        let (filters_pub, filters) = event::broadcast(|e, p| {
             if let Event::FilterManager(cbfmgr::Event::FilterReceived {
                 filter,
                 block_hash,
@@ -177,15 +178,21 @@ impl<R: Reactor<Publisher>> Client<R> {
                 ..
             }) = e
             {
-                return Some((filter, block_hash, height));
+                p.emit((filter, block_hash, height));
             }
-            None
+        });
+        let (publisher, subscriber) = event::broadcast({
+            // FIXME: Correct tip should be passed, or parameter should be removed.
+            let mut spv = crate::spv::Client::new(Default::default(), 0);
+
+            move |e, p| spv.process(e, p)
         });
 
         let publisher = Publisher::new()
             .register(event_pub)
             .register(blocks_pub)
-            .register(filters_pub);
+            .register(filters_pub)
+            .register(publisher);
 
         let reactor = R::new(publisher, commands)?;
 
@@ -196,6 +203,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             config,
             blocks,
             filters,
+            subscriber,
         })
     }
 
@@ -385,6 +393,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             timeout: self.config.timeout,
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
+            subscriber: self.subscriber.clone(),
         }
     }
 }
@@ -396,6 +405,7 @@ pub struct Handle<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
+    subscriber: event::Subscriber<spv::Event>,
     waker: R::Waker,
     timeout: time::Duration,
 }
@@ -411,6 +421,7 @@ where
             commands: self.commands.clone(),
             events: self.events.clone(),
             filters: self.filters.clone(),
+            subscriber: self.subscriber.clone(),
             timeout: self.timeout,
             waker: self.waker.clone(),
         }
@@ -495,6 +506,10 @@ where
 
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)> {
         self.filters.subscribe()
+    }
+
+    fn subscribe(&self) -> chan::Receiver<spv::Event> {
+        self.subscriber.subscribe()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {

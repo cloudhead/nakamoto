@@ -47,38 +47,12 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;
 
-use super::handle::Handle as _;
-use super::p2p::protocol::cbfmgr;
+use super::p2p::protocol::{cbfmgr, invmgr};
+use super::utxos::Utxos;
 use super::*;
 
 use crate::handle::Handle as _;
 use crate::tests::mock;
-
-#[test]
-fn test_handle_shutdown() {
-    let mock = mock::Client::new(Network::Regtest);
-    let client = mock.handle();
-    let spv = super::Client::new(client.clone(), Config::default());
-    let handle = spv.handle();
-
-    let t = thread::spawn(|| spv.run());
-
-    handle.shutdown().unwrap();
-    assert_eq!(t.join().unwrap().ok(), Some(()));
-
-    client.shutdown().unwrap();
-}
-
-#[test]
-fn test_client_dropped() {
-    let client = mock::Client::new(Network::Regtest);
-    let spv = super::Client::new(client.handle(), Config::default());
-    let t = thread::spawn(|| spv.run());
-
-    drop(client);
-
-    assert!(matches!(t.join().unwrap(), Err(Error::Disconnected)));
-}
 
 #[quickcheck]
 fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestResult {
@@ -100,63 +74,38 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     let (watch, heights, balance) = gen::watchlist(birth, chain.iter(), &mut rng);
 
     let config = Config::default();
-    let spv = super::Client::new(client.clone(), config);
-    let mut handle = spv.handle();
-    let events = handle.events();
+    let mut spv = super::Client::new(config, height);
 
     log::debug!(
         "-- Test case with birth = {} and height = {}",
         birth,
         height
     );
-    handle
-        .rescan(birth..=height, watch.iter().cloned())
-        .unwrap();
 
-    #[allow(clippy::redundant_clone)]
-    thread::spawn({
-        // Cloning prevents the client from being dropped too early.
-        let blocks = mock.blocks.clone();
-        let publisher = mock.events.clone();
-        let events = handle.clone().events();
+    let (mut publish, subscribe) = p2p::event::broadcast(move |e, p| spv.process(e, p));
+    let subscriber = subscribe.subscribe();
 
-        move || {
-            for h in birth..=height {
-                let matched = heights.contains(&h);
-                let block = chain[height as usize].block_hash();
+    for h in birth..=height {
+        let matched = heights.contains(&h);
+        let block = chain[h as usize].clone();
 
-                publisher
-                    .send(client::Event::FilterManager(
-                        cbfmgr::Event::FilterProcessed {
-                            block,
-                            height: h,
-                            matched,
-                        },
-                    ))
-                    .unwrap();
-            }
+        publish.broadcast(client::Event::FilterManager(
+            cbfmgr::Event::FilterProcessed {
+                block: block.block_hash(),
+                height: h,
+                matched,
+            },
+        ));
 
-            while let Ok(event) = events.recv() {
-                if let Event::FilterProcessed {
-                    height, matched, ..
-                } = event
-                {
-                    if matched {
-                        let block = chain[height as usize].clone();
-                        blocks.send((block, height)).unwrap();
-                    }
-                }
-            }
+        if matched {
+            publish.broadcast(client::Event::InventoryManager(
+                invmgr::Event::BlockProcessed { block, height: h },
+            ));
         }
-    });
+    }
 
-    let t = thread::spawn(|| spv.run().unwrap());
-
-    loop {
-        match events
-            .recv_timeout(time::Duration::from_secs(3))
-            .expect("An event is emitted")
-        {
+    for event in subscriber.try_iter() {
+        match event {
             Event::Block { transactions, .. } => {
                 for t in &transactions {
                     utxos.apply(t, &watch);
@@ -176,12 +125,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         }
     }
     assert_eq!(balance, utxos.balance());
-
-    // Shutdown.
-    handle.shutdown().unwrap();
     client.shutdown().unwrap();
-
-    t.join().unwrap();
 
     TestResult::passed()
 }

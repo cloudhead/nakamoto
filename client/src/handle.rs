@@ -17,6 +17,8 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::protocol::{Command, CommandError, GetFiltersError, Peer};
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 
+use crate::spv;
+
 /// An error resulting from a handle method.
 #[derive(Error, Debug)]
 pub enum Error {
@@ -72,6 +74,8 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
+    /// Subscribe to SPV events.
+    fn subscribe(&self) -> chan::Receiver<spv::Event>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Rescan the blockchain for matching addresses and outputs.

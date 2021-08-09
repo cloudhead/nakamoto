@@ -20,6 +20,7 @@ use nakamoto_p2p::protocol::Peer;
 
 use crate::client::chan;
 use crate::handle::{self, Handle};
+use crate::spv;
 
 pub struct Client {
     // Used by tests.
@@ -27,12 +28,14 @@ pub struct Client {
     pub events: chan::Sender<Event>,
     pub blocks: chan::Sender<(Block, Height)>,
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
+    pub subscriber: chan::Sender<spv::Event>,
     pub commands: chan::Receiver<Command>,
 
     // Used in handle.
     events_: chan::Receiver<Event>,
     blocks_: chan::Receiver<(Block, Height)>,
     filters_: chan::Receiver<(BlockFilter, BlockHash, Height)>,
+    subscriber_: chan::Receiver<spv::Event>,
     commands_: chan::Sender<Command>,
 }
 
@@ -51,6 +54,7 @@ impl Client {
             events: self.events_.clone(),
             blocks: self.blocks_.clone(),
             filters: self.filters_.clone(),
+            subscriber: self.subscriber_.clone(),
             commands: self.commands_.clone(),
         }
     }
@@ -61,6 +65,7 @@ impl Default for Client {
         let (events, events_) = chan::unbounded();
         let (blocks, blocks_) = chan::unbounded();
         let (filters, filters_) = chan::unbounded();
+        let (subscriber, subscriber_) = chan::unbounded();
         let (commands_, commands) = chan::unbounded();
 
         Self {
@@ -71,6 +76,8 @@ impl Default for Client {
             blocks_,
             filters,
             filters_,
+            subscriber,
+            subscriber_,
             commands,
             commands_,
         }
@@ -85,6 +92,7 @@ pub struct TestHandle {
     events: chan::Receiver<Event>,
     blocks: chan::Receiver<(Block, Height)>,
     filters: chan::Receiver<(BlockFilter, BlockHash, Height)>,
+    subscriber: chan::Receiver<spv::Event>,
     commands: chan::Sender<Command>,
 }
 
@@ -116,6 +124,10 @@ impl Handle for TestHandle {
 
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)> {
         self.filters.clone()
+    }
+
+    fn subscribe(&self) -> chan::Receiver<spv::Event> {
+        self.subscriber.clone()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {

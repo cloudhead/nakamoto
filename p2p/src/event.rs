@@ -35,29 +35,45 @@ pub enum Event {
 /// Any type that is able to publish events.
 pub trait Publisher: Send + Sync {
     /// Publish an event.
-    fn publish(&self, event: Event);
+    fn publish(&mut self, event: Event);
 }
 
-/// An event publisher.
+/// An event publish/subscribe channel.
 pub struct Broadcast<E, T> {
     subscribers: Arc<Mutex<Vec<chan::Sender<T>>>>,
-    filter: Box<dyn Fn(E) -> Option<T> + Send + Sync>,
+    broadcast: Box<dyn FnMut(E, &Emitter<T>) + Send + Sync>,
 }
 
 impl<E, T: Clone> Broadcast<E, T> {
     /// Broadcast an event to all subscribers.
-    pub fn broadcast(&self, event: E) {
-        let mut subs = self.subscribers.lock().unwrap();
+    pub fn broadcast(&mut self, event: E) {
+        (self.broadcast)(
+            event,
+            &Emitter {
+                subscribers: self.subscribers.clone(),
+            },
+        );
+    }
+}
 
-        if let Some(msg) = (self.filter)(event) {
-            subs.retain(|s| s.try_send(msg.clone()).is_ok());
-        }
+/// Publishes an event to all subscribers.
+pub struct Emitter<T> {
+    subscribers: Arc<Mutex<Vec<chan::Sender<T>>>>,
+}
+
+impl<T: Clone> Emitter<T> {
+    /// Publish an event to all subscribers.
+    pub fn emit(&self, event: T) {
+        self.subscribers
+            .lock()
+            .unwrap()
+            .retain(|s| s.try_send(event.clone()).is_ok());
     }
 }
 
 impl<T: Clone + Send + Sync> Publisher for Broadcast<Event, T> {
     /// Publish a message to all subscribers.
-    fn publish(&self, event: Event) {
+    fn publish(&mut self, event: Event) {
         self.broadcast(event)
     }
 }
@@ -81,13 +97,13 @@ impl<T> Subscriber<T> {
 
 /// Create a new broadcast channel.
 pub fn broadcast<E, T>(
-    filter: impl Fn(E) -> Option<T> + Send + Sync + 'static,
+    pipe: impl FnMut(E, &Emitter<T>) + Send + Sync + 'static,
 ) -> (Broadcast<E, T>, Subscriber<T>) {
     let subscribers = Arc::new(Mutex::new(Vec::new()));
     (
         Broadcast {
             subscribers: subscribers.clone(),
-            filter: Box::new(filter),
+            broadcast: Box::new(pipe),
         },
         Subscriber { subscribers },
     )
