@@ -25,7 +25,8 @@ use nakamoto_p2p as p2p;
 
 use crate::client::{self, chan};
 use crate::spv::utxos::Utxos;
-use event::Event;
+
+pub use event::Event;
 
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
@@ -156,10 +157,8 @@ impl<C: client::handle::Handle> handle::Handle for Handle<C> {
 }
 
 #[allow(missing_docs)]
-pub struct Config {
-    // TODO: Handle genesis that is further than chain tip.
-    genesis: Height,
-}
+#[derive(Debug, Default, Clone)]
+pub struct Config {}
 
 #[allow(missing_docs)]
 #[allow(dead_code)]
@@ -191,9 +190,9 @@ impl<C: client::handle::Handle> Client<C> {
         let (publisher, subscriber) = p2p::event::broadcast(Some);
         let (commands, control) = chan::unbounded::<Command>();
         let timeout = time::Duration::from_secs(9);
-        let sync_height = config.genesis;
-        let filter_height = config.genesis;
-        let block_height = config.genesis;
+        let sync_height = 0;
+        let filter_height = 0;
+        let block_height = 0;
         let pending = HashSet::new();
 
         Self {

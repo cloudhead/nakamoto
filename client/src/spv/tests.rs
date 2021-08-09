@@ -58,7 +58,7 @@ use crate::tests::mock;
 fn test_handle_shutdown() {
     let mock = mock::Client::new(Network::Regtest);
     let client = mock.handle();
-    let spv = super::Client::new(client.clone(), Config { genesis: 0 });
+    let spv = super::Client::new(client.clone(), Config::default());
     let handle = spv.handle();
 
     let t = thread::spawn(|| spv.run());
@@ -72,7 +72,7 @@ fn test_handle_shutdown() {
 #[test]
 fn test_client_dropped() {
     let client = mock::Client::new(Network::Regtest);
-    let spv = super::Client::new(client.handle(), Config { genesis: 0 });
+    let spv = super::Client::new(client.handle(), Config::default());
     let t = thread::spawn(|| spv.run());
 
     drop(client);
@@ -99,7 +99,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     let mut utxos = Utxos::new();
     let (watch, heights, balance) = gen::watchlist(birth, chain.iter(), &mut rng);
 
-    let config = Config { genesis: birth };
+    let config = Config::default();
     let spv = super::Client::new(client.clone(), config);
     let mut handle = spv.handle();
     let events = handle.events();
@@ -109,6 +109,9 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         birth,
         height
     );
+    handle
+        .rescan(birth..=height, watch.iter().cloned())
+        .unwrap();
 
     #[allow(clippy::redundant_clone)]
     thread::spawn({
