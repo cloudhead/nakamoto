@@ -79,7 +79,27 @@ pub trait Handle: Sized + Send + Sync + Clone {
         &self,
         range: impl RangeBounds<Height>,
         watch: impl Iterator<Item = Script>,
-    ) -> Result<(), Error>;
+    ) -> Result<(), Error> {
+        use std::ops::Bound;
+
+        // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
+        let from = match range.start_bound() {
+            Bound::Included(n) => Bound::Included(*n),
+            Bound::Excluded(n) => Bound::Excluded(*n),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        let to = match range.end_bound() {
+            Bound::Included(n) => Bound::Included(*n),
+            Bound::Excluded(n) => Bound::Excluded(*n),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+
+        self.command(Command::Rescan {
+            from,
+            to,
+            watch: watch.collect(),
+        })
+    }
     /// Broadcast a message to peers matching the predicate.
     ///
     /// To only broadcast to peers that have completed the handshake, filter

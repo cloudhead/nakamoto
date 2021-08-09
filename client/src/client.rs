@@ -584,32 +584,6 @@ where
         receive.recv()?.map_err(handle::Error::Command)
     }
 
-    fn rescan(
-        &self,
-        range: impl std::ops::RangeBounds<Height>,
-        watch: impl Iterator<Item = p2p::bitcoin::Script>,
-    ) -> Result<(), handle::Error> {
-        use std::ops::Bound;
-
-        // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
-        let from = match range.start_bound() {
-            Bound::Included(n) => Bound::Included(*n),
-            Bound::Excluded(n) => Bound::Excluded(*n),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-        let to = match range.end_bound() {
-            Bound::Included(n) => Bound::Included(*n),
-            Bound::Excluded(n) => Bound::Excluded(*n),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-
-        self.command(Command::Rescan {
-            from,
-            to,
-            watch: watch.collect(),
-        })
-    }
-
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
     where
         F: FnMut(Event) -> Option<T>,

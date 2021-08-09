@@ -13,7 +13,6 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
-use nakamoto_p2p::bitcoin::Script;
 use nakamoto_p2p::event::Event;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
@@ -160,32 +159,6 @@ impl Handle for TestHandle {
         _txs: Vec<Transaction>,
     ) -> Result<NonEmpty<net::SocketAddr>, handle::Error> {
         unimplemented!()
-    }
-
-    fn rescan(
-        &self,
-        range: impl std::ops::RangeBounds<Height>,
-        watch: impl Iterator<Item = Script>,
-    ) -> Result<(), handle::Error> {
-        use std::ops::Bound;
-
-        // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
-        let from = match range.start_bound() {
-            Bound::Included(n) => Bound::Included(*n),
-            Bound::Excluded(n) => Bound::Included(*n),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-        let to = match range.end_bound() {
-            Bound::Included(n) => Bound::Included(*n),
-            Bound::Excluded(n) => Bound::Included(*n),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-
-        self.command(Command::Rescan {
-            from,
-            to,
-            watch: watch.collect(),
-        })
     }
 
     fn wait<F, T>(&self, _f: F) -> Result<T, handle::Error>
