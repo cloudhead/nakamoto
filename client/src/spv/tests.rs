@@ -54,40 +54,6 @@ use super::*;
 use crate::handle::Handle as _;
 use crate::tests::mock;
 
-mod utils {
-    use super::*;
-
-    pub fn watchlist(
-        birth: Height,
-        chain: &NonEmpty<Block>,
-        rng: &mut fastrand::Rng,
-    ) -> (Vec<Script>, u64, Vec<Height>) {
-        let mut watch = Vec::new();
-        let mut balance = 0;
-        let mut blocks = Vec::new();
-
-        for (h, blk) in chain.iter().enumerate().skip(birth as usize) {
-            // Randomly pick certain blocks.
-            if rng.bool() {
-                // Randomly pick a transaction and add its output to the watchlist.
-                let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
-                watch.push(tx.output[0].script_pubkey.clone());
-                balance += tx.output[0].value;
-                blocks.push(h as Height);
-
-                log::debug!(
-                    target: "test",
-                    "Marking txid {} block #{} ({})",
-                    tx.txid(),
-                    h,
-                    blk.block_hash()
-                );
-            }
-        }
-        (watch, balance, blocks)
-    }
-}
-
 #[test]
 fn test_handle_shutdown() {
     let mock = mock::Client::new(Network::Regtest);
@@ -131,7 +97,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
 
     // Build watchlist.
     let mut utxos = Utxos::new();
-    let (watch, balance, heights) = utils::watchlist(birth, &chain, &mut rng);
+    let (watch, heights, balance) = gen::watchlist(birth, chain.iter(), &mut rng);
 
     let config = Config { genesis: birth };
     let spv = super::Client::new(client.clone(), config);
