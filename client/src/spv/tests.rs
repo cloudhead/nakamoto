@@ -61,8 +61,8 @@ mod utils {
         birth: Height,
         chain: &NonEmpty<Block>,
         rng: &mut fastrand::Rng,
-    ) -> (Watchlist, u64, Vec<Height>) {
-        let mut watchlist = Watchlist::new();
+    ) -> (Vec<Script>, u64, Vec<Height>) {
+        let mut watch = Vec::new();
         let mut balance = 0;
         let mut blocks = Vec::new();
 
@@ -71,7 +71,7 @@ mod utils {
             if rng.bool() {
                 // Randomly pick a transaction and add its output to the watchlist.
                 let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
-                watchlist.insert_scripts(iter::once(tx.output[0].script_pubkey.clone()));
+                watch.push(tx.output[0].script_pubkey.clone());
                 balance += tx.output[0].value;
                 blocks.push(h as Height);
 
@@ -84,7 +84,7 @@ mod utils {
                 );
             }
         }
-        (watchlist, balance, blocks)
+        (watch, balance, blocks)
     }
 }
 
@@ -131,8 +131,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
 
     // Build watchlist.
     let mut utxos = Utxos::new();
-    let (watchlist, balance, heights) = utils::watchlist(birth, &chain, &mut rng);
-    let scripts = watchlist.scripts();
+    let (watch, balance, heights) = utils::watchlist(birth, &chain, &mut rng);
 
     let config = Config { genesis: birth };
     let spv = super::Client::new(client.clone(), config);
@@ -191,7 +190,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         {
             Event::Block { transactions, .. } => {
                 for t in &transactions {
-                    utxos.apply(t, &scripts);
+                    utxos.apply(t, &watch);
                 }
             }
             Event::Synced {

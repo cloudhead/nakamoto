@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
 use bitcoin::{OutPoint, Script, Transaction, TxOut};
@@ -23,7 +23,7 @@ impl Utxos {
     }
 
     /// Apply a transaction to the UTXO set.
-    pub fn apply(&mut self, tx: &Transaction, scripts: &HashSet<Script>) {
+    pub fn apply(&mut self, tx: &Transaction, scripts: &[Script]) {
         // Look for outputs.
         for (vout, output) in tx.output.iter().enumerate() {
             // Received coin.

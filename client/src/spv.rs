@@ -17,12 +17,11 @@ use std::{fmt, net, time};
 
 use thiserror::Error;
 
-use bitcoin::{Block, Transaction, Txid};
+use bitcoin::{Block, Script, Transaction, Txid};
 
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p as p2p;
-use p2p::protocol::watchlist::Watchlist;
 
 use crate::client::{self, chan};
 use crate::spv::utxos::Utxos;
@@ -141,10 +140,10 @@ impl<C: client::handle::Handle> handle::Handle for Handle<C> {
     fn rescan(
         &mut self,
         range: impl std::ops::RangeBounds<Height>,
-        watchlist: Watchlist,
+        watch: impl Iterator<Item = Script>,
     ) -> Result<(), handle::Error> {
         self.client
-            .rescan(range, watchlist)
+            .rescan(range, watch)
             .map_err(handle::Error::from)
     }
 

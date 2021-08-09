@@ -49,8 +49,8 @@ impl Watchlist {
         self.scripts.contains(&txout.script_pubkey)
     }
 
-    pub fn scripts(&self) -> HashSet<Script> {
-        self.scripts.clone()
+    pub fn scripts(&self) -> impl Iterator<Item = Script> + '_ {
+        self.scripts.iter().cloned()
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &[u8]> {

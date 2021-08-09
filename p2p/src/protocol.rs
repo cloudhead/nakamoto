@@ -41,6 +41,7 @@ use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_filter::GetCFilters;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::Address;
+use bitcoin::Script;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
@@ -115,7 +116,7 @@ pub enum Command {
         /// Stop scanning at this height. If unbounded, don't stop scanning.
         to: Bound<Height>,
         /// Scripts to match on.
-        watchlist: watchlist::Watchlist,
+        watch: Vec<Script>,
     },
     /// Broadcast to peers matching the predicate.
     Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
@@ -982,9 +983,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         reply.send(Err(CommandError::NotConnected)).ok();
                     }
                 }
-                Command::Rescan { .. } => {
-                    debug!(target: self.target, "Received command: {:?}", cmd);
-                    todo!();
+                Command::Rescan { from, to, watch } => {
+                    debug!(target: self.target, "Received command: Rescan({:?}, {:?})", from, to);
+                    self.cbfmgr.rescan(from, to, watch);
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);

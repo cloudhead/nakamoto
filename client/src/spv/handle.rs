@@ -1,14 +1,13 @@
 use std::net;
 use std::ops::RangeBounds;
 
-use bitcoin::Transaction;
+use bitcoin::{Script, Transaction};
 use thiserror::Error;
 
 use nakamoto_common::block::Height;
 use nakamoto_common::nonempty::NonEmpty;
 
 use super::event::Event;
-use super::Watchlist;
 
 use crate::client::{self, chan};
 
@@ -60,7 +59,7 @@ pub trait Handle {
     fn rescan(
         &mut self,
         range: impl RangeBounds<Height>,
-        watchlist: Watchlist,
+        watchlist: impl Iterator<Item = Script>,
     ) -> Result<(), Error>;
 
     /// Shutdown the transaction manager. Blocks until ongoing tasks have completed.

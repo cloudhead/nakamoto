@@ -13,8 +13,8 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
+use nakamoto_p2p::bitcoin::Script;
 use nakamoto_p2p::event::Event;
-use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Peer;
@@ -165,7 +165,7 @@ impl Handle for TestHandle {
     fn rescan(
         &self,
         range: impl std::ops::RangeBounds<Height>,
-        watchlist: protocol::watchlist::Watchlist,
+        watch: impl Iterator<Item = Script>,
     ) -> Result<(), handle::Error> {
         use std::ops::Bound;
 
@@ -184,7 +184,7 @@ impl Handle for TestHandle {
         self.command(Command::Rescan {
             from,
             to,
-            watchlist,
+            watch: watch.collect(),
         })
     }
 

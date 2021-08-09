@@ -3,7 +3,7 @@
 //! Manages BIP 157/8 compact block filter sync.
 //!
 use std::collections::BTreeSet;
-use std::ops::{Range, RangeInclusive};
+use std::ops::{Bound, Range, RangeInclusive};
 
 use thiserror::Error;
 
@@ -308,16 +308,25 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     }
 
     /// Rescan compact block filters.
-    pub fn rescan(&mut self, start: Option<Height>, end: Option<Height>, watch: Vec<Script>) {
+    pub fn rescan(&mut self, start: Bound<Height>, end: Bound<Height>, watch: Vec<Script>) {
         if self.rescan.active {
+            // TODO: Don't panic here.
             panic!("{}: Rescan already active", source!());
         }
         self.rescan.active = true;
-        self.rescan.current = start.unwrap_or_else(|| self.filters.height());
         self.rescan.requested = BTreeSet::new();
         self.rescan.received = HashMap::with_hasher(self.rng.clone().into());
-        self.rescan.start = start;
-        self.rescan.end = end;
+        self.rescan.start = match start {
+            Bound::Unbounded => None,
+            Bound::Included(h) => Some(h),
+            Bound::Excluded(h) => Some(h + 1),
+        };
+        self.rescan.end = match end {
+            Bound::Unbounded => None,
+            Bound::Included(h) => Some(h),
+            Bound::Excluded(h) => Some(h - 1),
+        };
+        self.rescan.current = self.rescan.start.unwrap_or_else(|| self.filters.height());
         self.rescan.watch = watch.into_iter().collect();
     }
 
@@ -1008,7 +1017,7 @@ mod tests {
         let (watch, heights, _) = gen::watchlist(birth, chain.iter(), &mut rng);
 
         cbfmgr.initialize(time);
-        cbfmgr.rescan(Some(birth), None, watch);
+        cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch);
         cbfmgr.peer_negotiated(
             remote,
             best,
