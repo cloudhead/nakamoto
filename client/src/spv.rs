@@ -2,8 +2,6 @@
 #![allow(clippy::manual_range_contains, clippy::new_without_default)]
 
 #[allow(missing_docs)]
-pub mod event;
-#[allow(missing_docs)]
 pub mod utxos;
 
 #[cfg(test)]
@@ -18,10 +16,9 @@ use bitcoin::{Block, Txid};
 
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_p2p as p2p;
+use p2p::protocol;
 
-use crate::client;
-
-pub use event::Event;
+use crate::client::Event;
 
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
@@ -111,14 +108,14 @@ impl Client {
     }
 
     /// Process client event.
-    pub fn process(&mut self, event: client::Event, emitter: &Emitter<Event>) {
+    pub fn process(&mut self, event: protocol::Event, emitter: &Emitter<Event>) {
         use p2p::protocol::{cbfmgr, invmgr, syncmgr};
 
         match event {
-            client::Event::SyncManager(syncmgr::Event::Synced(_, height)) => {
+            protocol::Event::SyncManager(syncmgr::Event::Synced(_, height)) => {
                 self.tip = height;
             }
-            client::Event::SyncManager(syncmgr::Event::HeadersImported(result)) => {
+            protocol::Event::SyncManager(syncmgr::Event::HeadersImported(result)) => {
                 use nakamoto_common::block::tree::ImportResult;
 
                 if let ImportResult::TipChanged(_, _hash, _height, stale) = result {
@@ -130,10 +127,10 @@ impl Client {
                     // FIXME: To emit `BlockConnected` events we need the block hashes.
                 }
             }
-            client::Event::InventoryManager(invmgr::Event::BlockProcessed { block, height }) => {
+            protocol::Event::InventoryManager(invmgr::Event::BlockProcessed { block, height }) => {
                 self.process_block(block, height, emitter);
             }
-            client::Event::InventoryManager(invmgr::Event::Confirmed {
+            protocol::Event::InventoryManager(invmgr::Event::Confirmed {
                 transaction,
                 height,
                 block,
@@ -143,13 +140,13 @@ impl Client {
                     status: TxStatus::Confirmed { height, block },
                 });
             }
-            client::Event::InventoryManager(invmgr::Event::Acknowledged { txid, peer }) => {
+            protocol::Event::InventoryManager(invmgr::Event::Acknowledged { txid, peer }) => {
                 emitter.emit(Event::TxStatusChanged {
                     txid,
                     status: TxStatus::Acknowledged { peer },
                 });
             }
-            client::Event::FilterManager(cbfmgr::Event::FilterProcessed {
+            protocol::Event::FilterManager(cbfmgr::Event::FilterProcessed {
                 block,
                 height,
                 matched,

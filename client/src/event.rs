@@ -1,9 +1,10 @@
+//! Client events.
 use std::fmt;
 
 use bitcoin::{Transaction, Txid};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
-use super::TxStatus;
+use crate::spv::TxStatus;
 
 /// Event emitted by the SPV client.
 #[allow(missing_docs)]

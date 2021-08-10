@@ -12,10 +12,11 @@ use nakamoto_chain::block::store;
 use nakamoto_chain::filter::cache::FilterCache;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
+use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::syncmgr;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
-use crate::client::{self, event, Client, Config, Event};
+use crate::client::{self, event, Client, Config};
 use crate::error;
 use crate::handle::Handle as _;
 
@@ -59,7 +60,7 @@ fn network(
         let addr = event::wait(
             &events,
             |e| match e {
-                Event::Listening(addr) => Some(addr),
+                protocol::Event::Listening(addr) => Some(addr),
                 _ => None,
             },
             time::Duration::from_secs(5),
@@ -172,7 +173,7 @@ fn test_multiple_handle_events() {
     event::wait(
         &alice_events,
         |e| match e {
-            Event::Listening(_) => Some(()),
+            protocol::Event::Listening(_) => Some(()),
             _ => None,
         },
         time::Duration::from_secs(2),
@@ -182,7 +183,7 @@ fn test_multiple_handle_events() {
     event::wait(
         &bob_events,
         |e| match e {
-            Event::Listening(_) => Some(()),
+            protocol::Event::Listening(_) => Some(()),
             _ => None,
         },
         time::Duration::from_secs(2),

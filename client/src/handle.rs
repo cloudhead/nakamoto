@@ -14,10 +14,10 @@ use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
-use nakamoto_p2p::protocol::{Command, CommandError, GetFiltersError, Peer};
-use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
+use nakamoto_p2p::protocol::{self, Command, CommandError, GetFiltersError, Peer};
+use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, protocol::Link};
 
-use crate::spv;
+use crate::client::Event;
 
 /// An error resulting from a handle method.
 #[derive(Error, Debug)]
@@ -75,7 +75,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
     /// Subscribe to SPV events.
-    fn subscribe(&self) -> chan::Receiver<spv::Event>;
+    fn subscribe(&self) -> chan::Receiver<Event>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Rescan the blockchain for matching addresses and outputs.
@@ -139,7 +139,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Import peer addresses into the node's address book.
     fn import_addresses(&self, addrs: Vec<Address>) -> Result<(), Error>;
     /// Wait for the given predicate to be fulfilled.
-    fn wait<F: FnMut(Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
+    fn wait<F: FnMut(protocol::Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected with the given services.
     fn wait_for_peers(
         &self,
@@ -152,7 +152,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// is returned.
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;
     /// Listen on events.
-    fn events(&self) -> chan::Receiver<Event>;
+    fn events(&self) -> chan::Receiver<protocol::Event>;
     /// Shutdown the node process.
     fn shutdown(self) -> Result<(), Error>;
 }

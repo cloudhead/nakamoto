@@ -86,7 +86,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     let (mut publish, subscribe) = p2p::event::broadcast(move |e, p| spv.process(e, p));
     let subscriber = subscribe.subscribe();
 
-    publish.broadcast(client::Event::SyncManager(syncmgr::Event::Synced(
+    publish.broadcast(protocol::Event::SyncManager(syncmgr::Event::Synced(
         chain.last().block_hash(),
         height,
     )));
@@ -95,7 +95,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         let matched = heights.contains(&h);
         let block = chain[h as usize].clone();
 
-        publish.broadcast(client::Event::FilterManager(
+        publish.broadcast(protocol::Event::FilterManager(
             cbfmgr::Event::FilterProcessed {
                 block: block.block_hash(),
                 height: h,
@@ -104,7 +104,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         ));
 
         if matched {
-            publish.broadcast(client::Event::InventoryManager(
+            publish.broadcast(protocol::Event::InventoryManager(
                 invmgr::Event::BlockProcessed { block, height: h },
             ));
         }

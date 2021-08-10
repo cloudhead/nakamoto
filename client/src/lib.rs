@@ -4,6 +4,7 @@
 #![deny(missing_docs, unsafe_code)]
 pub mod client;
 pub mod error;
+pub mod event;
 pub mod handle;
 pub mod peer;
 pub mod spv;

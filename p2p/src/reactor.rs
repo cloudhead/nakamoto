@@ -8,7 +8,7 @@ use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::p2p::peer;
 
 use crate::error::Error;
-use crate::event::Publisher;
+use crate::protocol::event::Publisher;
 use crate::protocol::{Command, Out, Protocol};
 
 /// Any network reactor that can drive the light-client protocol.

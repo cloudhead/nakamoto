@@ -10,8 +10,8 @@ use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::p2p::peer;
 
 use nakamoto_p2p::error::Error;
-use nakamoto_p2p::event::{self, Event};
-use nakamoto_p2p::protocol::{Command, DisconnectReason, Input, Link, Out, Protocol};
+use nakamoto_p2p::protocol;
+use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Input, Link, Out, Protocol};
 
 use log::*;
 
@@ -80,7 +80,9 @@ impl<R: Write + Read + AsRawFd, E> Reactor<R, E> {
     }
 }
 
-impl<E: event::Publisher> nakamoto_p2p::reactor::Reactor<E> for Reactor<net::TcpStream, E> {
+impl<E: protocol::event::Publisher> nakamoto_p2p::reactor::Reactor<E>
+    for Reactor<net::TcpStream, E>
+{
     type Waker = Arc<popol::Waker>;
 
     /// Construct a new reactor, given a channel to send events on.
@@ -272,7 +274,7 @@ impl<E: event::Publisher> nakamoto_p2p::reactor::Reactor<E> for Reactor<net::Tcp
     }
 }
 
-impl<E: event::Publisher> Reactor<net::TcpStream, E> {
+impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
     /// Process protocol state machine outputs.
     fn process(&mut self, outputs: &chan::Receiver<Out>, local_time: LocalTime) -> Control {
         // Note that there may be messages destined for a peer that has since been

@@ -36,11 +36,12 @@ use nakamoto_p2p::protocol::Protocol;
 use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{cbfmgr, connmgr, invmgr, peermgr, syncmgr};
 
-pub use nakamoto_p2p::event::{self, Event};
+pub use nakamoto_p2p::event;
 pub use nakamoto_p2p::protocol::{Command, CommandError, Peer};
 pub use nakamoto_p2p::reactor::Reactor;
 
 pub use crate::error::Error;
+pub use crate::event::Event;
 pub use crate::handle;
 pub use crate::peer;
 pub use crate::spv;
@@ -122,7 +123,7 @@ impl Default for Config {
 
 /// The client's event publisher.
 pub struct Publisher {
-    publishers: Vec<Box<dyn event::Publisher>>,
+    publishers: Vec<Box<dyn protocol::event::Publisher>>,
 }
 
 impl Publisher {
@@ -132,14 +133,14 @@ impl Publisher {
         }
     }
 
-    fn register(mut self, publisher: impl event::Publisher + 'static) -> Self {
+    fn register(mut self, publisher: impl protocol::event::Publisher + 'static) -> Self {
         self.publishers.push(Box::new(publisher));
         self
     }
 }
 
-impl event::Publisher for Publisher {
-    fn publish(&mut self, e: Event) {
+impl protocol::event::Publisher for Publisher {
+    fn publish(&mut self, e: protocol::Event) {
         for p in self.publishers.iter_mut() {
             p.publish(e.clone());
         }
@@ -152,10 +153,10 @@ pub struct Client<R: Reactor<Publisher>> {
     pub config: Config,
 
     handle: chan::Sender<Command>,
-    events: event::Subscriber<Event>,
+    events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    subscriber: event::Subscriber<spv::Event>,
+    subscriber: event::Subscriber<Event>,
 
     reactor: R,
 }
@@ -166,12 +167,16 @@ impl<R: Reactor<Publisher>> Client<R> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(|e, p| p.emit(e));
         let (blocks_pub, blocks) = event::broadcast(|e, p| {
-            if let Event::InventoryManager(invmgr::Event::BlockProcessed { block, height }) = e {
+            if let protocol::Event::InventoryManager(invmgr::Event::BlockProcessed {
+                block,
+                height,
+            }) = e
+            {
                 p.emit((block, height));
             }
         });
         let (filters_pub, filters) = event::broadcast(|e, p| {
-            if let Event::FilterManager(cbfmgr::Event::FilterReceived {
+            if let protocol::Event::FilterManager(cbfmgr::Event::FilterReceived {
                 filter,
                 block_hash,
                 height,
@@ -402,10 +407,10 @@ impl<R: Reactor<Publisher>> Client<R> {
 pub struct Handle<R: Reactor<Publisher>> {
     network: Network,
     commands: chan::Sender<Command>,
-    events: event::Subscriber<Event>,
+    events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    subscriber: event::Subscriber<spv::Event>,
+    subscriber: event::Subscriber<Event>,
     waker: R::Waker,
     timeout: time::Duration,
 }
@@ -508,7 +513,7 @@ where
         self.filters.subscribe()
     }
 
-    fn subscribe(&self) -> chan::Receiver<spv::Event> {
+    fn subscribe(&self) -> chan::Receiver<Event> {
         self.subscriber.subscribe()
     }
 
@@ -541,7 +546,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                Event::ConnManager(connmgr::Event::Connected(a, link))
+                protocol::Event::ConnManager(connmgr::Event::Connected(a, link))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(link)
@@ -560,7 +565,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                Event::ConnManager(connmgr::Event::Disconnected(a))
+                protocol::Event::ConnManager(connmgr::Event::Disconnected(a))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(())
@@ -601,7 +606,7 @@ where
 
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
     where
-        F: FnMut(Event) -> Option<T>,
+        F: FnMut(protocol::Event) -> Option<T>,
     {
         let events = self.events();
         let result = event::wait(&events, f, self.timeout)?;
@@ -626,7 +631,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                Event::PeerManager(peermgr::Event::PeerNegotiated { addr, services }) => {
+                protocol::Event::PeerManager(peermgr::Event::PeerNegotiated { addr, services }) => {
                     if services.has(required_services) {
                         negotiated.insert(addr);
                     }
@@ -650,7 +655,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                Event::SyncManager(syncmgr::Event::Synced(_, _)) => Some(()),
+                protocol::Event::SyncManager(syncmgr::Event::Synced(_, _)) => Some(()),
                 _ => None,
             },
             self.timeout,
@@ -667,7 +672,7 @@ where
             None => event::wait(
                 &events,
                 |e| match e {
-                    Event::SyncManager(syncmgr::Event::HeadersImported(
+                    protocol::Event::SyncManager(syncmgr::Event::HeadersImported(
                         ImportResult::TipChanged(_, hash, height, _),
                     )) if height == h => Some(hash),
 
@@ -679,7 +684,7 @@ where
         }
     }
 
-    fn events(&self) -> chan::Receiver<Event> {
+    fn events(&self) -> chan::Receiver<protocol::Event> {
         self.events.subscribe()
     }
 

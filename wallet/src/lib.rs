@@ -9,10 +9,9 @@ use std::{fmt, io, net, thread};
 use bitcoin::Address;
 
 use nakamoto_client::handle::{self, Handle};
-use nakamoto_client::spv;
 use nakamoto_client::spv::utxos::Utxos;
 use nakamoto_client::Network;
-use nakamoto_client::{client, Client, Config};
+use nakamoto_client::{client, Client, Config, Event};
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
 
@@ -62,7 +61,7 @@ impl<H: Handle> Wallet<H> {
 
         while let Ok(event) = events.recv() {
             match event {
-                spv::Event::Block {
+                Event::Block {
                     transactions,
                     height,
                     ..
@@ -76,7 +75,7 @@ impl<H: Handle> Wallet<H> {
                         self.balance()
                     );
                 }
-                spv::Event::Synced { height, tip } => {
+                Event::Synced { height, tip } => {
                     log::info!(
                         "Synced up to height {} ({:.1}%)",
                         height,

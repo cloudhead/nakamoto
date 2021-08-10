@@ -13,29 +13,28 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
-use nakamoto_p2p::event::Event;
+use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Peer;
 
-use crate::client::chan;
+use crate::client::{chan, Event};
 use crate::handle::{self, Handle};
-use crate::spv;
 
 pub struct Client {
     // Used by tests.
     pub network: Network,
-    pub events: chan::Sender<Event>,
+    pub events: chan::Sender<protocol::Event>,
     pub blocks: chan::Sender<(Block, Height)>,
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
-    pub subscriber: chan::Sender<spv::Event>,
+    pub subscriber: chan::Sender<Event>,
     pub commands: chan::Receiver<Command>,
 
     // Used in handle.
-    events_: chan::Receiver<Event>,
+    events_: chan::Receiver<protocol::Event>,
     blocks_: chan::Receiver<(Block, Height)>,
     filters_: chan::Receiver<(BlockFilter, BlockHash, Height)>,
-    subscriber_: chan::Receiver<spv::Event>,
+    subscriber_: chan::Receiver<Event>,
     commands_: chan::Sender<Command>,
 }
 
@@ -89,10 +88,10 @@ pub struct TestHandle {
     pub tip: (Height, BlockHeader),
 
     network: Network,
-    events: chan::Receiver<Event>,
+    events: chan::Receiver<protocol::Event>,
     blocks: chan::Receiver<(Block, Height)>,
     filters: chan::Receiver<(BlockFilter, BlockHash, Height)>,
-    subscriber: chan::Receiver<spv::Event>,
+    subscriber: chan::Receiver<Event>,
     commands: chan::Sender<Command>,
 }
 
@@ -126,7 +125,7 @@ impl Handle for TestHandle {
         self.filters.clone()
     }
 
-    fn subscribe(&self) -> chan::Receiver<spv::Event> {
+    fn subscribe(&self) -> chan::Receiver<Event> {
         self.subscriber.clone()
     }
 
@@ -175,7 +174,7 @@ impl Handle for TestHandle {
 
     fn wait<F, T>(&self, _f: F) -> Result<T, handle::Error>
     where
-        F: FnMut(Event) -> Option<T>,
+        F: FnMut(protocol::Event) -> Option<T>,
     {
         unimplemented!()
     }
@@ -196,7 +195,7 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
-    fn events(&self) -> chan::Receiver<Event> {
+    fn events(&self) -> chan::Receiver<protocol::Event> {
         self.events.clone()
     }
 

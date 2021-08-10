@@ -7,6 +7,7 @@ pub mod addrmgr;
 pub mod cbfmgr;
 pub mod channel;
 pub mod connmgr;
+pub mod event;
 pub mod invmgr;
 pub mod peermgr;
 pub mod pingmgr;
@@ -25,7 +26,7 @@ use peermgr::PeerManager;
 use pingmgr::PingManager;
 use syncmgr::SyncManager;
 
-use crate::event::Event;
+pub use event::Event;
 
 use std::fmt::{self, Debug};
 use std::net;
