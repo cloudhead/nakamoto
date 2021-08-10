@@ -3,16 +3,14 @@ pub mod logger;
 
 use thiserror::Error;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::{fmt, io, net, thread};
 
-use crossbeam_channel as chan;
-
-use bitcoin::blockdata::script::Script;
-use bitcoin::blockdata::transaction::{OutPoint, TxOut};
 use bitcoin::Address;
 
 use nakamoto_client::handle::{self, Handle};
+use nakamoto_client::spv;
+use nakamoto_client::spv::utxos::Utxos;
 use nakamoto_client::Network;
 use nakamoto_client::{client, Client, Config};
 use nakamoto_common::block::Height;
@@ -31,16 +29,11 @@ pub enum Error {
     Io(#[from] io::Error),
 }
 
-/// Re-scan parameters.
-pub struct Rescan {
-    genesis: Height,
-}
-
 /// A Bitcoin wallet.
 pub struct Wallet<H> {
     client: H,
     addresses: HashSet<Address>,
-    utxos: HashMap<OutPoint, TxOut>,
+    utxos: Utxos,
 }
 
 impl<H: Handle> Wallet<H> {
@@ -49,128 +42,46 @@ impl<H: Handle> Wallet<H> {
         Self {
             client,
             addresses: addresses.into_iter().collect(),
-            utxos: HashMap::new(),
+            utxos: Utxos::new(),
         }
     }
 
     /// Rescan the blockchain for matching transactions.
-    pub fn rescan(&mut self, options: Rescan) -> Result<(), Error> {
-        // 1. Download block filters between `genesis` and `height` Filters can be downloaded in
-        //    parallel, but should be processed in-order.
-        // 2. As they are downloaded, check if there's a match. If so, add the block hash
-        //    to `blocks_remaining`.
-        // 3. Once all filters in the range are downloaded, check each for matching addresses, with
-        //    `addresses`. For each matching filter, download the corresponding block.
-        // 4. As blocks are downloaded and checked for txs, remove them from the block queue,
-        //    and update the UTXO set.
-        // 5. Once there are no more blocks in the queue and filters to check, exit.
-        //
-        let addresses: HashSet<Script> = self.addresses.iter().map(|a| a.script_pubkey()).collect();
-        let query = self
-            .addresses
-            .iter()
-            .map(|a| a.script_pubkey())
-            .collect::<Vec<_>>();
+    pub fn rescan(&mut self, birth: Height) -> Result<(), Error> {
+        let addresses: Vec<_> = self.addresses.iter().map(|a| a.script_pubkey()).collect();
+        let events = self.client.subscribe();
 
         log::info!("Waiting for peers..");
-
         self.client.wait_for_peers(1, Services::All)?;
         self.client.wait_for_ready()?;
 
-        let (height, _) = self.client.get_tip()?;
+        log::info!("Starting re-scan from block height {}", birth);
+        self.client.rescan(birth.., addresses.iter().cloned())?;
 
-        let range = if options.genesis > height {
-            // If the wallet genesis is higher than the current block height, we need to wait
-            // until we reach that height.
-            log::info!("Waiting for height {}", options.genesis);
-
-            self.client.wait_for_height(options.genesis)?;
-            options.genesis..=options.genesis
-        } else {
-            options.genesis..=height
-        };
-        let count = 1 + (range.end() - range.start()) as usize;
-
-        let blocks_recv = self.client.blocks();
-        let filters_recv = self.client.filters();
-
-        log::info!(
-            "Fetching filters in range {}...{}",
-            range.start(),
-            range.end()
-        );
-        self.client.get_filters(range)?;
-
-        let mut filter_height = options.genesis;
-        let mut blocks_remaining = HashSet::new();
-        let mut filters_remaining = count;
-
-        while !blocks_remaining.is_empty() || filters_remaining > 0 {
-            chan::select! {
-                recv(filters_recv) -> msg => {
-                    if let Ok((filter, block_hash, height)) = msg {
-                        // Process filters in-order.
-                        if height == filter_height {
-                            filter_height = height + 1;
-                            filters_remaining -= 1;
-
-                            if let Ok(true) =
-                                filter.match_any(&block_hash, &mut query.iter().map(|s| s.as_bytes()))
-                            {
-                                log::info!("Filter matched at height {}", height);
-                                log::info!("Fetching block {}", block_hash);
-
-                                // TODO: For BIP32 wallets, add one more address to check, if the
-                                // matching one was the highest-index one.
-                                blocks_remaining.insert(block_hash);
-                                self.client.get_block(&block_hash)?;
-
-                            }
-                        } else {
-                            // TODO: If this condition triggers, we should just queue the filters
-                            // for later processing.
-                            panic!(
-                                "Filter received is too far ahead: expected height={}, got height={}",
-                                filter_height, height
-                            );
-                        }
+        while let Ok(event) = events.recv() {
+            match event {
+                spv::Event::Block {
+                    transactions,
+                    height,
+                    ..
+                } => {
+                    for t in &transactions {
+                        self.utxos.apply(t, &addresses);
                     }
+                    log::info!(
+                        "Processed block at height #{} (balance = {})",
+                        height,
+                        self.balance()
+                    );
                 }
-                recv(blocks_recv) -> msg => {
-                    if let Ok((block, height)) = msg {
-                        blocks_remaining.remove(&block.block_hash());
-
-                        log::info!(
-                            "Received block {} (remaining={})",
-                            height,
-                            blocks_remaining.len()
-                        );
-
-                        for tx in block.txdata.iter() {
-                            let txid = tx.txid();
-
-                            // Look for outputs.
-                            for (vout, output) in tx.output.iter().enumerate() {
-                                // Received coin.
-                                if addresses.contains(&output.script_pubkey) {
-                                    let outpoint = OutPoint {
-                                        txid,
-                                        vout: vout as u32,
-                                    };
-                                    self.utxos.insert(outpoint, output.clone());
-                                    log::info!("Unspent output found (balance={})", self.balance());
-                                }
-                            }
-                            // Look for inputs.
-                            for input in tx.input.iter() {
-                                // Spent coin.
-                                if self.utxos.remove(&input.previous_output).is_some() {
-                                    log::info!("Spent output found (balance={})", self.balance())
-                                }
-                            }
-                        }
-                    }
+                spv::Event::Synced { height, tip } => {
+                    log::info!(
+                        "Synced up to height {} ({}%)",
+                        height,
+                        height as f64 / tip as f64 * 100.
+                    );
                 }
+                _ => {}
             }
         }
 
@@ -178,7 +89,7 @@ impl<H: Handle> Wallet<H> {
     }
 
     fn balance(&self) -> u64 {
-        self.utxos.values().map(|u| u.value).sum()
+        self.utxos.balance()
     }
 }
 
@@ -189,7 +100,7 @@ type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
 pub fn run<S: net::ToSocketAddrs + fmt::Debug>(
     seed: S,
     addresses: Vec<Address>,
-    genesis: Height,
+    birth: Height,
 ) -> Result<(), Error> {
     let mut cfg = Config {
         listen: vec![], // Don't listen for incoming connections.
@@ -205,17 +116,19 @@ pub fn run<S: net::ToSocketAddrs + fmt::Debug>(
     let client = Client::<Reactor>::new(cfg)?;
     let handle = client.handle();
 
+    // Create a new wallet and rescan the chain from the provided `birth` height for
+    // matching addresses.
+    let mut wallet = Wallet::new(handle.clone(), addresses);
+
     // Start the network client in the background.
     thread::spawn(|| client.run().unwrap());
 
-    // Create a new wallet and rescan the chain from the provided `genesis` height for
-    // matching addresses.
-    let mut wallet = Wallet::new(handle, addresses);
-
-    wallet.rescan(Rescan { genesis })?;
+    wallet.rescan(birth)?;
 
     log::info!("Balance is {} sats", wallet.balance());
     log::info!("Rescan complete.");
+
+    handle.shutdown()?;
 
     Ok(())
 }
