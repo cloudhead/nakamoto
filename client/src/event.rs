@@ -65,7 +65,7 @@ impl fmt::Display for Event {
             } => {
                 write!(
                     fmt,
-                    "filter processed at height {} (match={})",
+                    "filter processed at height {} (match = {})",
                     height, matched
                 )
             }

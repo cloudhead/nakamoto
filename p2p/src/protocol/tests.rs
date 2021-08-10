@@ -4,7 +4,7 @@ pub mod simulator;
 
 use std::iter;
 use std::net;
-use std::ops::Range;
+use std::ops::{Bound, Range};
 use std::sync::Arc;
 
 use log::*;
@@ -21,6 +21,8 @@ use peer::{Peer, PeerDummy};
 use simulator::{Options, Simulation};
 
 use bitcoin::network::message_blockdata::Inventory;
+use bitcoin::network::message_filter::CFHeaders;
+use bitcoin::network::message_filter::CFilter;
 use bitcoin::network::Address;
 use bitcoin_hashes::hex::FromHex;
 
@@ -28,7 +30,9 @@ use quickcheck_macros::quickcheck;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
+use nakamoto_chain::store::Genesis;
 
+use nakamoto_common::block::filter::FilterHeader;
 use nakamoto_common::collections::HashMap;
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;
@@ -1124,6 +1128,115 @@ fn test_confirmed_transaction() {
     );
 
     assert_eq!(events.count(), 0);
+    assert!(alice.protocol.invmgr.is_empty());
+}
+
+#[test]
+fn test_submitted_transaction_filtering() {
+    let height = 16;
+    let mut rng = fastrand::Rng::new();
+
+    logger::init(log::Level::Debug);
+
+    let network = Network::Regtest;
+    let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+    let (transmit, _) = chan::unbounded();
+    let genesis = network.genesis_block();
+    let chain = gen::blockchain(genesis, height, &mut rng);
+    let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
+    let cfheader_genesis = FilterHeader::genesis(network);
+    let cfheaders = gen::cfheaders_from_blocks(cfheader_genesis, chain.iter())
+        .into_iter()
+        .skip(1) // Skip genesis
+        .collect::<Vec<_>>();
+    let filter_type = 0x0;
+    let mut alice = Peer::new(
+        "alice",
+        [48, 48, 48, 48],
+        network,
+        headers.tail,
+        cfheaders.clone(),
+        vec![],
+        rng.clone(),
+    );
+    let tx = gen::transaction(&mut rng);
+
+    // Connect to a peer and submit the transaction.
+    alice.connect(
+        &PeerDummy {
+            addr: remote,
+            height,
+            protocol_version: alice.protocol.protocol_version,
+            services: cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
+            relay: true,
+            time: alice.time,
+        },
+        Link::Outbound,
+    );
+
+    // Start a rescan, to make sure we catch the transaction when it's confirmed.
+    alice.command(Command::Rescan {
+        from: Bound::Unbounded, // Start scanning from the current height.
+        to: Bound::Unbounded,   // Keep scanning forever.
+        watch: vec![],          // Submitted transactions are tracked automatically.
+    });
+    alice.command(Command::SubmitTransactions(vec![tx.clone()], transmit));
+    alice.tick();
+
+    assert!(alice.protocol.invmgr.contains(&tx.txid()));
+
+    // The next block will have the matching transaction.
+    let matching = gen::block_with(&chain.last().header, vec![tx], &mut rng);
+    let cfilter = gen::cfilter(&matching);
+    let (_, parent) = cfheaders.last().unwrap();
+    let (cfhash, _) = gen::cfheader(parent, &cfilter);
+
+    alice.time = LocalTime::from_block_time(chain.last().header.time);
+
+    // Alice receives a header announcement.
+    alice.receive(remote, NetworkMessage::Headers(vec![matching.header]));
+
+    alice
+        .messages()
+        .find(|(_, m)| matches!(m, NetworkMessage::GetCFHeaders(_)))
+        .expect("Alice asks for the matching cfheaders");
+
+    // Alice receives the cfheaders.
+    alice.receive(
+        remote,
+        NetworkMessage::CFHeaders(CFHeaders {
+            filter_type,
+            stop_hash: matching.block_hash(),
+            previous_filter_header: *parent,
+            filter_hashes: vec![cfhash],
+        }),
+    );
+
+    alice
+        .messages()
+        .find(|(_, m)| matches!(m, NetworkMessage::GetCFilters(_)))
+        .expect("Alice asks for the cfilter");
+
+    // Alice receives the cfilter, which we expect to match.
+    alice.receive(
+        remote,
+        NetworkMessage::CFilter(CFilter {
+            filter_type,
+            block_hash: matching.block_hash(),
+            filter: cfilter.content,
+        }),
+    );
+
+    // Alice asks for the corresponding block.
+    let expected = vec![Inventory::Block(matching.block_hash())];
+
+    alice.tick();
+    alice
+        .messages()
+        .find(|(_, m)| matches!(m, NetworkMessage::GetData(data) if data == &expected))
+        .expect("Alice asks for the matching block");
+    alice.receive(remote, NetworkMessage::Block(matching));
+
     assert!(alice.protocol.invmgr.is_empty());
 }
 

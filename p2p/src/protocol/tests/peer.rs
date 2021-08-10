@@ -172,7 +172,7 @@ impl Peer<Protocol> {
                 addr: *addr,
                 height: 144,
                 protocol_version: self.protocol.protocol_version,
-                services: self.protocol.peermgr.config.required_services,
+                services: cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
                 relay: true,
                 time: self.time,
             },

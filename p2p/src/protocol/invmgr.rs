@@ -379,7 +379,15 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     }
 
     /// Called when a block is received from a peer.
-    pub fn received_block<T: BlockTree>(&mut self, from: &PeerId, block: Block, tree: &T) {
+    /// Returns the list of confirmed [`Txid`].
+    ///
+    /// Note that the confirmed transactions don't necessarily pertain to this block.
+    pub fn received_block<T: BlockTree>(
+        &mut self,
+        from: &PeerId,
+        block: Block,
+        tree: &T,
+    ) -> Vec<Txid> {
         let hash = block.block_hash();
         let from = *from;
 
@@ -387,7 +395,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
             // Nb. The remote isn't necessarily sending an unsolicited block here.
             // We often have to ask multiple peers to get a response, so we may
             // have already received this block once.
-            return;
+            return vec![];
         }
 
         // We're done requesting this block.
@@ -401,7 +409,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         let height = if let Some((height, _)) = tree.get_block(&hash) {
             height
         } else {
-            return;
+            return vec![];
         };
 
         // Add to processing queue. Blocks are processed in-order only.
@@ -411,11 +419,13 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         // If there are still blocks remaining to download, don't process any of the
         // received queue yet.
         if !self.remaining.is_empty() {
-            return;
+            return vec![];
         }
 
         // Now that all blocks to be processed are downloaded, we can start
         // processing them in order.
+        let mut confirmed = Vec::new();
+
         while let Some((height, block)) = self
             .received
             .keys()
@@ -426,10 +436,14 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
             let txs = self.mempool.process_block(&block);
 
             for transaction in txs {
+                let txid = transaction.txid();
+
                 // Transactions that have been confirmed no longer need to be announced.
                 for peer in self.peers.values_mut() {
-                    peer.outbox.remove(&transaction.txid());
+                    peer.outbox.remove(&txid);
                 }
+                confirmed.push(txid);
+
                 self.upstream.event(Event::Confirmed {
                     transaction,
                     block: block.block_hash(),
@@ -438,6 +452,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
             }
             self.upstream.event(Event::BlockProcessed { block, height });
         }
+        confirmed
     }
 
     /// Announce inventories to all matching peers. Retries if necessary.

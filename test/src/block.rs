@@ -67,14 +67,19 @@ pub mod gen {
         }
     }
 
-    /// Generate a random transaction output.
-    pub fn tx_out(rng: &mut fastrand::Rng) -> TxOut {
+    pub fn script(rng: &mut fastrand::Rng) -> Script {
         let bytes = std::iter::repeat_with(|| rng.u8(..))
             .take(20)
             .collect::<Vec<_>>();
         let hash = hash160::Hash::from_slice(bytes.as_slice()).unwrap();
         let pkh = PubkeyHash::from_hash(hash);
-        let script_pubkey = Script::new_p2pkh(&pkh);
+
+        Script::new_p2pkh(&pkh)
+    }
+
+    /// Generate a random transaction output.
+    pub fn tx_out(rng: &mut fastrand::Rng) -> TxOut {
+        let script_pubkey = script(rng);
 
         TxOut {
             value: rng.u64(1..100_000_000),
@@ -101,7 +106,15 @@ pub mod gen {
         for _ in 1..txdata.capacity() {
             txdata.push(transaction(rng));
         }
+        self::block_with(prev_header, txdata, rng)
+    }
 
+    /// Generate a random block based on a previous header.
+    pub fn block_with(
+        prev_header: &BlockHeader,
+        txdata: Vec<Transaction>,
+        rng: &mut fastrand::Rng,
+    ) -> Block {
         let merkle_root =
             bitcoin::util::hash::bitcoin_merkle_root(txdata.iter().map(|tx| tx.txid().as_hash()));
         let merkle_root = TxMerkleNode::from_hash(merkle_root);

@@ -10,7 +10,7 @@ use thiserror::Error;
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
 use bitcoin::util::bip158;
-use bitcoin::Script;
+use bitcoin::{Script, Transaction, Txid};
 
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
@@ -136,7 +136,7 @@ impl std::fmt::Display for Event {
             } => {
                 write!(
                     fmt,
-                    "Filter processed at height {} (match={})",
+                    "Filter processed at height {} (match = {})",
                     height, matched
                 )
             }
@@ -251,6 +251,8 @@ pub struct Rescan {
     end: Option<Height>,
     /// Addresses and outpoints to watch for.
     watch: HashSet<Script>,
+    /// Transactions to watch for.
+    transactions: HashMap<Txid, HashSet<Script>>,
     /// Filters requested and remaining to download.
     requested: BTreeSet<Height>,
     /// Received filters waiting to be matched.
@@ -315,6 +317,27 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         self.filters.rollback(n)
     }
 
+    /// Add a script to the list of scripts to watch.
+    #[allow(dead_code)]
+    pub fn watch(&mut self, script: Script) -> bool {
+        self.rescan.watch.insert(script)
+    }
+
+    /// Add transaction outputs to list of transactions to watch.
+    pub fn watch_transactions(&mut self, txs: &[Transaction]) {
+        for tx in txs {
+            self.rescan.transactions.insert(
+                tx.txid(),
+                tx.output.iter().map(|o| o.script_pubkey.clone()).collect(),
+            );
+        }
+    }
+
+    /// Remove transaction from list of transactions being watch.
+    pub fn unwatch_transaction(&mut self, txid: &Txid) -> bool {
+        self.rescan.transactions.remove(txid).is_some()
+    }
+
     /// Rescan compact block filters.
     pub fn rescan<T: BlockTree>(
         &mut self,
@@ -339,10 +362,13 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             Bound::Included(h) => Some(h),
             Bound::Excluded(h) => Some(h - 1),
         };
-        self.rescan.current = self.rescan.start.unwrap_or_else(|| self.filters.height()); // TODO: Should this be header height?
+        self.rescan.current = self.rescan.start.unwrap_or_else(|| tree.height() + 1);
         self.rescan.watch = watch.into_iter().collect();
+        self.rescan.transactions = HashMap::with_hasher(self.rng.clone().into());
         self.rescan.requested = BTreeSet::new();
 
+        // Nb. If our filter header chain isn't caught up with our block header chain,
+        // this range will be empty, and this will effectively do nothing.
         self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
     }
 
@@ -355,6 +381,9 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         range: RangeInclusive<Height>,
         tree: &T,
     ) -> Result<(), GetFiltersError> {
+        if range.is_empty() {
+            return Ok(());
+        }
         if self.peers.is_empty() {
             return Err(GetFiltersError::NotConnected);
         }
@@ -751,17 +780,16 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         start: Height,
         stop: Height,
         tree: &T,
-    ) -> Result<(), Error> {
+    ) -> Result<(), GetFiltersError> {
         if !self.rescan.active {
             return Ok(());
         }
 
         let start = Height::max(start, self.rescan.current);
         let stop = Height::min(stop, self.rescan.end.unwrap_or(stop));
-        let range = start..=stop;
+        let range = start..=stop; // If the range is empty, it means we are not caught up yet.
 
-        debug_assert!(!range.is_empty());
-        self.get_cfilters(range, tree).unwrap(); // TODO
+        self.get_cfilters(range, tree)?;
 
         Ok(())
     }
@@ -777,18 +805,27 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         let mut current = self.rescan.current;
 
         while let Some((filter, block_hash)) = self.rescan.received.remove(&current) {
-            let matched = if self.rescan.watch.is_empty() {
-                false
-            } else {
-                filter.match_any(
+            // Match scripts first, then match transactions. All outputs of a transaction must
+            // match to consider the transaction matched.
+            let mut matched = false;
+
+            if !self.rescan.watch.is_empty() {
+                matched = filter.match_any(
                     &block_hash,
                     &mut self.rescan.watch.iter().map(|k| k.as_bytes()),
-                )?
-            };
+                )?;
+            }
+            if !matched && !self.rescan.transactions.is_empty() {
+                matched = self.rescan.transactions.values().any(|outs| {
+                    let mut outs = outs.iter().map(|k| k.as_bytes());
+                    filter.match_all(&block_hash, &mut outs).unwrap_or(false)
+                })
+            }
 
             if matched {
                 matches.push(block_hash);
             }
+
             self.upstream.event(Event::FilterProcessed {
                 block: block_hash,
                 height: current,
@@ -889,7 +926,7 @@ mod tests {
             let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
 
             (
-                FilterManager::new(Config::default(), rng.clone(), cache, upstream),
+                FilterManager::new(Config::default(), rng, cache, upstream),
                 tree,
                 chain,
                 outputs,
@@ -1059,8 +1096,8 @@ mod tests {
         let mut msgs = protocol::test::messages(&outputs);
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
         let tip = tree.get_block_by_height(best).unwrap().block_hash();
-        let previous_filter_header = FilterHeader::genesis(network);
         let filter_type = 0x0;
+        let previous_filter_header = FilterHeader::genesis(network);
         let filter_hashes = gen::cfheaders_from_blocks(previous_filter_header, chain.iter())
             .into_iter()
             .skip(1) // Skip genesis

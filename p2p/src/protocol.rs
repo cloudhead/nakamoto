@@ -766,7 +766,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .received_getheaders(&addr, (locator_hashes, stop_hash), &self.tree);
             }
             NetworkMessage::Block(block) => {
-                self.invmgr.received_block(&addr, block, &self.tree);
+                for confirmed in self.invmgr.received_block(&addr, block, &self.tree) {
+                    self.cbfmgr.unwatch_transaction(&confirmed);
+                }
             }
             NetworkMessage::Inv(inventory) => {
                 // Receive an `inv` message. This will happen if we are out of sync with a
@@ -974,6 +976,14 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
                 Command::SubmitTransactions(txs, reply) => {
                     debug!(target: self.target, "Received command: SubmitTransactions(..)");
+
+                    // Update local watchlist to track submitted transactions.
+                    //
+                    // Nb. This is currently non-optimal, as the cfilter matching is based on the
+                    // output scripts. This may trigger false-positives, since the same
+                    // invoice (address) can be re-used by multiple transactions, ie. outputs
+                    // can figure in more than one block.
+                    self.cbfmgr.watch_transactions(&txs);
 
                     // TODO: For BIP 339 support, we can send a `WTx` inventory here.
                     let peers = self.invmgr.announce(txs);

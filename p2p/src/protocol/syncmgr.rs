@@ -732,7 +732,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                 .unwrap_or(true)
             {
                 self.last_peer_sample = Some(now);
-
                 self.sample_peers(now, tree);
             }
             return;
