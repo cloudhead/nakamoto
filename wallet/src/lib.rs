@@ -76,7 +76,7 @@ impl<H: Handle> Wallet<H> {
                 }
                 spv::Event::Synced { height, tip } => {
                     log::info!(
-                        "Synced up to height {} ({}%)",
+                        "Synced up to height {} ({:.1}%)",
                         height,
                         height as f64 / tip as f64 * 100.
                     );
