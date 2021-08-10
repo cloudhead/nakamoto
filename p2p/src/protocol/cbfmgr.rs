@@ -102,6 +102,11 @@ pub enum Event {
         /// Reason for cancellation.
         reason: &'static str,
     },
+    /// An active rescan has completed.
+    RescanCompleted {
+        /// Last height processed by rescan.
+        height: Height,
+    },
     /// Finished syncing filter headers up to the specified height.
     Synced(Height),
     /// A peer has timed out responding to a filter request.
@@ -150,6 +155,9 @@ impl std::fmt::Display for Event {
                 "Syncing filter headers with {}, start = {}, stop = {}",
                 peer, start_height, stop_hash
             ),
+            Event::RescanCompleted { height } => {
+                write!(fmt, "Rescan completed at height {}", height)
+            }
             Event::RequestCanceled { reason } => {
                 write!(fmt, "Request canceled: {}", reason)
             }
@@ -502,7 +510,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         if !headers.is_empty() {
             let hashes = headers.iter().map(|(hash, _)| *hash);
             let prev_header = self.filters.get_prev_header(start_height).expect(
-                "CompactFilterManager::received_getcfheaders: all headers up to the tip must exist",
+                "FilterManager::received_getcfheaders: all headers up to the tip must exist",
             );
 
             self.upstream.send_cfheaders(
@@ -736,6 +744,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         }
 
         let start = Height::max(start, self.rescan.current);
+        let stop = Height::min(stop, self.rescan.end.unwrap_or(stop));
         let range = start..=stop;
 
         debug_assert!(!range.is_empty());
@@ -777,6 +786,13 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             current += 1;
         }
         self.rescan.current = current;
+
+        if let Some(stop) = self.rescan.end {
+            if self.rescan.current == stop {
+                self.rescan.active = false;
+                self.upstream.event(Event::RescanCompleted { height: stop });
+            }
+        }
 
         Ok(matches)
     }
