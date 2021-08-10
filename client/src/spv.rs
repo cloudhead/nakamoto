@@ -93,7 +93,8 @@ pub struct Client {
 
 impl Client {
     #[allow(missing_docs)]
-    pub fn new(config: Config, tip: Height) -> Self {
+    pub fn new(config: Config) -> Self {
+        let tip = 0;
         let sync_height = 0;
         let filter_height = 0;
         let block_height = 0;
@@ -114,7 +115,6 @@ impl Client {
         use p2p::protocol::{cbfmgr, invmgr, syncmgr};
 
         match event {
-            // FIXME: SyncManager should ALWAYS emit a 'Synced' event on initialization.
             client::Event::SyncManager(syncmgr::Event::Synced(_, height)) => {
                 self.tip = height;
             }
@@ -178,6 +178,7 @@ impl Client {
         // Ensure we only broadcast sync events when the sync height has changed.
         if height > self.sync_height {
             self.sync_height = height;
+
             emitter.emit(Event::Synced {
                 height,
                 tip: self.tip,

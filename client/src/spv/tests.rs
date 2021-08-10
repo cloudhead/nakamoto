@@ -39,6 +39,7 @@
 #![allow(unused_imports)]
 use std::{iter, net, thread};
 
+use p2p::protocol::syncmgr;
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
 
@@ -74,7 +75,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     let (watch, heights, balance) = gen::watchlist(birth, chain.iter(), &mut rng);
 
     let config = Config::default();
-    let mut spv = super::Client::new(config, height);
+    let mut spv = super::Client::new(config);
 
     log::debug!(
         "-- Test case with birth = {} and height = {}",
@@ -84,6 +85,11 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
 
     let (mut publish, subscribe) = p2p::event::broadcast(move |e, p| spv.process(e, p));
     let subscriber = subscribe.subscribe();
+
+    publish.broadcast(client::Event::SyncManager(syncmgr::Event::Synced(
+        chain.last().block_hash(),
+        height,
+    )));
 
     for h in birth..=height {
         let matched = heights.contains(&h);

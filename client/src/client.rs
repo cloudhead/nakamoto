@@ -183,7 +183,7 @@ impl<R: Reactor<Publisher>> Client<R> {
         });
         let (publisher, subscriber) = event::broadcast({
             // FIXME: Correct tip should be passed, or parameter should be removed.
-            let mut spv = crate::spv::Client::new(Default::default(), 0);
+            let mut spv = crate::spv::Client::new(Default::default());
 
             move |e, p| spv.process(e, p)
         });

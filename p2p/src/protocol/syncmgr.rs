@@ -114,7 +114,7 @@ pub enum Event {
     HeadersImported(ImportResult),
     /// Started syncing with a peer.
     Syncing(PeerId),
-    /// Finished syncing up to the specified hash and height.
+    /// Synced up to the specified hash and height.
     Synced(BlockHash, Height),
     /// A peer has timed out responding to a header request.
     TimedOut(PeerId),
@@ -206,7 +206,12 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
     /// Initialize the sync manager. Should only be called once.
     pub fn initialize<T: BlockTree>(&mut self, time: LocalTime, tree: &T) {
+        // TODO: `tip` should return the height.
+        let (hash, _) = tree.tip();
+        let height = tree.height();
+
         self.idle(time, tree);
+        self.upstream.event(Event::Synced(hash, height));
     }
 
     /// Called periodically.

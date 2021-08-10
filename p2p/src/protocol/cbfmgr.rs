@@ -997,6 +997,13 @@ mod tests {
         todo!()
     }
 
+    /// Test that a bounded rescan will eventually complete.
+    #[test]
+    #[ignore]
+    fn test_rescan_completed() {
+        todo!()
+    }
+
     #[quickcheck]
     fn prop_rescan(birth: Height, best: Height) -> quickcheck::TestResult {
         // We don't gain anything by testing longer chains.
