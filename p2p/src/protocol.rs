@@ -986,7 +986,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
                 Command::Rescan { from, to, watch } => {
                     debug!(target: self.target, "Received command: Rescan({:?}, {:?})", from, to);
-                    self.cbfmgr.rescan(from, to, watch);
+                    self.cbfmgr.rescan(from, to, watch, &self.tree).unwrap(); // FIXME
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);
