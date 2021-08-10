@@ -74,8 +74,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     let mut utxos = Utxos::new();
     let (watch, heights, balance) = gen::watchlist(birth, chain.iter(), &mut rng);
 
-    let config = Config::default();
-    let mut spv = super::Client::new(config);
+    let mut spv = super::Mapper::new();
 
     log::debug!(
         "-- Test case with birth = {} and height = {}",

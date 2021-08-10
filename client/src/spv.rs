@@ -1,4 +1,4 @@
-//! SPV client.
+//! SPV event mapper.
 #![allow(clippy::manual_range_contains, clippy::new_without_default)]
 
 #[allow(missing_docs)]
@@ -66,16 +66,9 @@ impl fmt::Display for TxStatus {
 }
 
 #[allow(missing_docs)]
-#[derive(Debug, Default, Clone)]
-pub struct Config {}
-
-#[allow(missing_docs)]
-#[allow(dead_code)]
-pub struct Client {
+pub struct Mapper {
     /// Best height known.
     tip: Height,
-    /// Configuration.
-    config: Config,
     /// The height up to which we've processed filters and matching blocks.
     sync_height: Height,
     /// The height up to which we've processed filters.
@@ -88,9 +81,9 @@ pub struct Client {
     pending: HashSet<Height>,
 }
 
-impl Client {
+impl Mapper {
     #[allow(missing_docs)]
-    pub fn new(config: Config) -> Self {
+    pub fn new() -> Self {
         let tip = 0;
         let sync_height = 0;
         let filter_height = 0;
@@ -99,7 +92,6 @@ impl Client {
 
         Self {
             tip,
-            config,
             sync_height,
             filter_height,
             block_height,
@@ -107,7 +99,7 @@ impl Client {
         }
     }
 
-    /// Process client event.
+    /// Process protocol event and map it to client event(s).
     pub fn process(&mut self, event: protocol::Event, emitter: &Emitter<Event>) {
         use p2p::protocol::{cbfmgr, invmgr, syncmgr};
 
