@@ -48,13 +48,15 @@ impl<H: Handle> Wallet<H> {
 
     /// Rescan the blockchain for matching transactions.
     pub fn rescan(&mut self, birth: Height) -> Result<(), Error> {
+        // Convert our address list into scripts.
         let addresses: Vec<_> = self.addresses.iter().map(|a| a.script_pubkey()).collect();
         let events = self.client.subscribe();
 
         log::info!("Waiting for peers..");
-        self.client.wait_for_peers(1, Services::All)?;
-        self.client.wait_for_ready()?;
+        self.client.wait_for_peers(1, Services::All)?; // At least one peer with filter and chain support.
+        self.client.wait_for_ready()?; // Let's wait until we're caught up with the header chain.
 
+        // Start a re-scan from the birht height, which keeps scanning as new blocks arrive.
         log::info!("Starting re-scan from block height {}", birth);
         self.client.rescan(birth.., addresses.iter().cloned())?;
 
