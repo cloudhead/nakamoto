@@ -20,8 +20,8 @@ use crate::filter::store;
 
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StoredHeader {
-    hash: FilterHash,
-    header: FilterHeader,
+    pub hash: FilterHash,
+    pub header: FilterHeader,
 }
 
 impl Encodable for StoredHeader {
