@@ -424,6 +424,14 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         time: LocalTime,
     ) -> Result<Height, Error> {
         let from = *from;
+        let stop_hash = msg.stop_hash;
+
+        if self.inflight.remove(&stop_hash).is_none() {
+            return Err(Error::Ignored {
+                from,
+                msg: "cfheaders: unsolicited message",
+            });
+        }
 
         if msg.filter_type != 0x0 {
             return Err(Error::InvalidMessage {
@@ -441,7 +449,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             return Ok(self.filters.height());
         }
 
-        let stop_hash = msg.stop_hash;
         let start_height = self.filters.height();
         let stop_height = if let Some((height, _)) = tree.get_block(&stop_hash) {
             height
@@ -451,13 +458,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
                 reason: "cfheaders: unknown stop hash",
             });
         };
-
-        if self.inflight.remove(&stop_hash).is_none() {
-            return Err(Error::Ignored {
-                from,
-                msg: "cfheaders: unsolicited message",
-            });
-        }
 
         let hashes = msg.filter_hashes;
         let count = hashes.len();
@@ -1082,6 +1082,13 @@ mod tests {
     #[test]
     #[ignore]
     fn test_rescan_completed() {
+        todo!()
+    }
+
+    /// Test that an empty watchlist can never match a block.
+    #[test]
+    #[ignore]
+    fn test_empty_watchlist() {
         todo!()
     }
 

@@ -1186,7 +1186,7 @@ fn test_submitted_transaction_filtering() {
     assert!(alice.protocol.invmgr.contains(&tx.txid()));
 
     // The next block will have the matching transaction.
-    let matching = gen::block_with(&chain.last().header, vec![tx], &mut rng);
+    let matching = gen::block_with(&chain.last().header, vec![tx.clone()], &mut rng);
     let cfilter = gen::cfilter(&matching);
     let (_, parent) = cfheaders.last().unwrap();
     let (cfhash, _) = gen::cfheader(parent, &cfilter);
@@ -1237,7 +1237,11 @@ fn test_submitted_transaction_filtering() {
         .expect("Alice asks for the matching block");
     alice.receive(remote, NetworkMessage::Block(matching));
 
-    assert!(alice.protocol.invmgr.is_empty());
+    assert!(alice.protocol.invmgr.is_empty(), "The mempool is empty");
+    assert!(
+        !alice.protocol.cbfmgr.unwatch_transaction(&tx.txid()),
+        "The transaction is no longer watched"
+    );
 }
 
 #[test]
