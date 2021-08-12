@@ -1,3 +1,4 @@
+pub mod assert;
 pub mod block;
 
 use std::fs::File;
