@@ -190,6 +190,24 @@ pub mod gen {
         chain
     }
 
+    /// Generate a random header chain.
+    pub fn headers(
+        parent: BlockHeader,
+        height: Height,
+        rng: &mut fastrand::Rng,
+    ) -> NonEmpty<BlockHeader> {
+        let mut prev_header = parent;
+        let mut chain = NonEmpty::new(parent);
+
+        for _ in 0..height {
+            let header = header(&prev_header, TxMerkleNode::default(), rng);
+            prev_header = header;
+
+            chain.push(header);
+        }
+        chain
+    }
+
     /// Create a filter from a block.
     pub fn cfilter(block: &Block) -> BlockFilter {
         let mut txmap = HashMap::new();

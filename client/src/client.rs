@@ -670,10 +670,11 @@ where
             None => event::wait(
                 &events,
                 |e| match e {
-                    protocol::Event::SyncManager(syncmgr::Event::HeadersImported(
-                        ImportResult::TipChanged(_, hash, height, _),
-                    )) if height == h => Some(hash),
-
+                    protocol::Event::SyncManager(syncmgr::Event::Synced(hash, height))
+                        if height == h =>
+                    {
+                        Some(hash)
+                    }
                     _ => None,
                 },
                 self.timeout,

@@ -107,17 +107,11 @@ impl Mapper {
             protocol::Event::SyncManager(syncmgr::Event::Synced(_, height)) => {
                 self.tip = height;
             }
-            protocol::Event::SyncManager(syncmgr::Event::HeadersImported(result)) => {
-                use nakamoto_common::block::tree::ImportResult;
-
-                if let ImportResult::TipChanged(_, _hash, _height, stale) = result {
-                    if !stale.is_empty() {
-                        for hash in stale {
-                            emitter.emit(Event::BlockDisconnected { hash });
-                        }
-                    }
-                    // FIXME: To emit `BlockConnected` events we need the block hashes.
-                }
+            protocol::Event::SyncManager(syncmgr::Event::BlockConnected { hash, height }) => {
+                emitter.emit(Event::BlockConnected { hash, height });
+            }
+            protocol::Event::SyncManager(syncmgr::Event::BlockDisconnected { hash, height }) => {
+                emitter.emit(Event::BlockDisconnected { hash, height });
             }
             protocol::Event::InventoryManager(invmgr::Event::BlockProcessed { block, height }) => {
                 self.process_block(block, height, emitter);

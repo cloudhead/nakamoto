@@ -8,7 +8,7 @@
 pub mod test;
 
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -266,6 +266,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
                 }
             }
         }
+        // FIXME: Prune candidates that ended up as a prefix of the main chain.
 
         let (hash, _) = self.tip();
         if hash != best {
@@ -274,7 +275,10 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
                 header,
                 hash,
                 self.height(),
-                stale.into_iter().map(|h| h.block_hash()).collect(),
+                stale
+                    .into_iter()
+                    .map(|(height, header)| (height, header.block_hash()))
+                    .collect(),
             ))
         } else {
             Ok(ImportResult::TipUnchanged)
@@ -439,11 +443,11 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     }
 
     /// Rollback active chain to the given height. Returns the list of rolled-back headers.
-    fn rollback(&mut self, height: Height) -> Result<Vec<BlockHeader>, Error> {
+    fn rollback(&mut self, height: Height) -> Result<Vec<(Height, BlockHeader)>, Error> {
         let mut stale = Vec::new();
 
-        for block in self.chain.tail.drain(height as usize..) {
-            stale.push(block.header);
+        for (block, height) in self.chain.tail.drain(height as usize..).zip(height + 1..) {
+            stale.push((height, block.header));
 
             self.headers.remove(&block.hash);
             self.orphans.insert(block.hash, block.header);
@@ -454,7 +458,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     }
 
     /// Activate a fork candidate. Returns the list of rolled-back (stale) headers.
-    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<Vec<BlockHeader>, Error> {
+    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<Vec<(Height, BlockHeader)>, Error> {
         let stale = self.rollback(branch.fork_height)?;
 
         for (i, header) in branch.headers.iter().enumerate() {
@@ -496,10 +500,25 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         context: &C,
     ) -> Result<ImportResult, Error> {
         let mut result = None;
+        let mut reverted = BTreeSet::new();
+
+        // FIXME: Remove this function!
 
         for (i, header) in chain.enumerate() {
             match self.import_block(header, context) {
-                Ok(r) => result = Some(r),
+                Ok(ImportResult::TipChanged(header, hash, height, r)) => {
+                    reverted.extend(r);
+                    reverted.retain(|(_, h)| !self.contains(h));
+                    result = Some(ImportResult::TipChanged(
+                        header,
+                        hash,
+                        height,
+                        reverted.iter().cloned().collect(),
+                    ));
+                }
+                Ok(r @ ImportResult::TipUnchanged) => {
+                    result = Some(r);
+                }
                 Err(Error::DuplicateBlock(hash)) => log::trace!("Duplicate block {}", hash),
                 Err(Error::BlockMissing(hash)) => log::trace!("Missing block {}", hash),
                 Err(err) => return Err(Error::BlockImportAborted(err.into(), i, self.height())),
@@ -556,6 +575,20 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
     /// Iterate over the longest chain, starting from genesis.
     fn iter<'a>(&'a self) -> Box<dyn DoubleEndedIterator<Item = (Height, BlockHeader)> + 'a> {
         Box::new(Iter::new(&self.chain).map(|(i, h)| (i, h.header)))
+    }
+
+    /// Iterate over a range of blocks.
+    fn range<'a>(
+        &'a self,
+        range: std::ops::Range<Height>,
+    ) -> Box<dyn Iterator<Item = (Height, BlockHash)> + 'a> {
+        Box::new(
+            self.chain
+                .iter()
+                .map(|block| (block.height, block.hash))
+                .skip(range.start as usize)
+                .take((range.end - range.start) as usize),
+        )
     }
 
     /// Return the height of the longest chain.

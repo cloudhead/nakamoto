@@ -71,7 +71,7 @@ pub enum ImportResult {
     /// 2. The imported block(s) caused a chain re-org. In that case, the last field is
     ///    populated with the now stale blocks.
     ///
-    TipChanged(BlockHeader, BlockHash, Height, Vec<BlockHash>),
+    TipChanged(BlockHeader, BlockHash, Height, Vec<(Height, BlockHash)>),
     /// The block headers were imported successfully, but our best block hasn't changed.
     /// This will happen if we imported a duplicate, orphan or stale block.
     TipUnchanged, // TODO: We could add a parameter eg. BlockMissing or DuplicateBlock.
@@ -121,10 +121,10 @@ pub trait BlockTree {
     fn range<'a>(
         &'a self,
         range: std::ops::Range<Height>,
-    ) -> Box<dyn Iterator<Item = BlockHeader> + 'a> {
+    ) -> Box<dyn Iterator<Item = (Height, BlockHash)> + 'a> {
         Box::new(
             self.iter()
-                .map(|(_, h)| h)
+                .map(|(height, header)| (height, header.block_hash()))
                 .skip(range.start as usize)
                 .take((range.end - range.start) as usize),
         )

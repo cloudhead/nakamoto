@@ -20,7 +20,7 @@ pub enum Event {
     /// One of the blocks of the main chain was disconnected, due to a re-org.
     /// These events will fire from the latest block to the earliest.
     /// Mark all transactions belonging to this block as *unconfirmed*.
-    BlockDisconnected { hash: BlockHash },
+    BlockDisconnected { hash: BlockHash, height: Height },
     /// A block's transactions where scanned for matching inputs and outputs.
     /// This event usually precedes [`Event::TxStatusChanged`] events.
     Block {
@@ -52,7 +52,9 @@ impl fmt::Display for Event {
             Self::BlockConnected { hash, height } => {
                 write!(fmt, "block {} connected at height {}", hash, height)
             }
-            Self::BlockDisconnected { hash } => write!(fmt, "block {} disconnected", hash),
+            Self::BlockDisconnected { hash, height } => {
+                write!(fmt, "block {} disconnected at height {}", hash, height)
+            }
             Self::Block { hash, height, .. } => {
                 write!(
                     fmt,

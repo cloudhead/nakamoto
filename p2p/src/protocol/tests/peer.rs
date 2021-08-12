@@ -1,5 +1,6 @@
 use super::*;
 
+use bitcoin::consensus::Params;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::Address;
 
@@ -102,6 +103,7 @@ impl Peer<Protocol> {
     ) -> Self {
         let cfg = Config {
             network,
+            params: Params::new(network.into()),
             target: name,
             // We don't actually have the required services, but we pretend to
             // for testing purposes.

@@ -38,6 +38,7 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_common::p2p::peer::Source;
 
+use nakamoto_test::assert_matches;
 use nakamoto_test::block::cache::model;
 use nakamoto_test::block::gen;
 use nakamoto_test::BITCOIN_HEADERS;
@@ -1242,6 +1243,128 @@ fn test_submitted_transaction_filtering() {
         !alice.protocol.cbfmgr.unwatch_transaction(&tx.txid()),
         "The transaction is no longer watched"
     );
+}
+
+/// Test that blocks being imported and going stale generates the right events.
+#[test]
+fn test_block_events() {
+    let mut rng = fastrand::Rng::new();
+    let network = Network::Regtest;
+    let genesis = network.genesis();
+    let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng.clone());
+    let (transmit, import) = chan::unbounded();
+
+    let best = 16;
+    let headers = gen::headers(genesis, best, &mut rng);
+    let extra = gen::block(headers.last(), &mut rng);
+
+    let fork_height = 8;
+    let fork_best = 20;
+    let fork = gen::headers(
+        headers[fork_height as usize],
+        fork_best - fork_height,
+        &mut rng,
+    );
+    logger::init(log::Level::Debug);
+
+    fn filter(events: impl Iterator<Item = Event>) -> impl Iterator<Item = syncmgr::Event> {
+        events.filter_map(|e| match e {
+            Event::SyncManager(event @ syncmgr::Event::BlockConnected { .. }) => Some(event),
+            Event::SyncManager(event @ syncmgr::Event::BlockDisconnected { .. }) => Some(event),
+            Event::SyncManager(event @ syncmgr::Event::Synced { .. }) => Some(event),
+            _ => None,
+        })
+    }
+
+    alice.time = LocalTime::from_block_time(headers.last().time);
+    alice.initialize();
+    alice.command(Command::ImportHeaders(
+        headers.tail.clone(),
+        transmit.clone(),
+    ));
+
+    import.recv().unwrap().unwrap();
+    let mut events = filter(alice.events());
+
+    assert_matches!(
+        events.next().unwrap(),
+        syncmgr::Event::Synced(hash, height)
+        if height == 0 && hash == genesis.block_hash()
+    );
+
+    for (height_, header) in headers.iter().enumerate().skip(1) {
+        let hash_ = header.block_hash();
+
+        assert_matches!(
+            events.next().unwrap(),
+            syncmgr::Event::BlockConnected { height, hash }
+            if height == height_ as Height && hash == hash_
+        );
+    }
+    assert_matches!(events.next().unwrap(), syncmgr::Event::Synced(_, height) if height == best);
+    assert_eq!(events.count(), 0);
+
+    // Receive "extra" block.
+    alice.connect_addr(&remote, Link::Outbound);
+    alice.receive(
+        remote,
+        NetworkMessage::Inv(vec![Inventory::Block(extra.block_hash())]),
+    );
+    alice.receive(remote, NetworkMessage::Headers(vec![extra.header]));
+
+    let mut events = filter(alice.events());
+    assert_matches!(
+        events.next().unwrap(),
+        syncmgr::Event::BlockConnected { height, hash }
+        if height == best + 1 && hash == extra.block_hash()
+    );
+    assert_matches!(
+        events.next().unwrap(),
+        syncmgr::Event::Synced(_, height) if height == best + 1
+    );
+    assert_eq!(0, events.count());
+
+    // Receive fork.
+    alice.time = LocalTime::from_block_time(extra.header.time);
+    alice.command(Command::ImportHeaders(fork.tail.clone(), transmit));
+    import.recv().unwrap().unwrap();
+
+    let mut events = filter(alice.events());
+
+    // Disconnected events.
+    for height_ in fork_height + 1..=best {
+        let hash_ = headers[height_ as usize].block_hash();
+
+        assert_matches!(
+            events.next().unwrap(),
+            syncmgr::Event::BlockDisconnected { height, hash }
+            if height == height_ as Height && hash == hash_
+        );
+    }
+    assert_matches!(
+        events.next().unwrap(),
+        syncmgr::Event::BlockDisconnected { height, hash }
+        if height == best + 1 && hash == extra.block_hash()
+    );
+
+    // Connected events.
+    for height_ in fork_height + 1..=fork_best {
+        let hash_ = fork[height_ as usize - fork_height as usize].block_hash();
+
+        assert_matches!(
+            events.next().unwrap(),
+            syncmgr::Event::BlockConnected { height, hash }
+            if height == height_ as Height && hash == hash_
+        );
+    }
+
+    assert_matches!(
+        events.next().unwrap(),
+        syncmgr::Event::Synced(_, height)
+        if height == fork_best
+    );
+    assert!(events.next().is_none());
 }
 
 #[test]

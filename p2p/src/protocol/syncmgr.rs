@@ -108,6 +108,20 @@ pub enum Event {
     InvalidHeadersReceived(PeerId, Arc<Error>),
     /// Unsolicited headers received.
     UnsolicitedHeadersReceived(PeerId, usize),
+    /// A block was added to the main chain.
+    BlockConnected {
+        /// Block height.
+        height: Height,
+        /// Block hash.
+        hash: BlockHash,
+    },
+    /// A block was removed from the main chain.
+    BlockDisconnected {
+        /// Block height.
+        height: Height,
+        /// Block hash.
+        hash: BlockHash,
+    },
     /// A new block was discovered via a peer.
     BlockDiscovered(PeerId, BlockHash),
     /// Headers were imported successfully.
@@ -142,6 +156,12 @@ impl std::fmt::Display for Event {
                 write!(fmt, "Headers synced up to hash={} height={}", hash, height)
             }
             Event::Syncing(addr) => write!(fmt, "Syncing headers with {}", addr),
+            Event::BlockConnected { height, hash } => {
+                write!(fmt, "Block {} connected at height {}", hash, height)
+            }
+            Event::BlockDisconnected { height, hash } => {
+                write!(fmt, "Block {} disconnected at height {}", hash, height)
+            }
             Event::BlockDiscovered(from, hash) => {
                 write!(fmt, "{}: Discovered new block: {}", from, &hash)
             }
@@ -273,21 +293,31 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         context: &C,
         tree: &mut T,
     ) -> Result<ImportResult, Error> {
+        let previous = tree.height();
+
         match tree.import_blocks(blocks, context) {
             Ok(ImportResult::TipChanged(header, tip, height, reverted)) => {
-                let result = ImportResult::TipChanged(header, tip, height, reverted);
+                let result = ImportResult::TipChanged(header, tip, height, reverted.clone());
+                let from = if reverted.is_empty() {
+                    previous + 1
+                } else {
+                    previous - reverted.len() as Height + 1
+                };
 
-                self.upstream.event(Event::HeadersImported(result.clone()));
+                for (height, hash) in reverted {
+                    self.upstream
+                        .event(Event::BlockDisconnected { height, hash });
+                }
+                for (height, hash) in tree.range(from..height + 1) {
+                    self.upstream.event(Event::BlockConnected { height, hash });
+                }
+
                 self.upstream.event(Event::Synced(tip, height));
                 self.broadcast_tip(&tip, tree);
 
                 Ok(result)
             }
-            Ok(result @ ImportResult::TipUnchanged) => {
-                self.upstream.event(Event::HeadersImported(result.clone()));
-
-                Ok(result)
-            }
+            Ok(result @ ImportResult::TipUnchanged) => Ok(result),
             Err(err) => Err(err),
         }
     }
@@ -332,11 +362,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                 // supplied to the peer. Otherwise, we consider them unsolicited.
 
                 let result = self.extend_chain(headers, clock, tree);
-
-                if let Ok(ref imported) = result {
-                    self.upstream
-                        .event(Event::HeadersImported(imported.clone()));
-                }
 
                 if let Ok(ImportResult::TipChanged(_, tip, height, _)) = result {
                     let peer = self.peers.get_mut(from).unwrap();
@@ -389,11 +414,8 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             _ if length <= MAX_HEADERS_ANNOUNCED => {
                 let root = headers.first().block_hash();
 
-                match tree.import_blocks(headers.into_iter(), clock) {
+                match self.import_blocks(headers.into_iter(), clock, tree) {
                     Ok(import_result @ ImportResult::TipUnchanged) => {
-                        self.upstream
-                            .event(Event::HeadersImported(import_result.clone()));
-
                         // Try to find a common ancestor that leads up to the first header in
                         // the list we received.
                         let locators = (tree.locator_hashes(tree.height()), root);
@@ -415,15 +437,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                             peer.tip = tip;
                             peer.height = height;
                         }
-
-                        self.upstream
-                            .event(Event::HeadersImported(ImportResult::TipChanged(
-                                header,
-                                tip,
-                                height,
-                                reverted.clone(),
-                            )));
-
                         Ok(ImportResult::TipChanged(header, tip, height, reverted))
                     }
                     Err(err) => self
@@ -476,14 +489,16 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         clock: &impl Clock,
         tree: &mut T,
     ) -> Result<ImportResult, Error> {
-        let mut import_result = ImportResult::TipUnchanged;
+        let mut result = ImportResult::TipUnchanged;
 
         for header in headers.into_iter() {
             match tree.extend_tip(header, clock) {
-                Ok(ImportResult::TipChanged(header, tip, height, reverted)) => {
+                Ok(ImportResult::TipChanged(header, hash, height, reverted)) => {
                     debug_assert!(reverted.is_empty());
 
-                    import_result = ImportResult::TipChanged(header, tip, height, vec![]);
+                    self.upstream.event(Event::BlockConnected { height, hash });
+                    self.upstream.event(Event::Synced(hash, height));
+                    result = ImportResult::TipChanged(header, hash, height, vec![]);
                 }
                 Ok(ImportResult::TipUnchanged) => {
                     // We must have received headers from a different peer in the meantime,
@@ -499,7 +514,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             }
         }
 
-        Ok(import_result)
+        Ok(result)
     }
 
     /// Called when we received an `inv` message. This will happen if we are out of sync with a
