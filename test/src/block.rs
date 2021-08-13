@@ -130,7 +130,7 @@ pub mod gen {
         rng: &mut fastrand::Rng,
     ) -> BlockHeader {
         let target_spacing = 60 * 10; // 10 minutes.
-        let delta = rng.u32(target_spacing / 2..target_spacing * 2);
+        let delta = rng.u32(target_spacing - 60..target_spacing + 60);
 
         let time = prev_header.time + delta;
         let bits = BlockHeader::compact_target_from_u256(&prev_header.target());

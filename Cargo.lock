@@ -253,6 +253,7 @@ version = "0.2.0"
 dependencies = [
  "bitcoin",
  "bitcoin_hashes",
+ "fastrand",
  "log",
  "nakamoto-common",
  "nakamoto-test",

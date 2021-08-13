@@ -294,7 +294,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             stale = self.switch_to_fork(branch)?;
         }
 
-        let (hash, _) = self.tip();
+        let (hash, header) = self.tip();
         if hash != best {
             // TODO: Test the reverted blocks.
             Ok(ImportResult::TipChanged(header, hash, self.height(), stale))
@@ -517,32 +517,46 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         chain: I,
         context: &C,
     ) -> Result<ImportResult, Error> {
-        let mut result = None;
         let mut reverted = BTreeSet::new();
+        let mut connected = BTreeSet::new();
+        let mut best_height = self.height();
+        let mut best_hash = self.chain.last().hash;
+        let mut best_header = self.chain.last().header;
 
-        // FIXME: Remove this function!
+        let previous = best_height;
 
         for (i, header) in chain.enumerate() {
             match self.import_block(header, context) {
                 Ok(ImportResult::TipChanged(header, hash, height, r)) => {
                     reverted.extend(r);
-                    reverted.retain(|(_, h)| !self.contains(h));
-                    result = Some(ImportResult::TipChanged(
-                        header,
-                        hash,
-                        height,
-                        reverted.iter().cloned().collect(),
-                    ));
+
+                    best_hash = hash;
+                    best_height = height;
+                    best_header = header;
+
+                    for block in self.range(previous..height + 1) {
+                        connected.insert(block.hash);
+                    }
                 }
-                Ok(r @ ImportResult::TipUnchanged) => {
-                    result = Some(r);
-                }
+                Ok(ImportResult::TipUnchanged) => {}
                 Err(Error::DuplicateBlock(hash)) => log::trace!("Duplicate block {}", hash),
                 Err(Error::BlockMissing(hash)) => log::trace!("Missing block {}", hash),
                 Err(err) => return Err(Error::BlockImportAborted(err.into(), i, self.height())),
             }
         }
-        Ok(result.unwrap_or(ImportResult::TipUnchanged))
+
+        if !connected.is_empty() {
+            reverted.retain(|(_, h)| !connected.contains(h) && !self.contains(h));
+
+            Ok(ImportResult::TipChanged(
+                best_header,
+                best_hash,
+                best_height,
+                reverted.iter().cloned().collect(),
+            ))
+        } else {
+            Ok(ImportResult::TipUnchanged)
+        }
     }
 
     /// Extend the active chain.

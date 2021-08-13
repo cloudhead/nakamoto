@@ -5,6 +5,7 @@ use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockTime, Height, Target};
 use nakamoto_common::nonempty::NonEmpty;
 
+use nakamoto_test::assert_matches;
 use nakamoto_test::block;
 use nakamoto_test::block::cache::model;
 
@@ -39,7 +40,7 @@ const TARGET: Uint256 = Uint256([
     0x7fffffffffffffffu64,
 ]);
 /// Target block time (1 minute).
-const TARGET_SPACING: BlockTime = 60;
+const TARGET_SPACING: BlockTime = 60 * 10;
 /// Target time span (1 hour).
 const _TARGET_TIMESPAN: BlockTime = 60 * 60;
 
@@ -783,7 +784,7 @@ impl std::fmt::Debug for Tree {
 
 #[ignore]
 #[quickcheck]
-fn prop_cache_import_tree(tree: Tree) -> bool {
+fn prop_cache_import_tree_genesis(tree: Tree) -> bool {
     let headers = tree.headers();
 
     let network = bitcoin::Network::Regtest;
@@ -795,10 +796,106 @@ fn prop_cache_import_tree(tree: Tree) -> bool {
     let mut real = BlockCache::from(store, params, &[]).unwrap();
     let mut model = model::Cache::new(genesis);
 
-    real.import_blocks(headers.iter().cloned(), &ctx).unwrap();
-    model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
+    let real_result = real.import_blocks(headers.iter().cloned(), &ctx).unwrap();
+    let model_result = model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
+
+    assert_eq!(real_result, model_result);
 
     real.tip() == model.tip()
+}
+
+#[ignore]
+#[quickcheck]
+fn prop_cache_import_tree_existing(tree: Tree) {
+    let headers = tree.headers();
+
+    use nakamoto_test::block::gen;
+
+    let mut rng = fastrand::Rng::new();
+    let initial = gen::headers(
+        tree.genesis,
+        rng.u64(1..headers.len() as Height + 1),
+        &mut rng,
+    );
+
+    let network = bitcoin::Network::Regtest;
+    let params = Params::new(network);
+    let store = store::Memory::new(initial.clone());
+
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
+    let mut real = BlockCache::from(store, params, &[]).unwrap();
+    let mut model = model::Cache::from(initial);
+
+    assert_eq!(real.tip(), model.tip());
+
+    let real_result = real.import_blocks(headers.iter().cloned(), &ctx).unwrap();
+    let model_result = model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
+
+    // We aren't yet able to get a perfect match on the result from the cache.
+    // This is the closest we can get.
+    //
+    // TODO: Pass with `assert_eq!(real_result, model_result)`.
+    match (real_result, model_result) {
+        (ImportResult::TipUnchanged, ImportResult::TipUnchanged) => {}
+        (
+            ImportResult::TipChanged(header, hash, height, reverted),
+            ImportResult::TipChanged(header_, hash_, height_, reverted_),
+        ) => {
+            assert_eq!(header, header_);
+            assert_eq!(hash, hash_);
+            assert_eq!(height, height_);
+
+            // All reverted items are present in the cache.
+            for r in reverted_ {
+                assert!(reverted.contains(&r));
+            }
+            // None of the items are in the active chain.
+            for (_, hash) in reverted {
+                assert!(!real.contains(&hash));
+            }
+        }
+        (actual, expected) => {
+            assert_eq!(actual, expected);
+        }
+    }
+    assert_eq!(real.tip(), model.tip());
+}
+
+#[test]
+fn test_cache_import_unchanged() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
+    let mut cache = BlockCache::from(store, params, &[]).unwrap();
+
+    let g = &mut rand::thread_rng();
+
+    let a0 = Tree::new(genesis);
+    let a1 = a0.next(g);
+    let a2 = a1.next(g);
+
+    cache.import_blocks(a0.branch([&a1, &a2]), &ctx).unwrap();
+    assert_eq!(cache.tip().0, a2.hash);
+
+    let r = cache
+        .import_blocks(a0.branch([&a0.next(g), &a0.next(g)]), &ctx)
+        .unwrap();
+    assert_matches!(r, ImportResult::TipUnchanged);
+
+    let a3 = a2.next(g);
+    let a4 = a3.next(g);
+    let a5 = a4.next(g);
+
+    let r = cache.import_block(a4.block(), &ctx).unwrap();
+    assert_matches!(r, ImportResult::TipUnchanged);
+
+    let r = cache.import_block(a5.block(), &ctx).unwrap();
+    assert_matches!(r, ImportResult::TipUnchanged);
+
+    let r = cache.import_block(a3.block(), &ctx).unwrap();
+    assert_matches!(r, ImportResult::TipChanged { .. });
 }
 
 #[test]
@@ -818,8 +915,9 @@ fn test_cache_import_back_and_forth() {
     let a1 = a0.next(g);
     let a2 = a1.next(g);
 
-    cache.import_blocks(a0.branch([&a1, &a2]), &ctx).unwrap();
+    let r = cache.import_blocks(a0.branch([&a1, &a2]), &ctx).unwrap();
     assert_eq!(cache.tip().0, a2.hash);
+    assert_matches!(r, ImportResult::TipChanged { .. });
 
     // a0 <- a1 <- a2
     //           \
@@ -827,8 +925,9 @@ fn test_cache_import_back_and_forth() {
     let b2 = a1.next(g);
     let b3 = b2.next(g);
 
-    cache.import_blocks(a0.branch([&b2, &b3]), &ctx).unwrap();
+    let r = cache.import_blocks(a0.branch([&b2, &b3]), &ctx).unwrap();
     assert_eq!(cache.tip().0, b3.hash);
+    assert_matches!(r, ImportResult::TipChanged { .. });
 
     // a0 <- a1 <- a2 <- a3 <- a4 *
     //           \
@@ -836,8 +935,9 @@ fn test_cache_import_back_and_forth() {
     let a3 = a2.next(g);
     let a4 = a3.next(g);
 
-    cache.import_blocks(a0.branch([&a3, &a4]), &ctx).unwrap();
+    let r = cache.import_blocks(a0.branch([&a3, &a4]), &ctx).unwrap();
     assert_eq!(cache.tip().0, a4.hash);
+    assert_matches!(r, ImportResult::TipChanged { .. });
 
     // a0 <- a1 <- a2 <- a3 <- a4
     //           \
@@ -845,8 +945,9 @@ fn test_cache_import_back_and_forth() {
     let b4 = b3.next(g);
     let b5 = b4.next(g);
 
-    cache.import_blocks(a1.branch([&b4, &b5]), &ctx).unwrap();
+    let r = cache.import_blocks(a1.branch([&b4, &b5]), &ctx).unwrap();
     assert_eq!(cache.tip().0, b5.hash);
+    assert_matches!(r, ImportResult::TipChanged { .. });
 }
 
 #[test]
@@ -1203,8 +1304,9 @@ fn test_cache_import_unordered() {
     let a2 = a1.next(g);
     let a3 = a2.next(g);
 
-    cache.import_blocks(a0.branch([&a1, &a3]), &ctx).unwrap();
+    let r = cache.import_blocks(a0.branch([&a1, &a3]), &ctx).unwrap();
     assert_eq!(cache.tip().0, a3.hash, "{:#?}", cache);
+    assert_matches!(r, ImportResult::TipChanged { .. });
 
     // a0 <- a1 <- a2 <- a3
     //                 \
@@ -1212,8 +1314,9 @@ fn test_cache_import_unordered() {
     let b3 = a2.next(g);
     let b4 = b3.next(g);
 
-    cache.import_blocks(a0.branch([&b3, &b4]), &ctx).unwrap();
+    let r = cache.import_blocks(a0.branch([&b3, &b4]), &ctx).unwrap();
     assert_eq!(cache.tip().0, b4.hash, "{:#?}", cache);
+    assert_matches!(r, ImportResult::TipChanged { .. });
 
     //            <- c2 <- c3 <- c4 <- c5 *
     //           /
@@ -1225,8 +1328,9 @@ fn test_cache_import_unordered() {
     let c4 = c3.next(g);
     let c5 = c4.next(g);
 
-    cache.import_blocks(a0.branch([&c2, &c5]), &ctx).unwrap();
+    let r = cache.import_blocks(a0.branch([&c2, &c5]), &ctx).unwrap();
     assert_eq!(cache.tip().0, c5.hash, "{:#?}", cache);
+    assert_matches!(r, ImportResult::TipChanged { .. });
 
     //                                <- d5 <- d6 *
     //                               /

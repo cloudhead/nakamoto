@@ -113,6 +113,9 @@ impl BlockTree for Cache {
         chain: I,
         _context: &C,
     ) -> Result<ImportResult, Error> {
+        let old = self.chain.clone();
+        let mut disconnected = Vec::new();
+
         for header in chain {
             self.headers.insert(header.block_hash(), header);
         }
@@ -121,12 +124,18 @@ impl BlockTree for Cache {
         self.chain = self.longest_chain();
         self.tip = self.chain.last().block_hash();
 
+        for (height, header) in old.iter().enumerate() {
+            if !self.chain.contains(&header) {
+                disconnected.push((height as Height, header.block_hash()));
+            }
+        }
+
         if tip != self.tip {
             Ok(ImportResult::TipChanged(
                 self.chain.last().to_owned(),
                 self.tip,
                 self.height(),
-                vec![],
+                disconnected,
             ))
         } else {
             Ok(ImportResult::TipUnchanged)
