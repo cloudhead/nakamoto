@@ -14,7 +14,9 @@ use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::network::constants::Network;
+use bitcoin::util::BitArray;
 
+use bitcoin::util::uint::Uint256;
 use nakamoto_common::block::tree::{self, BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::{
     self,
@@ -242,31 +244,55 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             return Err(Error::BlockMissing(header.prev_blockhash));
         }
 
-        // Stale blocks after potential re-org.
-        let mut stale = Vec::new();
+        // Find the best fork.
+        //
+        // Note that we can't compare candidates with each other directly, as they may have
+        // different fork heights. So a candidate with less work than another may infact result
+        // in a longer chain if selected, due to replacing less blocks on the active chain.
+        let mut best_branch = None;
+        let mut best_hash = self.chain.last().hash;
+        let mut best_work = Uint256::zero();
 
-        // TODO: Don't switch multiple times. Switch to the best branch in one go.
         for branch in candidates.iter() {
+            // Total work included in this branch.
             let candidate_work = Branch(&branch.headers).work();
-            let main_work = Branch(self.chain_suffix(branch.fork_height)).work();
+            // Work included on the active chain that would be lost if we switched to the candidate
+            // branch.
+            let lost_work = Branch(self.chain_suffix(branch.fork_height)).work();
+            // Not interested in candidates that result in a shorter chain.
+            if candidate_work < lost_work {
+                continue;
+            }
+            // Work added onto the main chain if this candidate were selected.
+            let added = candidate_work - lost_work;
 
             // TODO: Validate branch before switching to it.
-            if candidate_work > main_work {
-                stale = self.switch_to_fork(branch)?;
+            if added > best_work {
+                best_branch = Some(branch);
+                best_work = added;
+                best_hash = branch.tip;
             } else if self.params.network != Network::Bitcoin {
-                if candidate_work == main_work {
+                if added == best_work {
                     // Nb. We intend here to compare the hashes as integers, and pick the lowest
                     // hash as the winner. However, the `PartialEq` on `BlockHash` is implemented on
                     // the underlying `[u8]` array, and does something different (lexographical
                     // comparison). Since this code isn't run on Mainnet, it's okay, as it serves
                     // its purpose of being determinstic when choosing the active chain.
-                    if branch.tip < self.chain.last().hash {
-                        stale = self.switch_to_fork(branch)?;
+                    if branch.tip < best_hash {
+                        best_branch = Some(branch);
+                        best_hash = branch.tip;
                     }
                 }
             }
         }
-        // FIXME: Prune candidates that ended up as a prefix of the main chain.
+        // TODO: Prune candidates that ended up as a prefix of the main chain.
+
+        // Stale blocks after potential re-org.
+        let mut stale = Vec::new();
+
+        if let Some(branch) = best_branch {
+            stale = self.switch_to_fork(branch)?;
+        }
 
         let (hash, _) = self.tip();
         if hash != best {
