@@ -297,15 +297,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         let (hash, _) = self.tip();
         if hash != best {
             // TODO: Test the reverted blocks.
-            Ok(ImportResult::TipChanged(
-                header,
-                hash,
-                self.height(),
-                stale
-                    .into_iter()
-                    .map(|(height, header)| (height, header.block_hash()))
-                    .collect(),
-            ))
+            Ok(ImportResult::TipChanged(header, hash, self.height(), stale))
         } else {
             Ok(ImportResult::TipUnchanged)
         }
@@ -469,11 +461,11 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     }
 
     /// Rollback active chain to the given height. Returns the list of rolled-back headers.
-    fn rollback(&mut self, height: Height) -> Result<Vec<(Height, BlockHeader)>, Error> {
+    fn rollback(&mut self, height: Height) -> Result<Vec<(Height, BlockHash)>, Error> {
         let mut stale = Vec::new();
 
         for (block, height) in self.chain.tail.drain(height as usize..).zip(height + 1..) {
-            stale.push((height, block.header));
+            stale.push((height, block.hash));
 
             self.headers.remove(&block.hash);
             self.orphans.insert(block.hash, block.header);
@@ -484,7 +476,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     }
 
     /// Activate a fork candidate. Returns the list of rolled-back (stale) headers.
-    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<Vec<(Height, BlockHeader)>, Error> {
+    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<Vec<(Height, BlockHash)>, Error> {
         let stale = self.rollback(branch.fork_height)?;
 
         for (i, header) in branch.headers.iter().enumerate() {
