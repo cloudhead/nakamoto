@@ -890,8 +890,8 @@ fn test_cache_import_unchanged() {
     let a4 = a3.next(g);
     let a5 = a4.next(g);
 
-    let r = cache.import_block(a4.block(), &ctx).unwrap();
-    assert_matches!(r, ImportResult::TipUnchanged);
+    let e = cache.import_block(a4.block(), &ctx).err();
+    assert_matches!(e, Some(Error::BlockMissing(h)) if h == a3.block().block_hash());
 
     let r = cache.import_block(a5.block(), &ctx).unwrap();
     assert_matches!(r, ImportResult::TipUnchanged);
