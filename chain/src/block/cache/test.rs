@@ -832,27 +832,24 @@ fn prop_cache_import_tree_randomized(tree: Tree) {
         let real_result = real.import_blocks(headers.iter().cloned(), &ctx).unwrap();
         let model_result = model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
 
-        // We aren't yet able to get a perfect match on the result from the cache.
-        // This is the closest we can get.
-        //
-        // TODO: Pass with `assert_eq!(real_result, model_result)`.
+        assert_eq!(real_result, model_result);
+
         match (real_result, model_result) {
             (ImportResult::TipUnchanged, ImportResult::TipUnchanged) => {}
             (
-                ImportResult::TipChanged(header, hash, height, reverted),
-                ImportResult::TipChanged(header_, hash_, height_, reverted_),
+                ImportResult::TipChanged(header, hash, height, reverted, connected),
+                ImportResult::TipChanged(_, _, _, _, _),
             ) => {
-                assert_eq!(header, header_);
-                assert_eq!(hash, hash_);
-                assert_eq!(height, height_);
+                assert_eq!(connected.last(), &(height, hash));
+                assert_eq!(header.block_hash(), hash);
 
-                // All reverted items are present in the cache.
-                for r in reverted_ {
-                    assert!(reverted.contains(&r));
-                }
-                // None of the items are in the active chain.
+                // None of the reverted items are in the active chain.
                 for (_, hash) in reverted {
                     assert!(!real.contains(&hash));
+                }
+                // All of the connected items are in the active chain.
+                for (_, hash) in connected {
+                    assert!(real.contains(&hash));
                 }
             }
             (actual, expected) => {

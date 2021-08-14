@@ -238,7 +238,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         }
 
         let mut best_branch = None;
-        let mut best_hash = self.chain.last().hash;
+        let mut best_hash = tip.hash;
         let mut best_work = Uint256::zero();
 
         for branch in candidates.iter() {
@@ -288,17 +288,29 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             }
         }
 
-        // Stale blocks after potential re-org.
-        let mut stale = Vec::new();
-
         if let Some(branch) = best_branch {
-            stale = self.switch_to_fork(branch)?;
-        }
+            // Stale blocks after potential re-org.
+            let stale = self.switch_to_fork(branch)?;
+            let height = self.height();
+            let hash = branch.tip;
+            let header = *branch
+                .headers
+                .last()
+                .expect("BlockCache::import_block: fork candidates cannot be empty");
+            let start = branch.fork_height + 1;
+            let end = height + 1;
 
-        let (hash, header) = self.tip();
-        if hash != best {
-            // TODO: Test the reverted blocks.
-            Ok(ImportResult::TipChanged(header, hash, self.height(), stale))
+            assert!(end > start);
+
+            let connected =
+                NonEmpty::from_vec(self.range(start..end).map(|b| (b.height, b.hash)).collect())
+                    .expect(
+                        "BlockCache::import_block: there is always at least one connected block",
+                    );
+
+            Ok(ImportResult::TipChanged(
+                header, hash, height, stale, connected,
+            ))
         } else {
             Ok(ImportResult::TipUnchanged)
         }
@@ -342,6 +354,8 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         }
 
         if let Some(height) = self.headers.get(&cursor) {
+            assert!(!headers.is_empty());
+
             return Some(Candidate {
                 tip,
                 fork_height: *height,
@@ -524,20 +538,15 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         let mut best_hash = self.chain.last().hash;
         let mut best_header = self.chain.last().header;
 
-        let previous = best_height;
-
         for (i, header) in chain.enumerate() {
             match self.import_block(header, context) {
-                Ok(ImportResult::TipChanged(header, hash, height, r)) => {
+                Ok(ImportResult::TipChanged(header, hash, height, r, c)) => {
                     reverted.extend(r);
+                    connected.extend(c);
 
                     best_hash = hash;
                     best_height = height;
                     best_header = header;
-
-                    for block in self.range(previous..height + 1) {
-                        connected.insert(block.hash);
-                    }
                 }
                 Ok(ImportResult::TipUnchanged) => {}
                 Err(Error::DuplicateBlock(hash)) => log::trace!("Duplicate block {}", hash),
@@ -547,13 +556,17 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         }
 
         if !connected.is_empty() {
-            reverted.retain(|(_, h)| !connected.contains(h) && !self.contains(h));
+            reverted.retain(|(i, h)| !connected.contains(&(*i, *h)) && !self.contains(h));
+            connected.retain(|(_, h)| self.contains(h));
 
             Ok(ImportResult::TipChanged(
                 best_header,
                 best_hash,
                 best_height,
-                reverted.iter().cloned().collect(),
+                reverted.into_iter().collect(),
+                NonEmpty::from_vec(connected.into_iter().collect()).expect(
+                    "BlockCache::import_blocks: there is always at least one connected block",
+                ),
             ))
         } else {
             Ok(ImportResult::TipUnchanged)
@@ -576,7 +589,13 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
             self.extend_chain(height, hash, header);
             self.store.put(std::iter::once(header))?;
 
-            Ok(ImportResult::TipChanged(header, hash, height, vec![]))
+            Ok(ImportResult::TipChanged(
+                header,
+                hash,
+                height,
+                vec![],
+                NonEmpty::new((height, hash)),
+            ))
         } else {
             Ok(ImportResult::TipUnchanged)
         }
@@ -626,7 +645,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
 
     /// Return the height of the longest chain.
     fn height(&self) -> Height {
-        self.chain.tail.len() as Height
+        self.chain.last().height
     }
 
     /// Check whether this block hash is known.

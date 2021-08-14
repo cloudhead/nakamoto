@@ -9,6 +9,7 @@ use thiserror::Error;
 use crate::block::store;
 use crate::block::time::Clock;
 use crate::block::{Bits, BlockTime, Height, Target, Work};
+use crate::nonempty::NonEmpty;
 
 /// An error related to the block tree.
 #[derive(Debug, Error)]
@@ -71,7 +72,13 @@ pub enum ImportResult {
     /// 2. The imported block(s) caused a chain re-org. In that case, the last field is
     ///    populated with the now stale blocks.
     ///
-    TipChanged(BlockHeader, BlockHash, Height, Vec<(Height, BlockHash)>),
+    TipChanged(
+        BlockHeader,
+        BlockHash,
+        Height,
+        Vec<(Height, BlockHash)>,
+        NonEmpty<(Height, BlockHash)>,
+    ),
     /// The block headers were imported successfully, but our best block hasn't changed.
     /// This will happen if we imported a duplicate, orphan or stale block.
     TipUnchanged, // TODO: We could add a parameter eg. BlockMissing or DuplicateBlock.

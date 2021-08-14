@@ -293,22 +293,21 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         context: &C,
         tree: &mut T,
     ) -> Result<ImportResult, Error> {
-        let previous = tree.height();
-
         match tree.import_blocks(blocks, context) {
-            Ok(ImportResult::TipChanged(header, tip, height, reverted)) => {
-                let result = ImportResult::TipChanged(header, tip, height, reverted.clone());
-                let from = if reverted.is_empty() {
-                    previous + 1
-                } else {
-                    previous - reverted.len() as Height + 1
-                };
+            Ok(ImportResult::TipChanged(header, tip, height, reverted, connected)) => {
+                let result = ImportResult::TipChanged(
+                    header,
+                    tip,
+                    height,
+                    reverted.clone(),
+                    connected.clone(),
+                );
 
                 for (height, hash) in reverted {
                     self.upstream
                         .event(Event::BlockDisconnected { height, hash });
                 }
-                for (height, hash) in tree.range(from..height + 1) {
+                for (height, hash) in connected {
                     self.upstream.event(Event::BlockConnected { height, hash });
                 }
 
@@ -363,7 +362,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
                 let result = self.extend_chain(headers, clock, tree);
 
-                if let Ok(ImportResult::TipChanged(_, tip, height, _)) = result {
+                if let Ok(ImportResult::TipChanged(_, tip, height, _, _)) = result {
                     let peer = self.peers.get_mut(from).unwrap();
 
                     if height > peer.height {
@@ -374,7 +373,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
                 match result {
                     Ok(ImportResult::TipUnchanged) => Ok(ImportResult::TipUnchanged),
-                    Ok(ImportResult::TipChanged(header, tip, height, reverted)) => {
+                    Ok(ImportResult::TipChanged(header, tip, height, reverted, connected)) => {
                         // Keep track of when we last updated our tip. This is useful to check
                         // whether our tip is stale.
                         self.last_tip_update = Some(clock.local_time());
@@ -403,7 +402,9 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                             );
                         }
 
-                        Ok(ImportResult::TipChanged(header, tip, height, reverted))
+                        Ok(ImportResult::TipChanged(
+                            header, tip, height, reverted, connected,
+                        ))
                     }
                     Err(err) => self
                         .handle_error(from, err)
@@ -431,13 +432,15 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
                         Ok(import_result)
                     }
-                    Ok(ImportResult::TipChanged(header, tip, height, reverted)) => {
+                    Ok(ImportResult::TipChanged(header, tip, height, reverted, connected)) => {
                         let peer = self.peers.get_mut(from).unwrap();
                         if height > peer.height {
                             peer.tip = tip;
                             peer.height = height;
                         }
-                        Ok(ImportResult::TipChanged(header, tip, height, reverted))
+                        Ok(ImportResult::TipChanged(
+                            header, tip, height, reverted, connected,
+                        ))
                     }
                     Err(err) => self
                         .handle_error(from, err)
@@ -493,12 +496,12 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
         for header in headers.into_iter() {
             match tree.extend_tip(header, clock) {
-                Ok(ImportResult::TipChanged(header, hash, height, reverted)) => {
+                Ok(ImportResult::TipChanged(header, hash, height, reverted, connected)) => {
                     debug_assert!(reverted.is_empty());
 
                     self.upstream.event(Event::BlockConnected { height, hash });
                     self.upstream.event(Event::Synced(hash, height));
-                    result = ImportResult::TipChanged(header, hash, height, vec![]);
+                    result = ImportResult::TipChanged(header, hash, height, vec![], connected);
                 }
                 Ok(ImportResult::TipUnchanged) => {
                     // We must have received headers from a different peer in the meantime,

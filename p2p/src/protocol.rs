@@ -739,14 +739,14 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .received_headers(&addr, headers, &self.clock, &mut self.tree)
                 {
                     Err(e) => log::error!("Error receiving headers: {}", e),
-                    Ok(ImportResult::TipChanged(_, _, _, reverted)) if !reverted.is_empty() => {
+                    Ok(ImportResult::TipChanged(_, _, _, reverted, _)) if !reverted.is_empty() => {
                         // By rolling back the filter headers, we will trigger
                         // a re-download of the missing headers, which should result
                         // in us having the new headers.
                         self.cbfmgr.rollback(reverted.len()).unwrap();
                         self.cbfmgr.sync(&self.tree, now);
                     }
-                    Ok(ImportResult::TipChanged(_, _, _, _)) => {
+                    Ok(ImportResult::TipChanged { .. }) => {
                         if !self.syncmgr.is_syncing() {
                             // Trigger a filter sync, since we're going to have to catch up on the
                             // new block header(s). This is not required, but reduces latency.
