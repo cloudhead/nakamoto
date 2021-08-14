@@ -253,8 +253,6 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             }
             // Work added onto the main chain if this candidate were selected.
             let added = candidate_work - lost_work;
-
-            // TODO: Validate branch before switching to it.
             if added > best_work {
                 best_branch = Some(branch);
                 best_work = added;
