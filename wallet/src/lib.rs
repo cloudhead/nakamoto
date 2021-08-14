@@ -61,7 +61,7 @@ impl<H: Handle> Wallet<H> {
 
         while let Ok(event) = events.recv() {
             match event {
-                Event::Block {
+                Event::BlockMatched {
                     transactions,
                     height,
                     ..

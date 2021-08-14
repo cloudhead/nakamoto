@@ -1,7 +1,6 @@
 //! SPV event mapper.
 #![allow(clippy::manual_range_contains, clippy::new_without_default)]
 
-#[allow(missing_docs)]
 pub mod utxos;
 
 #[cfg(test)]
@@ -20,27 +19,42 @@ use p2p::protocol;
 
 use crate::client::Event;
 
-#[allow(missing_docs)]
+/// Transaction status of a given transaction.
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
 pub enum TxStatus {
     /// This is the initial state of a transaction after it has been announced by the
     /// client.
     Unconfirmed,
     /// Transaction was acknowledged by a peer.
+    ///
     /// This is the case when a peer requests the transaction data from us after an inventory
-    /// announcement.
-    Acknowledged { peer: net::SocketAddr },
-    /// The transaction was included in a block. This event is fired after
+    /// announcement. It does not mean the transaction is considered valid by the peer.
+    Acknowledged {
+        /// Peer acknowledging the transaction.
+        peer: net::SocketAddr,
+    },
+    /// Transaction was included in a block. This event is fired after
     /// a block from the main chain is scanned.
-    Confirmed { height: Height, block: BlockHash },
+    Confirmed {
+        /// Height at which it was included.
+        height: Height,
+        /// Hash of the block in which it was included.
+        block: BlockHash,
+    },
     /// A transaction that was previously confirmed, and is now reverted due to a
     /// re-org. Note that this event can only fire if the originally confirmed tx
     /// is still in memory.
     Reverted,
-    /// After `Reverted` is received, the transaction could be double-spent in a
-    /// conflicting block on the best chain. As with `Reverted`, this event can
-    /// only fire of the confirmed transaction is still in memory.
-    Stale { replaced_by: Txid, block: BlockHash },
+    /// Transaction was replaced by another transaction, and will probably never
+    /// be included in a block. This can happen if an RBF transaction is replaced by one with
+    /// a higher fee, or if a transaction is reverted and a conflicting transaction replaces
+    /// it. In this case it would be preceded by a [`TxStatus::Reverted`] status.
+    Stale {
+        /// Transaction replacing the given transaction and causing it to be stale.
+        replaced_by: Txid,
+        /// Block of the included transaction.
+        block: BlockHash,
+    },
 }
 
 impl fmt::Display for TxStatus {
@@ -65,7 +79,8 @@ impl fmt::Display for TxStatus {
     }
 }
 
-#[allow(missing_docs)]
+/// Event mapper for SPV and client events.
+/// Consumes protocol events and emits [`Event`].
 pub struct Mapper {
     /// Best height known.
     tip: Height,
@@ -82,7 +97,7 @@ pub struct Mapper {
 }
 
 impl Mapper {
-    #[allow(missing_docs)]
+    /// Create a new SPV event mapper.
     pub fn new() -> Self {
         let tip = 0;
         let sync_height = 0;
@@ -183,7 +198,7 @@ impl Mapper {
 
         self.block_height = height;
 
-        emitter.emit(Event::Block {
+        emitter.emit(Event::BlockMatched {
             height,
             hash,
             header: block.header,

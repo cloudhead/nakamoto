@@ -12,7 +12,6 @@ pub mod invmgr;
 pub mod peermgr;
 pub mod pingmgr;
 pub mod syncmgr;
-pub mod watchlist;
 
 #[cfg(test)]
 mod tests;

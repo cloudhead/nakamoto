@@ -1,9 +1,10 @@
+//! A simple UTXO set.
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
 use bitcoin::{OutPoint, Script, Transaction, TxOut};
 
-#[allow(missing_docs)]
+/// A simple UTXO set.
 #[derive(Debug, Clone)]
 pub struct Utxos {
     map: HashMap<OutPoint, TxOut>,

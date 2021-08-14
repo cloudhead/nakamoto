@@ -111,7 +111,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
 
     for event in subscriber.try_iter() {
         match event {
-            Event::Block { transactions, .. } => {
+            Event::BlockMatched { transactions, .. } => {
                 for t in &transactions {
                     utxos.apply(t, &watch);
                 }
