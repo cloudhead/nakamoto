@@ -806,7 +806,7 @@ fn prop_cache_import_tree_genesis(tree: Tree) -> bool {
 
 #[ignore]
 #[quickcheck]
-fn prop_cache_import_tree_existing(tree: Tree) {
+fn prop_cache_import_tree_randomized(tree: Tree) {
     let headers = tree.headers();
 
     use nakamoto_test::block::gen;
@@ -828,39 +828,39 @@ fn prop_cache_import_tree_existing(tree: Tree) {
 
     assert_eq!(real.tip(), model.tip());
 
-    // TODO: Import headers in batches.
+    for headers in headers.windows(rng.usize(1..=headers.len())) {
+        let real_result = real.import_blocks(headers.iter().cloned(), &ctx).unwrap();
+        let model_result = model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
 
-    let real_result = real.import_blocks(headers.iter().cloned(), &ctx).unwrap();
-    let model_result = model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
+        // We aren't yet able to get a perfect match on the result from the cache.
+        // This is the closest we can get.
+        //
+        // TODO: Pass with `assert_eq!(real_result, model_result)`.
+        match (real_result, model_result) {
+            (ImportResult::TipUnchanged, ImportResult::TipUnchanged) => {}
+            (
+                ImportResult::TipChanged(header, hash, height, reverted),
+                ImportResult::TipChanged(header_, hash_, height_, reverted_),
+            ) => {
+                assert_eq!(header, header_);
+                assert_eq!(hash, hash_);
+                assert_eq!(height, height_);
 
-    // We aren't yet able to get a perfect match on the result from the cache.
-    // This is the closest we can get.
-    //
-    // TODO: Pass with `assert_eq!(real_result, model_result)`.
-    match (real_result, model_result) {
-        (ImportResult::TipUnchanged, ImportResult::TipUnchanged) => {}
-        (
-            ImportResult::TipChanged(header, hash, height, reverted),
-            ImportResult::TipChanged(header_, hash_, height_, reverted_),
-        ) => {
-            assert_eq!(header, header_);
-            assert_eq!(hash, hash_);
-            assert_eq!(height, height_);
-
-            // All reverted items are present in the cache.
-            for r in reverted_ {
-                assert!(reverted.contains(&r));
+                // All reverted items are present in the cache.
+                for r in reverted_ {
+                    assert!(reverted.contains(&r));
+                }
+                // None of the items are in the active chain.
+                for (_, hash) in reverted {
+                    assert!(!real.contains(&hash));
+                }
             }
-            // None of the items are in the active chain.
-            for (_, hash) in reverted {
-                assert!(!real.contains(&hash));
+            (actual, expected) => {
+                assert_eq!(actual, expected);
             }
         }
-        (actual, expected) => {
-            assert_eq!(actual, expected);
-        }
+        assert_eq!(real.tip(), model.tip());
     }
-    assert_eq!(real.tip(), model.tip());
 }
 
 #[test]
