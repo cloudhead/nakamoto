@@ -210,19 +210,21 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
                     return Err(Error::InvalidBlockPoW);
                 }
                 Err(bitcoin::util::Error::BlockBadTarget) => {
-                    // The only way to get a 'bad target' error is to pass a different target
-                    // than the one specified in the header.
-                    unreachable!();
+                    unreachable! {
+                        // The only way to get a 'bad target' error is to pass a different target
+                        // than the one specified in the header.
+                    }
                 }
                 Err(_) => {
-                    // We've handled all possible errors above.
-                    unreachable!();
+                    unreachable! {
+                        // We've handled all possible errors above.
+                    }
                 }
             }
             self.orphans.insert(hash, header);
         }
 
-        // Activate the chain with the most work.
+        // ... Activate the chain with the most work ...
 
         let candidates = self.chain_candidates(clock);
 
@@ -285,7 +287,20 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
                 }
             }
         }
-        // TODO: Prune candidates that ended up as a prefix of the main chain.
+
+        {
+            // Prune orphans.
+            let hashes = self
+                .orphans
+                .keys()
+                .filter(|h| self.contains(h))
+                .cloned()
+                .collect::<Vec<_>>();
+
+            for h in hashes {
+                self.orphans.remove(&h);
+            }
+        }
 
         // Stale blocks after potential re-org.
         let mut stale = Vec::new();
