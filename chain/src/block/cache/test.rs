@@ -898,6 +898,50 @@ fn test_cache_import_unchanged() {
 }
 
 #[test]
+fn test_cache_import_height_unchanged() {
+    let network = bitcoin::Network::Regtest;
+    let genesis = constants::genesis_block(network).header;
+    let params = Params::new(network);
+    let store = store::Memory::new(NonEmpty::new(genesis));
+    let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
+    let mut cache = BlockCache::from(store, params, &[]).unwrap();
+
+    let g = &mut rand::thread_rng();
+
+    let a0 = Tree::new(genesis);
+    let a1 = a0.next(g);
+    let a2 = a1.next(g);
+    let b2 = loop {
+        let b2 = a1.next(g);
+
+        // Find a header that will be selected over `a2`.
+        if b2.block().block_hash() < a2.block().block_hash() {
+            break b2;
+        }
+    };
+
+    cache.import_block(a1.block(), &ctx).unwrap();
+    cache.import_block(a2.block(), &ctx).unwrap();
+
+    assert_eq!(cache.tip().0, a2.hash);
+
+    let height = cache.height();
+    let result = cache.import_block(b2.block(), &ctx).unwrap();
+
+    assert_eq!(cache.tip().0, b2.hash);
+    assert_eq!(
+        result,
+        ImportResult::TipChanged(
+            b2.block(),
+            b2.hash,
+            height,
+            vec![(2, a2.hash)],
+            NonEmpty::new((2, b2.hash))
+        )
+    );
+}
+
+#[test]
 fn test_cache_import_back_and_forth() {
     let network = bitcoin::Network::Regtest;
     let genesis = constants::genesis_block(network).header;
