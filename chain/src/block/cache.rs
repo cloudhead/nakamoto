@@ -176,53 +176,52 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         let tip = self.chain.last();
         let best = tip.hash;
 
-        // Block extends the active chain.
-        if header.prev_blockhash == best {
-            let height = tip.height + 1;
-
-            self.validate(&tip, &header, clock)?;
-            self.extend_chain(height, hash, header);
-            self.store.put(std::iter::once(header))?;
-        } else if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
-            // FIXME: This shouldn't be an error.
+        if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
             return Err(Error::DuplicateBlock(hash));
-        } else {
-            if let Some(height) = self.headers.get(&header.prev_blockhash) {
-                // Don't accept any forks from the main chain, prior to the last checkpoint.
-                if *height < self.last_checkpoint() {
-                    return Err(Error::InvalidBlockHeight(*height + 1));
-                }
-            }
-
-            // Validate that the block's PoW (1) is valid against its difficulty target, and (2)
-            // is greater than the minimum allowed for this network.
-            //
-            // We do this because it's cheap to verify and prevents flooding attacks.
-            let target = header.target();
-            match header.validate_pow(&target) {
-                Ok(_) => {
-                    let limit = self.params.pow_limit;
-                    if target > limit {
-                        return Err(Error::InvalidBlockTarget(target, limit));
-                    }
-                }
-                Err(bitcoin::util::Error::BlockBadProofOfWork) => {
-                    return Err(Error::InvalidBlockPoW);
-                }
-                Err(bitcoin::util::Error::BlockBadTarget) => {
-                    unreachable! {
-                        // The only way to get a 'bad target' error is to pass a different target
-                        // than the one specified in the header.
-                    }
-                }
-                Err(_) => {
-                    unreachable! {
-                        // We've handled all possible errors above.
-                    }
-                }
-            }
-            self.orphans.insert(hash, header);
         }
+
+        // Block extends the active chain. We can fully validate it before proceeding.
+        // Instead of adding the block to the main chain, we let chain selection do the job.
+        if header.prev_blockhash == best {
+            self.validate(&tip, &header, clock)?;
+        }
+
+        // Check if this block connects to a known block.
+        if let Some(height) = self.headers.get(&header.prev_blockhash) {
+            // Don't accept any forks from the main chain, prior to the last checkpoint.
+            if *height < self.last_checkpoint() {
+                return Err(Error::InvalidBlockHeight(*height + 1));
+            }
+        }
+
+        // Validate that the block's PoW (1) is valid against its difficulty target, and (2)
+        // is greater than the minimum allowed for this network.
+        //
+        // We do this because it's cheap to verify and prevents flooding attacks.
+        let target = header.target();
+        match header.validate_pow(&target) {
+            Ok(_) => {
+                let limit = self.params.pow_limit;
+                if target > limit {
+                    return Err(Error::InvalidBlockTarget(target, limit));
+                }
+            }
+            Err(bitcoin::util::Error::BlockBadProofOfWork) => {
+                return Err(Error::InvalidBlockPoW);
+            }
+            Err(bitcoin::util::Error::BlockBadTarget) => {
+                unreachable! {
+                    // The only way to get a 'bad target' error is to pass a different target
+                    // than the one specified in the header.
+                }
+            }
+            Err(_) => {
+                unreachable! {
+                    // We've handled all possible errors above.
+                }
+            }
+        }
+        self.orphans.insert(hash, header);
 
         // ... Activate the chain with the most work ...
 

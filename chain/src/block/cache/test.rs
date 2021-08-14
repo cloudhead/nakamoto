@@ -828,6 +828,8 @@ fn prop_cache_import_tree_existing(tree: Tree) {
 
     assert_eq!(real.tip(), model.tip());
 
+    // TODO: Import headers in batches.
+
     let real_result = real.import_blocks(headers.iter().cloned(), &ctx).unwrap();
     let model_result = model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
 
