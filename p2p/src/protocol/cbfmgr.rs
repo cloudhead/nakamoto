@@ -250,9 +250,9 @@ pub struct Rescan {
     /// Current height from which we're synced filters.
     /// Must be between `start` and `end`.
     current: Height,
-    /// Start height of the filter rescan. If `None`, starts at the current filter
+    /// Start height of the filter rescan.
     /// header height.
-    start: Option<Height>,
+    start: Height,
     /// End height of the filter rescan. If `None`, keeps scanning new blocks until stopped.
     end: Option<Height>,
     /// Addresses and outpoints to watch for.
@@ -368,37 +368,35 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         if self.rescan.active {
             let height = self.filters.height();
 
-            if let Some(start) = self.rescan.start {
-                // Reset "current" scanning height.
-                //
-                // We start re-scanning from either the start, or the current height, whichever
-                // is greater, while ensuring that we only reset backwards, ie. we never skip
-                // heights.
-                //
-                // For example, given we are currently at 7, if we rolled back to height 4, and our
-                // start is at 5, we restart from 5.
-                //
-                // If we rolled back to height 4 and our start is at 3, we restart at 4, because
-                // we don't need to scan blocks before our start height.
-                //
-                // If we rolled back to height 9 from height 11, we wouldn't want to re-scan any
-                // blocks, since we haven't yet gotten to that height.
-                //
-                let current = self.rescan.current;
-                if current > height + 1 {
-                    self.rescan.current = Height::max(height + 1, start);
-                }
+            // Reset "current" scanning height.
+            //
+            // We start re-scanning from either the start, or the current height, whichever
+            // is greater, while ensuring that we only reset backwards, ie. we never skip
+            // heights.
+            //
+            // For example, given we are currently at 7, if we rolled back to height 4, and our
+            // start is at 5, we restart from 5.
+            //
+            // If we rolled back to height 4 and our start is at 3, we restart at 4, because
+            // we don't need to scan blocks before our start height.
+            //
+            // If we rolled back to height 9 from height 11, we wouldn't want to re-scan any
+            // blocks, since we haven't yet gotten to that height.
+            //
+            let start = self.rescan.start;
+            let current = self.rescan.current;
 
-                log::debug!(
-                    "Rollback from {} to {}, start = {}, height = {}",
-                    current,
-                    self.rescan.current,
-                    start,
-                    height
-                );
-            } else {
-                todo! {}
+            if current > height + 1 {
+                self.rescan.current = Height::max(height + 1, start);
             }
+
+            log::debug!(
+                "Rollback from {} to {}, start = {}, height = {}",
+                current,
+                self.rescan.current,
+                start,
+                height
+            );
         }
 
         Ok(())
@@ -440,16 +438,16 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         self.rescan.active = true;
         self.rescan.received = HashMap::with_hasher(self.rng.clone().into());
         self.rescan.start = match start {
-            Bound::Unbounded => None,
-            Bound::Included(h) => Some(h),
-            Bound::Excluded(h) => Some(h + 1),
+            Bound::Unbounded => tree.height() + 1,
+            Bound::Included(h) => h,
+            Bound::Excluded(h) => h + 1,
         };
         self.rescan.end = match end {
             Bound::Unbounded => None,
             Bound::Included(h) => Some(h),
             Bound::Excluded(h) => Some(h - 1),
         };
-        self.rescan.current = self.rescan.start.unwrap_or_else(|| tree.height() + 1);
+        self.rescan.current = self.rescan.start;
         self.rescan.watch = watch.into_iter().collect();
         self.rescan.transactions = HashMap::with_hasher(self.rng.clone().into());
         self.rescan.requested = BTreeSet::new();
