@@ -71,4 +71,6 @@ pub trait Filters {
     }
     /// Rollback chain by the given number of headers.
     fn rollback(&mut self, n: usize) -> Result<(), Error>;
+    /// Truncate the filter header chain to zero.
+    fn clear(&mut self) -> Result<(), Error>;
 }

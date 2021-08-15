@@ -291,4 +291,11 @@ impl Filters for FilterCache {
         }
         Ok(())
     }
+
+    fn clear(&mut self) -> Result<(), filter::Error> {
+        self.headers.tail.clear();
+        self.filters.clear();
+
+        Ok(())
+    }
 }

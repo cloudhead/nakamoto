@@ -143,4 +143,11 @@ impl<S: Store<Header = StoredHeader>> Filters for FilterCache<S> {
 
         Ok(())
     }
+
+    fn clear(&mut self) -> Result<(), Error> {
+        self.header_store.rollback(0)?;
+        self.headers.tail.clear();
+
+        Ok(())
+    }
 }
