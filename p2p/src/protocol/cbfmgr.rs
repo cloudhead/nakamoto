@@ -83,6 +83,8 @@ pub enum Event {
     },
     /// Filter headers were imported successfully.
     FilterHeadersImported {
+        /// Number of filter headers imported.
+        count: usize,
         /// New filter header chain height.
         height: Height,
         /// Block hash corresponding to the tip of the filter header chain.
@@ -140,8 +142,12 @@ impl std::fmt::Display for Event {
                     height, matched
                 )
             }
-            Event::FilterHeadersImported { height, .. } => {
-                write!(fmt, "Imported filter header(s) up to height = {}", height,)
+            Event::FilterHeadersImported { count, height, .. } => {
+                write!(
+                    fmt,
+                    "Imported {} filter header(s) up to height = {}",
+                    count, height
+                )
             }
             Event::Synced(height) => {
                 write!(fmt, "Filter headers synced up to height = {}", height)
@@ -241,7 +247,7 @@ struct Peer {
 pub struct Rescan {
     /// Whether a rescan is currently in progress.
     active: bool,
-    /// Current height up to which we've synced filters.
+    /// Current height from which we're synced filters.
     /// Must be between `start` and `end`.
     current: Height,
     /// Start height of the filter rescan. If `None`, starts at the current filter
@@ -345,7 +351,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             self.sync(tree, now);
             self.last_idle = Some(now);
             self.upstream.set_timeout(IDLE_TIMEOUT);
-            self.inflight.clear();
+            // TODO: Re-request late inflight cfheaders.
         }
     }
 
@@ -356,7 +362,37 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
 
     /// Rollback filter header chain by a given number of headers.
     pub fn rollback(&mut self, n: usize) -> Result<(), filter::Error> {
-        self.filters.rollback(n)
+        self.filters.rollback(n)?;
+        self.schedule_tick();
+
+        if self.rescan.active {
+            let height = self.filters.height();
+
+            if let Some(start) = self.rescan.start {
+                // Reset "current" scanning height.
+                //
+                // We start re-scanning from either the start, or the current height, whichever
+                // is greater, while ensuring that we only reset backwards, ie. we never skip
+                // heights.
+                //
+                // For example, given we are currently at 7, if we rolled back to height 4, and our
+                // start is at 5, we restart from 5.
+                //
+                // If we rolled back to height 4 and our start is at 3, we restart at 4, because
+                // we don't need to scan blocks before our start height.
+                //
+                // If we rolled back to height 9 from height 11, we wouldn't want to re-scan any
+                // blocks, since we haven't yet gotten to that height.
+                //
+                if self.rescan.current > height + 1 {
+                    self.rescan.current = Height::max(height + 1, start);
+                }
+            } else {
+                todo! {}
+            }
+        }
+
+        Ok(())
     }
 
     /// Add a script to the list of scripts to watch.
@@ -540,6 +576,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             .import_headers(headers)
             .map(|height| {
                 self.upstream.event(Event::FilterHeadersImported {
+                    count,
                     height,
                     block_hash: stop_hash,
                 });
@@ -885,6 +922,11 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
 
         Ok(matches)
     }
+
+    fn schedule_tick(&mut self) {
+        self.last_idle = None; // Disable rate-limiting for the next tick.
+        self.upstream.set_timeout(LocalDuration::from_secs(1));
+    }
 }
 
 /// Iterator over height ranges.
@@ -913,8 +955,6 @@ impl Iterator for HeightIterator {
 
 #[cfg(test)]
 mod tests {
-    use std::iter;
-
     use bitcoin::consensus::Params;
     use bitcoin::network::message::NetworkMessage;
     use bitcoin::network::message_filter::GetCFilters;
@@ -929,8 +969,10 @@ mod tests {
     use nakamoto_chain::block::{cache::BlockCache, store};
     use nakamoto_chain::filter::cache::{FilterCache, StoredHeader};
     use nakamoto_common::block::filter::{FilterHash, FilterHeader};
+    use nakamoto_common::block::tree::ImportResult;
     use nakamoto_common::network::Network;
     use nakamoto_common::nonempty::NonEmpty;
+    use nakamoto_test::assert_matches;
     use nakamoto_test::block::gen;
     use nakamoto_test::BITCOIN_HEADERS;
 
@@ -947,7 +989,6 @@ mod tests {
         pub fn setup(
             network: Network,
             height: Height,
-            cfheaders: impl Iterator<Item = (FilterHash, FilterHeader)>,
         ) -> (
             FilterManager<FilterCache<store::Memory<StoredHeader>>, Channel>,
             BlockCache<store::Memory<BlockHeader>>,
@@ -965,15 +1006,14 @@ mod tests {
 
                 BlockCache::from(store, params, &[]).unwrap()
             };
-            let cfheaders = NonEmpty::from((
-                StoredHeader::genesis(network),
-                cfheaders
-                    .take(height as usize)
-                    .map(|(hash, header)| StoredHeader { hash, header })
-                    .collect::<Vec<_>>(),
-            ));
-            let cache = FilterCache::from(store::memory::Memory::new(cfheaders)).unwrap();
-            let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+            let cfheaders =
+                gen::cfheaders_from_blocks(FilterHeader::genesis(network), chain.tail.iter());
+
+            let mut cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
+            cache.import_headers(cfheaders).unwrap();
+            cache.verify(network).unwrap();
+
+            let upstream = Channel::new(network, PROTOCOL_VERSION, "channel", sender);
 
             (
                 FilterManager::new(Config::default(), rng, cache, upstream),
@@ -981,6 +1021,39 @@ mod tests {
                 chain,
                 outputs,
             )
+        }
+
+        pub fn cfilters<'a>(
+            blocks: impl Iterator<Item = &'a bitcoin::Block> + 'a,
+        ) -> impl Iterator<Item = CFilter> + 'a {
+            blocks.map(move |block| {
+                let block_hash = block.block_hash();
+                let filter = gen::cfilter(block);
+
+                CFilter {
+                    filter_type: 0x0,
+                    block_hash,
+                    filter: filter.content,
+                }
+            })
+        }
+
+        pub fn cfheaders(
+            previous_filter_header: FilterHeader,
+            blocks: &[bitcoin::Block],
+        ) -> CFHeaders {
+            let tip = blocks.last().unwrap().block_hash();
+            let filter_hashes = gen::cfheaders_from_blocks(previous_filter_header, blocks.iter())
+                .into_iter()
+                .map(|(h, _)| h)
+                .collect::<Vec<_>>();
+
+            CFHeaders {
+                filter_type: 0x0,
+                stop_hash: tip,
+                previous_filter_header,
+                filter_hashes,
+            }
         }
 
         #[allow(dead_code)]
@@ -1114,8 +1187,7 @@ mod tests {
         let mut rng = fastrand::Rng::new();
         let time = LocalTime::now();
         let network = Network::Regtest;
-        let cfheaders = gen::cfheaders(FilterHeader::genesis(network), &mut rng);
-        let (mut cbfmgr, tree, _, outputs) = util::setup(network, best, cfheaders);
+        let (mut cbfmgr, tree, _, outputs) = util::setup(network, best);
 
         // Start rescan with no peers.
         cbfmgr
@@ -1182,7 +1254,7 @@ mod tests {
         let best = 42;
         let time = LocalTime::now();
         let network = Network::Regtest;
-        let (mut cbfmgr, tree, chain, outputs) = util::setup(network, best, iter::empty());
+        let (mut cbfmgr, tree, chain, outputs) = util::setup(network, best);
         let mut msgs = protocol::test::messages(&outputs);
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
         let tip = tree.get_block_by_height(best).unwrap().block_hash();
@@ -1194,6 +1266,7 @@ mod tests {
             .map(|(h, _)| h)
             .collect::<Vec<_>>();
 
+        cbfmgr.filters.clear().unwrap();
         cbfmgr.initialize(time);
         cbfmgr.peer_negotiated(
             remote,
@@ -1242,6 +1315,147 @@ mod tests {
         todo!()
     }
 
+    /// Test that we re-request all filters after blocks are reverted and eventually
+    /// get back in sync.
+    #[test]
+    fn test_rescan_reorg() {
+        // We don't gain anything by testing longer chains.
+
+        let tests: [(Height, Height, Height, Height, usize, Height, Height); 1] = [
+            // Height, birth, sync height, fork height, fork length, cfheader request start,
+            // cfilter request start
+            (1, 0, 1, 0, 2, 1, 1),
+        ];
+        nakamoto_test::logger::init(log::Level::Debug);
+
+        for (
+            best,
+            birth,
+            sync_height,
+            fork_height,
+            fork_len,
+            cfheader_req_start,
+            cfilter_req_start,
+        ) in tests
+        {
+            log::debug!(target: "test", "Test case with birth = {}, height = {}", birth, best);
+
+            assert!(fork_height < best);
+            assert!(birth <= best);
+            assert!(fork_len > 0);
+            assert!(cfilter_req_start >= birth);
+            assert!(cfheader_req_start <= cfilter_req_start);
+
+            let mut rng = fastrand::Rng::new();
+            let network = Network::Regtest;
+            let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+
+            let (mut cbfmgr, mut tree, chain, outputs) = util::setup(network, best);
+            let time = LocalTime::now();
+
+            // Generate a watchlist and keep track of the matching block heights.
+            let (watch, _, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+
+            cbfmgr.initialize(time);
+            cbfmgr.peer_negotiated(
+                remote,
+                best,
+                REQUIRED_SERVICES,
+                Link::Outbound,
+                &time,
+                &tree,
+            );
+            cbfmgr
+                .rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree)
+                .unwrap();
+
+            log::debug!(target: "test",
+                "Chain {:?}",
+                tree.iter().map(|(_, b)| b.block_hash()).collect::<Vec<_>>()
+            );
+
+            // ... Setup ...
+
+            // First let's catch up the client with filters up to the sync height.
+            for filter in util::cfilters(chain.iter().take(sync_height as usize + 1)) {
+                cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
+            }
+            assert_eq!(cbfmgr.rescan.current, sync_height + 1);
+            outputs.try_iter().for_each(drop);
+
+            let mut msgs = messages(&outputs);
+
+            // ... Create a fork ...
+
+            let parent = fork_height;
+            let fork = gen::fork(
+                &tree.get_block_by_height(parent).unwrap(),
+                fork_len,
+                &mut rng,
+            );
+            log::debug!(target: "test", "Fork {:?}", &fork.iter().map(|b| b.header).collect::<Vec<_>>());
+
+            // ... Import fork ...
+
+            let (tip, reverted, connected) = assert_matches!(tree.import_blocks(fork.iter().map(|b| b.header), &time)
+                .unwrap(), ImportResult::TipChanged(_,tip,_,reverted,connected) => (tip,reverted, connected));
+
+            log::debug!(target: "test",
+                "Rollback to {}, stop = {}, length = {}",
+                parent,
+                tip,
+                fork.len()
+            );
+
+            // ... Perform rollback ...
+
+            cbfmgr.rollback(reverted.len()).unwrap();
+            cbfmgr.received_tick(time, &tree);
+
+            log::debug!(target: "test",
+                "Imported {:?}",
+                fork.iter().map(|b| b.block_hash()).collect::<Vec<_>>()
+            );
+            log::debug!(target: "test", "Reverted {:?}", reverted);
+
+            assert!(!reverted.is_empty(), "Blocks should be reverted");
+            assert!(!connected.is_empty(), "Blocks should be connected");
+            assert!(reverted.len() < connected.len());
+            assert_eq!(fork.len(), connected.len());
+            assert_eq!(fork.last().map(|b| b.block_hash()), Some(tip));
+
+            // Check that filter headers are requested.
+            assert_matches!(
+                msgs.next().unwrap(),
+                (_, NetworkMessage::GetCFHeaders(GetCFHeaders {
+                    start_height,
+                    stop_hash,
+                    ..
+                })) if start_height as Height == cfheader_req_start && stop_hash == tip,
+                "expected {} and {}", cfheader_req_start, tip
+            );
+
+            // Then import them.
+            let (_, parent) = cbfmgr.filters.tip();
+            let cfheaders = util::cfheaders(*parent, &fork);
+            cbfmgr
+                .received_cfheaders(&remote, cfheaders, &tree, time)
+                .unwrap();
+
+            // Check that corresponding filters are requested within the scope of the
+            // current rescan.
+            assert_matches!(
+                msgs.next().unwrap(),
+                (_, NetworkMessage::GetCFilters(GetCFilters {
+                    start_height,
+                    stop_hash,
+                    ..
+                })) if start_height as Height == cfilter_req_start && stop_hash == tip,
+                "expected {} and {}", cfilter_req_start, tip
+            );
+        }
+    }
+
     #[quickcheck]
     fn prop_rescan(birth: Height, best: Height) -> quickcheck::TestResult {
         // We don't gain anything by testing longer chains.
@@ -1254,14 +1468,14 @@ mod tests {
         let network = Network::Regtest;
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
-        let (mut cbfmgr, tree, chain, outputs) = util::setup(network, best, iter::empty());
+        let (mut cbfmgr, tree, chain, outputs) = util::setup(network, best);
         let time = LocalTime::now();
         let tip = chain.last().block_hash();
-        let filter_type = 0x0;
 
         // Generate a watchlist and keep track of the matching block heights.
         let (watch, heights, _) = gen::watchlist(birth, chain.iter(), &mut rng);
 
+        cbfmgr.filters.clear().unwrap();
         cbfmgr.initialize(time);
         cbfmgr.peer_negotiated(
             remote,
@@ -1306,25 +1520,9 @@ mod tests {
             .unwrap();
         }
 
-        let previous_filter_header = FilterHeader::genesis(network);
-        let filter_hashes = gen::cfheaders_from_blocks(previous_filter_header, chain.iter())
-            .into_iter()
-            .skip(1) // Skip genesis
-            .map(|(h, _)| h)
-            .collect::<Vec<_>>();
-
+        let cfheaders = util::cfheaders(FilterHeader::genesis(network), &chain.tail);
         let height = cbfmgr
-            .received_cfheaders(
-                &remote,
-                CFHeaders {
-                    filter_type,
-                    stop_hash: tip,
-                    previous_filter_header,
-                    filter_hashes,
-                },
-                &tree,
-                time,
-            )
+            .received_cfheaders(&remote, cfheaders, &tree, time)
             .unwrap();
 
         assert_eq!(height, best, "The new height is the best height");
@@ -1348,28 +1546,15 @@ mod tests {
             .find(|e| matches!(e, Event::Synced(height) if height == &best))
             .unwrap();
 
+        // Create and shuffle filters so that they arrive out-of-order.
         let mut filters: Vec<_> = (birth..=best)
-            .map(|height| {
-                let block = &chain[height as usize];
-                let block_hash = block.block_hash();
-                let filter = gen::cfilter(block);
-
-                (
-                    height,
-                    CFilter {
-                        filter_type,
-                        block_hash,
-                        filter: filter.content,
-                    },
-                )
-            })
+            .zip(util::cfilters(chain.iter().skip(birth as usize)))
             .collect();
-
-        // Shuffle filters so that they arrive out-of-order.
         rng.shuffle(&mut filters);
 
         let mut matches = Vec::new();
-        for (h, filter) in filters {
+        for (h, filter) in filters.into_iter() {
+            let h = h as Height;
             let hashes = cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
 
             matches.extend(

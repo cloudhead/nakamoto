@@ -53,8 +53,15 @@ pub mod logger {
             use colored::Colorize;
 
             match record.target() {
+                "test" => {
+                    println!("{}", record.args().to_string().yellow())
+                }
                 "sim" => {
-                    println!("<sim>    {}", record.args().to_string().bold())
+                    println!(
+                        "<{}>    {}",
+                        record.target(),
+                        record.args().to_string().bold()
+                    )
                 }
                 target => {
                     if self.enabled(record.metadata()) {

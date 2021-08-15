@@ -23,5 +23,5 @@ microserde = "0.1"
 nakamoto-test = { version = "0.2.0", path = "../test" }
 nakamoto-chain = { version = "0.2.0", path = "../chain" }
 tempfile = "3"
-quickcheck = { version = "0.9", default_features = false, features = ["use_logging"] }
+quickcheck = { version = "0.9", default_features = false }
 quickcheck_macros = "0.9"

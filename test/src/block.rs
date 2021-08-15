@@ -190,6 +190,20 @@ pub mod gen {
         chain
     }
 
+    /// Generate a fork from a fork block.
+    pub fn fork(parent: &BlockHeader, length: usize, rng: &mut fastrand::Rng) -> Vec<Block> {
+        let mut prev_header = *parent;
+        let mut chain = Vec::new();
+
+        for _ in 0..length {
+            let block = block(&prev_header, rng);
+            prev_header = block.header;
+
+            chain.push(block);
+        }
+        chain
+    }
+
     /// Generate a random header chain.
     pub fn headers(
         parent: BlockHeader,
