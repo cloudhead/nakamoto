@@ -384,9 +384,18 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
                 // If we rolled back to height 9 from height 11, we wouldn't want to re-scan any
                 // blocks, since we haven't yet gotten to that height.
                 //
-                if self.rescan.current > height + 1 {
+                let current = self.rescan.current;
+                if current > height + 1 {
                     self.rescan.current = Height::max(height + 1, start);
                 }
+
+                log::debug!(
+                    "Rollback from {} to {}, start = {}, height = {}",
+                    current,
+                    self.rescan.current,
+                    start,
+                    height
+                );
             } else {
                 todo! {}
             }
@@ -1319,12 +1328,27 @@ mod tests {
     /// get back in sync.
     #[test]
     fn test_rescan_reorg() {
-        // We don't gain anything by testing longer chains.
-
-        let tests: [(Height, Height, Height, Height, usize, Height, Height); 1] = [
-            // Height, birth, sync height, fork height, fork length, cfheader request start,
-            // cfilter request start
+        let tests: [(
+            // Best height.
+            Height,
+            // Birth height.
+            Height,
+            // Sync height (height up to which we have processed filters).
+            Height,
+            // Fork height.
+            Height,
+            // Fork length.
+            usize,
+            // Height from which we expect cfheaders to be re-requested.
+            Height,
+            // Height from which we expect cfilters to be re-requested.
+            Height,
+        ); 5] = [
             (1, 0, 1, 0, 2, 1, 1),
+            (7, 5, 7, 0, 8, 1, 5), // Rescan from scan start
+            (7, 2, 7, 3, 8, 4, 4), // Rescan from fork height
+            (7, 2, 3, 5, 8, 6, 8), // No rescan
+            (7, 7, 7, 3, 8, 4, 7),
         ];
         nakamoto_test::logger::init(log::Level::Debug);
 
