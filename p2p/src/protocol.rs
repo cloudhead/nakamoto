@@ -744,6 +744,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         // in us having the new headers.
                         self.cbfmgr.rollback(reverted.len()).unwrap();
                         self.cbfmgr.sync(&self.tree, now);
+
+                        for (height, hash) in reverted {
+                            let txs = self.invmgr.block_reverted(height, hash);
+                            self.cbfmgr.watch_transactions(&txs);
+                        }
                     }
                     Ok(ImportResult::TipChanged { .. }) => {
                         if !self.syncmgr.is_syncing() {

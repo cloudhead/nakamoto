@@ -68,10 +68,19 @@ pub enum Event {
     /// A transaction was confirmed.
     Confirmed {
         /// The confirmed transaction.
-        transaction: Transaction,
+        transaction: Transaction, // TODO: Just the txid?
         /// The height at which it was confirmed.
         height: Height,
         /// The block in which it was confirmed.
+        block: BlockHash,
+    },
+    /// A transaction was reverted.
+    Reverted {
+        /// The reverted transaction.
+        transaction: Transaction, // TODO: Just the txid?
+        /// The height at which it was reverted.
+        height: Height,
+        /// The block in which it was reverted.
         block: BlockHash,
     },
 }
@@ -101,6 +110,16 @@ impl std::fmt::Display for Event {
                 "Transaction {} was included in block {} at height {}",
                 transaction.txid(),
                 block,
+                height
+            ),
+            Event::Reverted {
+                transaction,
+                height,
+                ..
+            } => write!(
+                fmt,
+                "Transaction {} was reverted at height {}",
+                transaction.txid(),
                 height
             ),
         }
@@ -211,6 +230,9 @@ pub struct InventoryManager<U> {
     timeout: LocalDuration,
     /// Transaction mempool. Stores unconfirmed transactions sent to the network.
     mempool: Mempool,
+    /// Confirmed transactions.
+    /// Pruned after a certain depth.
+    confirmed: HashMap<(BlockHash, Height), Vec<Transaction>>,
 
     /// Inventories requested and the time at which they were last requested.
     /// Only blocks are requested currently.
@@ -229,6 +251,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         Self {
             peers: AddressBook::new(rng.clone()),
             mempool: Mempool::new(),
+            confirmed: HashMap::with_hasher(rng.clone().into()),
             remaining: HashMap::with_hasher(rng.clone().into()),
             received: HashMap::with_hasher(rng.clone().into()),
             timeout: REBROADCAST_TIMEOUT,
@@ -272,6 +295,25 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, id: &PeerId) {
         self.peers.remove(id);
+    }
+
+    /// Called when a block is reverted.
+    pub fn block_reverted(&mut self, height: Height, block: BlockHash) -> Vec<Transaction> {
+        let mut reverted = Vec::new();
+
+        if let Some(txs) = self.confirmed.remove(&(block, height)) {
+            reverted.extend(txs.clone());
+            self.announce(txs.clone());
+
+            for transaction in txs {
+                self.upstream.event(Event::Reverted {
+                    transaction,
+                    block,
+                    height,
+                });
+            }
+        }
+        reverted
     }
 
     /// Called when we receive a tick.
@@ -434,6 +476,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
             .and_then(|h| self.received.remove(&h).map(|b| (h, b)))
         {
             let txs = self.mempool.process_block(&block);
+            let hash = block.block_hash();
 
             for transaction in txs {
                 let txid = transaction.txid();
@@ -444,9 +487,14 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                 }
                 confirmed.push(txid);
 
+                self.confirmed
+                    .entry((hash, height))
+                    .or_default()
+                    .push(transaction.clone());
+
                 self.upstream.event(Event::Confirmed {
                     transaction,
-                    block: block.block_hash(),
+                    block: hash,
                     height,
                 });
             }
@@ -680,5 +728,80 @@ mod tests {
 
         assert!(invmgr.contains(&tx.txid()));
         assert!(invmgr.peers.is_empty());
+    }
+
+    #[test]
+    fn test_block_reverted() {
+        let network = Network::Regtest;
+        let remote = ([88, 88, 88, 88], 8333).into();
+        let (sender, receiver) = chan::unbounded::<Out>();
+        let mut rng = fastrand::Rng::new();
+
+        let mut main = gen::blockchain(network.genesis_block(), 16, &mut rng);
+        let tip = main.last().header;
+        let tx = gen::transaction(&mut rng);
+        let main_block1 = gen::block_with(&tip, vec![tx.clone()], &mut rng);
+
+        main.push(main_block1.clone());
+
+        let height = main.len() as Height - 1;
+        let headers = NonEmpty::from_vec(main.iter().map(|b| b.header).collect()).unwrap();
+
+        let fork_block1 = gen::block_with(&tip, vec![tx.clone()], &mut rng);
+        let fork_block2 = gen::block(&fork_block1.header, &mut rng);
+
+        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let time = LocalTime::now();
+
+        let mut tree = model::Cache::from(headers);
+        let mut invmgr = InventoryManager::new(rng, upstream);
+
+        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
+        invmgr.announce(vec![tx.clone()]);
+        invmgr.get_block(main_block1.block_hash());
+        invmgr.received_block(&remote, main_block1.clone(), &tree);
+
+        assert!(!invmgr.contains(&tx.txid()));
+
+        let mut events = events(&receiver);
+
+        events
+            .find(|e| {
+                matches! {
+                    e, Event::Confirmed { transaction, .. }
+                    if transaction.txid() == tx.txid()
+                }
+            })
+            .unwrap();
+
+        tree.import_blocks(
+            vec![fork_block1.header, fork_block2.header].into_iter(),
+            &time,
+        )
+        .unwrap();
+
+        invmgr.block_reverted(height, main_block1.block_hash());
+        assert!(invmgr.contains(&tx.txid()));
+
+        events
+            .find(|e| {
+                matches! {
+                    e, Event::Reverted { transaction, block: b, .. }
+                    if transaction.txid() == tx.txid() && b == &main_block1.block_hash()
+                }
+            })
+            .unwrap();
+
+        invmgr.get_block(fork_block1.block_hash());
+        invmgr.received_block(&remote, fork_block1.clone(), &tree);
+
+        events
+            .find(|e| {
+                matches! {
+                    e, Event::Confirmed { transaction, block: b, .. }
+                    if transaction.txid() == tx.txid() && b == &fork_block1.block_hash()
+                }
+            })
+            .unwrap();
     }
 }
