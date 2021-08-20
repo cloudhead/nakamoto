@@ -1175,11 +1175,13 @@ fn test_submitted_transaction_filtering() {
         Link::Outbound,
     );
 
+    let (reply, _reply) = chan::bounded(1);
     // Start a rescan, to make sure we catch the transaction when it's confirmed.
     alice.command(Command::Rescan {
         from: Bound::Unbounded, // Start scanning from the current height.
         to: Bound::Unbounded,   // Keep scanning forever.
         watch: vec![],          // Submitted transactions are tracked automatically.
+        reply,
     });
     alice.command(Command::SubmitTransactions(vec![tx.clone()], transmit));
     alice.tick();

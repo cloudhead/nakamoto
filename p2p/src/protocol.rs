@@ -117,6 +117,8 @@ pub enum Command {
         to: Bound<Height>,
         /// Scripts to match on.
         watch: Vec<Script>,
+        /// Reply channel on which to send result of command.
+        reply: chan::Sender<Result<(), GetFiltersError>>,
     },
     /// Broadcast to peers matching the predicate.
     Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
@@ -998,9 +1000,16 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         reply.send(Err(CommandError::NotConnected)).ok();
                     }
                 }
-                Command::Rescan { from, to, watch } => {
+                Command::Rescan {
+                    from,
+                    to,
+                    watch,
+                    reply,
+                } => {
                     debug!(target: self.target, "Received command: Rescan({:?}, {:?})", from, to);
-                    self.cbfmgr.rescan(from, to, watch, &self.tree).unwrap(); // FIXME
+
+                    let result = self.cbfmgr.rescan(from, to, watch, &self.tree);
+                    reply.send(result).ok();
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);
