@@ -187,10 +187,6 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
-    fn wait_for_ready(&self) -> Result<(), handle::Error> {
-        unimplemented!()
-    }
-
     fn wait_for_height(&self, _h: Height) -> Result<BlockHash, handle::Error> {
         unimplemented!()
     }

@@ -144,7 +144,7 @@ fn test_send_handle() {
     let handle = client.handle();
 
     thread::spawn(move || {
-        handle.wait_for_ready().unwrap();
+        handle.wait_for_height(1).unwrap();
     });
 }
 

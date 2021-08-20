@@ -13,7 +13,7 @@
 //! ```no_run
 //! use std::{net, thread};
 //!
-//! use nakamoto::client::{Publisher, Client, Config, Network};
+//! use nakamoto::client::{Publisher, Client, Config, Network, Services};
 //! use nakamoto::client::error::Error;
 //! use nakamoto::client::handle::Handle as _;
 //!
@@ -33,8 +33,8 @@
 //!     // Run the client on a different thread, to not block the main thread.
 //!     thread::spawn(|| client.run().unwrap());
 //!
-//!     // Wait for the client to be in-sync with the blockchain.
-//!     handle.wait_for_ready()?;
+//!     // Wait for the client to be connected to a peer.
+//!     handle.wait_for_peers(1, Services::default())?;
 //!
 //!     // Ask the client to terminate.
 //!     handle.shutdown()?;

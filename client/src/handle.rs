@@ -153,8 +153,6 @@ pub trait Handle: Sized + Send + Sync + Clone {
         count: usize,
         required_services: impl Into<ServiceFlags>,
     ) -> Result<(), Error>;
-    /// Wait for the node to be ready and in sync with the blockchain.
-    fn wait_for_ready(&self) -> Result<(), Error>;
     /// Wait for the node's active chain to reach a certain height. The hash at that height
     /// is returned.
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;

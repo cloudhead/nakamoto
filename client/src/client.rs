@@ -24,7 +24,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::{Source, Store as _};
 
-pub use nakamoto_common::network::Network;
+pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
 
 use nakamoto_p2p as p2p;
@@ -640,20 +640,6 @@ where
                         None
                     }
                 }
-                _ => None,
-            },
-            self.timeout,
-        )?;
-
-        Ok(())
-    }
-
-    fn wait_for_ready(&self) -> Result<(), handle::Error> {
-        let events = self.events();
-        event::wait(
-            &events,
-            |e| match e {
-                protocol::Event::SyncManager(syncmgr::Event::Synced(_, _)) => Some(()),
                 _ => None,
             },
             self.timeout,
