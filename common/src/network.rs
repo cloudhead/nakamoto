@@ -112,6 +112,7 @@ impl Network {
                 "seed.bitcoin.sprovoost.nl",     // Sjors Provoost
                 "dnsseed.emzy.de",               // Stephan Oeste
                 "seed.bitcoin.wiz.biz",          // Jason Maurice
+                "seed.cloudhead.io",             // Alexis Sellier
             ],
             Network::Testnet => &[
                 "testnet-seed.bitcoin.jonasschnelli.ch",
