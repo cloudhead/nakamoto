@@ -446,18 +446,6 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         Ok(())
     }
 
-    /// Get the height of the last checkpoint block.
-    fn last_checkpoint(&self) -> Height {
-        let height = self.height();
-
-        self.checkpoints
-            .iter()
-            .rev()
-            .map(|(h, _)| *h)
-            .find(|h| *h <= height)
-            .unwrap_or(0)
-    }
-
     /// Get the next minimum-difficulty target. Only valid in testnet and regtest networks.
     fn next_min_difficulty_target(&self, params: &Params) -> Bits {
         assert!(params.allow_min_difficulty_blocks);
@@ -647,6 +635,18 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
     /// Return the height of the longest chain.
     fn height(&self) -> Height {
         self.chain.last().height
+    }
+
+    /// Get the height of the last checkpoint block.
+    fn last_checkpoint(&self) -> Height {
+        let height = self.height();
+
+        self.checkpoints
+            .iter()
+            .rev()
+            .map(|(h, _)| *h)
+            .find(|h| *h <= height)
+            .unwrap_or(0)
     }
 
     /// Check whether this block hash is known.

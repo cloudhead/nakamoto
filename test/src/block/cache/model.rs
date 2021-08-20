@@ -188,6 +188,10 @@ impl BlockTree for Cache {
         unimplemented!()
     }
 
+    fn last_checkpoint(&self) -> Height {
+        0
+    }
+
     fn locator_hashes(&self, _from: Height) -> Vec<BlockHash> {
         vec![self.chain.last().block_hash()]
     }

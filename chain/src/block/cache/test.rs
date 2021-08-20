@@ -90,6 +90,10 @@ impl BlockTree for HeightCache {
         self.headers.get(&height)
     }
 
+    fn last_checkpoint(&self) -> Height {
+        0
+    }
+
     fn tip(&self) -> (BlockHash, BlockHeader) {
         let header = self.headers.get(&self.height).unwrap();
         (header.block_hash(), *header)
