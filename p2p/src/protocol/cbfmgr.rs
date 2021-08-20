@@ -345,16 +345,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         self.idle(now, tree);
     }
 
-    /// Called periodically. Triggers syncing if necessary.
-    pub fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
-        if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.sync(tree, now);
-            self.last_idle = Some(now);
-            self.upstream.set_timeout(IDLE_TIMEOUT);
-            // TODO: Re-request late inflight cfheaders.
-        }
-    }
-
     /// A tick was received.
     pub fn received_tick<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
         self.idle(now, tree);
@@ -766,8 +756,57 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         self.sync(tree, time);
     }
 
+    /// Attempt to sync the filter header chain.
+    pub fn sync<T: BlockTree>(&mut self, tree: &T, time: LocalTime) {
+        let filter_height = self.filters.height();
+        let block_height = tree.height();
+
+        assert!(filter_height <= block_height);
+
+        // Don't start syncing filter headers until block headers are synced passed the last
+        // checkpoint.
+        if let Some(checkpoint) = tree.checkpoints().keys().next_back() {
+            if &block_height < checkpoint {
+                return;
+            }
+        }
+
+        if filter_height < block_height {
+            // We need to sync the filter header chain.
+            let start_height = self.filters.height() + 1;
+            let stop_height = tree.height();
+
+            if let Some((peer, start_height, stop_hash)) =
+                self.send_getcfheaders(start_height..stop_height + 1, tree, time)
+            {
+                self.upstream.event(Event::Syncing {
+                    peer,
+                    start_height,
+                    stop_hash,
+                });
+            }
+        }
+
+        if self.rescan.active {
+            self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
+                .ok();
+        }
+    }
+
+    // PRIVATE METHODS /////////////////////////////////////////////////////////
+
+    /// Called periodically. Triggers syncing if necessary.
+    fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+        if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
+            self.sync(tree, now);
+            self.last_idle = Some(now);
+            self.upstream.set_timeout(IDLE_TIMEOUT);
+            // TODO: Re-request late inflight cfheaders.
+        }
+    }
+
     /// Send a `getcfheaders` message to a random peer.
-    pub fn send_getcfheaders<T: BlockTree>(
+    fn send_getcfheaders<T: BlockTree>(
         &mut self,
         range: Range<Height>,
         tree: &T,
@@ -821,45 +860,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         }
         None
     }
-
-    /// Attempt to sync the filter header chain.
-    pub fn sync<T: BlockTree>(&mut self, tree: &T, time: LocalTime) {
-        let filter_height = self.filters.height();
-        let block_height = tree.height();
-
-        assert!(filter_height <= block_height);
-
-        // Don't start syncing filter headers until block headers are synced passed the last
-        // checkpoint.
-        if let Some(checkpoint) = tree.checkpoints().keys().next_back() {
-            if &block_height < checkpoint {
-                return;
-            }
-        }
-
-        if filter_height < block_height {
-            // We need to sync the filter header chain.
-            let start_height = self.filters.height() + 1;
-            let stop_height = tree.height();
-
-            if let Some((peer, start_height, stop_hash)) =
-                self.send_getcfheaders(start_height..stop_height + 1, tree, time)
-            {
-                self.upstream.event(Event::Syncing {
-                    peer,
-                    start_height,
-                    stop_hash,
-                });
-            }
-        }
-
-        if self.rescan.active {
-            self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
-                .ok();
-        }
-    }
-
-    // PRIVATE METHODS /////////////////////////////////////////////////////////
 
     /// Called when filter headers were successfully imported.
     ///
