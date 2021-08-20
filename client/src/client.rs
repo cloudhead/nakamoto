@@ -5,7 +5,6 @@ use std::env;
 use std::fs;
 use std::io;
 use std::net;
-use std::net::SocketAddr;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::{self, SystemTime};
@@ -441,10 +440,7 @@ where
     }
 
     /// Get connected peers.
-    pub fn get_peers(
-        &self,
-        services: impl Into<ServiceFlags>,
-    ) -> Result<HashSet<SocketAddr>, handle::Error> {
+    pub fn get_peers(&self, services: impl Into<ServiceFlags>) -> Result<Vec<Peer>, handle::Error> {
         let (sender, recvr) = chan::bounded(1);
         self._command(Command::GetPeers(services.into(), sender))?;
 
@@ -620,7 +616,11 @@ where
         let events = self.events();
         let required_services = required_services.into();
 
-        let mut negotiated = self.get_peers(required_services)?; // Get already connected peers.
+        let mut negotiated = self
+            .get_peers(required_services)?
+            .into_iter()
+            .map(|p| p.address())
+            .collect::<HashSet<_>>(); // Get already connected peers.
 
         if negotiated.len() == count {
             return Ok(());

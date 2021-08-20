@@ -137,7 +137,6 @@ pub struct Connection {
 pub struct Peer {
     /// Connection information.
     pub conn: Connection,
-    // last_active: LocalTime,
     /// The peer's best height.
     pub height: Height,
     /// The peer's services.

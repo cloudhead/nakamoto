@@ -27,11 +27,11 @@ use syncmgr::SyncManager;
 
 pub use event::Event;
 
+use std::collections::HashSet;
 use std::fmt::{self, Debug};
 use std::net;
 use std::ops::{Bound, RangeInclusive};
 use std::sync::Arc;
-use std::{collections::HashSet, net::SocketAddr};
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -99,7 +99,7 @@ pub enum Command {
     /// Get block header at height.
     GetBlockByHeight(Height, chan::Sender<Option<BlockHeader>>),
     /// Get connected peers.
-    GetPeers(ServiceFlags, chan::Sender<HashSet<SocketAddr>>),
+    GetPeers(ServiceFlags, chan::Sender<Vec<Peer>>),
     /// Get the tip of the active chain.
     GetTip(chan::Sender<(Height, BlockHeader)>),
     /// Get a block from the active chain.
@@ -910,8 +910,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         .peers()
                         .filter(|f| f.is_negotiated())
                         .filter(|f| f.services.has(services))
-                        .map(|f| f.address())
-                        .collect::<HashSet<SocketAddr>>();
+                        .cloned()
+                        .collect::<Vec<peermgr::Peer>>();
 
                     reply.send(peers).ok();
                 }
