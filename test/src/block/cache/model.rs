@@ -133,7 +133,7 @@ impl BlockTree for Cache {
             }
             for (height, header) in self.chain.iter().enumerate() {
                 if !old.contains(&header) {
-                    connected.push((height as Height, header.block_hash()));
+                    connected.push((height as Height, *header));
                 }
             }
             let connected = NonEmpty::from_vec(connected).unwrap();
@@ -163,7 +163,7 @@ impl BlockTree for Cache {
                 self.tip,
                 self.height(),
                 vec![],
-                NonEmpty::new((self.height(), self.tip)),
+                NonEmpty::new((self.height(), header)),
             ))
         } else {
             Ok(ImportResult::TipUnchanged)

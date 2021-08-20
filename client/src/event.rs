@@ -16,8 +16,8 @@ pub enum Event {
     },
     /// A block was added to the main chain.
     BlockConnected {
-        /// Hash of the block.
-        hash: BlockHash,
+        /// Block header.
+        header: BlockHeader,
         /// Height of the block.
         height: Height,
     },
@@ -79,8 +79,13 @@ impl fmt::Display for Event {
             Self::Ready { .. } => {
                 write!(fmt, "ready to process events and commands")
             }
-            Self::BlockConnected { hash, height } => {
-                write!(fmt, "block {} connected at height {}", hash, height)
+            Self::BlockConnected { header, height } => {
+                write!(
+                    fmt,
+                    "block {} connected at height {}",
+                    header.block_hash(),
+                    height
+                )
             }
             Self::BlockDisconnected { hash, height } => {
                 write!(fmt, "block {} disconnected at height {}", hash, height)

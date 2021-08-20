@@ -300,11 +300,12 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
             assert!(end > start);
 
-            let connected =
-                NonEmpty::from_vec(self.range(start..end).map(|b| (b.height, b.hash)).collect())
-                    .expect(
-                        "BlockCache::import_block: there is always at least one connected block",
-                    );
+            let connected = NonEmpty::from_vec(
+                self.range(start..end)
+                    .map(|b| (b.height, b.header))
+                    .collect(),
+            )
+            .expect("BlockCache::import_block: there is always at least one connected block");
 
             Ok(ImportResult::TipChanged(
                 header, hash, height, stale, connected,
@@ -531,7 +532,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         context: &C,
     ) -> Result<ImportResult, Error> {
         let mut reverted = BTreeSet::new();
-        let mut connected = BTreeSet::new();
+        let mut connected = BTreeMap::new();
         let mut best_height = self.height();
         let mut best_hash = self.chain.last().hash;
         let mut best_header = self.chain.last().header;
@@ -554,8 +555,10 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         }
 
         if !connected.is_empty() {
-            reverted.retain(|(i, h)| !connected.contains(&(*i, *h)) && !self.contains(h));
-            connected.retain(|(_, h)| self.contains(h));
+            reverted.retain(|(i, h)| {
+                connected.get(&i).map(|h| h.block_hash()) != Some(*h) && !self.contains(h)
+            });
+            connected.retain(|_, h| self.contains(&h.block_hash()));
 
             Ok(ImportResult::TipChanged(
                 best_header,
@@ -592,7 +595,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
                 hash,
                 height,
                 vec![],
-                NonEmpty::new((height, hash)),
+                NonEmpty::new((height, header)),
             ))
         } else {
             Ok(ImportResult::TipUnchanged)

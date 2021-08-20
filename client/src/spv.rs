@@ -122,8 +122,8 @@ impl Mapper {
             protocol::Event::SyncManager(syncmgr::Event::Synced(_, height)) => {
                 self.tip = height;
             }
-            protocol::Event::SyncManager(syncmgr::Event::BlockConnected { hash, height }) => {
-                emitter.emit(Event::BlockConnected { hash, height });
+            protocol::Event::SyncManager(syncmgr::Event::BlockConnected { header, height }) => {
+                emitter.emit(Event::BlockConnected { header, height });
             }
             protocol::Event::SyncManager(syncmgr::Event::BlockDisconnected { hash, height }) => {
                 emitter.emit(Event::BlockDisconnected { hash, height });

@@ -77,7 +77,7 @@ pub enum ImportResult {
         BlockHash,
         Height,
         Vec<(Height, BlockHash)>,
-        NonEmpty<(Height, BlockHash)>,
+        NonEmpty<(Height, BlockHeader)>,
     ),
     /// The block headers were imported successfully, but our best block hasn't changed.
     /// This will happen if we imported a duplicate, orphan or stale block.

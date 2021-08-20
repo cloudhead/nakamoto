@@ -112,8 +112,8 @@ pub enum Event {
     BlockConnected {
         /// Block height.
         height: Height,
-        /// Block hash.
-        hash: BlockHash,
+        /// Block header.
+        header: BlockHeader,
     },
     /// A block was removed from the main chain.
     BlockDisconnected {
@@ -156,8 +156,13 @@ impl std::fmt::Display for Event {
                 write!(fmt, "Headers synced up to hash={} height={}", hash, height)
             }
             Event::Syncing(addr) => write!(fmt, "Syncing headers with {}", addr),
-            Event::BlockConnected { height, hash } => {
-                write!(fmt, "Block {} connected at height {}", hash, height)
+            Event::BlockConnected { height, header } => {
+                write!(
+                    fmt,
+                    "Block {} connected at height {}",
+                    header.block_hash(),
+                    height
+                )
             }
             Event::BlockDisconnected { height, hash } => {
                 write!(fmt, "Block {} disconnected at height {}", hash, height)
@@ -307,8 +312,9 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                     self.upstream
                         .event(Event::BlockDisconnected { height, hash });
                 }
-                for (height, hash) in connected {
-                    self.upstream.event(Event::BlockConnected { height, hash });
+                for (height, header) in connected {
+                    self.upstream
+                        .event(Event::BlockConnected { height, header });
                 }
 
                 self.upstream.event(Event::Synced(tip, height));
@@ -499,7 +505,8 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                 Ok(ImportResult::TipChanged(header, hash, height, reverted, connected)) => {
                     debug_assert!(reverted.is_empty());
 
-                    self.upstream.event(Event::BlockConnected { height, hash });
+                    self.upstream
+                        .event(Event::BlockConnected { height, header });
                     self.upstream.event(Event::Synced(hash, height));
                     result = ImportResult::TipChanged(header, hash, height, vec![], connected);
                 }

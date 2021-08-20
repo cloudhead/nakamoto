@@ -840,7 +840,7 @@ fn prop_cache_import_tree_randomized(tree: Tree) {
                 ImportResult::TipChanged(header, hash, height, reverted, connected),
                 ImportResult::TipChanged(_, _, _, _, _),
             ) => {
-                assert_eq!(connected.last(), &(height, hash));
+                assert_eq!(connected.last(), &(height, header));
                 assert_eq!(header.block_hash(), hash);
 
                 // None of the reverted items are in the active chain.
@@ -848,8 +848,8 @@ fn prop_cache_import_tree_randomized(tree: Tree) {
                     assert!(!real.contains(&hash));
                 }
                 // All of the connected items are in the active chain.
-                for (_, hash) in connected {
-                    assert!(real.contains(&hash));
+                for (_, header) in connected {
+                    assert!(real.contains(&header.block_hash()));
                 }
             }
             (actual, expected) => {
@@ -936,7 +936,7 @@ fn test_cache_import_height_unchanged() {
             b2.hash,
             height,
             vec![(2, a2.hash)],
-            NonEmpty::new((2, b2.hash))
+            NonEmpty::new((2, b2.block()))
         )
     );
 }
