@@ -1,5 +1,7 @@
 //! Types and functions relating to block trees.
 #![warn(missing_docs)]
+use std::collections::BTreeMap;
+
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
@@ -151,6 +153,8 @@ pub trait BlockTree {
     }
     /// Get the height of the last checkpoint block.
     fn last_checkpoint(&self) -> Height;
+    /// Known checkpoints.
+    fn checkpoints(&self) -> BTreeMap<Height, BlockHash>;
     /// Return the genesis block header.
     fn genesis(&self) -> &BlockHeader {
         self.get_block_by_height(0)

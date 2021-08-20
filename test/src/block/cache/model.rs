@@ -192,6 +192,10 @@ impl BlockTree for Cache {
         0
     }
 
+    fn checkpoints(&self) -> BTreeMap<Height, BlockHash> {
+        BTreeMap::new()
+    }
+
     fn locator_hashes(&self, _from: Height) -> Vec<BlockHash> {
         vec![self.chain.last().block_hash()]
     }

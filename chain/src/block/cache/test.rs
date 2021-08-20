@@ -94,6 +94,10 @@ impl BlockTree for HeightCache {
         0
     }
 
+    fn checkpoints(&self) -> BTreeMap<Height, BlockHash> {
+        BTreeMap::new()
+    }
+
     fn tip(&self) -> (BlockHash, BlockHeader) {
         let header = self.headers.get(&self.height).unwrap();
         (header.block_hash(), *header)

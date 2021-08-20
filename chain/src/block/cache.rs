@@ -649,6 +649,11 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
             .unwrap_or(0)
     }
 
+    /// Known block checkpoints.
+    fn checkpoints(&self) -> BTreeMap<Height, BlockHash> {
+        self.checkpoints.clone()
+    }
+
     /// Check whether this block hash is known.
     fn is_known(&self, hash: &BlockHash) -> bool {
         self.headers.contains_key(hash) || self.orphans.contains_key(hash)
