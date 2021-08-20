@@ -294,7 +294,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
             Some(Peer::Connected { link, .. }) if link.is_outbound() => {
                 self.maintain_connections(addrs, local_time);
             }
-            Some(Peer::Connecting { .. }) => {
+            Some(Peer::Connecting { .. } | Peer::Disconnecting { .. }) => {
                 self.maintain_connections(addrs, local_time);
             }
             _ => {}
@@ -447,6 +447,7 @@ mod tests {
         let remote1 = ([124, 43, 110, 1], 8333).into();
         let remote2 = ([124, 43, 110, 2], 8333).into();
         let remote3 = ([124, 43, 110, 3], 8333).into();
+        let remote4 = ([124, 43, 110, 4], 8333).into();
 
         let mut addrs = VecDeque::new();
         let mut connmgr: ConnectionManager<_, VecDeque<_>> = ConnectionManager::new((), cfg, rng);
@@ -483,6 +484,20 @@ mod tests {
             connmgr.connecting_peers().next(),
             Some(&remote3),
             "Disconnection triggers a new connection to remote#3"
+        );
+
+        // Connect, then disconnect remote#3.
+        addrs.push_back((Address::new(&remote4, services), Source::Dns));
+
+        connmgr.peer_connected(remote3, local, Link::Outbound, time);
+        connmgr.disconnect(remote3, DisconnectReason::Command);
+        connmgr.peer_disconnected(&remote3, &mut addrs, time);
+
+        assert!(connmgr.is_disconnected(&remote3));
+        assert_eq!(
+            connmgr.connecting_peers().next(),
+            Some(&remote4),
+            "Disconnection triggers a new connection to remote#4"
         );
     }
 }
