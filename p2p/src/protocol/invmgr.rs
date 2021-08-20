@@ -1,5 +1,24 @@
 //! Inventory manager.
 //! Takes care of sending and fetching inventories.
+//!
+//! ## Handling of reverted blocks
+//!
+//! When a block is reverted, the inventory manager is notified, via the
+//! [`InventoryManager::block_reverted`] function. Since confirmed transactions are held
+//! for some time in memory, the transactions that were confirmed in the reverted block
+//! can be matched and the user can be notified via a [`Event::Reverted`] event. These transactions
+//! are then placed back into the local mempool, to ensure that they get re-broadcast and
+//! eventually included in a new block.
+//!
+//! To ensure that any new and/or conflicting block that may contain the transaction is matched,
+//! the filter manager is told to re-watch all reverted transactions. Thus, the inventory manager
+//! can expect to receive the new block that contains the transaction that was reverted, via
+//! the [`InventoryManager::received_block`] event.
+//!
+//! To keep only the smallest set of confirmed transactions in memory, we prune the set every time
+//! the [`InventoryManager::received_tick`] function is called. Confirmed transactions are removed
+//! after they are burried at a certain depth.
+//!
 use std::collections::BTreeMap;
 use std::iter;
 
@@ -8,7 +27,6 @@ use bitcoin::{Block, BlockHash, Transaction, Txid};
 
 // TODO: Timeout should be configurable
 // TODO: Add exponential back-off
-// TODO: Do we need to handle re-orgs?
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
@@ -28,6 +46,9 @@ pub const MAX_ATTEMPTS: usize = 3;
 
 /// Time between idles.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
+
+/// Block depth at which confirmed transactions are pruned and no longer reverted after a re-org.
+pub const TRANSACTION_PRUNE_DEPTH: Height = 12;
 
 /// The ability to send and receive inventory data.
 pub trait Inventories {
@@ -78,10 +99,6 @@ pub enum Event {
     Reverted {
         /// The reverted transaction.
         transaction: Transaction, // TODO: Just the txid?
-        /// The height at which it was reverted.
-        height: Height,
-        /// The block in which it was reverted.
-        block: BlockHash,
     },
 }
 
@@ -112,16 +129,9 @@ impl std::fmt::Display for Event {
                 block,
                 height
             ),
-            Event::Reverted {
-                transaction,
-                height,
-                ..
-            } => write!(
-                fmt,
-                "Transaction {} was reverted at height {}",
-                transaction.txid(),
-                height
-            ),
+            Event::Reverted { transaction, .. } => {
+                write!(fmt, "Transaction {} was reverted", transaction.txid(),)
+            }
         }
     }
 }
@@ -230,9 +240,9 @@ pub struct InventoryManager<U> {
     timeout: LocalDuration,
     /// Transaction mempool. Stores unconfirmed transactions sent to the network.
     mempool: Mempool,
-    /// Confirmed transactions.
+    /// Confirmed transactions by block height.
     /// Pruned after a certain depth.
-    confirmed: HashMap<(BlockHash, Height), Vec<Transaction>>,
+    confirmed: HashMap<Height, Vec<Transaction>>,
 
     /// Inventories requested and the time at which they were last requested.
     /// Only blocks are requested currently.
@@ -298,31 +308,33 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     }
 
     /// Called when a block is reverted.
-    pub fn block_reverted(&mut self, height: Height, block: BlockHash) -> Vec<Transaction> {
-        let mut reverted = Vec::new();
+    pub fn block_reverted(&mut self, height: Height) -> Vec<Transaction> {
+        if let Some(transactions) = self.confirmed.remove(&height) {
+            self.announce(transactions.clone());
 
-        if let Some(txs) = self.confirmed.remove(&(block, height)) {
-            reverted.extend(txs.clone());
-            self.announce(txs.clone());
-
-            for transaction in txs {
-                self.upstream.event(Event::Reverted {
-                    transaction,
-                    block,
-                    height,
-                });
+            for transaction in transactions.iter().cloned() {
+                self.upstream.event(Event::Reverted { transaction });
             }
+            transactions
+        } else {
+            Vec::new()
         }
-        reverted
     }
 
     /// Called when we receive a tick.
-    pub fn received_tick(&mut self, now: LocalTime) {
+    pub fn received_tick<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
         // Rate-limit how much we run this function.
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
         } else {
             return;
+        }
+
+        {
+            // Prune confirmed transactions burried passed a certain depth.
+            let height = tree.height();
+            self.confirmed
+                .retain(|h, _| height - h <= TRANSACTION_PRUNE_DEPTH);
         }
 
         // Handle retries annd disconnects.
@@ -488,7 +500,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                 confirmed.push(txid);
 
                 self.confirmed
-                    .entry((hash, height))
+                    .entry(height)
                     .or_default()
                     .push(transaction.clone());
 
@@ -614,7 +626,7 @@ mod tests {
 
         loop {
             time.elapse(LocalDuration::from_secs(rng.u64(10..30)));
-            invmgr.received_tick(time);
+            invmgr.received_tick(time, &tree);
             assert!(!invmgr.remaining.is_empty());
 
             if let Some((addr, _)) = messages(&receiver)
@@ -641,7 +653,7 @@ mod tests {
                 break;
             }
         }
-        invmgr.received_tick(time + REQUEST_TIMEOUT);
+        invmgr.received_tick(time + REQUEST_TIMEOUT, &tree);
         assert_eq!(messages(&receiver).count(), 0, "No more requests are sent");
     }
 
@@ -650,31 +662,36 @@ mod tests {
         let network = Network::Mainnet;
         let (sender, receiver) = chan::unbounded::<Out>();
         let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
-
+        let tree = model::Cache::from(NonEmpty::new(network.genesis()));
+        let remote = ([88, 88, 88, 88], 8333).into();
         let mut rng = fastrand::Rng::with_seed(1);
-        let mut mempool = Mempool::new();
 
         let time = LocalTime::now();
         let tx = gen::transaction(&mut rng);
 
         let mut invmgr = InventoryManager::new(rng, upstream);
 
-        mempool.insert(vec![(tx.txid(), tx.clone())]);
-
-        invmgr.peer_negotiated(([88, 88, 88, 88], 8333).into(), ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
         invmgr.announce(vec![tx]);
-        invmgr.received_tick(time);
+        invmgr.received_tick(time, &tree);
 
         assert_eq!(
-            receiver
-                .try_iter()
-                .filter(|o| matches!(o, Out::Message(_, _)))
+            messages(&receiver)
+                .filter(|(a, m)| matches!(m, NetworkMessage::Inv(_)) && a == &remote)
                 .count(),
             1
         );
 
-        invmgr.received_tick(time);
+        invmgr.received_tick(time, &tree);
         assert_eq!(receiver.try_iter().count(), 0, "Timeout hasn't lapsed");
+
+        invmgr.received_tick(time + REBROADCAST_TIMEOUT, &tree);
+        assert_eq!(
+            messages(&receiver)
+                .filter(|(a, m)| matches!(m, NetworkMessage::Inv(_)) && a == &remote)
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -682,24 +699,22 @@ mod tests {
         let network = Network::Mainnet;
         let (sender, receiver) = chan::unbounded::<Out>();
         let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
         let mut time = LocalTime::now();
-        let mut mempool = Mempool::new();
 
         let remote = ([88, 88, 88, 88], 8333).into();
         let tx = gen::transaction(&mut rng);
 
         let mut invmgr = InventoryManager::new(rng, upstream);
 
-        mempool.insert(vec![(tx.txid(), tx.clone())]);
-
         invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
         invmgr.announce(vec![tx.clone()]);
 
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
-            invmgr.received_tick(time);
+            invmgr.received_tick(time, &tree);
             receiver
                 .try_iter()
                 .find(|o| {
@@ -720,7 +735,7 @@ mod tests {
         }
 
         // The next time we time out, we disconnect the peer.
-        invmgr.received_tick(time);
+        invmgr.received_tick(time, &tree);
         receiver
             .try_iter()
             .find(|o| matches!(o, Out::Disconnect(addr, _) if addr == &remote))
@@ -759,7 +774,7 @@ mod tests {
         invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
         invmgr.announce(vec![tx.clone()]);
         invmgr.get_block(main_block1.block_hash());
-        invmgr.received_block(&remote, main_block1.clone(), &tree);
+        invmgr.received_block(&remote, main_block1, &tree);
 
         assert!(!invmgr.contains(&tx.txid()));
 
@@ -780,14 +795,14 @@ mod tests {
         )
         .unwrap();
 
-        invmgr.block_reverted(height, main_block1.block_hash());
+        invmgr.block_reverted(height);
         assert!(invmgr.contains(&tx.txid()));
 
         events
             .find(|e| {
                 matches! {
-                    e, Event::Reverted { transaction, block: b, .. }
-                    if transaction.txid() == tx.txid() && b == &main_block1.block_hash()
+                    e, Event::Reverted { transaction }
+                    if transaction.txid() == tx.txid()
                 }
             })
             .unwrap();

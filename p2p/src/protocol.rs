@@ -745,8 +745,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         self.cbfmgr.rollback(reverted.len()).unwrap();
                         self.cbfmgr.sync(&self.tree, now);
 
-                        for (height, hash) in reverted {
-                            let txs = self.invmgr.block_reverted(height, hash);
+                        for (height, _) in reverted {
+                            let txs = self.invmgr.block_reverted(height);
                             self.cbfmgr.watch_transactions(&txs);
                         }
                     }
@@ -1009,7 +1009,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             Input::Tick => {
                 trace!(target: self.target, "Received tick");
 
-                self.invmgr.received_tick(local_time);
+                self.invmgr.received_tick(local_time, &self.tree);
                 self.connmgr.received_tick(local_time, &mut self.addrmgr);
                 self.syncmgr.received_tick(local_time, &self.tree);
                 self.pingmgr.received_tick(local_time);
