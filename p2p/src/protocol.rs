@@ -745,7 +745,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         // a re-download of the missing headers, which should result
                         // in us having the new headers.
                         self.cbfmgr.rollback(reverted.len()).unwrap();
-                        self.cbfmgr.sync(&self.tree, now);
 
                         for (height, _) in reverted {
                             let txs = self.invmgr.block_reverted(height);
@@ -849,7 +848,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         self.addrmgr.initialize(time);
         self.syncmgr.initialize(time, &self.tree);
         self.connmgr.initialize(time, &mut self.addrmgr);
-        self.cbfmgr.initialize(time);
+        self.cbfmgr.initialize(time, &self.tree);
     }
 
     /// Process the next input and advance the state machine by one step.

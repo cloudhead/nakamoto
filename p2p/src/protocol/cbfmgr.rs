@@ -341,8 +341,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     }
 
     /// Initialize the manager. Should only be called once.
-    pub fn initialize(&mut self, _now: LocalTime) {
-        self.upstream.set_timeout(IDLE_TIMEOUT);
+    pub fn initialize<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+        self.idle(now, tree);
     }
 
     /// Called periodically. Triggers syncing if necessary.
@@ -827,6 +827,16 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         let filter_height = self.filters.height();
         let block_height = tree.height();
 
+        assert!(filter_height <= block_height);
+
+        // Don't start syncing filter headers until block headers are synced passed the last
+        // checkpoint.
+        if let Some(checkpoint) = tree.checkpoints().keys().next_back() {
+            if &block_height < checkpoint {
+                return;
+            }
+        }
+
         if filter_height < block_height {
             // We need to sync the filter header chain.
             let start_height = self.filters.height() + 1;
@@ -841,8 +851,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
                     stop_hash,
                 });
             }
-        } else if filter_height > block_height {
-            panic!("{}: filter chain is longer than header chain!", source!());
         }
 
         if self.rescan.active {
@@ -1274,7 +1282,7 @@ mod tests {
             .collect::<Vec<_>>();
 
         cbfmgr.filters.clear().unwrap();
-        cbfmgr.initialize(time);
+        cbfmgr.initialize(time, &tree);
         cbfmgr.peer_negotiated(
             remote,
             best,
@@ -1378,7 +1386,7 @@ mod tests {
             // Generate a watchlist and keep track of the matching block heights.
             let (watch, _, _) = gen::watchlist(birth, chain.iter(), &mut rng);
 
-            cbfmgr.initialize(time);
+            cbfmgr.initialize(time, &tree);
             cbfmgr.peer_negotiated(
                 remote,
                 best,
@@ -1498,7 +1506,7 @@ mod tests {
         let (watch, heights, _) = gen::watchlist(birth, chain.iter(), &mut rng);
 
         cbfmgr.filters.clear().unwrap();
-        cbfmgr.initialize(time);
+        cbfmgr.initialize(time, &tree);
         cbfmgr.peer_negotiated(
             remote,
             best,
