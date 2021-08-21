@@ -21,8 +21,8 @@ use peer::{Peer, PeerDummy};
 use simulator::{Options, Simulation};
 
 use bitcoin::network::message_blockdata::Inventory;
-use bitcoin::network::message_filter::CFHeaders;
 use bitcoin::network::message_filter::CFilter;
+use bitcoin::network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters};
 use bitcoin::network::Address;
 use bitcoin_hashes::hex::FromHex;
 
@@ -1245,6 +1245,210 @@ fn test_submitted_transaction_filtering() {
         !alice.protocol.cbfmgr.unwatch_transaction(&tx.txid()),
         "The transaction is no longer watched"
     );
+}
+
+#[test]
+fn test_transaction_reverted_reconfirm() {
+    let height = 16;
+    let mut rng = fastrand::Rng::new();
+
+    logger::init(log::Level::Debug);
+
+    let network = Network::Regtest;
+    let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+    let genesis = network.genesis_block();
+    let chain = gen::blockchain(genesis, height, &mut rng);
+    let chain_tip = chain.last();
+    let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
+    let cfheader_genesis = FilterHeader::genesis(network);
+    let cfheaders = gen::cfheaders_from_blocks(cfheader_genesis, chain.iter())
+        .into_iter()
+        .skip(1) // Skip genesis
+        .collect::<Vec<_>>();
+    let (_, cfheaders_tip) = cfheaders.last().unwrap();
+    let filter_type = 0x0;
+
+    let mut alice = Peer::new(
+        "alice",
+        [48, 48, 48, 48],
+        network,
+        headers.tail,
+        cfheaders.clone(),
+        vec![],
+        rng.clone(),
+    );
+    let tx = gen::transaction(&mut rng);
+
+    // Connect to a peer and submit the transaction.
+    alice.connect(
+        &PeerDummy {
+            addr: remote,
+            height,
+            protocol_version: alice.protocol.protocol_version,
+            services: cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
+            relay: true,
+            time: alice.time,
+        },
+        Link::Outbound,
+    );
+
+    let (rescan_reply, _) = chan::bounded(1);
+    let (submit_reply, _) = chan::bounded(1);
+
+    // Start a rescan, to make sure we catch the transaction when it's confirmed.
+    alice.command(Command::Rescan {
+        from: Bound::Unbounded, // Start scanning from the current height.
+        to: Bound::Unbounded,   // Keep scanning forever.
+        watch: vec![],          // Submitted transactions are tracked automatically.
+        reply: rescan_reply,
+    });
+    alice.command(Command::SubmitTransactions(vec![tx.clone()], submit_reply));
+    alice.tick();
+
+    // Alice receives the initial shorter chain.
+    {
+        // The next block will have the matching transaction.
+        let matching = gen::block_with(&chain_tip.header, vec![tx.clone()], &mut rng);
+        let cfilter = gen::cfilter(&matching);
+        let (_, parent) = cfheaders.last().unwrap();
+        let (cfhash, _) = gen::cfheader(parent, &cfilter);
+
+        alice.time = LocalTime::from_block_time(chain_tip.header.time);
+
+        // Alice receives a header announcement.
+        alice.receive(remote, NetworkMessage::Headers(vec![matching.header]));
+
+        // Alice receives the cfheaders.
+        alice.receive(
+            remote,
+            NetworkMessage::CFHeaders(CFHeaders {
+                filter_type,
+                stop_hash: matching.block_hash(),
+                previous_filter_header: *parent,
+                filter_hashes: vec![cfhash],
+            }),
+        );
+        // Alice receives the cfilter, which we expect to match.
+        alice.receive(
+            remote,
+            NetworkMessage::CFilter(CFilter {
+                filter_type,
+                block_hash: matching.block_hash(),
+                filter: cfilter.content,
+            }),
+        );
+        // Alice receives the matching block.
+        alice.receive(remote, NetworkMessage::Block(matching));
+        alice
+            .events()
+            .find(|e| {
+                matches!(
+                    e,
+                    Event::InventoryManager(invmgr::Event::Confirmed { transaction, .. })
+                    if transaction.txid() == tx.txid()
+                )
+            })
+            .expect("The transaction is confirmed");
+    }
+
+    // Alice receives the new, longer fork.
+    {
+        let fork_trunk = gen::fork(&chain_tip.header, 3, &mut rng);
+        let fork_trunk_tip = fork_trunk.last().unwrap().header;
+        let fork_matching = gen::block_with(&fork_trunk_tip, vec![tx.clone()], &mut rng);
+        let fork = fork_trunk
+            .iter()
+            .chain(iter::once(&fork_matching))
+            .collect::<Vec<_>>();
+        let fork_tip = fork.last().unwrap();
+        let fork_cfheaders = gen::cfheaders_from_blocks(*cfheaders_tip, fork.iter().cloned())
+            .into_iter()
+            .collect::<Vec<_>>();
+        let fork_cfilters = gen::cfilters(fork.iter().cloned());
+
+        // Alice receives a new header announcement for a longer chain.
+        alice.receive(
+            remote,
+            NetworkMessage::Headers(fork.iter().map(|b| b.header).collect()),
+        );
+        alice
+            .events()
+            .find(|e| {
+                matches!(
+                    e,
+                    Event::InventoryManager(invmgr::Event::Reverted { transaction })
+                    if transaction.txid() == tx.txid()
+                )
+            })
+            .expect("The transaction is reverted");
+
+        assert!(alice.protocol.invmgr.contains(&tx.txid()));
+
+        alice.tick();
+        alice
+            .messages()
+            .find(|(_, m)| {
+                matches!(
+                    m,
+                    NetworkMessage::GetCFHeaders(GetCFHeaders { stop_hash, .. })
+                    if stop_hash == &fork_tip.block_hash()
+                )
+            })
+            .expect("Alice asks for the cfheaders");
+
+        alice.receive(
+            remote,
+            NetworkMessage::CFHeaders(CFHeaders {
+                filter_type,
+                stop_hash: fork_tip.block_hash(),
+                previous_filter_header: *cfheaders_tip,
+                filter_hashes: fork_cfheaders.iter().map(|(hash, _)| *hash).collect(),
+            }),
+        );
+        alice
+            .messages()
+            .find(|(_, m)| {
+                matches!(
+                    m,
+                    NetworkMessage::GetCFilters(GetCFilters { stop_hash, .. })
+                    if stop_hash == &fork_tip.block_hash()
+                )
+            })
+            .expect("Alice asks for the cfilters");
+
+        for (cfilter, block) in fork_cfilters.into_iter().zip(fork.iter()) {
+            alice.receive(
+                remote,
+                NetworkMessage::CFilter(CFilter {
+                    filter_type,
+                    block_hash: block.block_hash(),
+                    filter: cfilter.content,
+                }),
+            );
+        }
+        alice
+            .events()
+            .find(|e| {
+                matches!(
+                    e,
+                    Event::FilterManager(cbfmgr::Event::FilterProcessed { block, matched: true, .. })
+                    if block == &fork_matching.block_hash()
+                )
+            })
+            .expect("The new block is matched");
+
+        alice.receive(remote, NetworkMessage::Block(fork_matching.clone()));
+        alice
+            .events()
+            .find(|e| {
+                matches!(
+                    e,
+                    Event::InventoryManager(invmgr::Event::Confirmed { transaction, block, .. })
+                    if transaction.txid() == tx.txid() && block == &fork_matching.block_hash()
+                )
+            })
+            .expect("The transaction is re-confirmed");
+    }
 }
 
 /// Test that blocks being imported and going stale generates the right events.
