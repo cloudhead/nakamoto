@@ -20,7 +20,6 @@
 //! after they are burried at a certain depth.
 //!
 use std::collections::BTreeMap;
-use std::iter;
 
 use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
 use bitcoin::{Block, BlockHash, Transaction, Txid};
@@ -136,64 +135,6 @@ impl std::fmt::Display for Event {
     }
 }
 
-/// Transaction Mempool.
-///
-/// Keeps track of unconfirmed transactions.
-///
-/// The mempool is shared between the client and the protocol.  The client's responsibility is to
-/// remove transactions that have been included in blocks, while the protocol adds transactions
-/// that were submitted by the client.
-///
-/// The protocol also uses the mempool to respond to `getdata` messages received from peers.
-#[derive(Debug)]
-pub struct Mempool {
-    txs: BTreeMap<Txid, Transaction>,
-}
-
-impl Mempool {
-    /// Create a new, empty mempool.
-    fn new() -> Self {
-        Self {
-            txs: BTreeMap::new(),
-        }
-    }
-
-    /// Remove a transaction from the mempool. This should be used when the transaction is
-    /// confirmed.
-    fn remove(&mut self, txid: &Txid) -> Option<Transaction> {
-        self.txs.remove(txid)
-    }
-
-    /// Check if the mempool contains a specific transaction.
-    fn contains(&self, txid: &Txid) -> bool {
-        self.txs.contains_key(txid)
-    }
-
-    /// Remove all confirmed transactions in the given block from the mempool.
-    fn process_block(&mut self, block: &Block) -> Vec<Transaction> {
-        let mut confirmed = Vec::new();
-
-        for tx in &block.txdata {
-            let txid = tx.txid();
-
-            // Attempt to remove confirmed transaction from mempool.
-            // TODO: If this block becomes stale, this tx should go back in the
-            // mempool.
-            if let Some(tx) = self.remove(&txid) {
-                confirmed.push(tx);
-            }
-        }
-        confirmed
-    }
-
-    /// Add an unconfirmed transaction to the mempool.
-    fn insert(&mut self, txs: impl IntoIterator<Item = (Txid, Transaction)>) {
-        for (k, v) in txs {
-            self.txs.insert(k, v);
-        }
-    }
-}
-
 /// Inventory manager peer.
 #[derive(Debug)]
 pub struct Peer {
@@ -239,7 +180,7 @@ pub struct InventoryManager<U> {
     /// Timeout used for retrying broadcasts.
     timeout: LocalDuration,
     /// Transaction mempool. Stores unconfirmed transactions sent to the network.
-    mempool: Mempool,
+    mempool: BTreeMap<Txid, Transaction>,
     /// Confirmed transactions by block height.
     /// Pruned after a certain depth.
     confirmed: HashMap<Height, Vec<Transaction>>,
@@ -260,7 +201,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         Self {
             peers: AddressBook::new(rng.clone()),
-            mempool: Mempool::new(),
+            mempool: BTreeMap::new(),
             confirmed: HashMap::with_hasher(rng.clone().into()),
             remaining: HashMap::with_hasher(rng.clone().into()),
             received: HashMap::with_hasher(rng.clone().into()),
@@ -273,19 +214,19 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 
     /// Check whether the inventory is empty.
     pub fn is_empty(&self) -> bool {
-        self.mempool.txs.is_empty()
+        self.mempool.is_empty()
     }
 
     /// Check if the inventory contains the given transaction.
     pub fn contains(&self, txid: &Txid) -> bool {
-        self.mempool.contains(txid)
+        self.mempool.contains_key(txid)
     }
 
     /// Called when a peer is negotiated.
     pub fn peer_negotiated(&mut self, addr: PeerId, services: ServiceFlags, relay: bool) {
         // Add existing inventories to this peer's outbox so that they are announced.
         let mut outbox = HashSet::with_hasher(self.rng.clone().into());
-        for txid in self.mempool.txs.keys() {
+        for txid in self.mempool.keys() {
             outbox.insert(*txid);
         }
         self.schedule_tick();
@@ -377,7 +318,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                 let mut invs = Vec::with_capacity(peer.outbox.len());
                 for inv in &peer.outbox {
                     // TODO: Should we send a WitnessTransaction?
-                    invs.push(Inventory::Transaction(self.mempool.txs[inv].txid()));
+                    invs.push(Inventory::Transaction(self.mempool[inv].txid()));
                 }
                 self.upstream.inv(*addr, invs);
                 self.upstream.set_timeout(self.timeout);
@@ -404,8 +345,8 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                 // than witness inventories, but the `bitcoin` crate doesn't allow us to
                 // omit the witness data, hence we treat them equally here.
                 Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
-                    if let Some(tx) = self.mempool.txs.get(txid) {
-                        debug_assert!(self.mempool.contains(txid));
+                    if let Some(tx) = self.mempool.get(txid) {
+                        debug_assert!(self.mempool.contains_key(txid));
 
                         self.upstream.tx(addr, tx.clone());
                     }
@@ -487,28 +428,31 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
             .cloned()
             .and_then(|h| self.received.remove(&h).map(|b| (h, b)))
         {
-            let txs = self.mempool.process_block(&block);
             let hash = block.block_hash();
 
-            for transaction in txs {
-                let txid = transaction.txid();
+            for tx in &block.txdata {
+                let txid = tx.txid();
 
-                // Transactions that have been confirmed no longer need to be announced.
-                for peer in self.peers.values_mut() {
-                    peer.outbox.remove(&txid);
+                // Attempt to remove confirmed transaction from mempool.
+                if let Some(transaction) = self.mempool.remove(&txid) {
+                    confirmed.push(txid);
+
+                    // Transactions that have been confirmed no longer need to be announced.
+                    for peer in self.peers.values_mut() {
+                        peer.outbox.remove(&txid);
+                    }
+
+                    self.confirmed
+                        .entry(height)
+                        .or_default()
+                        .push(transaction.clone());
+
+                    self.upstream.event(Event::Confirmed {
+                        transaction,
+                        block: hash,
+                        height,
+                    });
                 }
-                confirmed.push(txid);
-
-                self.confirmed
-                    .entry(height)
-                    .or_default()
-                    .push(transaction.clone());
-
-                self.upstream.event(Event::Confirmed {
-                    transaction,
-                    block: hash,
-                    height,
-                });
             }
             self.upstream.event(Event::BlockProcessed { block, height });
         }
@@ -524,7 +468,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         // later.
         for tx in txs {
             let txid = tx.txid();
-            self.mempool.insert(iter::once((txid, tx)));
+            self.mempool.insert(txid, tx);
 
             for (addr, peer) in self.peers.iter_mut().filter(|(_, p)| p.relay) {
                 peer.outbox.insert(txid);
