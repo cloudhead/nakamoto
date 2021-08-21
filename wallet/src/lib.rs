@@ -4,7 +4,6 @@ pub mod logger;
 use thiserror::Error;
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::{fmt, io, net, thread};
 
 use crossbeam_channel as chan;
@@ -14,8 +13,8 @@ use bitcoin::blockdata::transaction::{OutPoint, TxOut};
 use bitcoin::Address;
 
 use nakamoto_client::handle::{self, Handle};
+use nakamoto_client::Network;
 use nakamoto_client::{client, Client, Config};
-use nakamoto_client::{Mempool, Network};
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
 
@@ -28,17 +27,8 @@ pub enum Error {
     #[error("client error: {0}")]
     Client(#[from] nakamoto_client::error::Error),
 
-    #[error("mempool lock is poisoned")]
-    Mempool,
-
     #[error("io error: {0}")]
     Io(#[from] io::Error),
-}
-
-impl<'a> From<PoisonError<MutexGuard<'a, Mempool>>> for Error {
-    fn from(_: PoisonError<MutexGuard<'a, Mempool>>) -> Self {
-        Self::Mempool
-    }
 }
 
 /// Re-scan parameters.
@@ -49,7 +39,6 @@ pub struct Rescan {
 /// A Bitcoin wallet.
 pub struct Wallet<H> {
     client: H,
-    mempool: Arc<Mutex<Mempool>>,
     addresses: HashSet<Address>,
     utxos: HashMap<OutPoint, TxOut>,
 }
@@ -57,11 +46,8 @@ pub struct Wallet<H> {
 impl<H: Handle> Wallet<H> {
     /// Create a new wallet, given a client handle and a list of watch addresses.
     pub fn new(client: H, addresses: Vec<Address>) -> Self {
-        let mempool = client.mempool();
-
         Self {
             client,
-            mempool,
             addresses: addresses.into_iter().collect(),
             utxos: HashMap::new(),
         }
@@ -162,14 +148,6 @@ impl<H: Handle> Wallet<H> {
 
                         for tx in block.txdata.iter() {
                             let txid = tx.txid();
-
-                            // Attempt to remove confirmed transaction from mempool.
-                            // TODO: If this block becomes stale, this tx should go back in the
-                            // mempool.
-                            if self.mempool.lock()?.remove(&txid).is_some() {
-                                // The transaction was in the mempool.
-                                // TODO: Fire transaction status event.
-                            }
 
                             // Look for outputs.
                             for (vout, output) in tx.output.iter().enumerate() {

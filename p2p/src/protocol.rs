@@ -11,6 +11,7 @@ pub mod invmgr;
 pub mod peermgr;
 pub mod pingmgr;
 pub mod syncmgr;
+pub mod watchlist;
 
 #[cfg(test)]
 mod tests;
@@ -28,9 +29,9 @@ use crate::event::Event;
 
 use std::fmt::{self, Debug};
 use std::net;
-use std::ops::RangeInclusive;
-use std::sync::{Arc, Mutex};
-use std::{collections::HashMap, collections::HashSet, net::SocketAddr};
+use std::ops::{Bound, RangeInclusive};
+use std::sync::Arc;
+use std::{collections::HashSet, net::SocketAddr};
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
@@ -40,7 +41,6 @@ use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use bitcoin::network::message_filter::GetCFilters;
 use bitcoin::network::message_network::VersionMessage;
 use bitcoin::network::Address;
-use bitcoin::Txid;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
@@ -108,6 +108,15 @@ pub enum Command {
         RangeInclusive<Height>,
         chan::Sender<Result<(), GetFiltersError>>,
     ),
+    /// Rescan the chain for matching scripts and addresses.
+    Rescan {
+        /// Start scan from this height. If unbounded, start at the current height.
+        from: Bound<Height>,
+        /// Stop scanning at this height. If unbounded, don't stop scanning.
+        to: Bound<Height>,
+        /// Scripts to match on.
+        watchlist: watchlist::Watchlist,
+    },
     /// Broadcast to peers matching the predicate.
     Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
     /// Send a message to a random peer.
@@ -291,49 +300,6 @@ mod message {
     }
 }
 
-/// Transaction Mempool.
-///
-/// Keeps track of unconfirmed transactions.
-///
-/// The mempool is shared between the client and the protocol.  The client's responsibility is to
-/// remove transactions that have been included in blocks, while the protocol adds transactions
-/// that were submitted by the client.
-///
-/// The protocol also uses the mempool to respond to `getdata` messages received from peers.
-#[derive(Debug)]
-pub struct Mempool {
-    txs: HashMap<Txid, Transaction>,
-}
-
-impl Mempool {
-    /// Create a new, empty mempool.
-    pub fn new() -> Self {
-        Self {
-            txs: HashMap::new(),
-        }
-    }
-
-    /// Remove a transaction from the mempool. This should be used when the transaction is
-    /// confirmed.
-    pub fn remove(&mut self, txid: &Txid) -> Option<Transaction> {
-        self.txs.remove(txid)
-    }
-
-    /// Check if the mempool contains a specific transaction.
-    pub fn contains(&self, txid: &Txid) -> bool {
-        self.txs.contains_key(txid)
-    }
-
-    // PRIVATE METHODS /////////////////////////////////////////////////////////
-
-    /// Add an unconfirmed transaction to the mempool.
-    fn insert(&mut self, txs: impl IntoIterator<Item = (Txid, Transaction)>) {
-        for (k, v) in txs {
-            self.txs.insert(k, v);
-        }
-    }
-}
-
 /// Holds functions that are used to hook into or alter protocol behavior.
 #[derive(Clone)]
 pub struct Hooks {
@@ -395,9 +361,6 @@ pub struct Protocol<T, F, P> {
     peermgr: PeerManager<Upstream>,
     /// Inventory manager.
     invmgr: InventoryManager<Upstream>,
-    /// Transaction mempool. Stores unconfirmed transactions submitted by
-    /// the client.
-    mempool: Arc<Mutex<Mempool>>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
@@ -520,7 +483,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         tree: T,
         filters: F,
         peers: P,
-        mempool: Arc<Mutex<Mempool>>,
         clock: AdjustedTime<PeerId>,
         rng: fastrand::Rng,
         config: Config,
@@ -544,7 +506,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         } = config;
 
         let upstream = Upstream::new(network, protocol_version, target, upstream);
-
         let syncmgr = SyncManager::new(
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
@@ -604,7 +565,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             target,
             params,
             clock,
-            mempool,
             addrmgr,
             syncmgr,
             connmgr,
@@ -831,10 +791,15 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             }
             NetworkMessage::CFilter(msg) => {
                 match self.cbfmgr.received_cfilter(&addr, msg, &self.tree) {
+                    Ok(matches) => {
+                        for hash in matches {
+                            self.invmgr.get_block(hash);
+                        }
+                    }
                     Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
                         self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
                     }
-                    _ => {}
+                    Err(cbfmgr::Error::Ignored { .. } | cbfmgr::Error::Filters { .. }) => {}
                 }
             }
             NetworkMessage::GetCFilters(msg) => {
@@ -848,8 +813,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             }
             NetworkMessage::GetData(invs) => {
                 // Don't panic if the lock is poisoned -- it may be held by a non-critical thread.
-                let mempool = self.mempool.lock().unwrap_or_else(|e| e.into_inner());
-                self.invmgr.received_getdata(addr, &invs, &mempool);
+                self.invmgr.received_getdata(addr, &invs);
 
                 (*self.hooks.on_getdata)(addr, invs, &self.upstream);
             }
@@ -875,7 +839,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         self.addrmgr.initialize(time);
         self.syncmgr.initialize(time, &self.tree);
         self.connmgr.initialize(time, &mut self.addrmgr);
-        self.cbfmgr.initialize(time, &self.tree);
+        self.cbfmgr.initialize(time);
     }
 
     /// Process the next input and advance the state machine by one step.
@@ -1009,29 +973,18 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 Command::SubmitTransactions(txs, reply) => {
                     debug!(target: self.target, "Received command: SubmitTransactions(..)");
 
-                    let mut invs = Vec::with_capacity(txs.len());
-                    let mut unconfirmed = Vec::with_capacity(txs.len());
-
-                    for tx in txs {
-                        let txid = tx.txid();
-
-                        invs.push(Inventory::Transaction(txid));
-                        unconfirmed.push((txid, tx));
-                    }
-
                     // TODO: For BIP 339 support, we can send a `WTx` inventory here.
-                    let peers = self.invmgr.announce(invs);
-
-                    self.mempool
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .insert(unconfirmed);
+                    let peers = self.invmgr.announce(txs);
 
                     if let Some(peers) = NonEmpty::from_vec(peers) {
                         reply.send(Ok(peers)).ok();
                     } else {
                         reply.send(Err(CommandError::NotConnected)).ok();
                     }
+                }
+                Command::Rescan { .. } => {
+                    debug!(target: self.target, "Received command: {:?}", cmd);
+                    todo!();
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);
@@ -1040,9 +993,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             Input::Tick => {
                 trace!(target: self.target, "Received tick");
 
-                let mempool = self.mempool.lock().unwrap_or_else(|e| e.into_inner());
-
-                self.invmgr.received_tick(local_time, &mempool);
+                self.invmgr.received_tick(local_time);
                 self.connmgr.received_tick(local_time, &mut self.addrmgr);
                 self.syncmgr.received_tick(local_time, &self.tree);
                 self.pingmgr.received_tick(local_time);
@@ -1051,5 +1002,22 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.cbfmgr.received_tick(local_time, &self.tree);
             }
         };
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use bitcoin::network::message::NetworkMessage;
+
+    use super::channel::chan;
+    use super::{Out, PeerId};
+
+    pub fn messages(
+        receiver: &chan::Receiver<Out>,
+    ) -> impl Iterator<Item = (PeerId, NetworkMessage)> + '_ {
+        receiver.try_iter().filter_map(|o| match o {
+            Out::Message(a, m) => Some((a, m.payload)),
+            _ => None,
+        })
     }
 }

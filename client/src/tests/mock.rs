@@ -1,6 +1,6 @@
+#![allow(dead_code)]
 use std::net;
 use std::ops::RangeInclusive;
-use std::sync::{Arc, Mutex};
 
 use nakamoto_chain::block::Block;
 use nakamoto_chain::filter::BlockFilter;
@@ -14,9 +14,10 @@ use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
 use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::event::Event;
+use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
-use nakamoto_p2p::protocol::{Mempool, Peer};
+use nakamoto_p2p::protocol::Peer;
 
 use crate::client::chan;
 use crate::handle::{self, Handle};
@@ -24,7 +25,6 @@ use crate::handle::{self, Handle};
 pub struct Client {
     // Used by tests.
     pub network: Network,
-    pub mempool: Arc<Mutex<Mempool>>,
     pub events: chan::Sender<Event>,
     pub blocks: chan::Sender<(Block, Height)>,
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
@@ -47,8 +47,8 @@ impl Client {
 
     pub fn handle(&self) -> TestHandle {
         TestHandle {
+            tip: (0, self.network.genesis()),
             network: self.network,
-            mempool: self.mempool.clone(),
             events: self.events_.clone(),
             blocks: self.blocks_.clone(),
             filters: self.filters_.clone(),
@@ -74,15 +74,15 @@ impl Default for Client {
             filters_,
             commands,
             commands_,
-            mempool: Arc::new(Mutex::new(Mempool::new())),
         }
     }
 }
 
 #[derive(Clone)]
 pub struct TestHandle {
+    pub tip: (Height, BlockHeader),
+
     network: Network,
-    mempool: Arc<Mutex<Mempool>>,
     events: chan::Receiver<Event>,
     blocks: chan::Receiver<(Block, Height)>,
     filters: chan::Receiver<(BlockFilter, BlockHash, Height)>,
@@ -95,7 +95,7 @@ impl Handle for TestHandle {
     }
 
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
-        unimplemented!()
+        Ok(self.tip)
     }
 
     fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
@@ -117,10 +117,6 @@ impl Handle for TestHandle {
 
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)> {
         self.filters.clone()
-    }
-
-    fn mempool(&self) -> Arc<Mutex<Mempool>> {
-        self.mempool.clone()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {
@@ -164,6 +160,32 @@ impl Handle for TestHandle {
         _txs: Vec<Transaction>,
     ) -> Result<NonEmpty<net::SocketAddr>, handle::Error> {
         unimplemented!()
+    }
+
+    fn rescan(
+        &self,
+        range: impl std::ops::RangeBounds<Height>,
+        watchlist: protocol::watchlist::Watchlist,
+    ) -> Result<(), handle::Error> {
+        use std::ops::Bound;
+
+        // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
+        let from = match range.start_bound() {
+            Bound::Included(n) => Bound::Included(*n),
+            Bound::Excluded(n) => Bound::Included(*n),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        let to = match range.end_bound() {
+            Bound::Included(n) => Bound::Included(*n),
+            Bound::Excluded(n) => Bound::Included(*n),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+
+        self.command(Command::Rescan {
+            from,
+            to,
+            watchlist,
+        })
     }
 
     fn wait<F, T>(&self, _f: F) -> Result<T, handle::Error>

@@ -1,7 +1,7 @@
 use std::fmt;
 
 use bitcoin::{Transaction, Txid};
-use nakamoto_common::block::{Block, BlockHash, Height};
+use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
 use super::TxStatus;
 
@@ -9,6 +9,11 @@ use super::TxStatus;
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// The transaction manager is starting to listen on events.
+    Ready {
+        /// The tip of the block header chain.
+        tip: Height,
+    },
     /// A block was discovered that extends the main chain.
     BlockConnected { hash: BlockHash, height: Height },
     /// One of the blocks of the main chain was disconnected, due to a re-org.
@@ -17,10 +22,11 @@ pub enum Event {
     BlockDisconnected { hash: BlockHash },
     /// A block's transactions where scanned for matching inputs and outputs.
     /// This event usually precedes [`Event::TxStatusChanged`] events.
-    BlockProcessed {
+    Block {
         hash: BlockHash,
+        header: BlockHeader,
         height: Height,
-        block: Block,
+        transactions: Vec<Transaction>,
     },
     /// A filter was processed. If it matched any of the scripts in the watchlist,
     /// the corresponding block was scheduled for download.
@@ -31,34 +37,27 @@ pub enum Event {
     },
     /// The status of a transaction has changed.
     TxStatusChanged { txid: Txid, status: TxStatus },
-    /// A transaction output has been redeemed in a block. One of the registered UTXOs was spent.
-    TxRedeemed {
-        transaction: Transaction,
-        block: BlockHash,
-        height: Height,
-        value: u64,
-    },
-    /// A transaction that pays to a registered address was confirmed.
-    TxReceived {
-        transaction: Transaction,
-        block: BlockHash,
-        height: Height,
-        value: u64,
-    },
     /// Compact filters have been synced and processed up to this point and matching blocks have
-    /// been scanned.  This should match the output of the [`super::handle::Handle::tip`] method.
-    Synced { height: Height },
+    /// been scanned.
+    Synced { height: Height, tip: Height },
 }
 
 impl fmt::Display for Event {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Ready { .. } => {
+                write!(fmt, "ready to process events and commands")
+            }
             Self::BlockConnected { hash, height } => {
                 write!(fmt, "block {} connected at height {}", hash, height)
             }
             Self::BlockDisconnected { hash } => write!(fmt, "block {} disconnected", hash),
-            Self::BlockProcessed { hash, height, .. } => {
-                write!(fmt, "block {} processed at height {}", hash, height)
+            Self::Block { hash, height, .. } => {
+                write!(
+                    fmt,
+                    "block {} ready to be processed at height {}",
+                    hash, height
+                )
             }
             Self::FilterProcessed {
                 height, matched, ..
@@ -72,22 +71,6 @@ impl fmt::Display for Event {
             Self::TxStatusChanged { txid, status } => {
                 write!(fmt, "transaction {} status changed: {}", txid, status)
             }
-            Self::TxRedeemed {
-                transaction, block, ..
-            } => write!(
-                fmt,
-                "transaction {} redeemed a registered output in block {}",
-                transaction.txid(),
-                block
-            ),
-            Self::TxReceived {
-                transaction, block, ..
-            } => write!(
-                fmt,
-                "transaction {} payed to a registered address in block {}",
-                transaction.txid(),
-                block
-            ),
             Self::Synced { height, .. } => write!(fmt, "filters synced up to height {}", height),
         }
     }

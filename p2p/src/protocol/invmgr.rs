@@ -1,5 +1,8 @@
 //! Inventory manager.
 //! Takes care of sending and fetching inventories.
+use std::collections::BTreeMap;
+use std::iter;
+
 use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
 use bitcoin::{Block, BlockHash, Transaction, Txid};
 
@@ -10,10 +13,9 @@ use bitcoin::{Block, BlockHash, Transaction, Txid};
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
-use nakamoto_common::source;
 
 use super::channel::{Disconnect, SetTimeout};
-use super::{DisconnectReason, Height, Mempool, PeerId};
+use super::{DisconnectReason, Height, PeerId};
 
 /// Time between re-broadcasts of inventories.
 pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -46,10 +48,31 @@ pub enum Event {
     BlockReceived {
         /// Sender.
         from: PeerId,
+        /// Block height.
+        height: Height,
+    },
+    /// Block received.
+    BlockProcessed {
         /// Block.
         block: Block,
         /// Block height.
         height: Height,
+    },
+    /// A peer acknowledged one of our transaction inventories.
+    Acknowledged {
+        /// The acknowledged transaction ID.
+        txid: Txid,
+        /// The acknowledging peer.
+        peer: PeerId,
+    },
+    /// A transaction was confirmed.
+    Confirmed {
+        /// The confirmed transaction.
+        transaction: Transaction,
+        /// The height at which it was confirmed.
+        height: Height,
+        /// The block in which it was confirmed.
+        block: BlockHash,
     },
 }
 
@@ -59,6 +82,85 @@ impl std::fmt::Display for Event {
             Event::BlockReceived { from, height, .. } => {
                 write!(fmt, "{}: Received block at height {}", from, height)
             }
+            Event::BlockProcessed { height, .. } => {
+                write!(fmt, "Processed block at height {}", height)
+            }
+            Event::Acknowledged { txid, peer } => {
+                write!(
+                    fmt,
+                    "Transaction {} was acknowledged by peer {}",
+                    txid, peer
+                )
+            }
+            Event::Confirmed {
+                transaction,
+                height,
+                block,
+            } => write!(
+                fmt,
+                "Transaction {} was included in block {} at height {}",
+                transaction.txid(),
+                block,
+                height
+            ),
+        }
+    }
+}
+
+/// Transaction Mempool.
+///
+/// Keeps track of unconfirmed transactions.
+///
+/// The mempool is shared between the client and the protocol.  The client's responsibility is to
+/// remove transactions that have been included in blocks, while the protocol adds transactions
+/// that were submitted by the client.
+///
+/// The protocol also uses the mempool to respond to `getdata` messages received from peers.
+#[derive(Debug)]
+pub struct Mempool {
+    txs: BTreeMap<Txid, Transaction>,
+}
+
+impl Mempool {
+    /// Create a new, empty mempool.
+    fn new() -> Self {
+        Self {
+            txs: BTreeMap::new(),
+        }
+    }
+
+    /// Remove a transaction from the mempool. This should be used when the transaction is
+    /// confirmed.
+    fn remove(&mut self, txid: &Txid) -> Option<Transaction> {
+        self.txs.remove(txid)
+    }
+
+    /// Check if the mempool contains a specific transaction.
+    fn contains(&self, txid: &Txid) -> bool {
+        self.txs.contains_key(txid)
+    }
+
+    /// Remove all confirmed transactions in the given block from the mempool.
+    fn process_block(&mut self, block: &Block) -> Vec<Transaction> {
+        let mut confirmed = Vec::new();
+
+        for tx in &block.txdata {
+            let txid = tx.txid();
+
+            // Attempt to remove confirmed transaction from mempool.
+            // TODO: If this block becomes stale, this tx should go back in the
+            // mempool.
+            if let Some(tx) = self.remove(&txid) {
+                confirmed.push(tx);
+            }
+        }
+        confirmed
+    }
+
+    /// Add an unconfirmed transaction to the mempool.
+    fn insert(&mut self, txs: impl IntoIterator<Item = (Txid, Transaction)>) {
+        for (k, v) in txs {
+            self.txs.insert(k, v);
         }
     }
 }
@@ -107,12 +209,14 @@ pub struct InventoryManager<U> {
     peers: AddressBook<PeerId, Peer>,
     /// Timeout used for retrying broadcasts.
     timeout: LocalDuration,
-    /// Inventories sent.
-    inventories: HashMap<Txid, Inventory>,
+    /// Transaction mempool. Stores unconfirmed transactions sent to the network.
+    mempool: Mempool,
 
     /// Inventories requested and the time at which they were last requested.
     /// Only blocks are requested currently.
     remaining: HashMap<BlockHash, Option<LocalTime>>,
+    /// Blocks received, waiting to be processed.
+    received: HashMap<Height, Block>,
 
     last_tick: Option<LocalTime>,
     rng: fastrand::Rng,
@@ -124,8 +228,9 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         Self {
             peers: AddressBook::new(rng.clone()),
-            inventories: HashMap::with_hasher(rng.clone().into()),
+            mempool: Mempool::new(),
             remaining: HashMap::with_hasher(rng.clone().into()),
+            received: HashMap::with_hasher(rng.clone().into()),
             timeout: REBROADCAST_TIMEOUT,
             last_tick: None,
             rng,
@@ -135,20 +240,20 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 
     /// Check whether the inventory is empty.
     pub fn is_empty(&self) -> bool {
-        self.inventories.is_empty()
+        self.mempool.txs.is_empty()
     }
 
     /// Check if the inventory contains the given transaction.
     pub fn contains(&self, txid: &Txid) -> bool {
-        self.inventories.contains_key(txid)
+        self.mempool.contains(txid)
     }
 
     /// Called when a peer is negotiated.
     pub fn peer_negotiated(&mut self, addr: PeerId, services: ServiceFlags, relay: bool) {
         // Add existing inventories to this peer's outbox so that they are announced.
         let mut outbox = HashSet::with_hasher(self.rng.clone().into());
-        for inv in self.inventories.keys() {
-            outbox.insert(*inv);
+        for txid in self.mempool.txs.keys() {
+            outbox.insert(*txid);
         }
         self.schedule_tick();
         self.peers.insert(
@@ -170,28 +275,12 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     }
 
     /// Called when we receive a tick.
-    pub fn received_tick(&mut self, now: LocalTime, mempool: &Mempool) {
-        // Rate-limit how much we run this code.
+    pub fn received_tick(&mut self, now: LocalTime) {
+        // Rate-limit how much we run this function.
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
-
-            // Prune inventories. Anything that isn't in the mempool should no longer be tracked
-            // by the inventory manager.
-            let mut remove = Vec::new();
-
-            for txid in self.inventories.keys() {
-                if !mempool.contains(txid) {
-                    remove.push(*txid);
-                }
-            }
-
-            for txid in remove {
-                self.inventories.remove(&txid);
-
-                for peer in self.peers.values_mut() {
-                    peer.outbox.remove(&txid);
-                }
-            }
+        } else {
+            return;
         }
 
         // Handle retries annd disconnects.
@@ -233,7 +322,8 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 
                 let mut invs = Vec::with_capacity(peer.outbox.len());
                 for inv in &peer.outbox {
-                    invs.push(self.inventories[inv]);
+                    // TODO: Should we send a WitnessTransaction?
+                    invs.push(Inventory::Transaction(self.mempool.txs[inv].txid()));
                 }
                 self.upstream.inv(*addr, invs);
                 self.upstream.set_timeout(self.timeout);
@@ -253,15 +343,15 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     }
 
     /// Called when a `getdata` is received from a peer.
-    pub fn received_getdata(&mut self, addr: PeerId, invs: &[Inventory], mempool: &Mempool) {
+    pub fn received_getdata(&mut self, addr: PeerId, invs: &[Inventory]) {
         for inv in invs {
             match inv {
                 // NOTE: Normally, we would handle non-witness inventory requests differently
                 // than witness inventories, but the `bitcoin` crate doesn't allow us to
                 // omit the witness data, hence we treat them equally here.
                 Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
-                    if let Some(tx) = mempool.txs.get(txid) {
-                        debug_assert!(self.inventories.contains_key(txid));
+                    if let Some(tx) = self.mempool.txs.get(txid) {
+                        debug_assert!(self.mempool.contains(txid));
 
                         self.upstream.tx(addr, tx.clone());
                     }
@@ -274,6 +364,10 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                             // Reset retry state.
                             peer.reset();
                         }
+                        self.upstream.event(Event::Acknowledged {
+                            peer: addr,
+                            txid: *txid,
+                        });
                     }
                 }
                 Inventory::WTx(_wtxid) => {
@@ -289,56 +383,77 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         let hash = block.block_hash();
         let from = *from;
 
-        if self.remaining.remove(&hash).is_some() {
-            for peer in self.peers.values_mut() {
-                peer.requests.remove(&hash);
-            }
+        if self.remaining.remove(&hash).is_none() {
+            // Nb. The remote isn't necessarily sending an unsolicited block here.
+            // We often have to ask multiple peers to get a response, so we may
+            // have already received this block once.
+            return;
+        }
 
-            if let Some((height, _)) = tree.get_block(&hash) {
-                self.upstream.event(Event::BlockReceived {
-                    from,
-                    block,
+        // We're done requesting this block.
+        for peer in self.peers.values_mut() {
+            peer.requests.remove(&hash);
+        }
+
+        // Find the block height, otherwise we've somehow requested a block which
+        // isn't part of the active chain. This could happen in the case of a re-org
+        // and a delayed block arrival.
+        let height = if let Some((height, _)) = tree.get_block(&hash) {
+            height
+        } else {
+            return;
+        };
+
+        // Add to processing queue. Blocks are processed in-order only.
+        self.received.insert(height, block);
+        self.upstream.event(Event::BlockReceived { from, height });
+
+        // If there are still blocks remaining to download, don't process any of the
+        // received queue yet.
+        if !self.remaining.is_empty() {
+            return;
+        }
+
+        // Now that all blocks to be processed are downloaded, we can start
+        // processing them in order.
+        while let Some((height, block)) = self
+            .received
+            .keys()
+            .min()
+            .cloned()
+            .and_then(|h| self.received.remove(&h).map(|b| (h, b)))
+        {
+            let txs = self.mempool.process_block(&block);
+
+            for transaction in txs {
+                // Transactions that have been confirmed no longer need to be announced.
+                for peer in self.peers.values_mut() {
+                    peer.outbox.remove(&transaction.txid());
+                }
+                self.upstream.event(Event::Confirmed {
+                    transaction,
+                    block: block.block_hash(),
                     height,
                 });
-            } else {
-                // TODO: Handle misbehavior. We assume here that we are never requesting blocks
-                // for which we don't have the header.
             }
-        } else {
-            // Nb. The remote isn't necessarily sending an unsolicited block here.
-            // We often have to ask multiple peers to get a response.
+            self.upstream.event(Event::BlockProcessed { block, height });
         }
     }
 
     /// Announce inventories to all matching peers. Retries if necessary.
-    pub fn announce(&mut self, inv: Vec<Inventory>) -> Vec<PeerId> {
+    pub fn announce(&mut self, txs: Vec<Transaction>) -> Vec<PeerId> {
         // All peers we are sending inventories to.
         let mut addrs = Vec::new();
 
         // Insert each inventory into the peer outboxes and keep a local copy for re-broadcasting
         // later.
-        for i in inv.iter().cloned() {
-            match i {
-                Inventory::Transaction(txid) => {
-                    self.inventories.insert(txid, i);
+        for tx in txs {
+            let txid = tx.txid();
+            self.mempool.insert(iter::once((txid, tx)));
 
-                    for (addr, peer) in self.peers.iter_mut().filter(|(_, p)| p.relay) {
-                        peer.outbox.insert(txid);
-                        addrs.push(*addr);
-                    }
-                }
-                Inventory::WTx(_) => {
-                    panic!("{}: BIP 339 is not yet supported", source!());
-                }
-                Inventory::WitnessTransaction(_) => {
-                    panic!(
-                        "{}: witness transaction inventories are only used in `getdata`",
-                        source!()
-                    );
-                }
-                other => {
-                    panic!("{}: {:?} is not supported", source!(), other);
-                }
+            for (addr, peer) in self.peers.iter_mut().filter(|(_, p)| p.relay) {
+                peer.outbox.insert(txid);
+                addrs.push(*addr);
             }
         }
         self.schedule_tick();
@@ -348,13 +463,14 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 
     /// Attempt to get a block from the network. Retries if necessary.
     pub fn get_block(&mut self, hash: BlockHash) {
-        self.schedule_tick();
         self.remaining.entry(hash).or_insert(None);
+        self.schedule_tick();
     }
 
     ////////////////////////////////////////////////////////////////////////////
 
-    fn schedule_tick(&self) {
+    fn schedule_tick(&mut self) {
+        self.last_tick = None; // Disable rate-limiting for the next tick.
         self.upstream.set_timeout(LocalDuration::from_secs(1));
     }
 
@@ -363,6 +479,8 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         self.peers
             .sample_with(|_, p| p.services.has(ServiceFlags::NETWORK))
             .map(|(addr, _)| {
+                log::debug!("Requesting block {} from {}", block, addr);
+
                 self.upstream.getdata(*addr, vec![Inventory::Block(block)]);
                 *addr
             })
@@ -410,7 +528,6 @@ mod tests {
         let mut rng = fastrand::Rng::new();
         let mut time = LocalTime::now();
 
-        let mempool = Mempool::new();
         let genesis = network.genesis_block();
         let chain = gen::blockchain(genesis, 16, &mut rng);
         let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
@@ -434,7 +551,7 @@ mod tests {
 
         loop {
             time.elapse(LocalDuration::from_secs(rng.u64(10..30)));
-            invmgr.received_tick(time, &mempool);
+            invmgr.received_tick(time);
             assert!(!invmgr.remaining.is_empty());
 
             if let Some((addr, _)) = messages(&receiver)
@@ -461,7 +578,7 @@ mod tests {
                 break;
             }
         }
-        invmgr.received_tick(time + REQUEST_TIMEOUT, &mempool);
+        invmgr.received_tick(time + REQUEST_TIMEOUT);
         assert_eq!(messages(&receiver).count(), 0, "No more requests are sent");
     }
 
@@ -482,8 +599,8 @@ mod tests {
         mempool.insert(vec![(tx.txid(), tx.clone())]);
 
         invmgr.peer_negotiated(([88, 88, 88, 88], 8333).into(), ServiceFlags::NETWORK, true);
-        invmgr.announce(vec![Inventory::Transaction(tx.txid())]);
-        invmgr.received_tick(time, &mempool);
+        invmgr.announce(vec![tx]);
+        invmgr.received_tick(time);
 
         assert_eq!(
             receiver
@@ -493,7 +610,7 @@ mod tests {
             1
         );
 
-        invmgr.received_tick(time, &mempool);
+        invmgr.received_tick(time);
         assert_eq!(receiver.try_iter().count(), 0, "Timeout hasn't lapsed");
     }
 
@@ -515,11 +632,11 @@ mod tests {
         mempool.insert(vec![(tx.txid(), tx.clone())]);
 
         invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
-        invmgr.announce(vec![Inventory::Transaction(tx.txid())]);
+        invmgr.announce(vec![tx.clone()]);
 
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
-            invmgr.received_tick(time, &mempool);
+            invmgr.received_tick(time);
             receiver
                 .try_iter()
                 .find(|o| {
@@ -540,7 +657,7 @@ mod tests {
         }
 
         // The next time we time out, we disconnect the peer.
-        invmgr.received_tick(time, &mempool);
+        invmgr.received_tick(time);
         receiver
             .try_iter()
             .find(|o| matches!(o, Out::Disconnect(addr, _) if addr == &remote))

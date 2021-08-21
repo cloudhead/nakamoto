@@ -2,74 +2,31 @@
 #![allow(clippy::manual_range_contains, clippy::new_without_default)]
 
 #[allow(missing_docs)]
-pub mod blockmgr;
-#[allow(missing_docs)]
-pub mod filtermgr;
-
-#[allow(missing_docs)]
 pub mod event;
 #[allow(missing_docs)]
 pub mod handle;
 #[allow(missing_docs)]
-pub mod watchlist;
+pub mod utxos;
 
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashMap;
-use std::ops::{Bound, Deref, DerefMut};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::collections::HashSet;
+use std::sync::{MutexGuard, PoisonError};
 use std::{fmt, net, time};
 
 use thiserror::Error;
 
-use bitcoin::{Block, OutPoint, Transaction, TxOut, Txid};
+use bitcoin::{Block, Transaction, Txid};
 
-use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p as p2p;
+use p2p::protocol::watchlist::Watchlist;
 
-use blockmgr::BlockManager;
-use filtermgr::FilterManager;
-
-use crate::client::{self, chan, Mempool};
+use crate::client::{self, chan};
+use crate::spv::utxos::Utxos;
 use event::Event;
-use watchlist::Watchlist;
-
-#[allow(missing_docs)]
-#[derive(Debug, Clone)]
-pub struct Utxos {
-    map: HashMap<OutPoint, TxOut>,
-}
-
-impl Deref for Utxos {
-    type Target = HashMap<OutPoint, TxOut>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.map
-    }
-}
-
-impl DerefMut for Utxos {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.map
-    }
-}
-
-impl Utxos {
-    /// Create a new empty UTXO set.
-    pub fn new() -> Self {
-        Self {
-            map: HashMap::new(),
-        }
-    }
-
-    /// Calculate the balance of all UTXOs.
-    pub fn balance(&self) -> u64 {
-        self.map.values().map(|u| u.value).sum()
-    }
-}
 
 #[allow(missing_docs)]
 #[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
@@ -122,29 +79,11 @@ pub enum Error {
     #[error("utxo lock is poisoned")]
     Utxos,
 
-    #[error("mempool lock is poisoned")]
-    Mempool,
-
-    #[error("watchlist lock is poisoned")]
-    Watchlist,
-
     #[error("client handle error: {0}")]
     Client(#[from] client::handle::Error),
 
     #[error("client channel is disconnected")]
     Disconnected,
-}
-
-impl<'a> From<PoisonError<MutexGuard<'a, Mempool>>> for Error {
-    fn from(_: PoisonError<MutexGuard<'a, Mempool>>) -> Self {
-        Self::Mempool
-    }
-}
-
-impl<'a> From<PoisonError<MutexGuard<'a, Watchlist>>> for Error {
-    fn from(_: PoisonError<MutexGuard<'a, Watchlist>>) -> Self {
-        Self::Watchlist
-    }
 }
 
 impl<'a> From<PoisonError<MutexGuard<'a, Utxos>>> for Error {
@@ -162,44 +101,30 @@ pub enum ControlFlow {
 #[allow(missing_docs)]
 #[derive(Debug, Clone)]
 pub enum Command {
-    Rescan {
-        from: Bound<Height>,
-        to: Bound<Height>,
-    },
-    Submit(
-        Vec<Transaction>,
-        chan::Sender<Result<NonEmpty<net::SocketAddr>, client::CommandError>>,
-    ),
     Shutdown(chan::Sender<()>),
 }
 
 #[allow(missing_docs)]
-pub struct Handle {
+pub struct Handle<C> {
     commands: chan::Sender<Command>,
+    client: C,
     subscriber: p2p::event::Subscriber<Event>,
     timeout: time::Duration,
-    watchlist: Arc<Mutex<Watchlist>>,
-    utxos: Arc<Mutex<Utxos>>,
 }
 
-impl Clone for Handle {
+impl<C: Clone> Clone for Handle<C> {
     fn clone(&self) -> Self {
         Self {
             commands: self.commands.clone(),
+            client: self.client.clone(),
             subscriber: self.subscriber.clone(),
             timeout: self.timeout,
-            watchlist: self.watchlist.clone(),
-            utxos: self.utxos.clone(),
         }
     }
 }
 
 #[allow(unused_variables)]
-impl handle::Handle for Handle {
-    fn tip(&self) -> Result<(Height, BlockHash), handle::Error> {
-        todo!()
-    }
-
+impl<C: client::handle::Handle> handle::Handle for Handle<C> {
     fn events(&mut self) -> chan::Receiver<Event> {
         self.subscriber.subscribe()
     }
@@ -208,60 +133,19 @@ impl handle::Handle for Handle {
         &mut self,
         txs: impl IntoIterator<Item = Transaction>,
     ) -> Result<NonEmpty<net::SocketAddr>, handle::Error> {
-        let (transmit, receive) = chan::bounded(1);
-        self.commands.send(Command::Submit(
-            txs.into_iter().collect::<Vec<_>>(),
-            transmit,
-        ))?;
-
-        let peers = receive.recv()??;
-
-        Ok(peers)
-    }
-
-    fn rescan(&mut self, range: impl std::ops::RangeBounds<Height>) -> Result<(), handle::Error> {
-        // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
-        let from = match range.start_bound() {
-            Bound::Included(n) => Bound::Included(*n),
-            Bound::Excluded(n) => Bound::Included(*n),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-        let to = match range.end_bound() {
-            Bound::Included(n) => Bound::Included(*n),
-            Bound::Excluded(n) => Bound::Included(*n),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-        self.commands
-            .send(Command::Rescan { from, to })
+        self.client
+            .submit_transactions(txs.into_iter().collect())
             .map_err(handle::Error::from)
     }
 
-    fn watch_address(&self, address: bitcoin::Address) -> bool {
-        self.watchlist
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert_address(address)
-    }
-
-    fn watch_scripts(&self, scripts: impl IntoIterator<Item = bitcoin::Script>) {
-        self.watchlist
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert_scripts(scripts)
-    }
-
-    fn unwatch_address(&self, address: &bitcoin::Address) -> bool {
-        self.watchlist
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove_address(address)
-    }
-
-    fn unwatch_scripts<'a>(&self, scripts: impl IntoIterator<Item = &'a bitcoin::Script> + 'a) {
-        self.watchlist
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove_scripts(scripts)
+    fn rescan(
+        &mut self,
+        range: impl std::ops::RangeBounds<Height>,
+        watchlist: Watchlist,
+    ) -> Result<(), handle::Error> {
+        self.client
+            .rescan(range, watchlist)
+            .map_err(handle::Error::from)
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {
@@ -280,52 +164,51 @@ pub struct Config {
 
 #[allow(missing_docs)]
 #[allow(dead_code)]
-pub struct Client<H: client::handle::Handle> {
-    client: H,
+pub struct Client<C: client::handle::Handle> {
+    client: C,
     publisher: p2p::event::Broadcast<Event, Event>,
     control: chan::Receiver<Command>,
-    mempool: Arc<Mutex<Mempool>>,
     config: Config,
-    height: Height,
+    // The height up to which we've processed filters and matching blocks.
+    sync_height: Height,
+    // The height up to which we've processed filters.
+    // This is usually going to be greater than `sync_height`.
+    filter_height: Height,
+    // The height up to which we've processed matching blocks.
+    // This is always going to be lesser or equal to `filter_height`.
+    block_height: Height,
+    // Filter heights that have been matched, and for which we are awaiting a block to process.
+    pending: HashSet<Height>,
 
     // Attributes accessible via a [`Handle`].
     commands: chan::Sender<Command>,
     subscriber: p2p::event::Subscriber<Event>,
     timeout: time::Duration,
-    watchlist: Arc<Mutex<Watchlist>>,
-    utxos: Arc<Mutex<Utxos>>,
-
-    blockmgr: BlockManager<H>,
-    filtermgr: FilterManager<H>,
 }
 
-impl<H: client::handle::Handle> Client<H> {
+impl<C: client::handle::Handle> Client<C> {
     #[allow(missing_docs)]
-    pub fn new(client: H, watchlist: Watchlist, config: Config) -> Self {
+    pub fn new(client: C, config: Config) -> Self {
         let (publisher, subscriber) = p2p::event::broadcast(Some);
         let (commands, control) = chan::unbounded::<Command>();
-        let mempool = client.mempool();
         let timeout = time::Duration::from_secs(9);
-        let height = config.genesis;
-        let watchlist = Arc::new(Mutex::new(watchlist));
-        let utxos = Arc::new(Mutex::new(Utxos::new()));
-        let blockmgr = BlockManager::new(client.clone(), utxos.clone(), watchlist.clone());
-        let filtermgr = FilterManager::new(height, client.clone(), watchlist.clone());
+        let sync_height = config.genesis;
+        let filter_height = config.genesis;
+        let block_height = config.genesis;
+        let pending = HashSet::new();
 
         Self {
             client,
-            mempool,
             publisher,
             control,
             config,
-            height,
+            sync_height,
+            filter_height,
+            block_height,
+            pending,
             commands,
             subscriber,
             timeout,
-            watchlist,
-            utxos,
-            blockmgr,
-            filtermgr,
         }
     }
 
@@ -333,19 +216,18 @@ impl<H: client::handle::Handle> Client<H> {
     pub fn run(mut self) -> Result<(), Error> {
         let events = self.client.events();
         let blocks = self.client.blocks();
-        let filters = self.client.filters();
 
         log::debug!("Starting SPV client event loop..");
+
+        let (mut tip, _) = self.client.get_tip()?;
+        self.publisher.broadcast(Event::Ready { tip });
 
         loop {
             chan::select! {
                 recv(events) -> event => {
                     // Forward to event subscribers.
                     if let Ok(event) = event {
-                        // TODO: Think about how other errors might be handled.
-                        if let Err(Error::Disconnected) = self.process_event(event) {
-                            return Err(Error::Disconnected);
-                        }
+                        self.process_event(event, &mut tip);
                     } else {
                         // If the events channel disconnects, it means our backing client
                         // is gone, and there's no point in continuing.
@@ -365,13 +247,6 @@ impl<H: client::handle::Handle> Client<H> {
                         }
                     }
                 }
-                recv(filters) -> msg => {
-                    if let Ok((filter, block_hash, height)) = msg {
-                        self.process_filter(filter, block_hash, height)?;
-                    } else {
-                        return Err(Error::Disconnected);
-                    }
-                }
                 recv(blocks) -> msg => {
                     if let Ok((block, height)) = msg {
                         self.process_block(block, height)?;
@@ -381,76 +256,119 @@ impl<H: client::handle::Handle> Client<H> {
                 }
             }
 
-            if let Some(height) = self.filtermgr.height() {
-                if height > self.height && self.blockmgr.is_synced() {
-                    self.publisher.broadcast(Event::Synced { height });
-                    self.height = height;
-                }
+            assert!(
+                self.block_height <= self.filter_height,
+                "Filters are processed before blocks"
+            );
+            assert!(
+                self.sync_height <= self.filter_height,
+                "Filters are processed before we are done"
+            );
+
+            // If we have no blocks left to process, we are synced to the height of the last
+            // processed filter. Otherwise, we're synced up to the last processed block.
+            let height = if self.pending.is_empty() {
+                self.filter_height
+            } else {
+                self.block_height
+            };
+
+            // Ensure we only broadcast sync events when the sync height has changed.
+            if height > self.sync_height {
+                self.sync_height = height;
+                self.publisher.broadcast(Event::Synced { height, tip });
             }
         }
         Ok(())
     }
 
     /// Create a new handle to the SPV client.
-    pub fn handle(&self) -> Handle {
+    pub fn handle(&self) -> Handle<C> {
         Handle {
             commands: self.commands.clone(),
+            client: self.client.clone(),
             subscriber: self.subscriber.clone(),
             timeout: self.timeout,
-            watchlist: self.watchlist.clone(),
-            utxos: self.utxos.clone(),
         }
     }
 
     // PRIVATE METHODS /////////////////////////////////////////////////////////
 
     /// Process client event.
-    fn process_event(&mut self, event: client::Event) -> Result<(), Error> {
+    fn process_event(&mut self, event: client::Event, tip: &mut Height) {
         log::debug!("Received event: {:?}", event);
 
-        use p2p::protocol::cbfmgr;
+        use p2p::protocol::{cbfmgr, invmgr, syncmgr};
 
-        if let client::Event::FilterManager(cbfmgr::Event::FilterHeadersImported {
-            height,
-            block_hash,
-        }) = event
-        {
-            self.filtermgr.headers_imported(height, block_hash)?;
+        match event {
+            client::Event::SyncManager(syncmgr::Event::Synced(_, height)) => {
+                *tip = height;
+            }
+            client::Event::SyncManager(syncmgr::Event::HeadersImported(result)) => {
+                use nakamoto_common::block::tree::ImportResult;
+
+                if let ImportResult::TipChanged(_, _hash, _height, stale) = result {
+                    if !stale.is_empty() {
+                        for hash in stale {
+                            self.publisher.broadcast(Event::BlockDisconnected { hash });
+                        }
+                    }
+                    // TODO: To emit `BlockConnected` events we need the block hashes.
+                }
+            }
+            client::Event::InventoryManager(invmgr::Event::Confirmed {
+                transaction,
+                height,
+                block,
+            }) => self.publisher.broadcast(Event::TxStatusChanged {
+                txid: transaction.txid(),
+                status: TxStatus::Confirmed { height, block },
+            }),
+            client::Event::InventoryManager(invmgr::Event::Acknowledged { txid, peer }) => {
+                self.publisher.broadcast(Event::TxStatusChanged {
+                    txid,
+                    status: TxStatus::Acknowledged { peer },
+                })
+            }
+            client::Event::FilterManager(cbfmgr::Event::FilterProcessed {
+                height,
+                matched,
+                block,
+            }) => {
+                debug_assert!(height >= self.filter_height);
+
+                if matched {
+                    log::debug!("Filter matched for block #{}", height);
+                    self.pending.insert(height);
+                }
+                self.filter_height = height;
+                self.publisher.broadcast(Event::FilterProcessed {
+                    height,
+                    matched,
+                    block,
+                });
+            }
+            _ => {}
         }
-        Ok(())
-    }
-
-    fn process_filter(
-        &mut self,
-        filter: BlockFilter,
-        block_hash: BlockHash,
-        height: Height,
-    ) -> Result<(), Error> {
-        log::debug!("Received filter for block #{}", height);
-
-        self.filtermgr.filter_received(filter, block_hash, height);
-
-        // TODO: Deal with unwrap.
-
-        let matches = self.filtermgr.process(&self.publisher).unwrap();
-        for (block_hash, height) in matches {
-            log::info!("Filter matched for block #{}", height);
-            log::info!("Fetching block #{} ({})", height, block_hash);
-
-            self.blockmgr.get(block_hash, height)?;
-        }
-        log::debug!("Finished processing filter for block #{}", height);
-
-        Ok(())
     }
 
     fn process_block(&mut self, block: Block, height: Height) -> Result<(), Error> {
-        let block_hash = block.block_hash();
+        if !self.pending.remove(&height) {
+            // Received unexpected block.
+            return Ok(());
+        }
+        let hash = block.block_hash();
 
-        log::debug!("Received block {} at height {}", block_hash, height);
+        log::debug!("Received block {} at height {}", hash, height);
+        debug_assert!(height >= self.block_height);
 
-        self.blockmgr.block_received(block, height, &self.publisher);
-        self.blockmgr.process(&self.publisher)?;
+        self.block_height = height;
+        self.publisher.broadcast(Event::Block {
+            height,
+            hash,
+            header: block.header,
+            transactions: block.txdata,
+        });
 
         Ok(())
     }
@@ -464,13 +382,6 @@ impl<H: client::handle::Handle> Client<H> {
         log::debug!("Received command: {:?}", command);
 
         match command {
-            Command::Rescan { .. } => {
-                todo!();
-            }
-            Command::Submit(txs, channel) => {
-                self.client
-                    .command(client::Command::SubmitTransactions(txs, channel))?;
-            }
             Command::Shutdown(reply) => {
                 // Drain incoming block queue before shutting down.
                 // We don't drain the other channels, as they may create
@@ -480,9 +391,8 @@ impl<H: client::handle::Handle> Client<H> {
                 }
                 reply.send(()).ok();
 
-                return Ok(ControlFlow::Break);
+                Ok(ControlFlow::Break)
             }
         }
-        Ok(ControlFlow::Continue)
     }
 }

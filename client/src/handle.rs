@@ -1,8 +1,7 @@
 //! Node handles are created from nodes by users of the library, to communicate with the underlying
 //! protocol instance.
 use std::net;
-use std::ops::RangeInclusive;
-use std::sync::{Arc, Mutex};
+use std::ops::{RangeBounds, RangeInclusive};
 
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::Address;
@@ -14,7 +13,7 @@ use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
-use nakamoto_p2p::protocol::{Command, CommandError, GetFiltersError, Mempool, Peer};
+use nakamoto_p2p::protocol::{watchlist::Watchlist, Command, CommandError, GetFiltersError, Peer};
 use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, event::Event, protocol::Link};
 
 /// An error resulting from a handle method.
@@ -72,10 +71,10 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
-    /// Get the client's transaction mempool.
-    fn mempool(&self) -> Arc<Mutex<Mempool>>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
+    /// Rescan the blockchain for matching addresses and outputs.
+    fn rescan(&self, range: impl RangeBounds<Height>, watchlist: Watchlist) -> Result<(), Error>;
     /// Broadcast a message to peers matching the predicate.
     ///
     /// To only broadcast to peers that have completed the handshake, filter

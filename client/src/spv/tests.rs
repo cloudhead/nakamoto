@@ -36,6 +36,7 @@
 //! 7. The system is *injective*, in the sense that for every input there is a unique, distinct
 //!    output.
 //!
+#![allow(unused_imports)]
 use std::{iter, net, thread};
 
 use quickcheck::TestResult;
@@ -53,118 +54,18 @@ use super::*;
 use crate::handle::Handle as _;
 use crate::tests::mock;
 
-struct TestNode {
-    height: Height,
-    peer: Height,
-    client: mock::Client,
-    chain: NonEmpty<Block>,
-    #[allow(dead_code)]
-    address: net::SocketAddr,
-    rng: fastrand::Rng,
-}
-
-impl TestNode {
-    fn new(client: mock::Client, height: Height, mut rng: fastrand::Rng) -> Self {
-        let genesis = client.network.genesis_block();
-        let chain = gen::blockchain(genesis, height, &mut rng);
-        let address = ([99, 99, 99, 99], 8333).into();
-        let peer = 0;
-
-        Self {
-            height,
-            peer,
-            client,
-            chain,
-            address,
-            rng,
-        }
-    }
-
-    fn run(mut self) {
-        let mut requested_blocks: Vec<BlockHash> = Vec::new();
-        let mut requested_filters: Vec<Height> = Vec::new();
-
-        loop {
-            chan::select! {
-                recv(self.client.commands) -> cmd => {
-                    match cmd.unwrap() {
-                        client::Command::GetFilters(range, reply) => {
-                            requested_filters.extend(range);
-                            self.rng.shuffle(&mut requested_filters);
-                            reply.send(Ok(())).unwrap();
-                        }
-                        client::Command::GetBlock(hash) => {
-                            requested_blocks.push(hash);
-                            self.rng.shuffle(&mut requested_blocks);
-                        }
-                        client::Command::Shutdown => {
-                            break;
-                        }
-                        other => {
-                            panic!("TestNode::run: unexpected command: {:?}", other);
-                        }
-                    }
-                }
-                default => {
-                    if self.peer < self.height {
-                        log::info!(target: "test", "Sending filter headers to client..");
-
-                        let height = self.rng.u64(self.peer + 1..=self.height);
-                        let event = client::Event::FilterManager(cbfmgr::Event::FilterHeadersImported {
-                            height,
-                            block_hash: self.chain[height as usize].block_hash(),
-                        });
-                        self.client.events.send(event).unwrap();
-                        self.peer = height;
-                    }
-
-                    if !requested_filters.is_empty() {
-                        log::info!(target: "test", "Sending requested filters to client..");
-
-                        // Construct list of filters to send to client, as well as set of matching
-                        // block hashes, including false-positives.
-                        let count = self.rng.usize(1..=requested_filters.len());
-                        for _ in 0..count {
-                            let h = requested_filters.pop().unwrap();
-                            let filter = gen::cfilter(&self.chain[h as usize]);
-                            let block_hash = self.chain[h as usize].block_hash();
-
-                            log::info!(target: "test", "Sending filter #{} to client", h);
-                            self.client.filters.send((filter, block_hash, h as Height)).unwrap();
-                        }
-                    }
-                    if !requested_blocks.is_empty() {
-                        log::info!(target: "test", "Sending requested blocks to client..");
-
-                        let count = self.rng.usize(1..=requested_blocks.len());
-                        for _ in 0..count {
-                            let hash = requested_blocks.pop().unwrap();
-                            let (height, blk) = self.chain
-                                .iter()
-                                .enumerate()
-                                .find(|(_, blk)| blk.block_hash() == hash)
-                                .unwrap();
-
-                            log::info!(target: "test", "Sending block #{} to client", height);
-                            self.client.blocks.send((blk.clone(), height as Height)).unwrap();
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 mod utils {
     use super::*;
 
-    pub fn populate_watchlist(
-        watchlist: &mut Watchlist,
+    pub fn watchlist(
         birth: Height,
         chain: &NonEmpty<Block>,
         rng: &mut fastrand::Rng,
-    ) -> u64 {
+    ) -> (Watchlist, u64, Vec<Height>) {
+        let mut watchlist = Watchlist::new();
         let mut balance = 0;
+        let mut blocks = Vec::new();
+
         for (h, blk) in chain.iter().enumerate().skip(birth as usize) {
             // Randomly pick certain blocks.
             if rng.bool() {
@@ -172,6 +73,7 @@ mod utils {
                 let tx = &blk.txdata[rng.usize(0..blk.txdata.len())];
                 watchlist.insert_scripts(iter::once(tx.output[0].script_pubkey.clone()));
                 balance += tx.output[0].value;
+                blocks.push(h as Height);
 
                 log::debug!(
                     target: "test",
@@ -182,15 +84,34 @@ mod utils {
                 );
             }
         }
-        balance
+        (watchlist, balance, blocks)
     }
+}
 
-    pub fn is_sorted<T>(data: &[T]) -> bool
-    where
-        T: Ord,
-    {
-        data.windows(2).all(|w| w[0] <= w[1])
-    }
+#[test]
+fn test_handle_shutdown() {
+    let mock = mock::Client::new(Network::Regtest);
+    let client = mock.handle();
+    let spv = super::Client::new(client.clone(), Config { genesis: 0 });
+    let handle = spv.handle();
+
+    let t = thread::spawn(|| spv.run());
+
+    handle.shutdown().unwrap();
+    assert_eq!(t.join().unwrap().ok(), Some(()));
+
+    client.shutdown().unwrap();
+}
+
+#[test]
+fn test_client_dropped() {
+    let client = mock::Client::new(Network::Regtest);
+    let spv = super::Client::new(client.handle(), Config { genesis: 0 });
+    let t = thread::spawn(|| spv.run());
+
+    drop(client);
+
+    assert!(matches!(t.join().unwrap(), Err(Error::Disconnected)));
 }
 
 #[quickcheck]
@@ -198,179 +119,103 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     if height < 1 || height > 24 || birth >= height {
         return TestResult::discard();
     }
-    logger::init(log::Level::Debug);
 
-    log::info!(
-        target: "test",
-        "--- Test case with chain height of {} and birth height of {} ---",
-        height,
-        birth,
-    );
-
-    let mc = mock::Client::new(Network::Regtest);
-    let client = mc.handle();
     let mut rng = fastrand::Rng::with_seed(seed);
-    let node = TestNode::new(mc, height, rng.clone());
+    let network = Network::Regtest;
+    let genesis = network.genesis_block();
+    let chain = gen::blockchain(genesis, height, &mut rng);
+    let mock = mock::Client::new(network);
+    let mut client = mock.handle();
+
+    client.tip = (height, chain[height as usize].header);
 
     // Build watchlist.
-    let mut watchlist = Watchlist::new();
-    let balance = utils::populate_watchlist(&mut watchlist, birth, &node.chain, &mut rng);
-    log::info!(target: "test", "Transaction balance is {}", balance);
+    let mut utxos = Utxos::new();
+    let (watchlist, balance, heights) = utils::watchlist(birth, &chain, &mut rng);
+    let scripts = watchlist.scripts();
 
     let config = Config { genesis: birth };
-    let spv = super::Client::new(node.client.handle(), watchlist, config);
+    let spv = super::Client::new(client.clone(), config);
     let mut handle = spv.handle();
     let events = handle.events();
 
+    log::debug!(
+        "-- Test case with birth = {} and height = {}",
+        birth,
+        height
+    );
+
+    #[allow(clippy::redundant_clone)]
+    thread::spawn({
+        // Cloning prevents the client from being dropped too early.
+        let blocks = mock.blocks.clone();
+        let publisher = mock.events.clone();
+        let events = handle.clone().events();
+
+        move || {
+            for h in birth..=height {
+                let matched = heights.contains(&h);
+                let block = chain[height as usize].block_hash();
+
+                publisher
+                    .send(client::Event::FilterManager(
+                        cbfmgr::Event::FilterProcessed {
+                            block,
+                            height: h,
+                            matched,
+                        },
+                    ))
+                    .unwrap();
+            }
+
+            while let Ok(event) = events.recv() {
+                if let Event::FilterProcessed {
+                    height, matched, ..
+                } = event
+                {
+                    if matched {
+                        let block = chain[height as usize].clone();
+                        blocks.send((block, height)).unwrap();
+                    }
+                }
+            }
+        }
+    });
+
     let t = thread::spawn(|| spv.run().unwrap());
-    let n = thread::spawn(|| node.run());
 
     loop {
-        if let Event::Synced { height: synced } = events.recv().unwrap() {
-            log::info!(target: "test", "Synced {}/{}", synced, height);
-
-            if synced == height {
-                break;
+        match events
+            .recv_timeout(time::Duration::from_secs(3))
+            .expect("An event is emitted")
+        {
+            Event::Block { transactions, .. } => {
+                for t in &transactions {
+                    utxos.apply(t, &scripts);
+                }
             }
+            Event::Synced {
+                height: sync_height,
+                tip,
+            } => {
+                assert_eq!(height, tip);
+
+                if sync_height == tip {
+                    break;
+                }
+            }
+            _ => {}
         }
     }
-    log::info!(target: "test", "Finished syncing");
-    assert_eq!(balance, handle.utxos.lock().unwrap().balance());
+    assert_eq!(balance, utxos.balance());
 
     // Shutdown.
     handle.shutdown().unwrap();
     client.shutdown().unwrap();
 
     t.join().unwrap();
-    n.join().unwrap();
 
     TestResult::passed()
-}
-
-#[ignore]
-#[quickcheck]
-fn prop_event_ordering(birth: Height, height: Height, seed: u64) -> TestResult {
-    if !(24..48).contains(&height) || birth >= height || birth == 0 {
-        return TestResult::discard();
-    }
-
-    let mc = mock::Client::new(Network::Regtest);
-    let client = mc.handle();
-    let mut rng = fastrand::Rng::with_seed(seed);
-    let node = TestNode::new(mc, height, rng.clone());
-    let mut watchlist = Watchlist::new();
-
-    let balance = utils::populate_watchlist(&mut watchlist, birth, &node.chain, &mut rng);
-
-    let config = Config { genesis: birth };
-    let txmgr = Client::new(node.client.handle(), watchlist, config);
-    let mut handle = txmgr.handle();
-    let events = handle.events();
-
-    let t = thread::spawn(|| txmgr.run().unwrap());
-    let n = thread::spawn(|| node.run());
-
-    let mut received = vec![];
-    let mut done = false;
-
-    while !done {
-        let event = events.recv().unwrap();
-        if let Event::Synced { height: synced } = event {
-            if synced == height {
-                done = true;
-            }
-        }
-        received.push(event.clone());
-    }
-    log::info!(target: "test", "Finished syncing");
-
-    let synced = received
-        .iter()
-        .filter_map(|e| {
-            if let Event::Synced { height } = e {
-                Some(height)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    let filter_processed = received
-        .iter()
-        .filter_map(|e| {
-            if let Event::FilterProcessed { height, .. } = e {
-                Some(height)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-    let block_processed = received
-        .iter()
-        .filter_map(|e| {
-            if let Event::BlockProcessed { height, .. } = e {
-                Some(height)
-            } else {
-                None
-            }
-        })
-        .collect::<Vec<_>>();
-
-    assert!(balance == 0 || !block_processed.is_empty());
-    assert!(!filter_processed.is_empty());
-    assert!(!synced.is_empty());
-
-    assert!(utils::is_sorted(&synced));
-    assert!(utils::is_sorted(&filter_processed));
-    assert!(utils::is_sorted(&block_processed));
-
-    // Shutdown.
-    handle.shutdown().unwrap();
-    client.shutdown().unwrap();
-
-    t.join().unwrap();
-    n.join().unwrap();
-
-    TestResult::passed()
-}
-
-#[test]
-fn test_client_dropped() {
-    let mc = mock::Client::new(Network::Regtest);
-    let client = mc.handle();
-    let rng = fastrand::Rng::with_seed(1);
-    let node = TestNode::new(mc, 42, rng);
-    let watchlist = Watchlist::new();
-    let config = Config { genesis: 0 };
-    let txmgr = TxManager::new(node.client.handle(), watchlist, config);
-
-    let t = thread::spawn(|| txmgr.run());
-    let n = thread::spawn(|| node.run());
-
-    client.shutdown().unwrap();
-    n.join().unwrap();
-
-    assert!(matches!(t.join().unwrap(), Err(Error::Disconnected)));
-}
-
-#[test]
-fn test_handle_shutdown() {
-    let mc = mock::Client::new(Network::Regtest);
-    let client = mc.handle();
-    let rng = fastrand::Rng::with_seed(1);
-    let node = TestNode::new(mc, 42, rng);
-    let watchlist = Watchlist::new();
-    let config = Config { genesis: 0 };
-    let txmgr = TxManager::new(node.client.handle(), watchlist, config);
-    let handle = txmgr.handle();
-
-    let t = thread::spawn(|| txmgr.run());
-    let n = thread::spawn(|| node.run());
-
-    handle.shutdown().unwrap();
-    assert_eq!(t.join().unwrap().ok(), Some(()));
-
-    client.shutdown().unwrap();
-    n.join().unwrap();
 }
 
 #[test]

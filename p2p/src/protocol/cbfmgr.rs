@@ -2,18 +2,21 @@
 //!
 //! Manages BIP 157/8 compact block filter sync.
 //!
+use std::collections::BTreeSet;
 use std::ops::{Range, RangeInclusive};
 
 use thiserror::Error;
 
 use bitcoin::network::constants::ServiceFlags;
 use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
+use bitcoin::util::bip158;
+use bitcoin::Script;
 
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::block::{BlockHash, Height};
-use nakamoto_common::collections::{AddressBook, HashMap};
+use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
 
 use super::channel::SetTimeout;
@@ -69,6 +72,15 @@ pub enum Event {
         /// Hash of corresponding block.
         block_hash: BlockHash,
     },
+    /// Filter was processed.
+    FilterProcessed {
+        /// The corresponding block hash.
+        block: BlockHash,
+        /// The filter height.
+        height: Height,
+        /// Whether or not this filter matched something in the watchlist.
+        matched: bool,
+    },
     /// Filter headers were imported successfully.
     FilterHeadersImported {
         /// New filter header chain height.
@@ -112,6 +124,15 @@ impl std::fmt::Display for Event {
                     fmt,
                     "Filter {} received for block {} from {}",
                     height, block_hash, from
+                )
+            }
+            Event::FilterProcessed {
+                height, matched, ..
+            } => {
+                write!(
+                    fmt,
+                    "Filter processed at height {} (match={})",
+                    height, matched
                 )
             }
             Event::FilterHeadersImported { height, .. } => {
@@ -207,11 +228,33 @@ struct Peer {
     last_active: LocalTime,
 }
 
+/// Filter (re)scan state.
+#[derive(Debug, Default)]
+pub struct Rescan {
+    /// Whether a rescan is currently in progress.
+    active: bool,
+    /// Current height up to which we've synced filters.
+    /// Must be between `start` and `end`.
+    current: Height,
+    /// Start height of the filter rescan. If `None`, starts at the current filter
+    /// header height.
+    start: Option<Height>,
+    /// End height of the filter rescan. If `None`, keeps scanning new blocks until stopped.
+    end: Option<Height>,
+    /// Addresses and outpoints to watch for.
+    watch: HashSet<Script>,
+    /// Filters requested and remaining to download.
+    requested: BTreeSet<Height>,
+    /// Received filters waiting to be matched.
+    received: HashMap<Height, (BlockFilter, BlockHash)>,
+}
+
 /// A compact block filter manager.
 #[derive(Debug)]
 pub struct FilterManager<F, U> {
     config: Config,
     peers: AddressBook<PeerId, Peer>,
+    rescan: Rescan,
     filters: F,
     upstream: U,
     /// Last time we idled.
@@ -225,10 +268,12 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
+        let rescan = Rescan::default();
 
         Self {
             config,
             peers,
+            rescan,
             upstream,
             filters,
             inflight: HashMap::with_hasher(rng.clone().into()),
@@ -238,8 +283,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     }
 
     /// Initialize the manager. Should only be called once.
-    pub fn initialize<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
-        self.idle(now, tree);
+    pub fn initialize(&mut self, _now: LocalTime) {
+        self.upstream.set_timeout(IDLE_TIMEOUT);
     }
 
     /// Called periodically. Triggers syncing if necessary.
@@ -260,6 +305,20 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     /// Rollback filter header chain by a given number of headers.
     pub fn rollback(&mut self, n: usize) -> Result<(), filter::Error> {
         self.filters.rollback(n)
+    }
+
+    /// Rescan compact block filters.
+    pub fn rescan(&mut self, start: Option<Height>, end: Option<Height>, watch: Vec<Script>) {
+        if self.rescan.active {
+            panic!("{}: Rescan already active", source!());
+        }
+        self.rescan.active = true;
+        self.rescan.current = start.unwrap_or_else(|| self.filters.height());
+        self.rescan.requested = BTreeSet::new();
+        self.rescan.received = HashMap::with_hasher(self.rng.clone().into());
+        self.rescan.start = start;
+        self.rescan.end = end;
+        self.rescan.watch = watch.into_iter().collect();
     }
 
     /// Send a `getcfilters` message to a random peer.
@@ -296,6 +355,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     }
 
     /// Handle a `cfheaders` message from a peer.
+    ///
+    /// Returns the new filter header height, or an error.
     pub fn received_cfheaders<T: BlockTree>(
         &mut self,
         from: &PeerId,
@@ -387,6 +448,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
                     height,
                     block_hash: stop_hash,
                 });
+                self.headers_imported(start_height, height, tree).unwrap(); // TODO
+
                 assert!(height <= tree.height());
 
                 if height == tree.height() {
@@ -453,12 +516,14 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     }
 
     /// Handle a `cfilter` message.
+    ///
+    /// Returns a list of blocks that need to be fetched from the network.
     pub fn received_cfilter<T: BlockTree>(
         &mut self,
         from: &PeerId,
         msg: CFilter,
         tree: &T,
-    ) -> Result<(), Error> {
+    ) -> Result<Vec<BlockHash>, Error> {
         let from = *from;
 
         if msg.filter_type != 0x0 {
@@ -496,6 +561,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             .get_prev_header(height)
             .expect("FilterManager::received_cfilter: all headers up to the tip must exist");
         let filter = BlockFilter::new(&msg.filter);
+        let block_hash = msg.block_hash;
 
         if filter.filter_header(&prev_header) != header {
             return Err(Error::InvalidMessage {
@@ -506,12 +572,26 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
 
         self.upstream.event(Event::FilterReceived {
             from,
-            block_hash: msg.block_hash,
+            block_hash,
             height,
-            filter,
+            filter: filter.clone(),
         });
 
-        Ok(())
+        if self.rescan.active && self.rescan.requested.remove(&height) {
+            self.rescan.received.insert(height, (filter, block_hash));
+
+            match self.process() {
+                Ok(matches) => {
+                    return Ok(matches);
+                }
+                Err(_err) => {
+                    // TODO: We couldn't process all filters due to an invalid filter.
+                    // We should probably do something about this!
+                    // At least, log an event.
+                }
+            }
+        }
+        Ok(Vec::default())
     }
 
     /// Called when a peer disconnected.
@@ -594,6 +674,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
 
             return Some((*peer, start_height, stop_hash));
         } else {
+            // TODO: Emit 'NotConnected' instead, and make sure we retry later, or when a
+            // peer connects.
             self.upstream.event(Event::RequestCanceled {
                 reason: "no peers with required services",
             });
@@ -624,6 +706,71 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             panic!("{}: filter chain is longer than header chain!", source!());
         }
     }
+
+    // PRIVATE METHODS /////////////////////////////////////////////////////////
+
+    /// Called when filter headers were successfully imported.
+    ///
+    /// The height is the new filter header chain height, and the hash is the
+    /// hash of the block corresponding to the last filter header.
+    ///
+    /// When new headers are imported, we want to download the corresponding compact filters
+    /// to check them for matches.
+    fn headers_imported<T: BlockTree>(
+        &mut self,
+        start: Height,
+        stop: Height,
+        tree: &T,
+    ) -> Result<(), Error> {
+        if !self.rescan.active {
+            return Ok(());
+        }
+
+        let start = Height::max(start, self.rescan.current);
+        let range = start..=stop;
+
+        debug_assert!(!range.is_empty());
+
+        self.get_cfilters(range.clone(), tree).unwrap(); // TODO
+        self.rescan.requested.extend(range);
+
+        Ok(())
+    }
+
+    /// Process the next filters in the queue that can be processed.
+    ///
+    /// Checks whether any of the queued filters is next in line (by height) and if so,
+    /// processes it and returns the result of trying to match it with the watch list.
+    fn process(&mut self) -> Result<Vec<BlockHash>, bip158::Error> {
+        // TODO: For BIP32 wallets, add one more address to check, if the
+        // matching one was the highest-index one.
+        let mut matches = Vec::new();
+        let mut current = self.rescan.current;
+
+        while let Some((filter, block_hash)) = self.rescan.received.remove(&current) {
+            let matched = if self.rescan.watch.is_empty() {
+                false
+            } else {
+                filter.match_any(
+                    &block_hash,
+                    &mut self.rescan.watch.iter().map(|k| k.as_bytes()),
+                )?
+            };
+
+            if matched {
+                matches.push(block_hash);
+            }
+            self.upstream.event(Event::FilterProcessed {
+                block: block_hash,
+                height: current,
+                matched,
+            });
+            current += 1;
+        }
+        self.rescan.current = current;
+
+        Ok(matches)
+    }
 }
 
 /// Iterator over height ranges.
@@ -652,19 +799,49 @@ impl Iterator for HeightIterator {
 
 #[cfg(test)]
 mod tests {
+    use bitcoin::consensus::Params;
+    use bitcoin::network::message::NetworkMessage;
+    use bitcoin::network::message_filter::GetCFilters;
     use bitcoin_hashes::hex::FromHex;
     use crossbeam_channel as chan;
+
+    use nakamoto_chain::store::Genesis;
+    use quickcheck::TestResult;
+    use quickcheck_macros::quickcheck;
 
     use nakamoto_chain::block::{cache::BlockCache, store};
     use nakamoto_chain::filter::cache::FilterCache;
     use nakamoto_common::block::filter::{FilterHash, FilterHeader};
     use nakamoto_common::network::Network;
+    use nakamoto_common::nonempty::NonEmpty;
+    use nakamoto_test::block::gen;
     use nakamoto_test::BITCOIN_HEADERS;
 
     use crate::protocol::channel::Channel;
+    use crate::protocol::test::messages;
     use crate::protocol::PROTOCOL_VERSION;
+    use crate::protocol::{self, Out};
 
     use super::*;
+
+    mod util {
+        use super::*;
+
+        #[allow(dead_code)]
+        pub fn is_sorted<T>(data: &[T]) -> bool
+        where
+            T: Ord,
+        {
+            data.windows(2).all(|w| w[0] <= w[1])
+        }
+
+        pub fn events(receiver: &chan::Receiver<Out>) -> impl Iterator<Item = Event> + '_ {
+            receiver.try_iter().filter_map(|o| match o {
+                Out::Event(protocol::Event::FilterManager(e)) => Some(e),
+                _ => None,
+            })
+        }
+    }
 
     const FILTER_HASHES: [&str; 15] = [
         "9acd599f31639d36b8e531d12afb430bb17e7cdd6e73c993c343e417cda1f299",
@@ -772,5 +949,168 @@ mod tests {
         assert_eq!(it.next(), Some(13..17));
         assert_eq!(it.next(), Some(18..19));
         assert_eq!(it.next(), None);
+    }
+
+    /// Test that we can start a rescan without any peers, and it'll pick up when peers connect.
+    #[test]
+    #[ignore]
+    fn test_not_connected() {
+        todo!()
+    }
+
+    /// Test that we can specify a birth date in the future.
+    #[test]
+    #[ignore]
+    fn test_rescan_future_birth() {
+        todo!()
+    }
+
+    /// Test that an unbounded rescan will continuously ask for filters.
+    #[test]
+    #[ignore]
+    fn test_rescan_unbouned() {
+        todo!()
+    }
+
+    #[quickcheck]
+    fn prop_rescan(birth: Height, best: Height) -> quickcheck::TestResult {
+        // We don't gain anything by testing longer chains.
+        if !(1..16).contains(&best) || birth > best {
+            return TestResult::discard();
+        }
+        log::debug!("-- Test case with birth = {}, best = {} --", birth, best);
+
+        let mut rng = fastrand::Rng::new();
+        let network = Network::Regtest;
+        let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+        let time = LocalTime::now();
+        let genesis = network.genesis_block();
+        let chain = gen::blockchain(genesis, best, &mut rng);
+        let (sender, outputs) = chan::unbounded();
+        let tree = {
+            let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
+            let store = store::Memory::new(headers);
+            let params = Params::new(network.into());
+
+            BlockCache::from(store, params, &[]).unwrap()
+        };
+        let tip = chain.last().block_hash();
+        let filter_type = 0x0;
+
+        let mut cbfmgr = {
+            let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
+            let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+
+            FilterManager::new(Config::default(), rng.clone(), cache, upstream)
+        };
+
+        // Generate a watchlist and keep track of the matching block heights.
+        let (watch, heights, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+
+        cbfmgr.initialize(time);
+        cbfmgr.rescan(Some(birth), None, watch);
+        cbfmgr.peer_negotiated(
+            remote,
+            best,
+            REQUIRED_SERVICES,
+            Link::Outbound,
+            &time,
+            &tree,
+        );
+
+        let mut msgs = messages(&outputs);
+        let mut events = util::events(&outputs);
+
+        msgs.find(|(_, m)| {
+            dbg!(&m);
+            matches!(
+                m,
+                NetworkMessage::GetCFHeaders(GetCFHeaders {
+                    start_height,
+                    stop_hash,
+                    ..
+                }) if *start_height == 1 && stop_hash == &tip
+            )
+        })
+        .unwrap();
+
+        let previous_filter_header = FilterHeader::genesis(network);
+        let filter_hashes = gen::cfheaders_from_blocks(previous_filter_header, chain.iter())
+            .into_iter()
+            .skip(1) // Skip genesis
+            .map(|(h, _)| h)
+            .collect::<Vec<_>>();
+
+        let height = cbfmgr
+            .received_cfheaders(
+                &remote,
+                CFHeaders {
+                    filter_type,
+                    stop_hash: tip,
+                    previous_filter_header,
+                    filter_hashes,
+                },
+                &tree,
+                time,
+            )
+            .unwrap();
+
+        assert_eq!(height, best, "The new height is the best height");
+
+        msgs.find(|(_, m)| {
+            matches!(
+                m,
+                NetworkMessage::GetCFilters(GetCFilters {
+                    start_height,
+                    stop_hash,
+                    ..
+                }) if *start_height as Height == birth && stop_hash == &tip
+            )
+        })
+        .unwrap();
+
+        events
+            .find(|e| matches!(e, Event::Synced(height) if height == &best))
+            .unwrap();
+
+        let mut filters: Vec<_> = (birth..=best)
+            .map(|height| {
+                let block = &chain[height as usize];
+                let block_hash = block.block_hash();
+                let filter = gen::cfilter(block);
+
+                (
+                    height,
+                    CFilter {
+                        filter_type,
+                        block_hash,
+                        filter: filter.content,
+                    },
+                )
+            })
+            .collect();
+
+        // Shuffle filters so that they arrive out-of-order.
+        rng.shuffle(&mut filters);
+
+        let mut matches = Vec::new();
+        for (h, filter) in filters {
+            let hashes = cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
+
+            matches.extend(
+                hashes
+                    .into_iter()
+                    .filter_map(|h| tree.get_block(&h).map(|(height, _)| height)),
+            );
+            events
+                .find(|e| matches!(e, Event::FilterReceived { height, .. } if height == &h))
+                .unwrap();
+        }
+
+        assert_eq!(
+            matches, heights,
+            "The blocks requested are the ones that matched"
+        );
+        quickcheck::TestResult::passed()
     }
 }

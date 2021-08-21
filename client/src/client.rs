@@ -8,7 +8,6 @@ use std::net;
 use std::net::SocketAddr;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::{self, SystemTime};
 
 pub use crossbeam_channel as chan;
@@ -38,7 +37,7 @@ use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{cbfmgr, connmgr, invmgr, peermgr, syncmgr};
 
 pub use nakamoto_p2p::event::{self, Event};
-pub use nakamoto_p2p::protocol::{Command, CommandError, Mempool, Peer};
+pub use nakamoto_p2p::protocol::{Command, CommandError, Peer};
 pub use nakamoto_p2p::reactor::Reactor;
 
 pub use crate::error::Error;
@@ -155,7 +154,6 @@ pub struct Client<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    mempool: Arc<Mutex<Mempool>>,
 
     reactor: R,
 }
@@ -166,7 +164,7 @@ impl<R: Reactor<Publisher>> Client<R> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(Some);
         let (blocks_pub, blocks) = event::broadcast(|e| {
-            if let Event::InventoryManager(invmgr::Event::BlockReceived { block, height, .. }) = e {
+            if let Event::InventoryManager(invmgr::Event::BlockProcessed { block, height }) = e {
                 return Some((block, height));
             }
             None
@@ -190,13 +188,11 @@ impl<R: Reactor<Publisher>> Client<R> {
             .register(filters_pub);
 
         let reactor = R::new(publisher, commands)?;
-        let mempool = Arc::new(Mutex::new(Mempool::new()));
 
         Ok(Self {
             events,
             handle,
             reactor,
-            mempool,
             config,
             blocks,
             filters,
@@ -323,7 +319,6 @@ impl<R: Reactor<Publisher>> Client<R> {
             log::info!("{} seeds added to address book", peers.len());
         }
 
-        let mempool = self.mempool.clone();
         let cfg = p2p::protocol::Config {
             network: self.config.network,
             params: self.config.network.params(),
@@ -338,7 +333,7 @@ impl<R: Reactor<Publisher>> Client<R> {
         };
 
         self.reactor.run(&listen, move |upstream| {
-            Protocol::new(cache, filters, peers, mempool, clock, rng, cfg, upstream)
+            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
         })?;
 
         Ok(())
@@ -370,12 +365,11 @@ impl<R: Reactor<Publisher>> Client<R> {
         let local_time = SystemTime::now().into();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
-        let mempool = self.mempool.clone();
 
         log::info!("{} peer(s) found..", peers.len());
 
         self.reactor.run(&self.config.listen, |upstream| {
-            Protocol::new(cache, filters, peers, mempool, clock, rng, cfg, upstream)
+            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
         })?;
 
         Ok(())
@@ -391,7 +385,6 @@ impl<R: Reactor<Publisher>> Client<R> {
             timeout: self.config.timeout,
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
-            mempool: self.mempool.clone(),
         }
     }
 }
@@ -403,7 +396,6 @@ pub struct Handle<R: Reactor<Publisher>> {
     events: event::Subscriber<Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    mempool: Arc<Mutex<Mempool>>,
     waker: R::Waker,
     timeout: time::Duration,
 }
@@ -419,7 +411,6 @@ where
             commands: self.commands.clone(),
             events: self.events.clone(),
             filters: self.filters.clone(),
-            mempool: self.mempool.clone(),
             timeout: self.timeout,
             waker: self.waker.clone(),
         }
@@ -504,10 +495,6 @@ where
 
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)> {
         self.filters.subscribe()
-    }
-
-    fn mempool(&self) -> Arc<Mutex<Mempool>> {
-        self.mempool.clone()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {
@@ -595,6 +582,32 @@ where
         self.command(Command::SubmitTransactions(txs, transmit))?;
 
         receive.recv()?.map_err(handle::Error::Command)
+    }
+
+    fn rescan(
+        &self,
+        range: impl std::ops::RangeBounds<Height>,
+        watchlist: protocol::watchlist::Watchlist,
+    ) -> Result<(), handle::Error> {
+        use std::ops::Bound;
+
+        // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
+        let from = match range.start_bound() {
+            Bound::Included(n) => Bound::Included(*n),
+            Bound::Excluded(n) => Bound::Included(*n),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+        let to = match range.end_bound() {
+            Bound::Included(n) => Bound::Included(*n),
+            Bound::Excluded(n) => Bound::Included(*n),
+            Bound::Unbounded => Bound::Unbounded,
+        };
+
+        self.command(Command::Rescan {
+            from,
+            to,
+            watchlist,
+        })
     }
 
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>

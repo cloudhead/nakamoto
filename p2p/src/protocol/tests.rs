@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use log::*;
 
-use super::{addrmgr, cbfmgr, connmgr, peermgr, pingmgr, syncmgr};
+use super::{addrmgr, cbfmgr, connmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
     chan, message, AdjustedTime, BlockHash, BlockHeader, BlockTree as _, Command, Config,
     DisconnectReason, Event, HashSet, Height, Input, Link, LocalDuration, LocalTime, Network,
@@ -30,6 +30,7 @@ use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 
 use nakamoto_common::collections::HashMap;
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_common::p2p::peer::Source;
 
@@ -813,7 +814,7 @@ fn test_submit_transactions() {
 
     let remotes = receive.recv().unwrap().unwrap();
     assert_eq!(Vec::from(remotes), vec![remote1.addr]);
-    assert!(alice.protocol.mempool.lock().unwrap().contains(&txid));
+    assert!(alice.protocol.invmgr.contains(&txid));
 
     alice.tick();
     alice
@@ -1015,16 +1016,30 @@ fn test_inv_partial_broadcast() {
 }
 
 #[test]
-fn test_mempool_inv_pruning() {
-    let network = Network::Mainnet;
-
+fn test_confirmed_transaction() {
     let mut rng = fastrand::Rng::new();
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng.clone());
 
-    let remote = ([88, 88, 88, 88], 8333).into();
-    let tx1 = gen::transaction(&mut rng);
-    let tx2 = gen::transaction(&mut rng);
+    let network = Network::Regtest;
+    let remote: PeerId = ([88, 88, 88, 88], 8333).into();
     let (transmit, _) = chan::unbounded();
+    let genesis = network.genesis_block();
+    let chain = gen::blockchain(genesis, 16, &mut rng);
+    let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
+    let msg = message::Builder::new(network);
+    let mut alice = Peer::new(
+        "alice",
+        [48, 48, 48, 48],
+        network,
+        headers.tail,
+        vec![],
+        vec![],
+        rng.clone(),
+    );
+
+    let blk1 = &chain[rng.usize(1..chain.len() / 2)];
+    let blk2 = &chain[rng.usize(chain.len() / 2..chain.len())];
+    let tx1 = &blk1.txdata[rng.usize(0..blk1.txdata.len())];
+    let tx2 = &blk2.txdata[rng.usize(0..blk2.txdata.len())];
 
     alice.connect_addr(&remote, Link::Outbound);
     alice.command(Command::SubmitTransactions(
@@ -1036,23 +1051,79 @@ fn test_mempool_inv_pruning() {
     assert!(alice.protocol.invmgr.contains(&tx1.txid()));
     assert!(alice.protocol.invmgr.contains(&tx2.txid()));
 
-    {
-        let mut mempool = alice.protocol.mempool.lock().unwrap();
-        mempool.remove(&tx2.txid());
-    }
-    alice.time.elapse(LocalDuration::from_mins(1));
+    alice.protocol.invmgr.get_block(blk1.block_hash());
+    alice.protocol.invmgr.get_block(blk2.block_hash());
+
     alice.tick();
+    alice.step(Input::Received(
+        remote,
+        msg.raw(NetworkMessage::Block(blk2.clone())),
+    ));
+    alice
+        .events()
+        .find(|e| {
+            matches!(
+                e,
+                Event::InventoryManager(invmgr::Event::BlockReceived { .. })
+            )
+        })
+        .expect("Alice receives the 2nd block");
 
-    assert!(alice.protocol.invmgr.contains(&tx1.txid()));
-    assert!(!alice.protocol.invmgr.contains(&tx2.txid()));
-
-    {
-        let mut mempool = alice.protocol.mempool.lock().unwrap();
-        mempool.remove(&tx1.txid());
-    }
     alice.time.elapse(LocalDuration::from_mins(1));
-    alice.tick();
+    alice.step(Input::Received(
+        remote,
+        msg.raw(NetworkMessage::Block(blk1.clone())),
+    ));
 
+    let mut events = alice.events().filter_map(|e| {
+        if let Event::InventoryManager(event) = e {
+            Some(event)
+        } else {
+            None
+        }
+    });
+
+    assert!(
+        matches! {
+            events.next().unwrap(),
+            invmgr::Event::BlockReceived { .. }
+        },
+        "Alice receives the 1st block"
+    );
+
+    // ... Now Alice has all the blocks and can start processing them ...
+
+    assert!(
+        matches! {
+            events.next().unwrap(), invmgr::Event::Confirmed { block, transaction, .. }
+            if block == blk1.block_hash() && transaction.txid() == tx1.txid()
+        },
+        "Alice emits the first 'Confirmed' event"
+    );
+    assert!(
+        matches! {
+            events.next().unwrap(), invmgr::Event::BlockProcessed { block, .. }
+            if block.block_hash() == blk1.block_hash()
+        },
+        "Alice is done processing the first block"
+    );
+
+    assert!(
+        matches! {
+            events.next().unwrap(), invmgr::Event::Confirmed { block, transaction, .. }
+            if block == blk2.block_hash() && transaction.txid() == tx2.txid()
+        },
+        "Alice emits the second 'Confirmed' event"
+    );
+    assert!(
+        matches! {
+            events.next().unwrap(), invmgr::Event::BlockProcessed { block, .. }
+            if block.block_hash() == blk2.block_hash()
+        },
+        "Alice is done processing the second block"
+    );
+
+    assert_eq!(events.count(), 0);
     assert!(alice.protocol.invmgr.is_empty());
 }
 
