@@ -519,6 +519,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         chain: I,
         context: &C,
     ) -> Result<ImportResult, Error> {
+        let mut seen = BTreeSet::new();
         let mut reverted = BTreeSet::new();
         let mut connected = BTreeMap::new();
         let mut best_height = self.height();
@@ -528,6 +529,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         for (i, header) in chain.enumerate() {
             match self.import_block(header, context) {
                 Ok(ImportResult::TipChanged(header, hash, height, r, c)) => {
+                    seen.extend(c.iter().map(|(_, h)| h.block_hash()));
                     reverted.extend(r);
                     connected.extend(c);
 
@@ -543,9 +545,10 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         }
 
         if !connected.is_empty() {
-            reverted.retain(|(i, h)| {
-                connected.get(&i).map(|h| h.block_hash()) != Some(*h) && !self.contains(h)
-            });
+            // Don't return reverted blocks if they were seen as connected at some point, since
+            // we only want to include blocks reverted from the main chain.
+            reverted.retain(|(_, h)| !seen.contains(h) && !self.contains(h));
+            // Don't return connected blocks if they are not in the main chain.
             connected.retain(|_, h| self.contains(&h.block_hash()));
 
             Ok(ImportResult::TipChanged(
