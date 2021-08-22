@@ -588,12 +588,12 @@ where
         Ok(())
     }
 
-    fn submit_transactions(
+    fn submit_transaction(
         &self,
-        txs: Vec<Transaction>,
+        tx: Transaction,
     ) -> Result<NonEmpty<net::SocketAddr>, handle::Error> {
         let (transmit, receive) = chan::bounded(1);
-        self.command(Command::SubmitTransactions(txs, transmit))?;
+        self.command(Command::SubmitTransaction(tx, transmit))?;
 
         receive.recv()?.map_err(handle::Error::Command)
     }

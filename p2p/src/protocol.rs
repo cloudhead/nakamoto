@@ -135,9 +135,9 @@ pub enum Command {
     ),
     /// Import addresses into the address book.
     ImportAddresses(Vec<Address>),
-    /// Submit transactions to the network.
-    SubmitTransactions(
-        Vec<Transaction>,
+    /// Submit a transaction to the network.
+    SubmitTransaction(
+        Transaction,
         chan::Sender<Result<NonEmpty<PeerId>, CommandError>>,
     ),
     /// Shutdown the protocol.
@@ -747,8 +747,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         self.cbfmgr.rollback(reverted.len()).unwrap();
 
                         for (height, _) in reverted {
-                            let txs = self.invmgr.block_reverted(height);
-                            self.cbfmgr.watch_transactions(&txs);
+                            for tx in self.invmgr.block_reverted(height) {
+                                self.cbfmgr.watch_transaction(&tx);
+                            }
                         }
                     }
                     Ok(ImportResult::TipChanged { .. }) => {
@@ -979,8 +980,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 Command::GetBlock(hash) => {
                     self.invmgr.get_block(hash);
                 }
-                Command::SubmitTransactions(txs, reply) => {
-                    debug!(target: self.target, "Received command: SubmitTransactions(..)");
+                Command::SubmitTransaction(tx, reply) => {
+                    debug!(target: self.target, "Received command: SubmitTransaction(..)");
 
                     // Update local watchlist to track submitted transactions.
                     //
@@ -988,10 +989,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     // output scripts. This may trigger false-positives, since the same
                     // invoice (address) can be re-used by multiple transactions, ie. outputs
                     // can figure in more than one block.
-                    self.cbfmgr.watch_transactions(&txs);
+                    self.cbfmgr.watch_transaction(&tx);
 
                     // TODO: For BIP 339 support, we can send a `WTx` inventory here.
-                    let peers = self.invmgr.announce(txs);
+                    let peers = self.invmgr.announce(tx);
 
                     if let Some(peers) = NonEmpty::from_vec(peers) {
                         reply.send(Ok(peers)).ok();

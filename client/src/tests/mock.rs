@@ -165,9 +165,9 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
-    fn submit_transactions(
+    fn submit_transaction(
         &self,
-        _txs: Vec<Transaction>,
+        _tx: Transaction,
     ) -> Result<NonEmpty<net::SocketAddr>, handle::Error> {
         unimplemented!()
     }

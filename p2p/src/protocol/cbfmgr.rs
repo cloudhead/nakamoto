@@ -399,13 +399,11 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     }
 
     /// Add transaction outputs to list of transactions to watch.
-    pub fn watch_transactions(&mut self, txs: &[Transaction]) {
-        for tx in txs {
-            self.rescan.transactions.insert(
-                tx.txid(),
-                tx.output.iter().map(|o| o.script_pubkey.clone()).collect(),
-            );
-        }
+    pub fn watch_transaction(&mut self, tx: &Transaction) {
+        self.rescan.transactions.insert(
+            tx.txid(),
+            tx.output.iter().map(|o| o.script_pubkey.clone()).collect(),
+        );
     }
 
     /// Remove transaction from list of transactions being watch.

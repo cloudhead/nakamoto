@@ -815,7 +815,7 @@ fn test_submit_transactions() {
     let txid = tx.txid();
     let inventory = vec![Inventory::Transaction(txid)];
     alice.connect(&remote2, Link::Outbound);
-    alice.command(Command::SubmitTransactions(vec![tx], transmit));
+    alice.command(Command::SubmitTransaction(tx, transmit));
 
     let remotes = receive.recv().unwrap().unwrap();
     assert_eq!(Vec::from(remotes), vec![remote1.addr]);
@@ -851,7 +851,8 @@ fn test_inv_rebroadcast() {
     let (transmit, _) = chan::unbounded();
 
     alice.connect_addr(&remote1, Link::Outbound);
-    alice.command(Command::SubmitTransactions(vec![tx1, tx2], transmit));
+    alice.command(Command::SubmitTransaction(tx1, transmit.clone()));
+    alice.command(Command::SubmitTransaction(tx2, transmit));
     alice.tick(); // Broadcasting doesn't happen immediately
     alice
         .messages()
@@ -924,10 +925,8 @@ fn test_inv_partial_broadcast() {
 
     alice.connect_addr(&remote1, Link::Outbound);
     alice.connect_addr(&remote2, Link::Outbound);
-    alice.command(Command::SubmitTransactions(
-        vec![tx1.clone(), tx2.clone()],
-        transmit,
-    ));
+    alice.command(Command::SubmitTransaction(tx1.clone(), transmit.clone()));
+    alice.command(Command::SubmitTransaction(tx2.clone(), transmit));
     alice.tick();
 
     // The first peer asks only for the first inventory item.
@@ -1047,10 +1046,8 @@ fn test_confirmed_transaction() {
     let tx2 = &blk2.txdata[rng.usize(0..blk2.txdata.len())];
 
     alice.connect_addr(&remote, Link::Outbound);
-    alice.command(Command::SubmitTransactions(
-        vec![tx1.clone(), tx2.clone()],
-        transmit,
-    ));
+    alice.command(Command::SubmitTransaction(tx1.clone(), transmit.clone()));
+    alice.command(Command::SubmitTransaction(tx2.clone(), transmit));
     alice.tick();
 
     assert!(alice.protocol.invmgr.contains(&tx1.txid()));
@@ -1183,7 +1180,7 @@ fn test_submitted_transaction_filtering() {
         watch: vec![],          // Submitted transactions are tracked automatically.
         reply,
     });
-    alice.command(Command::SubmitTransactions(vec![tx.clone()], transmit));
+    alice.command(Command::SubmitTransaction(tx.clone(), transmit));
     alice.tick();
 
     assert!(alice.protocol.invmgr.contains(&tx.txid()));
@@ -1302,7 +1299,7 @@ fn test_transaction_reverted_reconfirm() {
         watch: vec![],          // Submitted transactions are tracked automatically.
         reply: rescan_reply,
     });
-    alice.command(Command::SubmitTransactions(vec![tx.clone()], submit_reply));
+    alice.command(Command::SubmitTransaction(tx.clone(), submit_reply));
     alice.tick();
 
     // Alice receives the initial shorter chain.

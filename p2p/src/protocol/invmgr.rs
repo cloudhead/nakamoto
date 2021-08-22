@@ -251,8 +251,9 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     /// Called when a block is reverted.
     pub fn block_reverted(&mut self, height: Height) -> Vec<Transaction> {
         if let Some(transactions) = self.confirmed.remove(&height) {
-            self.announce(transactions.clone());
-
+            for tx in transactions.iter().cloned() {
+                self.announce(tx);
+            }
             for transaction in transactions.iter().cloned() {
                 self.upstream.event(Event::Reverted { transaction });
             }
@@ -460,20 +461,17 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     }
 
     /// Announce inventories to all matching peers. Retries if necessary.
-    pub fn announce(&mut self, txs: Vec<Transaction>) -> Vec<PeerId> {
+    pub fn announce(&mut self, tx: Transaction) -> Vec<PeerId> {
         // All peers we are sending inventories to.
         let mut addrs = Vec::new();
 
-        // Insert each inventory into the peer outboxes and keep a local copy for re-broadcasting
-        // later.
-        for tx in txs {
-            let txid = tx.txid();
-            self.mempool.insert(txid, tx);
+        // Insert transaction into the peer outboxes and keep a local copy for re-broadcasting later.
+        let txid = tx.txid();
+        self.mempool.insert(txid, tx);
 
-            for (addr, peer) in self.peers.iter_mut().filter(|(_, p)| p.relay) {
-                peer.outbox.insert(txid);
-                addrs.push(*addr);
-            }
+        for (addr, peer) in self.peers.iter_mut().filter(|(_, p)| p.relay) {
+            peer.outbox.insert(txid);
+            addrs.push(*addr);
         }
         self.schedule_tick();
 
@@ -616,7 +614,7 @@ mod tests {
         let mut invmgr = InventoryManager::new(rng, upstream);
 
         invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
-        invmgr.announce(vec![tx]);
+        invmgr.announce(tx);
         invmgr.received_tick(time, &tree);
 
         assert_eq!(
@@ -654,7 +652,7 @@ mod tests {
         let mut invmgr = InventoryManager::new(rng, upstream);
 
         invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
-        invmgr.announce(vec![tx.clone()]);
+        invmgr.announce(tx.clone());
 
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
@@ -716,7 +714,7 @@ mod tests {
         let mut invmgr = InventoryManager::new(rng, upstream);
 
         invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
-        invmgr.announce(vec![tx.clone()]);
+        invmgr.announce(tx.clone());
         invmgr.get_block(main_block1.block_hash());
         invmgr.received_block(&remote, main_block1, &tree);
 
