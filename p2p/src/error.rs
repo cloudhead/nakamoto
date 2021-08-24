@@ -22,7 +22,7 @@ pub enum Error {
 
     /// A channel send or receive error.
     #[error("channel error: {0}")]
-    Channel(Box<dyn std::error::Error + Send + Sync>),
+    Channel(Box<dyn std::error::Error + Send + Sync + 'static>),
 }
 
 impl<T: Debug + Send + Sync + 'static> From<crossbeam::SendError<T>> for Error {

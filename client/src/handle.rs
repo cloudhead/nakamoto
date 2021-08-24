@@ -23,7 +23,7 @@ pub enum Error {
     Disconnected,
     /// The command returned an error.
     #[error("command failed")]
-    Command(Box<dyn std::error::Error>),
+    Command(Box<dyn std::error::Error + Send + Sync + 'static>),
     /// The operation timed out.
     #[error("the operation timed out")]
     Timeout,
