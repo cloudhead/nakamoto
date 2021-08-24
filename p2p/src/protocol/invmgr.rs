@@ -32,6 +32,7 @@ use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 
 use super::channel::{Disconnect, SetTimeout};
+use super::fees::{FeeEstimate, FeeEstimator};
 use super::{DisconnectReason, Height, PeerId};
 
 /// Time between re-broadcasts of inventories.
@@ -99,6 +100,15 @@ pub enum Event {
         /// The reverted transaction.
         transaction: Transaction, // TODO: Just the txid?
     },
+    /// Transaction fee rate estimated for a block.
+    FeeEstimated {
+        /// Block hash of the estimate.
+        block: BlockHash,
+        /// Block height of the estimate.
+        height: Height,
+        /// Fee estimate.
+        fees: FeeEstimate,
+    },
 }
 
 impl std::fmt::Display for Event {
@@ -130,6 +140,13 @@ impl std::fmt::Display for Event {
             ),
             Event::Reverted { transaction, .. } => {
                 write!(fmt, "Transaction {} was reverted", transaction.txid(),)
+            }
+            Event::FeeEstimated { fees, height, .. } => {
+                write!(
+                    fmt,
+                    "Transaction median fee rate for block #{} is {} sat/vB",
+                    height, fees.median,
+                )
             }
         }
     }
@@ -185,8 +202,10 @@ pub struct InventoryManager<U> {
     /// Pruned after a certain depth.
     confirmed: HashMap<Height, Vec<Transaction>>,
 
-    /// Inventories requested and the time at which they were last requested.
-    /// Only blocks are requested currently.
+    /// Transaction fee estimator.
+    estimator: FeeEstimator,
+
+    /// Blocks requested and the time at which they were last requested.
     remaining: HashMap<BlockHash, Option<LocalTime>>,
     /// Blocks received, waiting to be processed.
     received: HashMap<Height, Block>,
@@ -202,6 +221,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         Self {
             peers: AddressBook::new(rng.clone()),
             mempool: BTreeMap::new(),
+            estimator: FeeEstimator::default(),
             confirmed: HashMap::with_hasher(rng.clone().into()),
             remaining: HashMap::with_hasher(rng.clone().into()),
             received: HashMap::with_hasher(rng.clone().into()),
@@ -454,6 +474,14 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
                         height,
                     });
                 }
+            }
+            // Process block through fee estimator.
+            if let Some(fees) = self.estimator.get_estimate(&block.txdata) {
+                self.upstream.event(Event::FeeEstimated {
+                    block: hash,
+                    height,
+                    fees,
+                });
             }
             self.upstream.event(Event::BlockProcessed { block, height });
         }

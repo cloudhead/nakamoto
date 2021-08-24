@@ -8,6 +8,7 @@ pub mod cbfmgr;
 pub mod channel;
 pub mod connmgr;
 pub mod event;
+pub mod fees;
 pub mod invmgr;
 pub mod peermgr;
 pub mod pingmgr;
@@ -93,6 +94,15 @@ impl Link {
     }
 }
 
+/// Fee estimation strategy.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum FeeEstimation {
+    /// High-bandwidth high precision fee estimate.
+    Conservative,
+    /// Low-bandwidth rough fee estimate. Best for mobile use.
+    Economical,
+}
+
 /// A command or request that can be sent to the protocol.
 #[derive(Debug, Clone)]
 pub enum Command {
@@ -109,6 +119,11 @@ pub enum Command {
         RangeInclusive<Height>,
         chan::Sender<Result<(), GetFiltersError>>,
     ),
+    /// Estimate the next transaction fee range.
+    EstimateFee {
+        /// Type of estimate to make.
+        strategy: FeeEstimation,
+    },
     /// Rescan the chain for matching scripts and addresses.
     Rescan {
         /// Start scan from this height. If unbounded, start at the current height.
@@ -920,6 +935,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
 
                     self.peermgr.whitelist(addr);
                     self.connmgr.connect(&addr, local_time);
+                }
+                Command::EstimateFee { strategy } => {
+                    debug!(target: self.target, "Received command: EstimateFee({:?})", strategy);
+
+                    todo!("Command::EstimateFee is not yet implemented");
                 }
                 Command::Disconnect(addr) => {
                     debug!(target: self.target, "Received command: Disconnect({})", addr);
