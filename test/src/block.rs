@@ -31,8 +31,8 @@ pub mod gen {
 
     /// Generates a random transaction.
     pub fn transaction(rng: &mut fastrand::Rng) -> Transaction {
-        let mut input = Vec::with_capacity(rng.usize(1..16));
-        let mut output = Vec::with_capacity(rng.usize(1..16));
+        let mut input = Vec::with_capacity(rng.usize(1..8));
+        let mut output = Vec::with_capacity(rng.usize(1..8));
 
         // Inputs.
         for _ in 0..input.capacity() {
@@ -91,10 +91,16 @@ pub mod gen {
     pub fn coinbase(rng: &mut fastrand::Rng) -> Transaction {
         let output = vec![tx_out(rng)];
 
+        let input = TxIn {
+            previous_output: OutPoint::null(),
+            script_sig: Script::new(),
+            sequence: 0xFFFFFFFF,
+            witness: vec![],
+        };
         Transaction {
             version: 1,
             lock_time: 0,
-            input: vec![],
+            input: vec![input],
             output,
         }
     }
