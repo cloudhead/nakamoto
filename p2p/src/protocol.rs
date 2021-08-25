@@ -642,7 +642,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         self.clock.set_local_time(local_time);
 
         #[cfg(not(test))]
-        if local_time - self.last_tick >= LocalDuration::from_secs(30) {
+        if local_time - self.last_tick >= LocalDuration::from_secs(10) {
             let (tip, _) = self.tree.tip();
             let height = self.tree.height();
             let best = self
@@ -660,6 +660,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             let target = self.connmgr.config.target_outbound_peers;
             let max_inbound = self.connmgr.config.max_inbound_peers;
             let addresses = self.addrmgr.len();
+            let preferred = self
+                .peermgr
+                .outbound()
+                .filter(|p| p.services.has(self.connmgr.config.preferred_services))
+                .count();
 
             // TODO: Add cache sizes on disk
             // TODO: Add protocol state(s)
@@ -671,7 +676,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             msg.push(format!("tip = {}", tip));
             msg.push(format!("height = {}/{} ({:.1}%)", height, best, sync));
             msg.push(format!("inbound = {}/{}", inbound, max_inbound));
-            msg.push(format!("outbound = {}/{}", outbound, target));
+            msg.push(format!(
+                "outbound = {}/{} ({})",
+                outbound, target, preferred,
+            ));
             msg.push(format!("connecting = {}/{}", connecting, target));
             msg.push(format!("addresses = {}", addresses));
 
