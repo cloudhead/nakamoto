@@ -15,7 +15,7 @@ pub type FeeRate = u64;
 
 /// Fee rate estimate for a single block.
 /// Measured in satoshis/vByte.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FeeEstimate {
     /// The lowest fee rate included in the block.
     pub low: FeeRate,
@@ -28,7 +28,33 @@ pub struct FeeEstimate {
 impl FeeEstimate {
     /// Calculate a fee estimate from a list of fees.
     /// Returns [`None`] if the list is empty.
-    fn from(mut fees: Vec<FeeRate>) -> Option<Self> {
+    ///
+    /// ```
+    /// use nakamoto_p2p::protocol::fees::FeeEstimate;
+    ///
+    /// assert_eq!(
+    ///     FeeEstimate::from(vec![3, 9, 2]),
+    ///     Some(FeeEstimate { low: 2, median: 3, high: 9 }),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     FeeEstimate::from(vec![4, 6]),
+    ///     Some(FeeEstimate { low: 4, median: 5, high: 6 }),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     FeeEstimate::from(vec![9, 2, 1, 7]),
+    ///     Some(FeeEstimate { low: 1, median: 5, high: 9 }),
+    /// );
+    ///
+    /// assert_eq!(
+    ///     FeeEstimate::from(vec![3]),
+    ///     Some(FeeEstimate { low: 3, median: 3, high: 3 }),
+    /// );
+    ///
+    /// assert_eq!(FeeEstimate::from(vec![]), None);
+    /// ```
+    pub fn from(mut fees: Vec<FeeRate>) -> Option<Self> {
         fees.sort_unstable();
 
         NonEmpty::from_vec(fees).map(|fees| {
@@ -36,7 +62,10 @@ impl FeeEstimate {
             let median = if count % 2 == 1 {
                 fees[count / 2]
             } else {
-                (fees[count / 2 - 1] + fees[count / 2]) / 2
+                let left = fees[count / 2 - 1] as f64;
+                let right = fees[count / 2] as f64;
+
+                ((left + right) / 2.).round() as FeeRate
             };
 
             Self {
@@ -104,11 +133,7 @@ impl FeeEstimator {
                 return None;
             }
         }
-        assert!(
-            received >= sent,
-            "you can't spend what you don't have: {:#?}",
-            tx
-        );
+        assert!(received >= sent, "you can't spend what you don't have",);
 
         let fee = received - sent;
         let weight = tx.get_weight();

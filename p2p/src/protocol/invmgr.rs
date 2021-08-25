@@ -270,6 +270,8 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 
     /// Called when a block is reverted.
     pub fn block_reverted(&mut self, height: Height) -> Vec<Transaction> {
+        self.estimator.rollback(height - 1);
+
         if let Some(transactions) = self.confirmed.remove(&height) {
             for tx in transactions.iter().cloned() {
                 self.announce(tx);
