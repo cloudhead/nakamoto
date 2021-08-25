@@ -124,7 +124,7 @@ pub mod gen {
         let merkle_root =
             bitcoin::util::hash::bitcoin_merkle_root(txdata.iter().map(|tx| tx.txid().as_hash()));
         let merkle_root = TxMerkleNode::from_hash(merkle_root);
-        let header = header(&prev_header, merkle_root, rng);
+        let header = header(prev_header, merkle_root, rng);
 
         Block { header, txdata }
     }

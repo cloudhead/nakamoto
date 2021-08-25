@@ -1417,7 +1417,7 @@ mod tests {
 
             let parent = fork_height;
             let fork = gen::fork(
-                &tree.get_block_by_height(parent).unwrap(),
+                tree.get_block_by_height(parent).unwrap(),
                 fork_len,
                 &mut rng,
             );

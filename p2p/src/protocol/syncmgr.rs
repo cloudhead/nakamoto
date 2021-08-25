@@ -587,11 +587,11 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             .collect::<Vec<_>>();
 
         for (peer, on_timeout) in &timed_out {
-            self.inflight.remove(&peer);
+            self.inflight.remove(peer);
 
             match on_timeout {
                 OnTimeout::Disconnect => {
-                    self.unregister(&peer);
+                    self.unregister(peer);
                     self.upstream
                         .disconnect(*peer, DisconnectReason::PeerTimeout("sync"));
                 }

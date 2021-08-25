@@ -283,7 +283,7 @@ impl<U: Connect + Disconnect + Events + SetTimeout, A: AddressSource> Connection
         local_time: LocalTime,
     ) {
         debug_assert!(self.peers.contains_key(addr));
-        debug_assert!(!self.is_disconnected(&addr));
+        debug_assert!(!self.is_disconnected(addr));
 
         Events::event(&self.upstream, Event::Disconnected(*addr));
 

@@ -192,10 +192,10 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::reactor::Reactor<E>
                                 }
 
                                 if ev.writable {
-                                    self.handle_writable(&addr, source)?;
+                                    self.handle_writable(addr, source)?;
                                 }
                                 if ev.readable {
-                                    self.handle_readable(&addr);
+                                    self.handle_readable(addr);
                                 }
                             }
                             Source::Listener => loop {
@@ -366,7 +366,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
     }
 
     fn handle_readable(&mut self, addr: &net::SocketAddr) {
-        let socket = self.peers.get_mut(&addr).unwrap();
+        let socket = self.peers.get_mut(addr).unwrap();
 
         trace!("{}: Socket is readable", addr);
 
@@ -406,7 +406,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
         trace!("{}: Socket is writable", addr);
 
         let src = self.sources.get_mut(source).unwrap();
-        let socket = self.peers.get_mut(&addr).unwrap();
+        let socket = self.peers.get_mut(addr).unwrap();
 
         // "A file descriptor for a socket that is connecting asynchronously shall indicate
         // that it is ready for writing, once a connection has been established."

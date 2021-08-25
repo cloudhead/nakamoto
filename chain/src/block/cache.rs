@@ -183,7 +183,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         // Block extends the active chain. We can fully validate it before proceeding.
         // Instead of adding the block to the main chain, we let chain selection do the job.
         if header.prev_blockhash == best {
-            self.validate(&tip, &header, clock)?;
+            self.validate(tip, &header, clock)?;
         }
 
         // Validate that the block's PoW is valid against its difficulty target, and
@@ -577,7 +577,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         if header.prev_blockhash == tip.hash {
             let height = tip.height + 1;
 
-            self.validate(&tip, &header, clock)?;
+            self.validate(tip, &header, clock)?;
             self.extend_chain(height, hash, header);
             self.store.put(std::iter::once(header))?;
 

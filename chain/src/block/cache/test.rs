@@ -266,7 +266,7 @@ fn arbitrary_header<G: Gen>(
     let delta = g.gen_range(TARGET_SPACING / 2, TARGET_SPACING * 2);
 
     let time = prev_time + delta;
-    let bits = BlockHeader::compact_target_from_u256(&target);
+    let bits = BlockHeader::compact_target_from_u256(target);
 
     let mut header = BlockHeader {
         version: 1,

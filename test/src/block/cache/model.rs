@@ -127,12 +127,12 @@ impl BlockTree for Cache {
 
         if tip != self.tip {
             for (height, header) in old.iter().enumerate() {
-                if !self.chain.contains(&header) {
+                if !self.chain.contains(header) {
                     disconnected.push((height as Height, header.block_hash()));
                 }
             }
             for (height, header) in self.chain.iter().enumerate() {
-                if !old.contains(&header) {
+                if !old.contains(header) {
                     connected.push((height as Height, *header));
                 }
             }
@@ -275,7 +275,7 @@ impl Filters for FilterCache {
 
     fn tip(&self) -> (&FilterHash, &FilterHeader) {
         let (hash, header) = self.headers.last();
-        (&hash, &header)
+        (hash, header)
     }
 
     fn height(&self) -> Height {

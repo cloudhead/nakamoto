@@ -248,8 +248,8 @@ impl<U: Handshake + SetTimeout + Disconnect + Events> PeerManager<U> {
 
     /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, addr: &net::SocketAddr) {
-        self.peers.remove(&addr);
-        self.connections.remove(&addr);
+        self.peers.remove(addr);
+        self.connections.remove(addr);
     }
 
     /// Called when a `version` message was received.

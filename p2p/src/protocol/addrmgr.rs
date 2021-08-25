@@ -198,7 +198,7 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
         for range in self.address_ranges.values() {
             let ix = self.rng.usize(..range.len());
             let ip = range.iter().nth(ix).expect("index must be present");
-            let ka = self.peers.get(&ip).expect("address must exist");
+            let ka = self.peers.get(ip).expect("address must exist");
 
             addrs.push((
                 ka.last_active.map(|t| t.block_time()).unwrap_or_default(),
@@ -283,7 +283,7 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
     pub fn peer_disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
         if self.connected.remove(&addr.ip()) {
             // Disconnected peers cannot be used as a source for new addresses.
-            self.sources.remove(&addr);
+            self.sources.remove(addr);
 
             // If the reason for disconnecting the peer suggests that we shouldn't try to
             // connect to this peer again, then remove the peer from the address book.
@@ -599,7 +599,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             // Then select a random address in that range.
             let ix = self.rng.usize(..range.len());
             let ip = range.iter().nth(ix)?;
-            let ka = self.peers.get_mut(&ip).expect("address must exist");
+            let ka = self.peers.get_mut(ip).expect("address must exist");
 
             visited.insert(ip);
 
@@ -622,11 +622,11 @@ impl<P: Store, U: Events> AddressManager<P, U> {
                 continue;
             }
             // If we're already connected to this address, skip it.
-            if self.connected.contains(&ip) {
+            if self.connected.contains(ip) {
                 continue;
             }
             // If the provided filter doesn't pass, keep looking.
-            if !predicate(&ka) {
+            if !predicate(ka) {
                 continue;
             }
             // Ok, we've found a worthy address!
@@ -676,7 +676,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         let key = self::addr_key(addr);
 
         if let Some(range) = self.address_ranges.get_mut(&key) {
-            range.remove(&addr);
+            range.remove(addr);
 
             if range.is_empty() {
                 self.address_ranges.remove(&key);
@@ -822,7 +822,7 @@ mod tests {
             Some(LocalTime::from_block_time(time.block_time()))
         );
 
-        addrmgr.peer_attempted(&addr, LocalTime::now());
+        addrmgr.peer_attempted(addr, LocalTime::now());
 
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_none());
@@ -831,7 +831,7 @@ mod tests {
         assert!(ka.last_sampled.is_none());
 
         // When a peer is connected, it is not yet considered a "success".
-        addrmgr.peer_connected(&addr, LocalTime::now());
+        addrmgr.peer_connected(addr, LocalTime::now());
 
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_none());
@@ -840,7 +840,7 @@ mod tests {
         assert!(ka.last_sampled.is_none());
 
         // Only when it is negotiated is it a "success".
-        addrmgr.peer_negotiated(&addr, services, Link::Outbound, LocalTime::now());
+        addrmgr.peer_negotiated(addr, services, Link::Outbound, LocalTime::now());
 
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_some());
