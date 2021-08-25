@@ -308,8 +308,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         }
                     }
                 }
-                // TODO: Use connection timeout, or handle timeouts in connection manager.
-                Out::Connect(addr, _timeout) => {
+                Out::Connect(addr, timeout) => {
                     trace!("Connecting to {}...", &addr);
 
                     match self::dial(&addr) {
@@ -319,6 +318,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                             self.register_peer(addr, stream, Link::Outbound);
                             self.connecting.insert(addr);
                             self.inputs.push_back(Input::Connecting { addr });
+                            self.timeouts.register((), local_time + timeout);
                         }
                         Err(Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
                             // Ignore. We are already establishing a connection through
