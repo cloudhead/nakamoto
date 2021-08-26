@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use log::*;
 
-use super::{addrmgr, cbfmgr, connmgr, invmgr, peermgr, pingmgr, syncmgr};
+use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
     chan, message, AdjustedTime, BlockHash, BlockHeader, BlockTree as _, Command, Config,
     DisconnectReason, Event, HashSet, Height, Input, Link, LocalDuration, LocalTime, Network,
@@ -238,7 +238,7 @@ fn test_maintain_connections() {
     // Keep track of who Alice is connected to.
     for peer in peers.iter() {
         alice.connect_addr(peer, Link::Outbound);
-        alice.protocol.connmgr.is_connected(peer);
+        alice.protocol.peermgr.is_connected(peer);
     }
 
     // Give alice some addresses for her address book.
@@ -333,11 +333,14 @@ fn test_getheaders_retry() {
 #[test]
 fn test_handshake_version_timeout() {
     let network = Network::Mainnet;
+    let remote = ([131, 31, 11, 33], 11111).into();
     let rng = fastrand::Rng::new();
     let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
-    let remote = ([131, 31, 11, 33], 11111).into();
 
     for link in &[Link::Outbound, Link::Inbound] {
+        if link.is_outbound() {
+            peer.protocol.peermgr.connect(&remote, LocalTime::now());
+        }
         peer.step(Input::Connected {
             addr: remote,
             local_addr: peer.addr,
@@ -368,6 +371,11 @@ fn test_handshake_verack_timeout() {
     let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
 
     for link in &[Link::Outbound, Link::Inbound] {
+        if link.is_outbound() {
+            peer.protocol
+                .peermgr
+                .connect(&remote.addr, LocalTime::now());
+        }
         peer.step(Input::Connected {
             addr: remote.addr,
             local_addr: peer.addr,
@@ -474,6 +482,9 @@ fn test_handshake_initial_messages() {
     );
 
     // Handshake
+    peer.protocol
+        .peermgr
+        .connect(&remote.addr, LocalTime::now());
     peer.step(Input::Connected {
         addr: remote.addr,
         local_addr: local,
@@ -565,7 +576,7 @@ fn test_getaddr() {
     ));
 
     // After some time, Alice tries to connect to the new address.
-    alice.time.elapse(connmgr::IDLE_TIMEOUT);
+    alice.time.elapse(peermgr::IDLE_TIMEOUT);
     alice.tick();
 
     alice
@@ -714,7 +725,7 @@ fn prop_connect_timeout(seed: u64) {
 
     assert_eq!(
         result.len(),
-        alice.protocol.connmgr.config.target_outbound_peers
+        alice.protocol.peermgr.config.target_outbound_peers
     );
 
     let mut attempted: Vec<net::SocketAddr> = result
@@ -731,7 +742,7 @@ fn prop_connect_timeout(seed: u64) {
 
     attempted.pop().unwrap();
 
-    alice.time.elapse(connmgr::IDLE_TIMEOUT);
+    alice.time.elapse(peermgr::IDLE_TIMEOUT);
     alice.tick();
 
     assert!(alice.outputs().all(|o| match o {
@@ -751,7 +762,7 @@ fn sim_connect_to_peers() {
     let time = LocalTime::from_block_time(headers.last().unwrap().time);
 
     // Alice will try to connect to enough outbound peers.
-    let mut peers = peer::network(network, connmgr::TARGET_OUTBOUND_PEERS + 1, rng.clone());
+    let mut peers = peer::network(network, peermgr::TARGET_OUTBOUND_PEERS + 1, rng.clone());
     let addrs = peers
         .iter()
         .map(|p| (p.addr, Source::Dns, p.cfg.services))
@@ -772,7 +783,15 @@ fn sim_connect_to_peers() {
     // TODO: Node needs to try to reconnect after disconnect!
 
     while simulator.step(iter::once(&mut alice).chain(&mut peers)) {
-        if alice.protocol.connmgr.outbound_peers().count() >= connmgr::TARGET_OUTBOUND_PEERS {
+        // TODO: Check for negotiated peers instead.
+        if alice
+            .protocol
+            .peermgr
+            .connected()
+            .filter(|c| c.link.is_outbound())
+            .count()
+            >= peermgr::TARGET_OUTBOUND_PEERS
+        {
             break;
         }
     }
@@ -808,7 +827,15 @@ fn test_submit_transactions() {
     };
 
     alice.connect(&remote1, Link::Outbound);
-    assert!(alice.protocol.peermgr.outbound().next().unwrap().relay);
+    assert!(
+        alice
+            .protocol
+            .peermgr
+            .negotiated(Link::Outbound)
+            .next()
+            .unwrap()
+            .relay
+    );
 
     let (transmit, receive) = chan::bounded(1);
     let tx = gen::transaction(&mut rng);

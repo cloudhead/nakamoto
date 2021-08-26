@@ -22,7 +22,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 use crate::protocol::{DisconnectReason, Event, Out, PeerId};
 
 use super::network::Network;
-use super::{addrmgr, cbfmgr, connmgr, invmgr, message, peermgr, pingmgr, syncmgr, Link, Locators};
+use super::{addrmgr, cbfmgr, invmgr, message, peermgr, pingmgr, syncmgr, Locators};
 
 /// Used to construct a protocol output.
 #[derive(Debug, Clone)]
@@ -118,33 +118,19 @@ impl addrmgr::SyncAddresses for Channel {
     }
 }
 
-impl connmgr::Connect for Channel {
+impl peermgr::Connect for Channel {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
         info!(target: self.target, "[conn] {}: Connecting..", addr);
         self.push(Out::Connect(addr, timeout));
     }
 }
 
-impl connmgr::Connect for () {
+impl peermgr::Connect for () {
     fn connect(&self, _addr: net::SocketAddr, _timeout: LocalDuration) {}
 }
 
-impl connmgr::Events for Channel {
-    fn event(&self, event: connmgr::Event) {
-        match event {
-            connmgr::Event::Connected(_, Link::Outbound) => {
-                info!(target: self.target, "[conn] {}", &event)
-            }
-            _ => {
-                debug!(target: self.target, "[conn] {}", &event);
-            }
-        }
-        self.event(Event::ConnManager(event));
-    }
-}
-
-impl connmgr::Events for () {
-    fn event(&self, _event: connmgr::Event) {}
+impl peermgr::Events for () {
+    fn event(&self, _event: peermgr::Event) {}
 }
 
 impl addrmgr::Events for Channel {
@@ -225,6 +211,16 @@ impl peermgr::Handshake for Channel {
 
     fn verack(&self, addr: PeerId) -> &Self {
         self.message(addr, NetworkMessage::Verack);
+        self
+    }
+}
+
+impl peermgr::Handshake for () {
+    fn version(&self, _addr: PeerId, _msg: VersionMessage) -> &Self {
+        self
+    }
+
+    fn verack(&self, _addr: PeerId) -> &Self {
         self
     }
 }

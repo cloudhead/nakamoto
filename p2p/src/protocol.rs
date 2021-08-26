@@ -6,7 +6,6 @@ use log::*;
 pub mod addrmgr;
 pub mod cbfmgr;
 pub mod channel;
-pub mod connmgr;
 pub mod event;
 pub mod fees;
 pub mod invmgr;
@@ -20,7 +19,6 @@ mod tests;
 use addrmgr::AddressManager;
 use cbfmgr::FilterManager;
 use channel::Channel;
-use connmgr::ConnectionManager;
 use invmgr::InventoryManager;
 use peermgr::PeerManager;
 use pingmgr::PingManager;
@@ -369,8 +367,6 @@ pub struct Protocol<T, F, P> {
     addrmgr: AddressManager<P, Upstream>,
     /// Blockchain synchronization manager.
     syncmgr: SyncManager<Upstream>,
-    /// Peer connection manager.
-    connmgr: ConnectionManager<Upstream, AddressManager<P, Upstream>>,
     /// Ping manager.
     pingmgr: PingManager<Upstream>,
     /// CBF (Compact Block Filter) manager.
@@ -437,8 +433,8 @@ impl Default for Config {
             required_services: ServiceFlags::NETWORK,
             whitelist: Whitelist::default(),
             protocol_version: PROTOCOL_VERSION,
-            target_outbound_peers: connmgr::TARGET_OUTBOUND_PEERS,
-            max_inbound_peers: connmgr::MAX_INBOUND_PEERS,
+            target_outbound_peers: peermgr::TARGET_OUTBOUND_PEERS,
+            max_inbound_peers: peermgr::MAX_INBOUND_PEERS,
             ping_timeout: pingmgr::PING_TIMEOUT,
             user_agent: USER_AGENT,
             target: "self",
@@ -533,19 +529,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             rng.clone(),
             upstream.clone(),
         );
-        let connmgr = ConnectionManager::new(
-            upstream.clone(),
-            connmgr::Config {
-                target_outbound_peers,
-                max_inbound_peers,
-                retry: connect,
-                domains: domains.clone(),
-                required_services,
-                // Include services required by all sub-protocols.
-                preferred_services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
-            },
-            rng.clone(),
-        );
         let pingmgr = PingManager::new(ping_timeout, rng.clone(), upstream.clone());
         let cbfmgr = FilterManager::new(
             cbfmgr::Config::default(),
@@ -557,7 +540,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             peermgr::Config {
                 protocol_version: PROTOCOL_VERSION,
                 whitelist,
+                retry: connect,
+                domains: domains.clone(),
+                target_outbound_peers,
+                max_inbound_peers,
                 required_services,
+                preferred_services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
                 services,
                 user_agent,
             },
@@ -585,7 +573,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             clock,
             addrmgr,
             syncmgr,
-            connmgr,
             pingmgr,
             cbfmgr,
             peermgr,
@@ -620,7 +607,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     {
         let peers = self
             .peermgr
-            .outbound()
+            .negotiated(Link::Outbound)
             .filter(|p| f(*p))
             .collect::<Vec<_>>();
 
@@ -654,16 +641,16 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             } else {
                 0.
             };
-            let outbound = self.connmgr.outbound_peers().count();
-            let inbound = self.connmgr.inbound_peers().count();
-            let connecting = self.connmgr.connecting_peers().count();
-            let target = self.connmgr.config.target_outbound_peers;
-            let max_inbound = self.connmgr.config.max_inbound_peers;
+            let outbound = self.peermgr.negotiated(Link::Outbound).count();
+            let inbound = self.peermgr.negotiated(Link::Inbound).count();
+            let connecting = self.peermgr.connecting().count();
+            let target = self.peermgr.config.target_outbound_peers;
+            let max_inbound = self.peermgr.config.max_inbound_peers;
             let addresses = self.addrmgr.len();
             let preferred = self
                 .peermgr
-                .outbound()
-                .filter(|p| p.services.has(self.connmgr.config.preferred_services))
+                .negotiated(Link::Outbound)
+                .filter(|p| p.services.has(self.peermgr.config.preferred_services))
                 .count();
 
             // TODO: Add cache sizes on disk
@@ -697,7 +684,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             return self.disconnect(addr, DisconnectReason::PeerMagic(msg.magic));
         }
 
-        if !self.connmgr.is_connected(&addr) {
+        if !self.peermgr.is_connected(&addr) {
             debug!(target: self.target, "Received {:?} from unknown peer {}", cmd, addr);
             return;
         }
@@ -728,7 +715,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     self.addrmgr
                         .peer_negotiated(&addr, peer.services, peer.conn.link, now);
                     self.pingmgr.peer_negotiated(peer.address(), now);
-                    self.connmgr.peer_negotiated(peer.address(), peer.services);
                     self.cbfmgr.peer_negotiated(
                         peer.address(),
                         peer.height,
@@ -861,7 +847,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         // avoids being in a state where we know a peer is about to get disconnected,
         // but we still process messages from it as normal.
 
-        self.connmgr.disconnect(addr, reason);
+        self.peermgr.disconnect(addr, reason);
     }
 }
 
@@ -871,7 +857,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         self.clock.set_local_time(time);
         self.addrmgr.initialize(time);
         self.syncmgr.initialize(time, &self.tree);
-        self.connmgr.initialize(time, &mut self.addrmgr);
+        self.peermgr.initialize(time, &mut self.addrmgr);
         self.cbfmgr.initialize(time, &self.tree);
     }
 
@@ -882,7 +868,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         match input {
             Input::Connecting { addr } => {
                 self.addrmgr.peer_attempted(&addr, local_time);
-                self.connmgr.peer_attempted(&addr);
+                self.peermgr.peer_attempted(&addr);
             }
             Input::Connected {
                 addr,
@@ -894,8 +880,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 // address our peers see.
                 self.addrmgr.record_local_addr(local_addr);
                 self.addrmgr.peer_connected(&addr, local_time);
-                self.connmgr
-                    .peer_connected(addr, local_addr, link, local_time);
                 self.peermgr
                     .peer_connected(addr, local_addr, link, height, local_time);
             }
@@ -905,10 +889,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.cbfmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
                 self.addrmgr.peer_disconnected(&addr, reason);
-                self.connmgr
-                    .peer_disconnected(&addr, &mut self.addrmgr, local_time);
                 self.pingmgr.peer_disconnected(&addr);
-                self.peermgr.peer_disconnected(&addr);
+                self.peermgr
+                    .peer_disconnected(&addr, &mut self.addrmgr, local_time);
                 self.invmgr.peer_disconnected(&addr);
             }
             Input::Received(addr, msg) => {
@@ -942,7 +925,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     debug!(target: self.target, "Received command: Connect({})", addr);
 
                     self.peermgr.whitelist(addr);
-                    self.connmgr.connect(&addr, local_time);
+                    self.peermgr.connect(&addr, local_time);
                 }
                 Command::EstimateFee { strategy } => {
                     debug!(target: self.target, "Received command: EstimateFee({:?})", strategy);
@@ -1047,11 +1030,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 trace!(target: self.target, "Received tick");
 
                 self.invmgr.received_tick(local_time, &self.tree);
-                self.connmgr.received_tick(local_time, &mut self.addrmgr);
                 self.syncmgr.received_tick(local_time, &self.tree);
                 self.pingmgr.received_tick(local_time);
                 self.addrmgr.received_tick(local_time);
-                self.peermgr.received_tick(local_time);
+                self.peermgr.received_tick(local_time, &mut self.addrmgr);
                 self.cbfmgr.received_tick(local_time, &self.tree);
             }
         };

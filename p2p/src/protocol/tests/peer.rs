@@ -229,6 +229,10 @@ impl Peer<Protocol> {
         let rng = self.protocol.rng.clone();
         let time = self.time;
 
+        if link.is_outbound() {
+            self.protocol.peermgr.connect(&remote.addr, time);
+        }
+
         // Initiate connection.
         self.protocol.step(
             Input::Connected {
@@ -295,7 +299,7 @@ impl Peer<Protocol> {
                 matches!(
                     o,
                     Out::Event(
-                        Event::PeerManager(peermgr::Event::PeerNegotiated { addr, services })
+                        Event::PeerManager(peermgr::Event::Negotiated { addr, services })
                     ) if addr == &remote.addr && services.has(ServiceFlags::NETWORK)
                 )
             })

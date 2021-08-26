@@ -33,7 +33,7 @@ use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
 use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::protocol::Protocol;
 use nakamoto_p2p::protocol::{self, Link};
-use nakamoto_p2p::protocol::{cbfmgr, connmgr, invmgr, peermgr, syncmgr};
+use nakamoto_p2p::protocol::{cbfmgr, invmgr, peermgr, syncmgr};
 
 pub use nakamoto_p2p::event;
 pub use nakamoto_p2p::protocol::{Command, CommandError, Peer};
@@ -111,8 +111,8 @@ impl Default for Config {
             domains: Domain::all(),
             timeout: time::Duration::from_secs(60),
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
-            target_outbound_peers: p2p::protocol::connmgr::TARGET_OUTBOUND_PEERS,
-            max_inbound_peers: p2p::protocol::connmgr::MAX_INBOUND_PEERS,
+            target_outbound_peers: p2p::protocol::peermgr::TARGET_OUTBOUND_PEERS,
+            max_inbound_peers: p2p::protocol::peermgr::MAX_INBOUND_PEERS,
             services: ServiceFlags::NONE,
             name: "self",
             hooks: protocol::Hooks::default(),
@@ -540,7 +540,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::ConnManager(connmgr::Event::Connected(a, link))
+                protocol::Event::PeerManager(peermgr::Event::Connected(a, link))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(link)
@@ -559,7 +559,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::ConnManager(connmgr::Event::Disconnected(a))
+                protocol::Event::PeerManager(peermgr::Event::Disconnected(a))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(())
@@ -629,7 +629,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::PeerManager(peermgr::Event::PeerNegotiated { addr, services }) => {
+                protocol::Event::PeerManager(peermgr::Event::Negotiated { addr, services }) => {
                     if services.has(required_services) {
                         negotiated.insert(addr);
                     }

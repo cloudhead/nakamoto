@@ -5,7 +5,7 @@ use bitcoin::network::message::NetworkMessage;
 
 use crate::event::Broadcast;
 use crate::protocol::PeerId;
-use crate::protocol::{addrmgr, cbfmgr, connmgr, invmgr, peermgr, syncmgr};
+use crate::protocol::{addrmgr, cbfmgr, invmgr, peermgr, syncmgr};
 
 /// A peer-to-peer event.
 #[derive(Debug, Clone)]
@@ -18,8 +18,6 @@ pub enum Event {
     AddrManager(addrmgr::Event),
     /// A sync manager event.
     SyncManager(syncmgr::Event),
-    /// A connection manager event.
-    ConnManager(connmgr::Event),
     /// A peer manager event.
     PeerManager(peermgr::Event),
     /// A CBF manager event.

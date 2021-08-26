@@ -5,14 +5,12 @@
 //!
 //! * [`AddressManager`][addrmgr]: handles peer address exchange
 //! * [`SyncManager`][syncmgr]: handles block header sync
-//! * [`ConnectionManager`][connmgr]: handles peer connections
 //! * [`PingManager`][pingmgr]: handles pings and pongs
 //! * [`FilterManager`][cbfmgr]: handles compact block filter sync
 //! * [`PeerManager`][peermgr]: handles peer handshake
 //!
 //! [addrmgr]: crate::protocol::addrmgr::AddressManager
 //! [syncmgr]: crate::protocol::syncmgr::SyncManager
-//! [connmgr]: crate::protocol::connmgr::ConnectionManager
 //! [pingmgr]: crate::protocol::pingmgr::PingManager
 //! [cbfmgr]: crate::protocol::cbfmgr::FilterManager
 //! [peermgr]: crate::protocol::peermgr::PeerManager
