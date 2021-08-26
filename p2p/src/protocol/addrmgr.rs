@@ -308,14 +308,6 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
     }
 }
 
-impl<P, U> AddressManager<P, U> {
-    /// Record an address of ours as seen by a remote peer.
-    /// This helps avoid self-connections.
-    pub fn record_local_addr(&mut self, addr: net::SocketAddr) {
-        self.local_addrs.insert(addr);
-    }
-}
-
 impl<P: Store, U: Events> AddressManager<P, U> {
     /// Create a new, empty address manager.
     pub fn new(cfg: Config, rng: fastrand::Rng, peers: P, upstream: U) -> Self {
@@ -690,6 +682,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 impl<P: Store, U: Events + SyncAddresses + SetTimeout> AddressSource for AddressManager<P, U> {
     fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
         AddressManager::sample(self, services)
+    }
+
+    fn record_local_address(&mut self, addr: net::SocketAddr) {
+        self.local_addrs.insert(addr);
     }
 
     fn iter(&mut self, services: ServiceFlags) -> Box<dyn Iterator<Item = (Address, Source)> + '_> {

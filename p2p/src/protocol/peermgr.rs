@@ -123,7 +123,7 @@ pub trait Events {
 }
 
 /// Peer manager configuration.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Config {
     /// Protocol version.
     pub protocol_version: u32,
@@ -280,13 +280,6 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         self.maintain_connections(addrs, time);
     }
 
-    /// Iterator over inbound peers.
-    pub fn negotiated(&self, link: Link) -> impl Iterator<Item = &Peer> + Clone {
-        self.peers
-            .values()
-            .filter(move |p| p.is_negotiated() && p.conn.link == link)
-    }
-
     /// Iterator over peers that have at least sent their `version` message.
     pub fn peers(&self) -> impl Iterator<Item = &Peer> + Clone {
         self.peers.values()
@@ -367,13 +360,13 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
     }
 
     /// Called when a `version` message was received.
-    pub fn received_version<S, T>(
+    pub fn received_version<A: AddressSource>(
         &mut self,
         addr: &PeerId,
         msg: VersionMessage,
         height: Height,
         now: LocalTime,
-        addrs: &mut addrmgr::AddressManager<S, T>,
+        addrs: &mut A,
     ) {
         if let Some(Connection::Connected(conn)) = self.connections.get(addr) {
             self.upstream.event(Event::VersionReceived {
@@ -401,6 +394,8 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 ..
             } = msg.clone();
 
+            let target = self.config.target_outbound_peers;
+            let preferred = self.config.preferred_services;
             let trusted = self.config.whitelist.contains(&addr.ip(), &user_agent)
                 || addrmgr::is_local(&addr.ip());
 
@@ -440,6 +435,17 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 }
             }
 
+            // If this peer doesn't have the preferred services, and we already have enough peers,
+            // disconnect this peer.
+            if conn.link.is_outbound()
+                && !services.has(preferred)
+                && self.negotiated(Link::Outbound).count() >= target
+            {
+                return self
+                    .upstream
+                    .disconnect(*addr, DisconnectReason::ConnectionLimit);
+            }
+
             // Call the user-provided version hook and disconnect if asked.
             if let Err(reason) = (*self.hooks.on_version)(*addr, msg) {
                 return self
@@ -449,7 +455,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
             // Record the address this peer has of us.
             if let Ok(addr) = receiver.socket_addr() {
-                addrs.record_local_addr(addr);
+                addrs.record_local_address(addr);
             }
 
             match conn.link {
@@ -650,6 +656,13 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
         })
     }
 
+    /// Iterator over inbound peers.
+    pub fn negotiated(&self, link: Link) -> impl Iterator<Item = &Peer> + Clone {
+        self.peers
+            .values()
+            .filter(move |p| p.is_negotiated() && p.conn.link == link)
+    }
+
     /// Connect to a peer.
     pub fn connect(&mut self, addr: &PeerId, time: LocalTime) -> bool {
         if !self.is_disconnected(addr) && !self.is_disconnecting(addr) {
@@ -679,12 +692,50 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
         self.connections.insert(addr, Connection::Disconnecting);
     }
 
+    /// Given the current peer state and targets, calculate how many new connections we should
+    /// make.
+    fn delta(&self) -> usize {
+        // Peers with our preferred services.
+        let primary = self
+            .negotiated(Link::Outbound)
+            .filter(|p| p.services.has(self.config.preferred_services))
+            .count();
+        // Peers only with required services, which we'd eventually want to drop in favor of peers
+        // that have all services.
+        let secondary = self.negotiated(Link::Outbound).count() - primary;
+        // Connected peers that have not yet completed handshake.
+        let connected = self.connected().count() - primary - secondary;
+        // Connecting peers.
+        let connecting = self.connecting().count();
+
+        // We connect up to the target number of peers plus a margin equal to the number of
+        // secondary peers divided by two. This ensures we have *some* connections to
+        // primary peers, even if that means exceeding our target. When a secondary peer is
+        // dropped, if we have our target number of primary peers connected, there is no need
+        // to replace the connection.
+        //
+        // Above the target count, all peer connections without the preferred services are
+        // automatically dropped. This ensures we never have more than the target of secondary
+        // peers.
+        let target = self.config.target_outbound_peers;
+
+        // Extra connection margin. Try to connect to as many primary peers as possible,
+        // but no more than half of the target above the target.
+        //
+        // The extra margin is only used if we have reached our connection target, but don't have
+        // enough primary peers.
+        let extra = if primary + secondary >= target {
+            usize::min(target - primary, target / 2)
+        } else {
+            0
+        };
+
+        (target + extra).saturating_sub(primary + secondary + connected + connecting)
+    }
+
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections<A: AddressSource>(&mut self, addrs: &mut A, local_time: LocalTime) {
-        let outbound = self.connected().filter(|c| c.link.is_outbound());
-        let current = outbound.count() + self.connecting().count();
-        let target = self.config.target_outbound_peers;
-        let delta = target - current;
+        let delta = self.delta();
 
         // Keep track of new addresses we're connecting to, and loop until
         // we've connected to enough addresses.
@@ -731,18 +782,22 @@ mod tests {
     use bitcoin::network::address::Address;
     use std::collections::VecDeque;
 
-    fn config() -> Config {
-        Config {
-            protocol_version: crate::protocol::PROTOCOL_VERSION,
-            target_outbound_peers: TARGET_OUTBOUND_PEERS,
-            max_inbound_peers: MAX_INBOUND_PEERS,
-            domains: Domain::all(),
-            user_agent: crate::protocol::USER_AGENT,
-            retry: vec![],
-            services: ServiceFlags::NONE,
-            preferred_services: ServiceFlags::COMPACT_FILTERS | ServiceFlags::NETWORK,
-            required_services: ServiceFlags::NETWORK,
-            whitelist: Whitelist::default(),
+    mod util {
+        use super::*;
+
+        pub fn config() -> Config {
+            Config {
+                protocol_version: crate::protocol::PROTOCOL_VERSION,
+                target_outbound_peers: TARGET_OUTBOUND_PEERS,
+                max_inbound_peers: MAX_INBOUND_PEERS,
+                domains: Domain::all(),
+                user_agent: crate::protocol::USER_AGENT,
+                retry: vec![],
+                services: ServiceFlags::NONE,
+                preferred_services: ServiceFlags::COMPACT_FILTERS | ServiceFlags::NETWORK,
+                required_services: ServiceFlags::NETWORK,
+                whitelist: Whitelist::default(),
+            }
         }
     }
 
@@ -754,7 +809,7 @@ mod tests {
         let remote = ([124, 43, 110, 1], 8333).into();
 
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(config(), rng, Hooks::default(), ());
+        let mut peermgr = PeerManager::new(util::config(), rng, Hooks::default(), ());
 
         peermgr.initialize(time, &mut addrs);
         peermgr.connect(&remote, time);
@@ -792,7 +847,7 @@ mod tests {
         let remote4 = ([124, 43, 110, 4], 8333).into();
 
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(config(), rng, Hooks::default(), ());
+        let mut peermgr = PeerManager::new(util::config(), rng, Hooks::default(), ());
 
         peermgr.initialize(time, &mut addrs);
         peermgr.connect(&remote1, time);
@@ -841,5 +896,103 @@ mod tests {
             Some(&remote4),
             "Disconnection triggers a new connection to remote#4"
         );
+    }
+
+    #[test]
+    fn test_connection_delta() {
+        let target_outbound_peers = 4;
+        let height = 144;
+        let cfg = Config {
+            target_outbound_peers,
+            ..util::config()
+        };
+        let rng = fastrand::Rng::with_seed(1);
+        let time = LocalTime::now();
+        let local = ([99, 99, 99, 99], 9999).into();
+
+        let cases: Vec<((usize, usize, usize, usize), usize)> = vec![
+            // outbound = 0/4 (0), connecting = 0/4
+            ((0, 0, 0, 0), target_outbound_peers),
+            // outbound = 0/4 (0), connecting = 1/4
+            ((1, 0, 0, 0), target_outbound_peers - 1),
+            // outbound = 0/4 (0), connecting = 3/4
+            ((1, 2, 0, 0), target_outbound_peers - 3),
+            // outbound = 1/4 (0), connecting = 2/4
+            ((1, 1, 1, 0), target_outbound_peers - 3),
+            // outbound = 2/4 (1), connecting = 2/4
+            ((1, 1, 1, 1), 0),
+            // outbound = 3/4 (1), connecting = 1/4
+            ((0, 1, 2, 1), 0),
+            // outbound = 4/4 (1), connecting = 0/4, extra = 2
+            ((0, 0, 3, 1), 2),
+            // outbound = 8/4 (4), connecting = 0/4
+            ((0, 0, 3, 3), 0),
+            // outbound = 4/4 (4), connecting = 0/4
+            ((0, 0, 0, target_outbound_peers), 0),
+            // outbound = 7/4 (3), connecting = 0/4
+            ((0, 0, 4, 3), 0),
+            // outbound = 5/4 (2), connecting = 0/4, extra = 1
+            ((0, 0, 3, 2), 1),
+            // outbound = 0/4 (0), connecting = 4/4
+            ((4, 0, 0, 0), 0),
+            // outbound = 4/4 (0), connecting = 0/4, extra = 2
+            ((0, 0, 4, 0), 2),
+        ];
+
+        for (case, delta) in cases {
+            let (connecting, connected, required, preferred) = case;
+
+            let mut addrs = VecDeque::new();
+            let mut peermgr = PeerManager::new(cfg.clone(), rng.clone(), Hooks::default(), ());
+
+            peermgr.initialize(time, &mut addrs);
+
+            for i in 0..connecting {
+                let remote = ([44, 44, 44, i as u8], 8333).into();
+                peermgr.connect(&remote, time);
+                assert!(peermgr.connections.contains_key(&remote));
+            }
+            for i in 0..connected {
+                let remote = ([55, 55, 55, i as u8], 8333).into();
+                peermgr.connect(&remote, time);
+                peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+                assert!(peermgr.connections.contains_key(&remote));
+            }
+            for i in 0..required {
+                let remote = ([66, 66, 66, i as u8], 8333).into();
+                let version = VersionMessage {
+                    services: cfg.required_services,
+                    ..peermgr.version(local, remote, rng.u64(..), height, time)
+                };
+
+                peermgr.connect(&remote, time);
+                peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+                assert!(peermgr.connections.contains_key(&remote));
+
+                peermgr.received_version(&remote, version, height, time, &mut addrs);
+                assert!(peermgr.peers.contains_key(&remote));
+
+                peermgr.received_verack(&remote, time).unwrap();
+                assert!(peermgr.peers.get(&remote).unwrap().is_negotiated());
+            }
+            for i in 0..preferred {
+                let remote = ([77, 77, 77, i as u8], 8333).into();
+                let version = VersionMessage {
+                    services: cfg.preferred_services,
+                    ..peermgr.version(local, remote, rng.u64(..), height, time)
+                };
+
+                peermgr.connect(&remote, time);
+                peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+                assert!(peermgr.connections.contains_key(&remote));
+
+                peermgr.received_version(&remote, version, height, time, &mut addrs);
+                assert!(peermgr.peers.contains_key(&remote));
+
+                peermgr.received_verack(&remote, time).unwrap();
+                assert!(peermgr.peers.get(&remote).unwrap().is_negotiated());
+            }
+            assert_eq!(peermgr.delta(), delta, "{:?}", case);
+        }
     }
 }

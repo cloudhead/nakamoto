@@ -49,6 +49,7 @@ use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::block::{BlockTime, Transaction};
 use nakamoto_common::network::{self, Network};
 use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_common::p2p::peer::AddressSource;
 use nakamoto_common::p2p::{peer, Domain};
 
 use thiserror::Error;
@@ -878,7 +879,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 let height = self.tree.height();
                 // This is usually not that useful, except when our local address is actually the
                 // address our peers see.
-                self.addrmgr.record_local_addr(local_addr);
+                self.addrmgr.record_local_address(local_addr);
                 self.addrmgr.peer_connected(&addr, local_time);
                 self.peermgr
                     .peer_connected(addr, local_addr, link, height, local_time);
