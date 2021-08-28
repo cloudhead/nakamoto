@@ -52,7 +52,7 @@ impl<H: Handle> Wallet<H> {
         let events = self.client.subscribe();
 
         log::info!("Waiting for peers..");
-        self.client.wait_for_peers(1, Services::All)?; // At least one peer with filter and chain support.
+        self.client.wait_for_peers(1, Services::Chain)?;
 
         // Start a re-scan from the birht height, which keeps scanning as new blocks arrive.
         log::info!("Starting re-scan from block height {}", birth);
