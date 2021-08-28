@@ -700,7 +700,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         let height = tree.height();
 
         // Find the peer with the longest chain and compare our height to it.
-        if let Some(peer_height) = self.peers.values().map(|p| p.height).max() {
+        if let Some(peer_height) = self.best_height() {
             return height >= peer_height;
         }
 
