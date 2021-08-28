@@ -784,12 +784,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         }
                     }
                     Ok(ImportResult::TipChanged { .. }) => {
-                        if !self.syncmgr.is_syncing() {
-                            // Trigger a filter sync, since we're going to have to catch up on the
-                            // new block header(s). This is not required, but reduces latency.
-                            // We only do this at the tip of the header chain.
-                            self.cbfmgr.sync(&self.tree, now);
-                        }
+                        // Trigger a filter sync, since we're going to have to catch up on the
+                        // new block header(s). This is not required, but reduces latency.
+                        self.cbfmgr.sync(&self.tree, now);
                     }
                     _ => {}
                 }

@@ -357,16 +357,17 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         }
 
         match self.inflight.remove(from) {
+            // Nb. This branch may activate after peers are sampled.
             Some(GetHeaders { locators, .. })
                 if headers
                     .iter()
                     .any(|h| locators.0.contains(&h.prev_blockhash)) =>
             {
-                // Requested headers. These should extend our main chain.
+                // Requested headers.
                 // Check whether the start of the header chain matches one of the locators we
                 // supplied to the peer. Otherwise, we consider them unsolicited.
 
-                let result = self.extend_chain(headers, clock, tree);
+                let result = self.import_blocks(headers.into_iter(), clock, tree);
 
                 if let Ok(ImportResult::TipChanged(_, tip, height, _, _)) = result {
                     let peer = self.peers.get_mut(from).unwrap();
@@ -490,41 +491,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             self.upstream.get_headers(req.addr, req.locators);
             self.upstream.set_timeout(req.timeout);
         }
-    }
-
-    fn extend_chain<T: BlockTree>(
-        &mut self,
-        headers: NonEmpty<BlockHeader>,
-        clock: &impl Clock,
-        tree: &mut T,
-    ) -> Result<ImportResult, Error> {
-        let mut result = ImportResult::TipUnchanged;
-
-        for header in headers.into_iter() {
-            match tree.extend_tip(header, clock) {
-                Ok(ImportResult::TipChanged(header, hash, height, reverted, connected)) => {
-                    debug_assert!(reverted.is_empty());
-
-                    self.upstream
-                        .event(Event::BlockConnected { height, header });
-                    self.upstream.event(Event::Synced(hash, height));
-                    result = ImportResult::TipChanged(header, hash, height, vec![], connected);
-                }
-                Ok(ImportResult::TipUnchanged) => {
-                    // We must have received headers from a different peer in the meantime,
-                    // keep processing in case one of the headers extends our chain.
-                    continue;
-                }
-                Err(err) => {
-                    // TODO: Ask different peer.
-                    // TODO: Transition peer.
-
-                    return Err(err);
-                }
-            }
-        }
-
-        Ok(result)
     }
 
     /// Called when we received an `inv` message. This will happen if we are out of sync with a
@@ -709,9 +675,18 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         locators: &[BlockHash],
         tree: &T,
     ) -> bool {
-        peer.link.is_outbound()
-            && peer.height > tree.height()
-            && !self.inflight.contains_key(addr)
+        peer.height > tree.height() && self.is_request_candidate(addr, peer, locators)
+    }
+
+    /// Check whether a peer is a good request candidate.
+    fn is_request_candidate(
+        &self,
+        addr: &PeerId,
+        peer: &PeerState,
+        locators: &[BlockHash],
+    ) -> bool {
+        !self.inflight.contains_key(addr)
+            && peer.link.is_outbound()
             && peer.last_asked.as_ref().map_or(true, |l| l.0 != locators)
     }
 
@@ -802,7 +777,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         let addrs = self
             .peers
             .iter()
-            .filter(|(a, p)| self.is_sync_candidate(a, p, &locators, tree))
+            .filter(|(a, p)| self.is_request_candidate(a, p, &locators))
             .map(|(a, _)| *a)
             .collect::<Vec<_>>();
 

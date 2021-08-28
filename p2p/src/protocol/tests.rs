@@ -1186,6 +1186,9 @@ fn test_submitted_transaction_filtering() {
     );
     let tx = gen::transaction(&mut rng);
 
+    // Set Alice's clock to the last block.
+    alice.time = LocalTime::from_block_time(chain.last().header.time);
+
     // Connect to a peer and submit the transaction.
     alice.connect(
         &PeerDummy {
@@ -1215,8 +1218,6 @@ fn test_submitted_transaction_filtering() {
     let cfilter = gen::cfilter(&matching);
     let (_, parent) = cfheaders.last().unwrap();
     let (cfhash, _) = gen::cfheader(parent, &cfilter);
-
-    alice.time = LocalTime::from_block_time(chain.last().header.time);
 
     // Alice receives a header announcement.
     alice.receive(remote, NetworkMessage::Headers(vec![matching.header]));
@@ -1333,6 +1334,7 @@ fn test_transaction_reverted_reconfirm() {
         let (_, parent) = cfheaders.last().unwrap();
         let (cfhash, _) = gen::cfheader(parent, &cfilter);
 
+        // Set Alice's clock to the last block time.
         alice.time = LocalTime::from_block_time(chain_tip.header.time);
 
         // Alice receives a header announcement.
