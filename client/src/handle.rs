@@ -31,9 +31,6 @@ pub enum Error {
     /// Failed to fetch filters.
     #[error("failed to get filters: {0}")]
     GetFilters(#[from] GetFiltersError),
-    /// Failed to rescan.
-    #[error("failed to rescan: {0}")]
-    Rescan(GetFiltersError),
     /// The operation timed out.
     #[error("the operation timed out")]
     Timeout,
@@ -100,16 +97,13 @@ pub trait Handle: Sized + Send + Sync + Clone {
             Bound::Excluded(n) => Bound::Excluded(*n),
             Bound::Unbounded => Bound::Unbounded,
         };
-        let (reply, receive) = chan::bounded(1);
-
         self.command(Command::Rescan {
             from,
             to,
             watch: watch.collect(),
-            reply,
         })?;
 
-        receive.recv()?.map_err(Error::Rescan)
+        Ok(())
     }
     /// Broadcast a message to peers matching the predicate.
     ///

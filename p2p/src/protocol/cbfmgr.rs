@@ -420,7 +420,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         end: Bound<Height>,
         watch: Vec<Script>,
         tree: &T,
-    ) -> Result<(), GetFiltersError> {
+    ) {
         if self.rescan.active {
             // TODO: Don't panic here.
             panic!("{}: Rescan already active", source!());
@@ -445,6 +445,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         // Nb. If our filter header chain isn't caught up with our block header chain,
         // this range will be empty, and this will effectively do nothing.
         self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
+            .ok();
     }
 
     /// Send a `getcfilters` message to a random peer.
@@ -1205,14 +1206,12 @@ mod tests {
         let (mut cbfmgr, tree, _, outputs) = util::setup(network, best);
 
         // Start rescan with no peers.
-        cbfmgr
-            .rescan(
-                Bound::Included(0),
-                Bound::Unbounded,
-                vec![gen::script(&mut rng)],
-                &tree,
-            )
-            .unwrap_err();
+        cbfmgr.rescan(
+            Bound::Included(0),
+            Bound::Unbounded,
+            vec![gen::script(&mut rng)],
+            &tree,
+        );
 
         cbfmgr.peer_negotiated(
             ([8, 8, 8, 8], 8333).into(),
@@ -1309,9 +1308,7 @@ mod tests {
             .unwrap();
 
         // Start rescan.
-        cbfmgr
-            .rescan(Bound::Included(birth), Bound::Unbounded, vec![], &tree)
-            .unwrap();
+        cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, vec![], &tree);
 
         let expected = GetCFilters {
             filter_type,
@@ -1395,9 +1392,7 @@ mod tests {
                 &time,
                 &tree,
             );
-            cbfmgr
-                .rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree)
-                .unwrap();
+            cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
 
             log::debug!(target: "test",
                 "Chain {:?}",
@@ -1515,9 +1510,7 @@ mod tests {
             &time,
             &tree,
         );
-        cbfmgr
-            .rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree)
-            .unwrap();
+        cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
 
         let mut msgs = messages(&outputs);
         let mut events = util::events(&outputs);
