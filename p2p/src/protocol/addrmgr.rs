@@ -415,6 +415,11 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             if !addr.services.has(self.cfg.required_services) {
                 continue;
             }
+            // Ignore peers with these antiquated services offered. They are very unlikely to
+            // support compact filters, or have up-to-date clients.
+            if addr.services.has(ServiceFlags::GETUTXO) || addr.services.has(ServiceFlags::BLOOM) {
+                continue;
+            }
             // Ignore addresses that don't have a "last active" time.
             if last_active == 0 {
                 continue;
