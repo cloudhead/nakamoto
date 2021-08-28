@@ -196,8 +196,6 @@ pub struct InventoryManager<U> {
     peers: AddressBook<PeerId, Peer>,
     /// Timeout used for retrying broadcasts.
     timeout: LocalDuration,
-    /// Transaction mempool. Stores unconfirmed transactions sent to the network.
-    mempool: BTreeMap<Txid, Transaction>,
     /// Confirmed transactions by block height.
     /// Pruned after a certain depth.
     confirmed: HashMap<Height, Vec<Transaction>>,
@@ -205,10 +203,12 @@ pub struct InventoryManager<U> {
     /// Transaction fee estimator.
     estimator: FeeEstimator,
 
+    /// Transaction mempool. Stores unconfirmed transactions sent to the network.
+    pub mempool: BTreeMap<Txid, Transaction>,
     /// Blocks requested and the time at which they were last requested.
-    remaining: HashMap<BlockHash, Option<LocalTime>>,
+    pub remaining: HashMap<BlockHash, Option<LocalTime>>,
     /// Blocks received, waiting to be processed.
-    received: HashMap<Height, Block>,
+    pub received: HashMap<Height, Block>,
 
     last_tick: Option<LocalTime>,
     rng: fastrand::Rng,

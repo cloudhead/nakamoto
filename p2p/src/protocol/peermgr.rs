@@ -71,7 +71,7 @@ pub enum Event {
         services: ServiceFlags,
     },
     /// Connecting to a peer found from the specified source.
-    Connecting(PeerId, Source),
+    Connecting(PeerId, Source, ServiceFlags),
     /// A new peer has connected and is ready to accept messages.
     /// This event is triggered *after* the peer handshake
     /// has successfully completed.
@@ -93,8 +93,12 @@ impl std::fmt::Display for Event {
                 "{}: Peer negotiated with services {}..",
                 addr, services
             ),
-            Self::Connecting(addr, source) => {
-                write!(fmt, "Connecting to peer {} from source `{}`", addr, source)
+            Self::Connecting(addr, source, services) => {
+                write!(
+                    fmt,
+                    "Connecting to peer {} from source `{}` with {}",
+                    addr, source, services
+                )
             }
             Self::Connected(addr, link) => write!(fmt, "{}: Peer connected ({:?})", &addr, link),
             Self::Disconnected(addr) => write!(fmt, "Disconnected from {}", &addr),
@@ -753,7 +757,8 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
 
                     if self.connect(&sockaddr, local_time) {
                         connecting.insert(sockaddr);
-                        self.upstream.event(Event::Connecting(sockaddr, source));
+                        self.upstream
+                            .event(Event::Connecting(sockaddr, source, addr.services));
                     }
                 }
             } else {

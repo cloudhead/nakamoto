@@ -299,8 +299,16 @@ impl<R: Reactor<Publisher>> Client<R> {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                 log::info!("Found existing peer cache {:?}", peers_path);
                 let cache = peer::Cache::open(&peers_path).map_err(Error::PeerStore)?;
-                log::info!("{} peer(s) found..", cache.len());
+                let cfpeers = cache
+                    .iter()
+                    .filter(|(_, ka)| ka.addr.services.has(ServiceFlags::COMPACT_FILTERS))
+                    .count();
 
+                log::info!(
+                    "{} peer(s) found.. {} with compact filters support",
+                    cache.len(),
+                    cfpeers
+                );
                 cache
             }
             Err(err) => {

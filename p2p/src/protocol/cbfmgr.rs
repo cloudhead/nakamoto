@@ -246,23 +246,22 @@ struct Peer {
 #[derive(Debug, Default)]
 pub struct Rescan {
     /// Whether a rescan is currently in progress.
-    active: bool,
+    pub active: bool,
     /// Current height from which we're synced filters.
     /// Must be between `start` and `end`.
-    current: Height,
+    pub current: Height,
     /// Start height of the filter rescan.
-    /// header height.
-    start: Height,
+    pub start: Height,
     /// End height of the filter rescan. If `None`, keeps scanning new blocks until stopped.
-    end: Option<Height>,
+    pub end: Option<Height>,
     /// Addresses and outpoints to watch for.
-    watch: HashSet<Script>,
+    pub watch: HashSet<Script>,
     /// Transactions to watch for.
-    transactions: HashMap<Txid, HashSet<Script>>,
+    pub transactions: HashMap<Txid, HashSet<Script>>,
     /// Filters requested and remaining to download.
-    requested: BTreeSet<Height>,
+    pub requested: BTreeSet<Height>,
     /// Received filters waiting to be matched.
-    received: HashMap<Height, (BlockFilter, BlockHash)>,
+    pub received: HashMap<Height, (BlockFilter, BlockHash)>,
 }
 
 impl Rescan {
@@ -310,9 +309,11 @@ impl Rescan {
 /// A compact block filter manager.
 #[derive(Debug)]
 pub struct FilterManager<F, U> {
+    /// Rescan state.
+    pub rescan: Rescan,
+
     config: Config,
     peers: AddressBook<PeerId, Peer>,
-    rescan: Rescan,
     filters: F,
     upstream: U,
     /// Last time we idled.
