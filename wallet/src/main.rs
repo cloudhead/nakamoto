@@ -8,9 +8,6 @@ use nakamoto_wallet::logger;
 /// A Bitcoin wallet.
 #[derive(FromArgs)]
 pub struct Options {
-    /// connect to the specified peer
-    #[argh(option)]
-    pub connect: String,
     /// watch the following addresses
     #[argh(option)]
     pub addresses: Vec<Address>,
@@ -43,7 +40,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    if let Err(err) = nakamoto_wallet::run(&opts.connect, opts.addresses, opts.genesis) {
+    if let Err(err) = nakamoto_wallet::run(opts.addresses, opts.genesis) {
         log::error!("Fatal: {}", err);
         std::process::exit(1);
     }

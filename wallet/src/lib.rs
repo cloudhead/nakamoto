@@ -4,7 +4,7 @@ pub mod logger;
 use thiserror::Error;
 
 use std::collections::HashSet;
-use std::{fmt, io, net, thread};
+use std::{io, net, thread};
 
 use bitcoin::Address;
 
@@ -76,9 +76,10 @@ impl<H: Handle> Wallet<H> {
                 }
                 Event::Synced { height, tip } => {
                     log::info!(
-                        "Synced up to height {} ({:.1}%)",
+                        "Synced up to height {} ({:.1}%) ({} remaining)",
                         height,
-                        height as f64 / tip as f64 * 100.
+                        height as f64 / tip as f64 * 100.,
+                        tip - height
                     );
                 }
                 _ => {}
@@ -97,20 +98,12 @@ impl<H: Handle> Wallet<H> {
 type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
 
 /// Entry point for running the wallet.
-pub fn run<S: net::ToSocketAddrs + fmt::Debug>(
-    seed: S,
-    addresses: Vec<Address>,
-    birth: Height,
-) -> Result<(), Error> {
-    let mut cfg = Config {
+pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {
+    let cfg = Config {
         listen: vec![], // Don't listen for incoming connections.
         network: Network::Mainnet,
         ..Config::default()
     };
-    cfg.seed(&[seed])?;
-    // TODO: This shouldn't have to be specified manually. We should have a "discovery mode"
-    // that can be static or dynamic.
-    cfg.target_outbound_peers = cfg.connect.len().min(8);
 
     // Create a new client using `Reactor` for networking.
     let client = Client::<Reactor>::new(cfg)?;
