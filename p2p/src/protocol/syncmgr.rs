@@ -714,9 +714,11 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     }
 
     /// Start syncing if we're out of sync.
-    fn sync<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+    /// Returns `true` if we started syncing, and `false` if we were up to date or not able to
+    /// sync.
+    fn sync<T: BlockTree>(&mut self, now: LocalTime, tree: &T) -> bool {
         if self.peers.is_empty() {
-            return;
+            return false;
         }
         if self.is_synced(now, tree) {
             let (tip, _) = tree.tip();
@@ -734,15 +736,16 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
                 self.last_peer_sample = Some(now);
                 self.sample_peers(now, tree);
             }
-            return;
+            return false;
         }
-        // It looks like we're out of sync...
+
+        // ... It looks like we're out of sync ...
 
         let locators = (tree.locator_hashes(tree.height()), BlockHash::default());
 
         // If we're already fetching these headers, just wait.
         if self.syncing(&locators) {
-            return;
+            return false;
         }
 
         if let Some((addr, _)) = self
@@ -754,8 +757,11 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
             self.request(addr, locators, now, timeout, OnTimeout::Ignore);
             self.upstream.event(Event::Syncing(addr));
+
+            true
         } else {
             // TODO: No peer found to sync.. emit event.
+            false
         }
     }
 
