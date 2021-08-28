@@ -115,10 +115,10 @@ impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Event::BlockReceived { from, height, .. } => {
-                write!(fmt, "{}: Received block at height {}", from, height)
+                write!(fmt, "{}: Received block #{}", from, height)
             }
             Event::BlockProcessed { height, .. } => {
-                write!(fmt, "Processed block at height {}", height)
+                write!(fmt, "Processed block #{}", height)
             }
             Event::Acknowledged { txid, peer } => {
                 write!(
@@ -133,10 +133,10 @@ impl std::fmt::Display for Event {
                 block,
             } => write!(
                 fmt,
-                "Transaction {} was included in block {} at height {}",
+                "Transaction {} was included in block #{} ({})",
                 transaction.txid(),
+                height,
                 block,
-                height
             ),
             Event::Reverted { transaction, .. } => {
                 write!(fmt, "Transaction {} was reverted", transaction.txid(),)
