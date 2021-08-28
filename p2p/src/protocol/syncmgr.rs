@@ -59,7 +59,7 @@ pub enum OnTimeout {
 
 /// State of a sync peer.
 #[derive(Debug)]
-struct PeerState {
+struct Peer {
     height: Height,
     tip: BlockHash,
     link: Link,
@@ -82,7 +82,7 @@ pub struct Config {
 #[derive(Debug)]
 pub struct SyncManager<U> {
     /// Sync-specific peer state.
-    peers: AddressBook<PeerId, PeerState>,
+    peers: AddressBook<PeerId, Peer>,
     /// Sync manager configuration.
     config: Config,
     /// Last time our tip was updated.
@@ -651,7 +651,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
         self.peers.insert(
             id,
-            PeerState {
+            Peer {
                 height,
                 tip,
                 link,
@@ -671,7 +671,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     fn is_sync_candidate<T: BlockTree>(
         &self,
         addr: &PeerId,
-        peer: &PeerState,
+        peer: &Peer,
         locators: &[BlockHash],
         tree: &T,
     ) -> bool {
@@ -679,12 +679,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     }
 
     /// Check whether a peer is a good request candidate.
-    fn is_request_candidate(
-        &self,
-        addr: &PeerId,
-        peer: &PeerState,
-        locators: &[BlockHash],
-    ) -> bool {
+    fn is_request_candidate(&self, addr: &PeerId, peer: &Peer, locators: &[BlockHash]) -> bool {
         !self.inflight.contains_key(addr)
             && peer.link.is_outbound()
             && peer.last_asked.as_ref().map_or(true, |l| l.0 != locators)
