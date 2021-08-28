@@ -662,7 +662,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             let mut msg = Vec::new();
 
             msg.push(format!("tip = {}", tip));
-            msg.push(format!("height = {}/{} ({:.1}%)", height, best, sync));
+            msg.push(format!("headers = {}/{} ({:.1}%)", height, best, sync));
+            msg.push(format!(
+                "cfheaders = {}/{}",
+                self.cbfmgr.filters.height(),
+                height
+            ));
             msg.push(format!("inbound = {}/{}", inbound, max_inbound));
             msg.push(format!(
                 "outbound = {}/{} ({})",

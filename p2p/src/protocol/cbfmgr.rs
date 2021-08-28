@@ -311,10 +311,11 @@ impl Rescan {
 pub struct FilterManager<F, U> {
     /// Rescan state.
     pub rescan: Rescan,
+    /// Filter header chain.
+    pub filters: F,
 
     config: Config,
     peers: AddressBook<PeerId, Peer>,
-    filters: F,
     upstream: U,
     /// Last time we idled.
     last_idle: Option<LocalTime>,
