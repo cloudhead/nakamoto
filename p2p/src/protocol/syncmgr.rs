@@ -720,17 +720,8 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             let height = tree.height();
 
             self.upstream.event(Event::Synced(tip, height));
+            self.sample_peers(now, tree);
 
-            // If we think we're in sync and we haven't asked other peers in a while, then
-            // sample their headers just to make sure we're on the right chain.
-            if self
-                .last_peer_sample
-                .map(|t| now.duration_since(t) >= PEER_SAMPLE_INTERVAL)
-                .unwrap_or(true)
-            {
-                self.last_peer_sample = Some(now);
-                self.sample_peers(now, tree);
-            }
             return false;
         }
 
@@ -774,6 +765,13 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
     /// Ask all our outbound peers whether they have better block headers.
     fn sample_peers<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+        if now - self.last_peer_sample.unwrap_or_default() < PEER_SAMPLE_INTERVAL {
+            return;
+        }
+        self.last_peer_sample = Some(now);
+
+        // If we think we're in sync and we haven't asked other peers in a while, then
+        // sample their headers just to make sure we're on the right chain.
         let locators = tree.locator_hashes(tree.height());
         let addrs = self
             .peers
