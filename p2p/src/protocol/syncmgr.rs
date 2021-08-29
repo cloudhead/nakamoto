@@ -404,7 +404,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
 
                 // If we received less than the maximum number of headers, we must be in sync.
                 // Otherwise, ask for the next batch of headers.
-                if length < self.config.max_message_headers {
+                if length < MAX_MESSAGE_HEADERS {
                     // If these headers were unsolicited, we may already be ready/synced.
                     // Otherwise, we're finally in sync.
 
