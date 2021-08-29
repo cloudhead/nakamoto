@@ -89,7 +89,6 @@ fn test_handshake() {
     peer.connect_addr(&outbound, Link::Outbound);
 }
 
-// TODO: We need to test this with a chain that is longer than 2000.
 #[test]
 fn test_initial_sync() {
     let rng = fastrand::Rng::new();
@@ -112,6 +111,9 @@ fn test_initial_sync() {
         vec![],
         rng.clone(),
     );
+    // Ensures alice has to request multiple batches of headers from bob.
+    bob.protocol.syncmgr.config.max_message_headers = 10;
+
     assert_eq!(bob.protocol.tree.height(), height as Height);
 
     alice.command(Command::Connect(bob.addr));

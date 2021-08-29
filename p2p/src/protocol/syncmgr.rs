@@ -81,10 +81,11 @@ pub struct Config {
 /// The sync manager state.
 #[derive(Debug)]
 pub struct SyncManager<U> {
+    /// Sync manager configuration.
+    pub config: Config,
+
     /// Sync-specific peer state.
     peers: AddressBook<PeerId, Peer>,
-    /// Sync manager configuration.
-    config: Config,
     /// Last time our tip was updated.
     last_tip_update: Option<LocalTime>,
     /// Last time we sampled our peers for their active chain.
