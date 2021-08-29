@@ -32,7 +32,7 @@ pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 pub const REQUIRED_SERVICES: ServiceFlags = ServiceFlags::NETWORK;
 
 /// Maximum headers announced in a `headers` message, when unsolicited.
-const MAX_HEADERS_ANNOUNCED: usize = 8;
+const MAX_UNSOLICITED_HEADERS: usize = 24;
 /// How long to wait between checks for longer chains from peers.
 const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
 
@@ -335,6 +335,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         clock: &impl Clock,
         tree: &mut T,
     ) -> Result<ImportResult, store::Error> {
+        let request = self.inflight.remove(from);
         let headers = if let Some(headers) = NonEmpty::from_vec(headers) {
             headers
         } else {
@@ -342,7 +343,20 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         };
 
         let length = headers.len();
-        let best = headers.last().block_hash();
+
+        if length > MAX_MESSAGE_HEADERS {
+            self.upstream
+                .event(Event::UnsolicitedHeadersReceived(*from, length));
+
+            return Ok(ImportResult::TipUnchanged);
+        }
+        // When unsolicited, we don't want to process too many headers in case of a DoS.
+        if length > MAX_UNSOLICITED_HEADERS && request.is_none() {
+            self.upstream
+                .event(Event::UnsolicitedHeadersReceived(*from, length));
+
+            return Ok(ImportResult::TipUnchanged);
+        }
 
         if let Some(peer) = self.peers.get_mut(from) {
             peer.last_active = Some(clock.local_time());
@@ -352,117 +366,73 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         self.upstream
             .event(Event::HeadersReceived(*from, headers.len()));
 
+        let root = headers.first().block_hash();
+        let best = headers.last().block_hash();
+
         if tree.contains(&best) {
             return Ok(ImportResult::TipUnchanged);
         }
 
-        match self.inflight.remove(from) {
-            // Nb. This branch may activate after peers are sampled.
-            Some(GetHeaders { locators, .. })
-                if headers
-                    .iter()
-                    .any(|h| locators.0.contains(&h.prev_blockhash)) =>
-            {
-                // Requested headers.
-                // Check whether the start of the header chain matches one of the locators we
-                // supplied to the peer. Otherwise, we consider them unsolicited.
+        match self.import_blocks(headers.into_iter(), clock, tree) {
+            Ok(ImportResult::TipUnchanged) => {
+                // Try to find a common ancestor that leads up to the first header in
+                // the list we received.
+                let locators = (tree.locator_hashes(tree.height()), root);
+                let timeout = self.config.request_timeout;
 
-                let result = self.import_blocks(headers.into_iter(), clock, tree);
+                self.request(
+                    *from,
+                    locators,
+                    clock.local_time(),
+                    timeout,
+                    OnTimeout::Ignore,
+                );
 
-                if let Ok(ImportResult::TipChanged(_, tip, height, _, _)) = result {
-                    let peer = self.peers.get_mut(from).unwrap();
-
+                Ok(ImportResult::TipUnchanged)
+            }
+            Ok(ImportResult::TipChanged(header, tip, height, reverted, connected)) => {
+                // Update peer height.
+                if let Some(peer) = self.peers.get_mut(from) {
                     if height > peer.height {
                         peer.tip = tip;
                         peer.height = height;
                     }
                 }
+                // Keep track of when we last updated our tip. This is useful to check
+                // whether our tip is stale.
+                self.last_tip_update = Some(clock.local_time());
 
-                match result {
-                    Ok(ImportResult::TipUnchanged) => Ok(ImportResult::TipUnchanged),
-                    Ok(ImportResult::TipChanged(header, tip, height, reverted, connected)) => {
-                        // Keep track of when we last updated our tip. This is useful to check
-                        // whether our tip is stale.
-                        self.last_tip_update = Some(clock.local_time());
+                // If we received less than the maximum number of headers, we must be in sync.
+                // Otherwise, ask for the next batch of headers.
+                if length < self.config.max_message_headers {
+                    // If these headers were unsolicited, we may already be ready/synced.
+                    // Otherwise, we're finally in sync.
 
-                        // If we received less than the maximum number of headers, we must be in sync.
-                        // Otherwise, ask for the next batch of headers.
-                        if length < self.config.max_message_headers {
-                            // If these headers were unsolicited, we may already be ready/synced.
-                            // Otherwise, we're finally in sync.
+                    self.broadcast_tip(&tip, tree);
+                    self.sync(clock.local_time(), tree);
+                } else {
+                    // TODO: If we're already in the state of asking for this header, don't
+                    // ask again.
+                    // TODO: Should we use stop-hash for the single locator?
+                    let locators = (vec![tip], BlockHash::default());
+                    let timeout = self.config.request_timeout;
 
-                            self.broadcast_tip(&tip, tree);
-                            self.sync(clock.local_time(), tree);
-                        } else {
-                            // TODO: If we're already in the state of asking for this header, don't
-                            // ask again.
-                            // TODO: Should we use stop-hash for the single locator?
-                            let locators = (vec![tip], BlockHash::default());
-                            let timeout = self.config.request_timeout;
-
-                            self.request(
-                                *from,
-                                locators,
-                                clock.local_time(),
-                                timeout,
-                                OnTimeout::Disconnect,
-                            );
-                        }
-
-                        Ok(ImportResult::TipChanged(
-                            header, tip, height, reverted, connected,
-                        ))
-                    }
-                    Err(err) => self
-                        .handle_error(from, err)
-                        .map(|()| ImportResult::TipUnchanged),
+                    self.request(
+                        *from,
+                        locators,
+                        clock.local_time(),
+                        timeout,
+                        OnTimeout::Disconnect,
+                    );
                 }
+
+                Ok(ImportResult::TipChanged(
+                    header, tip, height, reverted, connected,
+                ))
             }
-            // Header announcement.
-            _ if length <= MAX_HEADERS_ANNOUNCED => {
-                let root = headers.first().block_hash();
-
-                match self.import_blocks(headers.into_iter(), clock, tree) {
-                    Ok(import_result @ ImportResult::TipUnchanged) => {
-                        // Try to find a common ancestor that leads up to the first header in
-                        // the list we received.
-                        let locators = (tree.locator_hashes(tree.height()), root);
-                        let timeout = self.config.request_timeout;
-
-                        self.request(
-                            *from,
-                            locators,
-                            clock.local_time(),
-                            timeout,
-                            OnTimeout::Ignore,
-                        );
-
-                        Ok(import_result)
-                    }
-                    Ok(ImportResult::TipChanged(header, tip, height, reverted, connected)) => {
-                        let peer = self.peers.get_mut(from).unwrap();
-                        if height > peer.height {
-                            peer.tip = tip;
-                            peer.height = height;
-                        }
-                        Ok(ImportResult::TipChanged(
-                            header, tip, height, reverted, connected,
-                        ))
-                    }
-                    Err(err) => self
-                        .handle_error(from, err)
-                        .map(|()| ImportResult::TipUnchanged),
-                }
-            }
-            // We've received a large number of unsolicited headers. This is more than the
-            // typical headers sent during a header announcement, and we haven't asked
-            // this peer for any headers. We choose to ignore it.
-            _ => {
-                self.upstream
-                    .event(Event::UnsolicitedHeadersReceived(*from, length));
-
-                Ok(ImportResult::TipUnchanged)
-            }
+            Err(err) => self
+                .handle_error(from, err)
+                .map(|()| ImportResult::TipUnchanged),
         }
     }
 
