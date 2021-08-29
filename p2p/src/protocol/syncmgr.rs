@@ -50,7 +50,7 @@ pub trait SyncHeaders {
 
 /// What to do if a timeout for a peer is received.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum OnTimeout {
+enum OnTimeout {
     /// Disconnect peer on timeout.
     Disconnect,
     /// Do nothing on timeout.
@@ -186,27 +186,13 @@ impl std::fmt::Display for Event {
 
 /// A `getheaders` request sent to a peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct GetHeaders {
-    /// The remote peer.
-    pub addr: PeerId,
+struct GetHeaders {
     /// Locators hashes.
-    pub locators: Locators,
-    /// Request timeout.
-    pub timeout: LocalDuration,
-
+    locators: Locators,
     /// Time at which the request was sent.
     sent_at: LocalTime,
     /// What to do if this request times out.
     on_timeout: OnTimeout,
-}
-
-/// `headers` broadcast.
-#[derive(Debug)]
-pub struct SendHeaders {
-    /// Peers to send headers to.
-    pub addrs: Vec<PeerId>,
-    /// Headers to send.
-    pub headers: Vec<BlockHeader>,
 }
 
 impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
@@ -451,16 +437,14 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             peer.last_asked = Some(locators.clone());
 
             let req = GetHeaders {
-                addr,
                 locators,
-                timeout,
                 sent_at,
                 on_timeout,
             };
 
             self.inflight.insert(addr, req.clone());
-            self.upstream.get_headers(req.addr, req.locators);
-            self.upstream.set_timeout(req.timeout);
+            self.upstream.get_headers(addr, req.locators);
+            self.upstream.set_timeout(timeout);
         }
     }
 
