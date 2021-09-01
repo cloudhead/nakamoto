@@ -627,7 +627,7 @@ where
         let mut negotiated = self
             .get_peers(required_services)?
             .into_iter()
-            .map(|p| p.address())
+            .map(|p| p.addr)
             .collect::<HashSet<_>>(); // Get already connected peers.
 
         if negotiated.len() == count {

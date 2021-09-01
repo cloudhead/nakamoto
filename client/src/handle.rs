@@ -106,10 +106,6 @@ pub trait Handle: Sized + Send + Sync + Clone {
         Ok(())
     }
     /// Broadcast a message to peers matching the predicate.
-    ///
-    /// To only broadcast to peers that have completed the handshake, filter
-    /// using [`Peer::is_negotiated`].
-    ///
     /// To only broadcast to outbound peers, use [`Peer::is_outbound`].
     fn broadcast(
         &self,

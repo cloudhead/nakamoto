@@ -834,6 +834,7 @@ fn test_submit_transactions() {
             .protocol
             .peermgr
             .negotiated(Link::Outbound)
+            .map(|(p, _)| p)
             .next()
             .unwrap()
             .relay

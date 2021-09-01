@@ -20,7 +20,7 @@ use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
 
 use super::channel::SetTimeout;
-use super::{Link, PeerId, Timeout};
+use super::{Link, PeerId, Socket, Timeout};
 
 /// Idle timeout.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
@@ -240,6 +240,7 @@ impl Default for Config {
 struct Peer {
     height: Height,
     last_active: LocalTime,
+    socket: Socket,
 }
 
 /// Filter (re)scan state.
@@ -732,7 +733,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     /// Called when a new peer was negotiated.
     pub fn peer_negotiated<T: BlockTree>(
         &mut self,
-        id: PeerId,
+        socket: Socket,
         height: Height,
         services: ServiceFlags,
         link: Link,
@@ -748,10 +749,11 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         let time = clock.local_time();
 
         self.peers.insert(
-            id,
+            socket.addr,
             Peer {
                 last_active: time,
                 height,
+                socket,
             },
         );
         self.sync(tree, time);
@@ -1214,7 +1216,7 @@ mod tests {
         );
 
         cbfmgr.peer_negotiated(
-            ([8, 8, 8, 8], 8333).into(),
+            Socket::new(([8, 8, 8, 8], 8333)),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1283,7 +1285,7 @@ mod tests {
         cbfmgr.filters.clear().unwrap();
         cbfmgr.initialize(time, &tree);
         cbfmgr.peer_negotiated(
-            remote,
+            Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1385,7 +1387,7 @@ mod tests {
 
             cbfmgr.initialize(time, &tree);
             cbfmgr.peer_negotiated(
-                remote,
+                Socket::new(remote),
                 best,
                 REQUIRED_SERVICES,
                 Link::Outbound,
@@ -1503,7 +1505,7 @@ mod tests {
         cbfmgr.filters.clear().unwrap();
         cbfmgr.initialize(time, &tree);
         cbfmgr.peer_negotiated(
-            remote,
+            Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,

@@ -31,9 +31,9 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
 use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 
-use super::channel::{Disconnect, SetTimeout};
+use super::channel::SetTimeout;
 use super::fees::{FeeEstimate, FeeEstimator};
-use super::{DisconnectReason, Height, PeerId};
+use super::{Height, PeerId, Socket};
 
 /// Time between re-broadcasts of inventories.
 pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -109,6 +109,11 @@ pub enum Event {
         /// Fee estimate.
         fees: FeeEstimate,
     },
+    /// A request timed out.
+    TimedOut {
+        /// Peer who timed out.
+        peer: PeerId,
+    },
 }
 
 impl std::fmt::Display for Event {
@@ -148,6 +153,7 @@ impl std::fmt::Display for Event {
                     height, fees.median,
                 )
             }
+            Event::TimedOut { peer } => write!(fmt, "Peer {} timed out", peer),
         }
     }
 }
@@ -160,6 +166,8 @@ pub struct Peer {
     /// Peer announced services.
     pub services: ServiceFlags,
 
+    /// Peer socket.
+    socket: Socket,
     /// Inventories we are attempting to send to this peer.
     outbox: HashSet<Txid>,
     /// Number of times we attempted to send inventories to this peer.
@@ -215,7 +223,7 @@ pub struct InventoryManager<U> {
     upstream: U,
 }
 
-impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
+impl<U: Inventories + SetTimeout> InventoryManager<U> {
     /// Create a new inventory manager.
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         Self {
@@ -243,7 +251,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
     }
 
     /// Called when a peer is negotiated.
-    pub fn peer_negotiated(&mut self, addr: PeerId, services: ServiceFlags, relay: bool) {
+    pub fn peer_negotiated(&mut self, socket: Socket, services: ServiceFlags, relay: bool) {
         // Add existing inventories to this peer's outbox so that they are announced.
         let mut outbox = HashSet::with_hasher(self.rng.clone().into());
         for txid in self.mempool.keys() {
@@ -251,8 +259,9 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
         }
         self.schedule_tick();
         self.peers.insert(
-            addr,
+            socket.addr,
             Peer {
+                socket,
                 services,
                 attempts: 0,
                 relay,
@@ -350,8 +359,7 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 
         for addr in disconnect {
             self.peers.remove(&addr);
-            self.upstream
-                .disconnect(addr, DisconnectReason::PeerTimeout("inv"));
+            self.upstream.event(Event::TimedOut { peer: addr });
         }
         for block_hash in requests {
             if let Some(_peer) = self.request(block_hash) {
@@ -538,6 +546,8 @@ impl<U: Inventories + SetTimeout + Disconnect> InventoryManager<U> {
 mod tests {
     use super::*;
 
+    use std::net;
+
     use crate::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::protocol;
     use crate::protocol::channel::{chan, Channel};
@@ -586,10 +596,26 @@ mod tests {
 
         let mut invmgr = InventoryManager::new(rng.clone(), upstream);
 
-        invmgr.peer_negotiated(([66, 66, 66, 66], 8333).into(), ServiceFlags::NETWORK, true);
-        invmgr.peer_negotiated(([77, 77, 77, 77], 8333).into(), ServiceFlags::NETWORK, true);
-        invmgr.peer_negotiated(([88, 88, 88, 88], 8333).into(), ServiceFlags::NETWORK, true);
-        invmgr.peer_negotiated(([99, 99, 99, 99], 8333).into(), ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(
+            Socket::new(([66, 66, 66, 66], 8333)),
+            ServiceFlags::NETWORK,
+            true,
+        );
+        invmgr.peer_negotiated(
+            Socket::new(([77, 77, 77, 77], 8333)),
+            ServiceFlags::NETWORK,
+            true,
+        );
+        invmgr.peer_negotiated(
+            Socket::new(([88, 88, 88, 88], 8333)),
+            ServiceFlags::NETWORK,
+            true,
+        );
+        invmgr.peer_negotiated(
+            Socket::new(([99, 99, 99, 99], 8333)),
+            ServiceFlags::NETWORK,
+            true,
+        );
 
         invmgr.get_block(hash);
 
@@ -635,7 +661,7 @@ mod tests {
         let (sender, receiver) = chan::unbounded::<Out>();
         let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
-        let remote = ([88, 88, 88, 88], 8333).into();
+        let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let mut rng = fastrand::Rng::with_seed(1);
 
         let time = LocalTime::now();
@@ -643,7 +669,7 @@ mod tests {
 
         let mut invmgr = InventoryManager::new(rng, upstream);
 
-        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true);
         invmgr.announce(tx);
         invmgr.received_tick(time, &tree);
 
@@ -676,12 +702,12 @@ mod tests {
         let mut rng = fastrand::Rng::with_seed(1);
         let mut time = LocalTime::now();
 
-        let remote = ([88, 88, 88, 88], 8333).into();
+        let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let tx = gen::transaction(&mut rng);
 
         let mut invmgr = InventoryManager::new(rng, upstream);
 
-        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true);
         invmgr.announce(tx.clone());
 
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
@@ -708,10 +734,9 @@ mod tests {
 
         // The next time we time out, we disconnect the peer.
         invmgr.received_tick(time, &tree);
-        receiver
-            .try_iter()
-            .find(|o| matches!(o, Out::Disconnect(addr, _) if addr == &remote))
-            .expect("Peer is disconnected");
+        events(&receiver)
+            .find(|e| matches!(e, Event::TimedOut { peer } if peer == &remote))
+            .expect("Peer times out");
 
         assert!(invmgr.contains(&tx.txid()));
         assert!(invmgr.peers.is_empty());
@@ -720,7 +745,7 @@ mod tests {
     #[test]
     fn test_block_reverted() {
         let network = Network::Regtest;
-        let remote = ([88, 88, 88, 88], 8333).into();
+        let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let (sender, receiver) = chan::unbounded::<Out>();
         let mut rng = fastrand::Rng::new();
 
@@ -743,7 +768,7 @@ mod tests {
         let mut tree = model::Cache::from(headers);
         let mut invmgr = InventoryManager::new(rng, upstream);
 
-        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true);
         invmgr.announce(tx.clone());
         invmgr.get_block(main_block1.block_hash());
         invmgr.received_block(&remote, main_block1, &tree);

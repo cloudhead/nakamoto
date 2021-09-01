@@ -33,7 +33,7 @@ use super::{
     channel::{Disconnect, SetTimeout},
     DisconnectReason, Timeout,
 };
-use super::{Hooks, Link, PeerId, Whitelist};
+use super::{Hooks, Link, PeerId, Socket, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
@@ -148,29 +148,25 @@ pub struct Config {
     pub max_inbound_peers: usize,
     /// Our user agent.
     pub user_agent: &'static str,
-
     /// Supported communication domains.
     pub domains: Vec<Domain>,
 }
 
-/// Peer states.
+/// Peer negotiation (handshake) state.
 #[derive(Copy, Clone, Debug, PartialOrd, PartialEq, Ord, Eq)]
-enum PeerState {
-    /// Waiting for "verack" message from remote.
-    AwaitingVerack {
-        since: LocalTime,
-    },
-    Negotiated {
-        since: LocalTime,
-    },
+enum HandshakeState {
+    /// Received "version" and waiting for "verack" message from remote.
+    ReceivedVersion { since: LocalTime },
+    /// Received "verack". Handshake is complete.
+    ReceivedVerack { since: LocalTime },
 }
 
 /// A peer connection. Peers that haven't yet sent their `version` message are stored as
 /// connections.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Connected {
-    /// Remote peer address.
-    pub addr: net::SocketAddr,
+pub struct Connection {
+    /// Remote peer socket.
+    pub socket: Socket,
     /// Local peer address.
     pub local_addr: net::SocketAddr,
     /// Whether this is an inbound or outbound peer connection.
@@ -179,25 +175,28 @@ pub struct Connected {
     pub since: LocalTime,
 }
 
-/// Peer connection state.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Connection {
+/// Peer state.
+#[derive(Debug, Clone)]
+pub enum Peer {
     /// A connection is being attempted.
     Connecting {
         /// Time the connection was attempted.
         time: LocalTime,
     },
     /// A connection is established.
-    Connected(Connected),
+    Connected {
+        /// Connection.
+        conn: Connection,
+        /// Peer information, if a `version` message was received.
+        peer: Option<PeerInfo>,
+    },
     /// The connection is being closed.
     Disconnecting,
 }
 
-/// A peer with connection and protocol information.
+/// A peer with protocol information.
 #[derive(Debug, Clone)]
-pub struct Peer {
-    /// Connection information.
-    pub conn: Connected,
+pub struct PeerInfo {
     /// The peer's best height.
     pub height: Height,
     /// The peer's services.
@@ -212,28 +211,18 @@ pub struct Peer {
 
     /// Peer nonce. Used to detect self-connections.
     nonce: u64,
-    /// Peer state.
-    state: PeerState,
+    /// Peer handshake state.
+    state: HandshakeState,
 }
 
-impl Peer {
-    /// Get the peer's address.
-    pub fn address(&self) -> net::SocketAddr {
-        self.conn.addr
-    }
-
-    /// Check whether the peer has successfully negotiated.
+impl PeerInfo {
+    /// Check whether the peer has finished negotiating and received our `version`.
     pub fn is_negotiated(&self) -> bool {
-        matches!(self.state, PeerState::Negotiated { .. })
-    }
-
-    /// Check whether the peer is outbound.
-    pub fn is_outbound(&self) -> bool {
-        self.conn.link.is_outbound()
+        matches!(self.state, HandshakeState::ReceivedVerack { .. })
     }
 }
 
-/// Manages peers and peer negotiation.
+/// Manages peer connections and handshake.
 #[derive(Debug)]
 pub struct PeerManager<U> {
     /// Peer manager configuration.
@@ -242,9 +231,7 @@ pub struct PeerManager<U> {
     /// Last time we were idle.
     last_idle: Option<LocalTime>,
     /// Connection states.
-    connections: HashMap<net::SocketAddr, Connection>,
-    /// Peers for which we have received at least the `version` message.
-    peers: HashMap<PeerId, Peer>,
+    peers: HashMap<net::SocketAddr, Peer>,
     upstream: U,
     rng: fastrand::Rng,
     hooks: Hooks,
@@ -253,13 +240,11 @@ pub struct PeerManager<U> {
 impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
     /// Create a new peer manager.
     pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, upstream: U) -> Self {
-        let connections = HashMap::with_hasher(rng.clone().into());
         let peers = HashMap::with_hasher(rng.clone().into());
 
         Self {
             config,
             last_idle: None,
-            connections,
             peers,
             upstream,
             rng,
@@ -284,11 +269,6 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         self.maintain_connections(addrs, time);
     }
 
-    /// Iterator over peers that have at least sent their `version` message.
-    pub fn peers(&self) -> impl Iterator<Item = &Peer> + Clone {
-        self.peers.values()
-    }
-
     /// Called when a peer connected.
     pub fn peer_connected(
         &mut self,
@@ -309,14 +289,17 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         // inbound. To prevent this, we could look at IPs when receiving inbound connections,
         // to check whether we are already connected to the peer.
 
-        self.connections.insert(
+        self.peers.insert(
             addr,
-            Connection::Connected(Connected {
-                addr,
-                local_addr,
-                link,
-                since: local_time,
-            }),
+            Peer::Connected {
+                conn: Connection {
+                    socket: Socket::new(addr),
+                    local_addr,
+                    link,
+                    since: local_time,
+                },
+                peer: None,
+            },
         );
 
         match link {
@@ -351,11 +334,10 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         addrs: &mut A,
         local_time: LocalTime,
     ) {
-        debug_assert!(self.connections.contains_key(addr));
+        debug_assert!(self.peers.contains_key(addr));
         debug_assert!(!self.is_disconnected(addr));
 
         self.peers.remove(addr);
-        self.connections.remove(addr);
         // If an outbound peer disconnected, we should make sure to maintain
         // our target outbound connection count.
         self.maintain_connections(addrs, local_time);
@@ -372,7 +354,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         now: LocalTime,
         addrs: &mut A,
     ) {
-        if let Some(Connection::Connected(conn)) = self.connections.get(addr) {
+        if let Some(Peer::Connected { conn, .. }) = self.peers.get(addr) {
             self.upstream.event(Event::VersionReceived {
                 addr: *addr,
                 msg: msg.clone(),
@@ -431,7 +413,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             }
             // Check for self-connections. We only need to check one link direction,
             // since in the case of a self-connection, we will see both link directions.
-            for (_, peer) in self.peers.iter() {
+            for (peer, conn) in self.peers() {
                 if conn.link.is_outbound() && peer.nonce == nonce {
                     return self
                         .upstream
@@ -465,48 +447,59 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             match conn.link {
                 Link::Outbound => {
                     self.upstream
-                        .verack(conn.addr)
+                        .verack(conn.socket.addr)
                         .set_timeout(HANDSHAKE_TIMEOUT);
                 }
                 Link::Inbound => {
                     self.upstream
                         .version(
-                            conn.addr,
-                            self.version(conn.addr, conn.local_addr, nonce, height, now),
+                            conn.socket.addr,
+                            self.version(conn.socket.addr, conn.local_addr, nonce, height, now),
                         )
-                        .verack(conn.addr)
+                        .verack(conn.socket.addr)
                         .set_timeout(HANDSHAKE_TIMEOUT);
                 }
             }
+            let conn = conn.clone();
 
             self.peers.insert(
-                conn.addr,
-                Peer {
-                    nonce,
-                    conn: conn.clone(),
-                    height: start_height as Height,
-                    time_offset: timestamp - now.block_time() as i64,
-                    services,
-                    user_agent,
-                    state: PeerState::AwaitingVerack { since: now },
-                    relay,
+                conn.socket.addr,
+                Peer::Connected {
+                    conn,
+                    peer: Some(PeerInfo {
+                        nonce,
+                        height: start_height as Height,
+                        time_offset: timestamp - now.block_time() as i64,
+                        services,
+                        user_agent,
+                        state: HandshakeState::ReceivedVersion { since: now },
+                        relay,
+                    }),
                 },
             );
         }
     }
 
     /// Called when a `verack` message was received.
-    pub fn received_verack(&mut self, addr: &PeerId, local_time: LocalTime) -> Option<&Peer> {
-        if let Some(peer) = self.peers.get_mut(addr) {
-            if let PeerState::AwaitingVerack { .. } = peer.state {
+    pub fn received_verack(
+        &mut self,
+        addr: &PeerId,
+        local_time: LocalTime,
+    ) -> Option<(&PeerInfo, &Connection)> {
+        if let Some(Peer::Connected {
+            peer: Some(peer),
+            conn,
+        }) = self.peers.get_mut(addr)
+        {
+            if let HandshakeState::ReceivedVersion { .. } = peer.state {
                 self.upstream.event(Event::Negotiated {
                     addr: *addr,
                     services: peer.services,
                 });
 
-                peer.state = PeerState::Negotiated { since: local_time };
+                peer.state = HandshakeState::ReceivedVerack { since: local_time };
 
-                return Some(peer);
+                return Some((peer, conn));
             } else {
                 self.upstream.disconnect(
                     *addr,
@@ -521,32 +514,46 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
     pub fn received_tick<A: AddressSource>(&mut self, local_time: LocalTime, addrs: &mut A) {
         let mut timed_out = Vec::new();
 
-        // Disconnect all peers that have been idle in a "connecting" state for too long.
+        // Time out all peers that have been idle in a "connecting" state for too long.
         for addr in self.idle_peers(local_time).collect::<Vec<_>>() {
             timed_out.push((addr, "connection"));
         }
-
-        for (addr, peer) in self.peers.iter() {
+        // Time out peers that haven't sent a `verack` quickly enough.
+        for (peer, conn) in self.peers() {
             match peer.state {
-                PeerState::AwaitingVerack { since } => {
+                HandshakeState::ReceivedVersion { since } => {
                     if local_time - since >= HANDSHAKE_TIMEOUT {
-                        timed_out.push((*addr, "handshake"));
+                        timed_out.push((conn.socket.addr, "handshake"));
                     }
                 }
-                PeerState::Negotiated { .. } => {}
+                HandshakeState::ReceivedVerack { .. } => {}
             }
         }
-        for connected in self
-            .connected()
-            .filter(|c| !self.peers.contains_key(&c.addr))
-        {
+        // Time out peers that haven't sent a `version` quickly enough.
+        for connected in self.peers.values().filter_map(|c| match c {
+            Peer::Connected { conn, peer: None } => Some(conn),
+            _ => None,
+        }) {
             if local_time - connected.since >= HANDSHAKE_TIMEOUT {
-                timed_out.push((connected.addr, "handshake"));
+                timed_out.push((connected.socket.addr, "handshake"));
             }
         }
-
+        // Disconnect all timed out peers.
         for (addr, reason) in timed_out {
             self._disconnect(addr, DisconnectReason::PeerTimeout(reason));
+        }
+
+        // Disconnect peers that have been dropped from all other sub-protocols.
+        // Since the job of the peer manager is simply to establish connections, if a peer is
+        // dropped from all other sub-protocols and we are holding on to the last reference,
+        // there is no use in keeping this peer around.
+        let dropped = self
+            .negotiated(Link::Outbound)
+            .filter(|(_, c)| c.socket.refs() == 1)
+            .map(|(_, c)| c.socket.addr)
+            .collect::<Vec<_>>();
+        for addr in dropped {
+            self._disconnect(addr, DisconnectReason::PeerDropped);
         }
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
@@ -611,60 +618,67 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
 
     /// Check whether a peer is connected via an inbound link.
     pub fn is_inbound(&self, addr: &PeerId) -> bool {
-        self.connections.get(addr).map_or(
+        self.peers.get(addr).map_or(
             false,
-            |c| matches!(c, Connection::Connected(conn) if conn.link.is_inbound()),
+            |c| matches!(c, Peer::Connected { conn, .. } if conn.link.is_inbound()),
         )
     }
 
     /// Check whether a peer is connecting.
     pub fn is_connecting(&self, addr: &PeerId) -> bool {
-        self.connections
+        self.peers
             .get(addr)
-            .map_or(false, |c| matches!(c, Connection::Connecting { .. }))
+            .map_or(false, |c| matches!(c, Peer::Connecting { .. }))
     }
 
     /// Check whether a peer is connected.
     pub fn is_connected(&self, addr: &PeerId) -> bool {
-        self.connections
+        self.peers
             .get(addr)
-            .map_or(false, |c| matches!(c, Connection::Connected { .. }))
+            .map_or(false, |c| matches!(c, Peer::Connected { .. }))
     }
 
     /// Check whether a peer is disconnected.
     pub fn is_disconnected(&self, addr: &PeerId) -> bool {
-        !self.connections.contains_key(addr)
+        !self.peers.contains_key(addr)
     }
 
     /// Check whether a peer is being disconnected.
     pub fn is_disconnecting(&self, addr: &PeerId) -> bool {
-        matches!(self.connections.get(addr), Some(Connection::Disconnecting))
+        matches!(self.peers.get(addr), Some(Peer::Disconnecting))
+    }
+
+    /// Iterator over peers that have at least sent their `version` message.
+    pub fn peers(&self) -> impl Iterator<Item = (&PeerInfo, &Connection)> + Clone {
+        self.peers.values().filter_map(move |c| match c {
+            Peer::Connected {
+                conn,
+                peer: Some(peer),
+            } => Some((peer, conn)),
+            _ => None,
+        })
     }
 
     /// Returns connecting peers.
     pub fn connecting(&self) -> impl Iterator<Item = &PeerId> {
-        self.connections
+        self.peers
             .iter()
-            .filter(|(_, p)| matches!(p, Connection::Connecting { .. }))
+            .filter(|(_, p)| matches!(p, Peer::Connecting { .. }))
             .map(|(addr, _)| addr)
     }
 
-    /// Iterator over connections in a *connected* state..
-    pub fn connected(&self) -> impl Iterator<Item = &Connected> + Clone {
-        self.connections.values().filter_map(|c| {
-            if let Connection::Connected(conn) = c {
-                Some(conn)
-            } else {
-                None
-            }
+    /// Iterator over peers in a *connected* state..
+    pub fn connected(&self) -> impl Iterator<Item = &Connection> + Clone {
+        self.peers.values().filter_map(|c| match c {
+            Peer::Connected { conn, .. } => Some(conn),
+            _ => None,
         })
     }
 
-    /// Iterator over inbound peers.
-    pub fn negotiated(&self, link: Link) -> impl Iterator<Item = &Peer> + Clone {
-        self.peers
-            .values()
-            .filter(move |p| p.is_negotiated() && p.conn.link == link)
+    /// Iterator over fully negotiated peers.
+    pub fn negotiated(&self, link: Link) -> impl Iterator<Item = (&PeerInfo, &Connection)> + Clone {
+        self.peers()
+            .filter(move |(p, c)| p.is_negotiated() && c.link == link)
     }
 
     /// Connect to a peer.
@@ -676,8 +690,7 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
         if !self.config.domains.contains(&Domain::for_address(addr)) {
             return false;
         }
-        self.connections
-            .insert(*addr, Connection::Connecting { time });
+        self.peers.insert(*addr, Peer::Connecting { time });
         self.upstream.connect(*addr, CONNECTION_TIMEOUT);
 
         true
@@ -693,7 +706,7 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
     /// Disconnect a peer (internal).
     fn _disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
         self.upstream.disconnect(addr, reason);
-        self.connections.insert(addr, Connection::Disconnecting);
+        self.peers.insert(addr, Peer::Disconnecting);
     }
 
     /// Given the current peer state and targets, calculate how many new connections we should
@@ -702,7 +715,7 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
         // Peers with our preferred services.
         let primary = self
             .negotiated(Link::Outbound)
-            .filter(|p| p.services.has(self.config.preferred_services))
+            .filter(|(p, _)| p.services.has(self.config.preferred_services))
             .count();
         // Peers only with required services, which we'd eventually want to drop in favor of peers
         // that have all services.
@@ -770,8 +783,8 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
 
     /// Peers that have been idle longer than [`CONNECTION_TIMEOUT`].
     fn idle_peers(&self, now: LocalTime) -> impl Iterator<Item = PeerId> + '_ {
-        self.connections.iter().filter_map(move |(addr, c)| {
-            if let Connection::Connecting { time } = c {
+        self.peers.iter().filter_map(move |(addr, c)| {
+            if let Peer::Connecting { time } = c {
                 if now - *time >= CONNECTION_TIMEOUT {
                     return Some(*addr);
                 }
@@ -786,6 +799,8 @@ mod tests {
     use super::*;
     use bitcoin::network::address::Address;
     use std::collections::VecDeque;
+
+    use nakamoto_test::assert_matches;
 
     mod util {
         use super::*;
@@ -833,9 +848,49 @@ mod tests {
 
         assert_eq!(peermgr.connecting().next(), None);
         assert!(matches!(
-            peermgr.connections.get(&remote),
-            Some(Connection::Disconnecting)
+            peermgr.peers.get(&remote),
+            Some(Peer::Disconnecting)
         ));
+    }
+
+    #[test]
+    fn test_peer_dropped() {
+        let rng = fastrand::Rng::with_seed(1);
+        let time = LocalTime::now();
+
+        let mut addrs = VecDeque::new();
+        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), ());
+
+        let height = 144;
+        let local = ([99, 99, 99, 99], 9999).into();
+        let remote = ([124, 43, 110, 1], 8333).into();
+        let version = VersionMessage {
+            services: ServiceFlags::NETWORK,
+            ..peermgr.version(local, remote, rng.u64(..), height, time)
+        };
+
+        peermgr.initialize(time, &mut addrs);
+        peermgr.connect(&remote, time);
+        peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+        peermgr.received_version(&remote, version, height, time, &mut addrs);
+
+        let (_, conn) = peermgr.received_verack(&remote, time).unwrap();
+        let socket = conn.socket.clone();
+        assert_eq!(socket.refs(), 2);
+
+        peermgr
+            .negotiated(Link::Outbound)
+            .find(|(_, c)| c.socket.addr == remote)
+            .unwrap();
+
+        peermgr.received_tick(time, &mut addrs);
+        assert!(!peermgr.is_disconnecting(&remote));
+        assert_eq!(socket.refs(), 2);
+
+        drop(socket);
+
+        peermgr.received_tick(time, &mut addrs);
+        assert!(peermgr.is_disconnecting(&remote));
     }
 
     #[test]
@@ -863,7 +918,10 @@ mod tests {
         peermgr.peer_connected(remote1, local, Link::Outbound, height, time);
 
         assert_eq!(peermgr.connecting().next(), None);
-        assert_eq!(peermgr.connected().map(|c| &c.addr).next(), Some(&remote1));
+        assert_eq!(
+            peermgr.connected().map(|c| &c.socket.addr).next(),
+            Some(&remote1)
+        );
 
         // Disconnect remote#1 after it has connected.
         addrs.push_back((Address::new(&remote2, services), Source::Dns));
@@ -955,13 +1013,13 @@ mod tests {
             for i in 0..connecting {
                 let remote = ([44, 44, 44, i as u8], 8333).into();
                 peermgr.connect(&remote, time);
-                assert!(peermgr.connections.contains_key(&remote));
+                assert!(peermgr.peers.contains_key(&remote));
             }
             for i in 0..connected {
                 let remote = ([55, 55, 55, i as u8], 8333).into();
                 peermgr.connect(&remote, time);
                 peermgr.peer_connected(remote, local, Link::Outbound, height, time);
-                assert!(peermgr.connections.contains_key(&remote));
+                assert!(peermgr.peers.contains_key(&remote));
             }
             for i in 0..required {
                 let remote = ([66, 66, 66, i as u8], 8333).into();
@@ -972,13 +1030,16 @@ mod tests {
 
                 peermgr.connect(&remote, time);
                 peermgr.peer_connected(remote, local, Link::Outbound, height, time);
-                assert!(peermgr.connections.contains_key(&remote));
+                assert!(peermgr.peers.contains_key(&remote));
 
                 peermgr.received_version(&remote, version, height, time, &mut addrs);
                 assert!(peermgr.peers.contains_key(&remote));
 
                 peermgr.received_verack(&remote, time).unwrap();
-                assert!(peermgr.peers.get(&remote).unwrap().is_negotiated());
+                assert_matches!(
+                    peermgr.peers.get(&remote).unwrap(),
+                    Peer::Connected { peer: Some(p), .. } if p.is_negotiated()
+                );
             }
             for i in 0..preferred {
                 let remote = ([77, 77, 77, i as u8], 8333).into();
@@ -989,13 +1050,16 @@ mod tests {
 
                 peermgr.connect(&remote, time);
                 peermgr.peer_connected(remote, local, Link::Outbound, height, time);
-                assert!(peermgr.connections.contains_key(&remote));
+                assert!(peermgr.peers.contains_key(&remote));
 
                 peermgr.received_version(&remote, version, height, time, &mut addrs);
                 assert!(peermgr.peers.contains_key(&remote));
 
                 peermgr.received_verack(&remote, time).unwrap();
-                assert!(peermgr.peers.get(&remote).unwrap().is_negotiated());
+                assert_matches!(
+                    peermgr.peers.get(&remote).unwrap(),
+                    Peer::Connected { peer: Some(p), .. } if p.is_negotiated()
+                );
             }
             assert_eq!(peermgr.delta(), delta, "{:?}", case);
         }

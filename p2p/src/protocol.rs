@@ -69,6 +69,80 @@ type Upstream = Channel;
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
 
+/// Reference counting virtual socket.
+/// When there are no more references held, this peer can be dropped.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Socket {
+    /// Socket address.
+    pub addr: net::SocketAddr,
+    /// Reference counter.
+    refs: Arc<()>,
+}
+
+impl Socket {
+    /// Create a new virtual socket.
+    pub fn new(addr: impl Into<net::SocketAddr>) -> Self {
+        Self {
+            addr: addr.into(),
+            refs: Arc::new(()),
+        }
+    }
+
+    /// Get the number of references to this virtual socket.
+    pub fn refs(&self) -> usize {
+        Arc::strong_count(&self.refs)
+    }
+}
+
+impl From<net::SocketAddr> for Socket {
+    fn from(addr: net::SocketAddr) -> Self {
+        Self::new(addr)
+    }
+}
+
+/// A remote peer.
+#[derive(Debug, Clone)]
+pub struct Peer {
+    /// Peer address.
+    pub addr: net::SocketAddr,
+    /// Local peer address.
+    pub local_addr: net::SocketAddr,
+    /// Whether this is an inbound or outbound peer connection.
+    pub link: Link,
+    /// Connected since this time.
+    pub since: LocalTime,
+    /// The peer's best height.
+    pub height: Height,
+    /// The peer's services.
+    pub services: ServiceFlags,
+    /// Peer user agent string.
+    pub user_agent: String,
+    /// Whether this peer relays transactions.
+    pub relay: bool,
+}
+
+impl Peer {
+    /// Check if this is an outbound peer.
+    pub fn is_outbound(&self) -> bool {
+        self.link.is_outbound()
+    }
+}
+
+impl From<(&peermgr::PeerInfo, &peermgr::Connection)> for Peer {
+    fn from((peer, conn): (&peermgr::PeerInfo, &peermgr::Connection)) -> Self {
+        Self {
+            addr: conn.socket.addr,
+            local_addr: conn.local_addr,
+            link: conn.link,
+            since: conn.since,
+            height: peer.height,
+            services: peer.services,
+            user_agent: peer.user_agent.clone(),
+            relay: peer.relay,
+        }
+    }
+}
+
 /// A timeout.
 pub type Timeout = LocalDuration;
 
@@ -165,7 +239,6 @@ pub enum CommandError {
 }
 
 pub use cbfmgr::GetFiltersError;
-pub use peermgr::Peer;
 
 /// A protocol input event, parametrized over the network message type.
 /// These are input events generated outside of the protocol.
@@ -243,6 +316,8 @@ pub enum DisconnectReason {
     PeerMagic(u32),
     /// Peer timed out.
     PeerTimeout(&'static str),
+    /// Peer was dropped by all sub-protocols.
+    PeerDropped,
     /// Connection to self was detected.
     SelfConnection,
     /// Inbound connection limit reached.
@@ -278,6 +353,7 @@ impl fmt::Display for DisconnectReason {
             Self::PeerHeight(_) => write!(f, "peer is too far behind"),
             Self::PeerMagic(magic) => write!(f, "received message with invalid magic: {}", magic),
             Self::PeerTimeout(s) => write!(f, "peer timed out: {:?}", s),
+            Self::PeerDropped => write!(f, "peer dropped"),
             Self::SelfConnection => write!(f, "detected self-connection"),
             Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
             Self::ConnectionError(err) => write!(f, "connection error: {}", err),
@@ -586,14 +662,14 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     /// Send a message to a all peers matching the predicate.
     fn broadcast<Q>(&self, msg: NetworkMessage, predicate: Q) -> Vec<PeerId>
     where
-        Q: Fn(&peermgr::Peer) -> bool,
+        Q: Fn(&Peer) -> bool,
     {
         let mut peers = Vec::new();
 
-        for peer in self.peermgr.peers() {
-            if predicate(peer) {
-                peers.push(peer.address());
-                self.upstream.message(peer.address(), msg.clone());
+        for peer in self.peermgr.peers().map(Peer::from) {
+            if predicate(&peer) {
+                peers.push(peer.addr);
+                self.upstream.message(peer.addr, msg.clone());
             }
         }
         peers
@@ -602,12 +678,13 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     /// Send a message to a random outbound peer. Returns the peer id.
     fn query<Q>(&self, msg: NetworkMessage, f: Q) -> Option<PeerId>
     where
-        Q: Fn(&peermgr::Peer) -> bool,
+        Q: Fn(&Peer) -> bool,
     {
         let peers = self
             .peermgr
             .negotiated(Link::Outbound)
-            .filter(|p| f(*p))
+            .map(Peer::from)
+            .filter(f)
             .collect::<Vec<_>>();
 
         match peers.len() {
@@ -615,9 +692,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 let r = self.rng.usize(..n);
                 let p = peers.get(r).unwrap();
 
-                self.upstream.message(p.address(), msg);
+                self.upstream.message(p.addr, msg);
 
-                Some(p.address())
+                Some(p.addr)
             }
             _ => None,
         }
@@ -649,7 +726,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             let preferred = self
                 .peermgr
                 .negotiated(Link::Outbound)
-                .filter(|p| p.services.has(self.peermgr.config.preferred_services))
+                .filter(|(p, _)| p.services.has(self.peermgr.config.preferred_services))
                 .count();
 
             // TODO: Add cache sizes on disk
@@ -732,29 +809,29 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     .received_version(&addr, msg, height, now, &mut self.addrmgr);
             }
             NetworkMessage::Verack => {
-                if let Some(peer) = self.peermgr.received_verack(&addr, now) {
-                    self.clock.record_offset(peer.address(), peer.time_offset);
+                if let Some((peer, conn)) = self.peermgr.received_verack(&addr, now) {
+                    self.clock.record_offset(conn.socket.addr, peer.time_offset);
                     self.addrmgr
-                        .peer_negotiated(&addr, peer.services, peer.conn.link, now);
-                    self.pingmgr.peer_negotiated(peer.address(), now);
+                        .peer_negotiated(&addr, peer.services, conn.link, now);
+                    self.pingmgr.peer_negotiated(conn.socket.addr, now);
                     self.cbfmgr.peer_negotiated(
-                        peer.address(),
+                        conn.socket.clone(),
                         peer.height,
                         peer.services,
-                        peer.conn.link,
+                        conn.link,
                         &self.clock,
                         &self.tree,
                     );
                     self.syncmgr.peer_negotiated(
-                        peer.address(),
+                        conn.socket.clone(),
                         peer.height,
                         peer.services,
-                        peer.conn.link,
+                        conn.link,
                         &self.clock,
                         &self.tree,
                     );
                     self.invmgr
-                        .peer_negotiated(peer.address(), peer.services, peer.relay);
+                        .peer_negotiated(conn.socket.clone(), peer.services, peer.relay);
                 }
             }
             NetworkMessage::Ping(nonce) => {
@@ -933,10 +1010,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                     let peers = self
                         .peermgr
                         .peers()
-                        .filter(|f| f.is_negotiated())
-                        .filter(|f| f.services.has(services))
-                        .cloned()
-                        .collect::<Vec<peermgr::Peer>>();
+                        .filter(|(p, _)| p.is_negotiated())
+                        .filter(|(p, _)| p.services.has(services))
+                        .map(Peer::from)
+                        .collect::<Vec<Peer>>();
 
                     reply.send(peers).ok();
                 }

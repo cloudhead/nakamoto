@@ -16,8 +16,8 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
-use super::channel::{Disconnect, SetTimeout};
-use super::{DisconnectReason, Link, Locators, PeerId, Timeout};
+use super::channel::SetTimeout;
+use super::{Link, Locators, PeerId, Socket, Timeout};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
@@ -60,6 +60,7 @@ enum OnTimeout {
 /// State of a sync peer.
 #[derive(Debug)]
 struct Peer {
+    socket: Socket,
     height: Height,
     tip: BlockHash,
     link: Link,
@@ -195,7 +196,7 @@ struct GetHeaders {
     on_timeout: OnTimeout,
 }
 
-impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
+impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
     /// Create a new sync manager.
     pub fn new(config: Config, rng: fastrand::Rng, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -238,7 +239,7 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     /// Called when a new peer was negotiated.
     pub fn peer_negotiated<T: BlockTree>(
         &mut self,
-        id: PeerId,
+        socket: Socket,
         height: Height,
         services: ServiceFlags,
         link: Link,
@@ -248,8 +249,8 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
         if link.is_outbound() && !services.has(REQUIRED_SERVICES) {
             return;
         }
-        self.register(id, height, link);
-        self.upstream.negotiate(id);
+        self.upstream.negotiate(socket.addr);
+        self.register(socket, height, link);
         self.sync(clock.local_time(), tree);
     }
 
@@ -513,8 +514,6 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
             match on_timeout {
                 OnTimeout::Disconnect => {
                     self.unregister(peer);
-                    self.upstream
-                        .disconnect(*peer, DisconnectReason::PeerTimeout("sync"));
                 }
                 OnTimeout::Ignore => {
                     // It's likely that the peer just didn't have the requested header.
@@ -599,17 +598,18 @@ impl<U: SetTimeout + SyncHeaders + Disconnect> SyncManager<U> {
     }
 
     /// Register a new peer.
-    fn register(&mut self, id: PeerId, height: Height, link: Link) {
+    fn register(&mut self, socket: Socket, height: Height, link: Link) {
         let last_active = None;
         let last_asked = None;
         let tip = BlockHash::default();
 
         self.peers.insert(
-            id,
+            socket.addr,
             Peer {
                 height,
                 tip,
                 link,
+                socket,
                 last_active,
                 last_asked,
             },
