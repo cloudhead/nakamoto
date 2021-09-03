@@ -451,6 +451,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             }
 
             let last_active = if last_active == 0 {
+                // TODO: Cannot be 'None' due to above condition.
                 None
             } else {
                 Some(LocalTime::from_block_time(last_active))

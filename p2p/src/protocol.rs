@@ -922,6 +922,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             }
             NetworkMessage::Addr(addrs) => {
                 self.addrmgr.received_addr(addr, addrs);
+                // TODO: Tick the peer manager, because we may have new addresses to connect to.
             }
             NetworkMessage::GetAddr => {
                 self.addrmgr.received_getaddr(&addr);

@@ -225,14 +225,13 @@ impl peermgr::Handshake for () {
     }
 }
 
-#[allow(unused_variables)]
 impl cbfmgr::SyncFilters for Channel {
     fn get_cfheaders(
         &self,
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
-        timeout: LocalDuration,
+        _timeout: LocalDuration,
     ) {
         self.message(
             addr,
@@ -253,7 +252,7 @@ impl cbfmgr::SyncFilters for Channel {
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
-        timeout: LocalDuration,
+        _timeout: LocalDuration,
     ) {
         self.message(
             addr,

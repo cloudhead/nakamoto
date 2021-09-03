@@ -78,13 +78,15 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn subscribe(&self) -> chan::Receiver<Event>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
-    /// Rescan the blockchain for matching addresses and outputs.
+    /// Rescan the blockchain for matching scripts.
     fn rescan(
         &self,
         range: impl RangeBounds<Height>,
         watch: impl Iterator<Item = Script>,
     ) -> Result<(), Error> {
         use std::ops::Bound;
+
+        // TODO: Handle invalid/empty ranges.
 
         // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
         let from = match range.start_bound() {
@@ -122,7 +124,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Submit a transaction to the network.
     ///
     /// Returns the peer(s) the transaction was announced to, or an error if no peers were found.
-    fn submit_transaction(&self, txs: Transaction) -> Result<NonEmpty<net::SocketAddr>, Error>;
+    fn submit_transaction(&self, tx: Transaction) -> Result<NonEmpty<net::SocketAddr>, Error>;
     /// Import block headers into the node.
     /// This may cause the node to broadcast header or inventory messages to its peers.
     fn import_headers(
