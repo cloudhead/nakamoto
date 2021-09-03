@@ -72,10 +72,10 @@ pub enum Event {
         /// Block height.
         height: Height,
     },
-    /// Block received.
+    /// Block processed.
     BlockProcessed {
         /// Block.
-        block: Block,
+        block: Block, // TODO: Just the block hash?
         /// Block height.
         height: Height,
     },
@@ -486,7 +486,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 }
             }
             // Process block through fee estimator.
-            if let Some(fees) = self.estimator.get_estimate(&block.txdata) {
+            if let Some(fees) = self.estimator.process(block.clone(), height) {
                 self.upstream.event(Event::FeeEstimated {
                     block: hash,
                     height,

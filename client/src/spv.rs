@@ -186,6 +186,7 @@ impl Mapper {
 
     // PRIVATE METHODS /////////////////////////////////////////////////////////
 
+    // TODO: Instead of receiving the block, fetch it if matched.
     fn process_block(&mut self, block: Block, height: Height, emitter: &Emitter<Event>) {
         if !self.pending.remove(&height) {
             // Received unexpected block.

@@ -1,6 +1,8 @@
 //! Types and utilities related to transaction fees and fee rates.
+use std::collections::VecDeque;
+
 use bitcoin::blockdata::constants::WITNESS_SCALE_FACTOR;
-use bitcoin::{OutPoint, Transaction, TxOut};
+use bitcoin::{Block, OutPoint, Transaction, TxOut};
 
 use nakamoto_common::collections::HashMap;
 use nakamoto_common::nonempty::NonEmpty;
@@ -9,6 +11,9 @@ use super::Height;
 
 // TODO: Handle rollbacks in a more graceful way.
 // TODO: Prune UTXO set so that it doesn't grow indefinitely.
+
+/// Maximum depth of a re-org that we are able to handle.
+pub const MAX_REORG_DEPTH: usize = 12;
 
 /// Transaction fee rate in satoshis/vByte.
 pub type FeeRate = u64;
@@ -80,19 +85,27 @@ impl FeeEstimate {
 /// Transaction fee rate estimator.
 #[derive(Debug, Default)]
 pub struct FeeEstimator {
+    /// UTXO set.
     utxos: HashMap<OutPoint, TxOut>,
+    /// Blocks recently processed. We keep these around to replay the transactions
+    /// backwards in case of a re-org.
+    processed: VecDeque<(Height, Block)>,
 }
 
 impl FeeEstimator {
-    /// Get a fee estimate, given a transaction block.
-    /// Returns [`None`] if the block is empty.
-    pub fn get_estimate(&mut self, txs: &[Transaction]) -> Option<FeeEstimate> {
+    /// Process a block and get a fee estimate.  Returns [`None`] if the block is empty.
+    pub fn process(&mut self, block: Block, height: Height) -> Option<FeeEstimate> {
         let mut fees = Vec::new();
 
-        for tx in txs {
-            if let Some(rate) = self.fee_rate(tx) {
+        for tx in &block.txdata {
+            if let Some(rate) = self.apply(tx) {
                 fees.push(rate);
             }
+        }
+
+        self.processed.push_back((height, block));
+        if self.processed.len() > MAX_REORG_DEPTH {
+            self.processed.pop_front();
         }
         FeeEstimate::from(fees)
     }
@@ -102,12 +115,13 @@ impl FeeEstimator {
         self.utxos.clear();
     }
 
-    /// Calculate the fee rate of a transaction.
-    fn fee_rate(&mut self, tx: &Transaction) -> Option<FeeRate> {
+    /// Apply the transaction to the UTXO set and calculate the fee rate.
+    fn apply(&mut self, tx: &Transaction) -> Option<FeeRate> {
         let txid = tx.txid();
         let mut received = 0;
         let mut sent = 0;
 
+        // TODO: Process outputs.
         if tx.is_coin_base() {
             return None;
         }
