@@ -4,14 +4,11 @@ use bitcoin::network::message::RawNetworkMessage;
 
 use crossbeam_channel as chan;
 
-use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
-use nakamoto_common::block::tree::BlockTree;
-use nakamoto_common::p2p::peer;
 
 use nakamoto_p2p::error::Error;
 use nakamoto_p2p::protocol;
-use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Input, Link, Out, Protocol};
+use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Input, Link, Out};
 
 use log::*;
 
@@ -80,7 +77,7 @@ impl<R: Write + Read + AsRawFd, E> Reactor<R, E> {
     }
 }
 
-impl<E: protocol::event::Publisher> nakamoto_p2p::reactor::Reactor<E>
+impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
     for Reactor<net::TcpStream, E>
 {
     type Waker = Arc<popol::Waker>;
@@ -108,13 +105,10 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::reactor::Reactor<E>
     }
 
     /// Run the given protocol with the reactor.
-    fn run<B, T: BlockTree, F: Filters, P: peer::Store>(
-        &mut self,
-        listen_addrs: &[net::SocketAddr],
-        builder: B,
-    ) -> Result<(), Error>
+    fn run<B, P>(&mut self, listen_addrs: &[net::SocketAddr], builder: B) -> Result<(), Error>
     where
-        B: FnOnce(chan::Sender<Out>) -> Protocol<T, F, P>,
+        B: FnOnce(chan::Sender<Out>) -> P,
+        P: nakamoto_p2p::traits::Protocol,
     {
         let listener = if listen_addrs.is_empty() {
             None

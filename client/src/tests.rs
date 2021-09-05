@@ -10,10 +10,12 @@ use bitcoin::network::constants::ServiceFlags;
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_chain::filter::cache::FilterCache;
+use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::syncmgr;
+use nakamoto_p2p::protocol::Protocol;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
 use crate::client::{self, event, Client, Config};
@@ -52,8 +54,14 @@ fn network(
                 let cache = BlockCache::from(store, params, &checkpoints).unwrap();
                 let filters = FilterCache::from(store::Memory::default()).unwrap();
                 let peers = HashMap::new();
+                let local_time = time::SystemTime::now().into();
+                let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
+                let rng = fastrand::Rng::new();
 
-                node.run_with(cache, filters, peers).unwrap();
+                node.run_with(move |cfg, upstream| {
+                    Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
+                })
+                .unwrap();
             }
         });
 
@@ -167,7 +175,15 @@ fn test_multiple_handle_events() {
     let bob_events = bob.events();
 
     thread::spawn(|| {
-        client.run_with(cache, filters, peers).unwrap();
+        let local_time = time::SystemTime::now().into();
+        let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
+        let rng = fastrand::Rng::new();
+
+        client
+            .run_with(|cfg, upstream| {
+                Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
+            })
+            .unwrap();
     });
 
     event::wait(
@@ -203,7 +219,15 @@ fn test_handle_shutdown() {
     let filters = FilterCache::from(store::Memory::default()).unwrap();
     let peers = HashMap::new();
 
-    let th = thread::spawn(|| client.run_with(cache, filters, peers));
+    let th = thread::spawn(|| {
+        let local_time = time::SystemTime::now().into();
+        let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
+        let rng = fastrand::Rng::new();
+
+        client.run_with(|cfg, upstream| {
+            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
+        })
+    });
 
     handle.shutdown().unwrap();
     th.join().unwrap().unwrap();

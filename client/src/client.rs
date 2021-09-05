@@ -16,10 +16,9 @@ use nakamoto_chain::filter;
 use nakamoto_chain::filter::cache::FilterCache;
 use nakamoto_chain::{block::cache::BlockCache, filter::BlockFilter};
 
-use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
-use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
+use nakamoto_common::block::tree::{self, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::{Source, Store as _};
@@ -37,7 +36,7 @@ use nakamoto_p2p::protocol::{cbfmgr, invmgr, peermgr, syncmgr};
 
 pub use nakamoto_p2p::event;
 pub use nakamoto_p2p::protocol::{Command, CommandError, Peer};
-pub use nakamoto_p2p::reactor::Reactor;
+pub use nakamoto_p2p::traits::Reactor;
 
 pub use crate::error::Error;
 pub use crate::event::Event;
@@ -359,12 +358,11 @@ impl<R: Reactor<Publisher>> Client<R> {
 
     /// Start the client process, supplying the block cache. This function is meant to be run in
     /// its own thread.
-    pub fn run_with<T: BlockTree, F: Filters, P: peer::Store>(
-        mut self,
-        cache: T,
-        filters: F,
-        peers: P,
-    ) -> Result<(), Error> {
+    pub fn run_with<B, P>(mut self, builder: B) -> Result<(), Error>
+    where
+        B: FnOnce(p2p::protocol::Config, chan::Sender<protocol::Out>) -> P,
+        P: p2p::traits::Protocol,
+    {
         let cfg = p2p::protocol::Config {
             services: self.config.services,
             hooks: self.config.hooks,
@@ -378,17 +376,9 @@ impl<R: Reactor<Publisher>> Client<R> {
 
         log::info!("Initializing client ({:?})..", cfg.network);
         log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
-        log::info!("Chain height is {}", cache.height());
 
-        let local_time = SystemTime::now().into();
-        let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
-        let rng = fastrand::Rng::new();
-
-        log::info!("{} peer(s) found..", peers.len());
-
-        self.reactor.run(&self.config.listen, |upstream| {
-            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
-        })?;
+        self.reactor
+            .run::<_, P>(&self.config.listen, |upstream| builder(cfg, upstream))?;
 
         Ok(())
     }

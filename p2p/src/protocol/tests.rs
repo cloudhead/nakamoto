@@ -46,6 +46,8 @@ use nakamoto_test::BITCOIN_HEADERS;
 #[allow(unused_imports)]
 use nakamoto_test::logger;
 
+use crate::traits::Protocol as _;
+
 pub type Protocol = super::Protocol<
     BlockCache<store::Memory<BlockHeader>>,
     model::FilterCache,

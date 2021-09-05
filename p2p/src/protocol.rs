@@ -24,6 +24,8 @@ use peermgr::PeerManager;
 use pingmgr::PingManager;
 use syncmgr::SyncManager;
 
+use crate::traits;
+
 pub use event::Event;
 
 use std::collections::HashSet;
@@ -948,9 +950,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     }
 }
 
-impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
-    /// Initialize the protocol. Called once before any event is sent to the state machine.
-    pub fn initialize(&mut self, time: LocalTime) {
+impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
+    fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.addrmgr.initialize(time);
         self.syncmgr.initialize(time, &self.tree);
@@ -958,8 +959,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         self.cbfmgr.initialize(time, &self.tree);
     }
 
-    /// Process the next input and advance the state machine by one step.
-    pub fn step(&mut self, input: Input, local_time: LocalTime) {
+    fn step(&mut self, input: Input, local_time: LocalTime) {
         self.tick(local_time);
 
         match input {
