@@ -1147,13 +1147,15 @@ fn test_confirmed_transaction() {
         },
         "Alice emits the second 'Confirmed' event"
     );
-    assert!(
-        matches! {
-            events.next().unwrap(), invmgr::Event::BlockProcessed { block, .. }
-            if block.block_hash() == blk2.block_hash()
-        },
-        "Alice is done processing the second block"
-    );
+
+    events
+        .find(|e| {
+            matches!(
+                e, invmgr::Event::BlockProcessed { block, .. }
+                if block.block_hash() == blk2.block_hash()
+            )
+        })
+        .expect("Alice is done processing the second block");
 
     assert_eq!(events.count(), 0);
     assert!(alice.protocol.invmgr.is_empty());
