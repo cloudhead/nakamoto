@@ -9,11 +9,10 @@ use nakamoto_common::nonempty::NonEmpty;
 
 use super::Height;
 
-// TODO: Handle rollbacks in a more graceful way.
 // TODO: Prune UTXO set so that it doesn't grow indefinitely.
 
 /// Maximum depth of a re-org that we are able to handle.
-pub const MAX_REORG_DEPTH: usize = 12;
+pub const MAX_UTXO_SNAPSHOTS: usize = 12;
 
 /// Transaction fee rate in satoshis/vByte.
 pub type FeeRate = u64;
@@ -82,20 +81,40 @@ impl FeeEstimate {
     }
 }
 
+/// Set of unspent transaction outputs (UTXO).
+type UtxoSet = HashMap<OutPoint, TxOut>;
+
 /// Transaction fee rate estimator.
 #[derive(Debug, Default)]
 pub struct FeeEstimator {
     /// UTXO set.
-    utxos: HashMap<OutPoint, TxOut>,
-    /// Blocks recently processed. We keep these around to replay the transactions
-    /// backwards in case of a re-org.
-    processed: VecDeque<(Height, Block)>,
+    utxos: UtxoSet,
+    /// Current (best) height.
+    height: Height,
+    /// UTXO set snapshots.
+    /// These are used to return to a previous state in the case of a re-org.
+    snapshots: VecDeque<(Height, UtxoSet)>,
 }
 
 impl FeeEstimator {
-    /// Process a block and get a fee estimate.  Returns [`None`] if the block is empty.
+    /// Process a block and get a fee estimate.  Returns [`None`] if none of the transactions
+    /// could be processed due to missing UTXOs, or the block height isn't greater than the
+    /// current block height of the fee estimator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the block height is not greater than the current block height of the
+    /// fee estimator.
     pub fn process(&mut self, block: Block, height: Height) -> Option<FeeEstimate> {
         let mut fees = Vec::new();
+        let snapshot = self.utxos.clone();
+
+        assert!(
+            height > self.height,
+            "Received block #{} must be higher than best block #{}",
+            height,
+            self.height,
+        );
 
         for tx in &block.txdata {
             if let Some(rate) = self.apply(tx) {
@@ -103,16 +122,25 @@ impl FeeEstimator {
             }
         }
 
-        self.processed.push_back((height, block));
-        if self.processed.len() > MAX_REORG_DEPTH {
-            self.processed.pop_front();
+        self.snapshots.push_back((self.height, snapshot));
+        if self.snapshots.len() > MAX_UTXO_SNAPSHOTS {
+            self.snapshots.pop_front();
         }
+        self.height = height;
+
         FeeEstimate::from(fees)
     }
 
     /// Rollback to a certain height.
-    pub fn rollback(&mut self, _height: Height) {
-        self.utxos.clear();
+    pub fn rollback(&mut self, height: Height) {
+        self.snapshots.retain(|(h, _)| h <= &height);
+
+        if let Some((h, snapshot)) = self.snapshots.pop_back() {
+            assert!(h <= height);
+
+            self.utxos = snapshot;
+            self.height = h;
+        }
     }
 
     /// Apply the transaction to the UTXO set and calculate the fee rate.
@@ -154,5 +182,76 @@ impl FeeEstimator {
         let rate = fee as f64 / (weight as f64 / WITNESS_SCALE_FACTOR as f64);
 
         Some(rate.round() as FeeRate)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nakamoto_test::assert_matches;
+    use nakamoto_test::block::gen;
+
+    #[test]
+    fn test_rollback() {
+        let mut fe = FeeEstimator::default();
+        let mut rng = fastrand::Rng::new();
+        let genesis = gen::genesis(&mut rng);
+        let blocks = gen::blockchain(genesis, 21, &mut rng);
+
+        let mut estimates = HashMap::with_hasher(rng.into());
+
+        for (height, block) in blocks.iter().cloned().enumerate().skip(1) {
+            let estimate = fe.process(block, height as Height);
+            estimates.insert(height, estimate);
+        }
+        assert_eq!(fe.snapshots.len(), MAX_UTXO_SNAPSHOTS as usize);
+        assert_eq!(fe.height, 21);
+        assert_matches!(fe.snapshots.back(), Some((20, _)));
+
+        fe.rollback(18);
+        assert_eq!(fe.snapshots.len(), 9);
+        assert_eq!(fe.height, 18);
+        assert_matches!(fe.snapshots.back(), Some((17, _)));
+
+        assert_eq!(
+            fe.process(blocks[19].clone(), 19).as_ref().unwrap(),
+            estimates[&19].as_ref().unwrap()
+        );
+        assert_eq!(fe.snapshots.len(), 10);
+        assert_eq!(fe.height, 19);
+        assert_matches!(fe.snapshots.back(), Some((18, _)));
+    }
+
+    #[test]
+    fn test_rollback_missing_height() {
+        let mut fe = FeeEstimator::default();
+        let mut rng = fastrand::Rng::new();
+        let genesis = gen::genesis(&mut rng);
+        let blocks = gen::blockchain(genesis, 14, &mut rng);
+
+        fe.process(blocks[8].clone(), 8);
+        fe.process(blocks[9].clone(), 9);
+
+        fe.process(blocks[13].clone(), 13);
+        fe.process(blocks[14].clone(), 14);
+
+        assert_eq!(fe.snapshots.len(), 4);
+
+        fe.rollback(10); // Missing height
+
+        assert_eq!(fe.snapshots.len(), 2);
+        assert_eq!(fe.height, 9);
+        assert_matches!(fe.snapshots.back(), Some((8, _)));
+
+        fe.rollback(8);
+
+        assert_eq!(fe.snapshots.len(), 1);
+        assert_eq!(fe.height, 8);
+        assert_matches!(fe.snapshots.back(), Some((0, _)));
+
+        fe.rollback(4);
+
+        assert_eq!(fe.snapshots.len(), 0);
+        assert_eq!(fe.height, 0);
     }
 }

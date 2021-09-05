@@ -1,3 +1,7 @@
+use std::collections::HashMap;
+
+use bitcoin::blockdata::transaction::{OutPoint, TxOut};
+
 use nakamoto_common::block::BlockHeader;
 pub use nakamoto_common::block::*;
 
@@ -11,6 +15,45 @@ pub fn solve(header: &mut BlockHeader) {
 
 pub mod cache {
     pub mod model;
+}
+
+#[derive(Default)]
+struct UtxoSet {
+    utxos: HashMap<OutPoint, TxOut>,
+}
+
+impl std::ops::Deref for UtxoSet {
+    type Target = HashMap<OutPoint, TxOut>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.utxos
+    }
+}
+
+impl std::ops::DerefMut for UtxoSet {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.utxos
+    }
+}
+
+impl UtxoSet {
+    fn apply(&mut self, tx: &Transaction) {
+        if !tx.is_coin_base() {
+            for input in tx.input.iter() {
+                if self.utxos.remove(&input.previous_output).is_none() {
+                    return;
+                }
+            }
+        }
+
+        for (vout, output) in tx.output.iter().enumerate() {
+            let out = OutPoint {
+                txid: tx.txid(),
+                vout: vout as u32,
+            };
+            self.utxos.insert(out, output.clone());
+        }
+    }
 }
 
 pub mod gen {
@@ -28,6 +71,8 @@ pub mod gen {
     use nakamoto_common::block::filter::{BlockFilter, FilterHash, FilterHeader};
     use nakamoto_common::block::*;
     use nakamoto_common::nonempty::NonEmpty;
+
+    use super::UtxoSet;
 
     /// Generates a random transaction.
     pub fn transaction(rng: &mut fastrand::Rng) -> Transaction {
@@ -63,6 +108,49 @@ pub mod gen {
             version: 1,
             lock_time: 0,
             input,
+            output,
+        }
+    }
+
+    /// Generates a random transaction with the specified input and value.
+    pub fn transaction_with(
+        previous_output: OutPoint,
+        value: u64,
+        rng: &mut fastrand::Rng,
+    ) -> Transaction {
+        assert!(value > 0);
+
+        let mut output = Vec::with_capacity(rng.usize(1..8));
+        let input = TxIn {
+            previous_output,
+            script_sig: Script::new(),
+            sequence: 0xFFFFFFFF,
+            witness: vec![],
+        };
+        let fee = rng.u64(0..value);
+        let mut allowance = value - fee;
+
+        // Outputs.
+        for _ in 0..output.capacity() {
+            let script_pubkey = script(rng);
+            let v = rng.u64(1..=allowance);
+
+            output.push(TxOut {
+                value: v,
+                script_pubkey,
+            });
+
+            allowance -= v;
+            if allowance == 0 {
+                break;
+            }
+        }
+        assert!(output.iter().map(|o| o.value).sum::<u64>() <= value);
+
+        Transaction {
+            version: 1,
+            lock_time: 0,
+            input: vec![input],
             output,
         }
     }
@@ -185,10 +273,36 @@ pub mod gen {
     /// Generate a random blockchain.
     pub fn blockchain(parent: Block, height: Height, rng: &mut fastrand::Rng) -> NonEmpty<Block> {
         let mut prev_header = parent.header;
-        let mut chain = NonEmpty::new(parent);
+        let mut chain = NonEmpty::new(parent.clone());
+        let mut utxos = UtxoSet::default();
+
+        assert!(height > 0);
+        assert!(!parent.txdata.is_empty());
+
+        for tx in &parent.txdata {
+            utxos.apply(tx);
+        }
 
         for _ in 0..height {
-            let block = block(&prev_header, rng);
+            let mut txdata = Vec::with_capacity(rng.usize(1..16));
+            let mut outpoints = utxos
+                .iter()
+                .map(|(k, txout)| (*k, txout.value))
+                .collect::<Vec<_>>();
+
+            for _ in 0..txdata.capacity() {
+                if let Some((out, value)) = outpoints.pop() {
+                    let tx = transaction_with(out, value, rng);
+                    assert!(!tx.output.is_empty());
+
+                    utxos.apply(&tx);
+                    txdata.push(tx);
+                } else {
+                    break;
+                }
+            }
+
+            let block = block_with(&prev_header, txdata, rng);
             prev_header = block.header;
 
             chain.push(block);
@@ -200,6 +314,8 @@ pub mod gen {
     pub fn fork(parent: &BlockHeader, length: usize, rng: &mut fastrand::Rng) -> Vec<Block> {
         let mut prev_header = *parent;
         let mut chain = Vec::new();
+
+        assert!(length > 0);
 
         for _ in 0..length {
             let block = block(&prev_header, rng);
@@ -218,6 +334,8 @@ pub mod gen {
     ) -> NonEmpty<BlockHeader> {
         let mut prev_header = parent;
         let mut chain = NonEmpty::new(parent);
+
+        assert!(height > 0);
 
         for _ in 0..height {
             let header = header(&prev_header, TxMerkleNode::default(), rng);

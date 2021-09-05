@@ -39,14 +39,17 @@
 #![allow(unused_imports)]
 use std::{iter, net, thread};
 
-use p2p::protocol::syncmgr;
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
+
+use bitcoin::OutPoint;
 
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;
+
+use p2p::protocol::syncmgr;
 
 use super::p2p::protocol::{cbfmgr, invmgr};
 use super::utxos::Utxos;
@@ -71,7 +74,8 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     client.tip = (height, chain[height as usize].header);
 
     // Build watchlist.
-    let mut utxos = Utxos::new();
+    // let mut utxos = Utxos::new();
+    let mut spent = 0;
     let (watch, heights, balance) = gen::watchlist(birth, chain.iter(), &mut rng);
 
     let mut spv = super::Mapper::new();
@@ -113,7 +117,11 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         match event {
             Event::BlockMatched { transactions, .. } => {
                 for t in &transactions {
-                    utxos.apply(t, &watch);
+                    for output in &t.output {
+                        if watch.contains(&output.script_pubkey) {
+                            spent += output.value;
+                        }
+                    }
                 }
             }
             Event::Synced {
@@ -129,7 +137,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
             _ => {}
         }
     }
-    assert_eq!(balance, utxos.balance());
+    assert_eq!(balance, spent);
     client.shutdown().unwrap();
 
     TestResult::passed()
