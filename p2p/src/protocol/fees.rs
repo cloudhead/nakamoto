@@ -149,11 +149,6 @@ impl FeeEstimator {
         let mut received = 0;
         let mut sent = 0;
 
-        // TODO: Process outputs.
-        if tx.is_coin_base() {
-            return None;
-        }
-
         // Look for outputs.
         for (vout, output) in tx.output.iter().enumerate() {
             let outpoint = OutPoint {
@@ -162,6 +157,10 @@ impl FeeEstimator {
             };
             self.utxos.insert(outpoint, output.clone());
             sent += output.value;
+        }
+        // Since coinbase transactions have no inputs, we only process the outputs.
+        if tx.is_coin_base() {
+            return None;
         }
 
         // Look for inputs.
