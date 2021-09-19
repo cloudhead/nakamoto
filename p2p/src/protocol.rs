@@ -194,11 +194,6 @@ pub enum Command {
         RangeInclusive<Height>,
         chan::Sender<Result<(), GetFiltersError>>,
     ),
-    /// Estimate the next transaction fee range.
-    EstimateFee {
-        /// Type of estimate to make.
-        strategy: FeeEstimation,
-    },
     /// Rescan the chain for matching scripts and addresses.
     Rescan {
         /// Start scan from this height. If unbounded, start at the current height.
@@ -1023,11 +1018,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
 
                     self.peermgr.whitelist(addr);
                     self.peermgr.connect(&addr, local_time);
-                }
-                Command::EstimateFee { strategy } => {
-                    debug!(target: self.target, "Received command: EstimateFee({:?})", strategy);
-
-                    todo!("Command::EstimateFee is not yet implemented");
                 }
                 Command::Disconnect(addr) => {
                     debug!(target: self.target, "Received command: Disconnect({})", addr);
