@@ -925,9 +925,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 self.addrmgr.received_getaddr(&addr);
             }
             NetworkMessage::GetData(invs) => {
-                // Don't panic if the lock is poisoned -- it may be held by a non-critical thread.
                 self.invmgr.received_getdata(addr, &invs);
-
                 (*self.hooks.on_getdata)(addr, invs, &self.upstream);
             }
             _ => {
