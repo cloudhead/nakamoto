@@ -22,6 +22,9 @@ use nakamoto_common::source;
 use super::channel::SetTimeout;
 use super::{Link, PeerId, Socket, Timeout};
 
+pub mod cache;
+use cache::FilterCache;
+
 /// Idle timeout.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 
@@ -225,12 +228,15 @@ pub enum GetFiltersError {
 pub struct Config {
     /// How long to wait for a response from a peer.
     pub request_timeout: Timeout,
+    /// Filter cache size, in bytes.
+    pub filter_cache_size: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
             request_timeout: Timeout::from_secs(30),
+            filter_cache_size: 1024 * 1024, // 1 MB.
         }
     }
 }
@@ -266,6 +272,28 @@ pub struct Rescan {
 }
 
 impl Rescan {
+    /// Check whether a filter matches one of our scripts.
+    fn match_filter(
+        &self,
+        filter: &BlockFilter,
+        block_hash: &BlockHash,
+    ) -> Result<bool, bip158::Error> {
+        let mut matched = false;
+
+        // Match scripts first, then match transactions. All outputs of a transaction must
+        // match to consider the transaction matched.
+        if !self.watch.is_empty() {
+            matched = filter.match_any(block_hash, &mut self.watch.iter().map(|k| k.as_bytes()))?;
+        }
+        if !matched && !self.transactions.is_empty() {
+            matched = self.transactions.values().any(|outs| {
+                let mut outs = outs.iter().map(|k| k.as_bytes());
+                filter.match_all(block_hash, &mut outs).unwrap_or(false)
+            })
+        }
+        Ok(matched)
+    }
+
     /// Given a range of filter heights, return the ranges that are missing.
     /// This is useful to figure out which ranges to fetch while ensuring we don't request
     /// the same heights more than once.
@@ -314,6 +342,8 @@ pub struct FilterManager<F, U> {
     pub rescan: Rescan,
     /// Filter header chain.
     pub filters: F,
+    /// Filter cache.
+    pub cache: FilterCache,
 
     config: Config,
     peers: AddressBook<PeerId, Peer>,
@@ -330,11 +360,13 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
         let rescan = Rescan::default();
+        let cache = FilterCache::new(config.filter_cache_size);
 
         Self {
             config,
             peers,
             rescan,
+            cache,
             upstream,
             filters,
             inflight: HashMap::with_hasher(rng.clone().into()),
@@ -358,9 +390,12 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         self.filters.rollback(n)?;
         self.schedule_tick();
 
-        if self.rescan.active {
-            let height = self.filters.height();
+        let height = self.filters.height();
 
+        // Purge stale block filters.
+        self.cache.rollback(height);
+
+        if self.rescan.active {
             // Reset "current" scanning height.
             //
             // We start re-scanning from either the start, or the current height, whichever
@@ -421,13 +456,10 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         end: Bound<Height>,
         watch: Vec<Script>,
         tree: &T,
-    ) {
-        if self.rescan.active {
-            // TODO: Don't panic here.
-            panic!("{}: Rescan already active", source!());
-        }
+    ) -> Vec<BlockHash> {
+        let mut matches = Vec::new();
+
         self.rescan.active = true;
-        self.rescan.received = HashMap::with_hasher(self.rng.clone().into());
         self.rescan.start = match start {
             Bound::Unbounded => tree.height() + 1,
             Bound::Included(h) => h,
@@ -440,13 +472,32 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         };
         self.rescan.current = self.rescan.start;
         self.rescan.watch = watch.into_iter().collect();
-        self.rescan.transactions = HashMap::with_hasher(self.rng.clone().into());
-        self.rescan.requested = BTreeSet::new();
+
+        // Match filters in the cache.
+        if !self.rescan.watch.is_empty() {
+            for (height, filter) in self.cache.iter() {
+                if let Some(header) = tree.get_block_by_height(*height) {
+                    let block_hash = header.block_hash();
+                    let matched = self
+                        .rescan
+                        .match_filter(filter, &block_hash)
+                        .unwrap_or_else(|e| {
+                            panic!("{}: Only valid filters should be cached: {}", source!(), e)
+                        });
+
+                    if matched {
+                        matches.push(block_hash);
+                    }
+                }
+            }
+        }
 
         // Nb. If our filter header chain isn't caught up with our block header chain,
         // this range will be empty, and this will effectively do nothing.
         self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
             .ok();
+
+        matches
     }
 
     /// Send a `getcfilters` message to a random peer.
@@ -721,6 +772,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
                     // At least, log an event.
                 }
             }
+        } else {
+            // Unsolicited filter.
         }
         Ok(Vec::default())
     }
@@ -895,33 +948,16 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     /// Checks whether any of the queued filters is next in line (by height) and if so,
     /// processes it and returns the result of trying to match it with the watch list.
     fn process(&mut self) -> Result<Vec<BlockHash>, bip158::Error> {
-        // TODO: For BIP32 wallets, add one more address to check, if the
-        // matching one was the highest-index one.
         let mut matches = Vec::new();
         let mut current = self.rescan.current;
 
         while let Some((filter, block_hash)) = self.rescan.received.remove(&current) {
-            // Match scripts first, then match transactions. All outputs of a transaction must
-            // match to consider the transaction matched.
-            let mut matched = false;
-
-            if !self.rescan.watch.is_empty() {
-                matched = filter.match_any(
-                    &block_hash,
-                    &mut self.rescan.watch.iter().map(|k| k.as_bytes()),
-                )?;
-            }
-            if !matched && !self.rescan.transactions.is_empty() {
-                matched = self.rescan.transactions.values().any(|outs| {
-                    let mut outs = outs.iter().map(|k| k.as_bytes());
-                    filter.match_all(&block_hash, &mut outs).unwrap_or(false)
-                })
-            }
-
+            let matched = self.rescan.match_filter(&filter, &block_hash)?;
             if matched {
                 matches.push(block_hash);
             }
 
+            self.cache.push(current, filter);
             self.upstream.event(Event::FilterProcessed {
                 block: block_hash,
                 height: current,

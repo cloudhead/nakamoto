@@ -48,6 +48,11 @@ impl FilterCache {
         self.cache.len()
     }
 
+    /// Check whether the cache is empty.
+    pub fn is_empty(&self) -> bool {
+        self.cache.len() == 0
+    }
+
     /// Push a filter into the cache.
     ///
     /// Returns `false` if the filter was not added to the cache because it wasn't
@@ -126,6 +131,11 @@ impl FilterCache {
     /// Get the end height of the cache.
     pub fn end(&self) -> Option<Height> {
         self.cache.back().cloned().map(|(h, _)| h)
+    }
+
+    /// Iterate over cached filters.
+    pub fn iter(&self) -> impl Iterator<Item = (&Height, &BlockFilter)> {
+        self.cache.iter().map(|(h, b)| (h, b))
     }
 
     /// Get a filter in the cache by height.

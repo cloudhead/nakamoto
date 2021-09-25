@@ -1098,7 +1098,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
                 }
                 Command::Rescan { from, to, watch } => {
                     debug!(target: self.target, "Received command: Rescan({:?}, {:?})", from, to);
-                    self.cbfmgr.rescan(from, to, watch, &self.tree);
+
+                    // A rescan with a new watch list may return matches on cached filters.
+                    for hash in self.cbfmgr.rescan(from, to, watch, &self.tree) {
+                        self.invmgr.get_block(hash);
+                    }
                 }
                 Command::Shutdown => {
                     self.upstream.push(Out::Shutdown);
