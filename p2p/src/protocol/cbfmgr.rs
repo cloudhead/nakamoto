@@ -305,7 +305,7 @@ impl Rescan {
         // Limit the requested ranges to `MAX_MESSAGE_CFILTERS`.
         let ranges = HeightIterator {
             start: *range.start(),
-            stop: *range.end() + 1, // `HeightIterator` uses an exclusive stop.
+            stop: *range.end(),
             step: MAX_MESSAGE_CFILTERS as Height,
         };
         let mut requests: Vec<Range<Height>> = Vec::new();
@@ -991,16 +991,16 @@ struct HeightIterator {
 }
 
 impl Iterator for HeightIterator {
-    type Item = Range<Height>;
+    type Item = RangeInclusive<Height>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.start < self.stop {
+        if self.start <= self.stop {
             let start = self.start;
             let stop = self.stop.min(start + self.step - 1);
 
             self.start = stop + 1;
 
-            Some(start..stop)
+            Some(start..=stop)
         } else {
             None
         }
@@ -1227,10 +1227,10 @@ mod tests {
             stop: 19,
             step: 5,
         };
-        assert_eq!(it.next(), Some(3..7));
-        assert_eq!(it.next(), Some(8..12));
-        assert_eq!(it.next(), Some(13..17));
-        assert_eq!(it.next(), Some(18..19));
+        assert_eq!(it.next(), Some(3..=7));
+        assert_eq!(it.next(), Some(8..=12));
+        assert_eq!(it.next(), Some(13..=17));
+        assert_eq!(it.next(), Some(18..=19));
         assert_eq!(it.next(), None);
     }
 
