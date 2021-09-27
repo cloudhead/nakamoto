@@ -1,7 +1,7 @@
 //! Block cache *model*.
 //! Not for production use.
 
-use std::ops::Range;
+use std::ops::RangeInclusive;
 
 use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader, Filters};
 use nakamoto_common::block::iter::Iter;
@@ -253,14 +253,16 @@ impl Filters for FilterCache {
         self.headers.get(height as usize).copied()
     }
 
-    fn get_headers(&self, range: Range<Height>) -> Vec<(FilterHash, FilterHeader)> {
-        assert!(range.start < range.end);
+    fn get_headers(&self, range: RangeInclusive<Height>) -> Vec<(FilterHash, FilterHeader)> {
+        let (start, end) = (*range.start(), *range.end());
+
+        assert!(start <= end);
 
         self.headers
             .iter()
             .cloned()
-            .skip(range.start as usize)
-            .take(range.end as usize - range.start as usize)
+            .skip(start as usize)
+            .take(end as usize - start as usize + 1)
             .collect()
     }
 

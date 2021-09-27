@@ -3,7 +3,7 @@
 //! Manages BIP 157/8 compact block filter sync.
 //!
 use std::collections::BTreeSet;
-use std::ops::{Bound, Range, RangeInclusive};
+use std::ops::{Bound, RangeInclusive};
 
 use thiserror::Error;
 
@@ -297,7 +297,7 @@ impl Rescan {
     /// Given a range of filter heights, return the ranges that are missing.
     /// This is useful to figure out which ranges to fetch while ensuring we don't request
     /// the same heights more than once.
-    fn requests(&self, range: RangeInclusive<Height>) -> Vec<Range<Height>> {
+    fn requests(&self, range: RangeInclusive<Height>) -> Vec<RangeInclusive<Height>> {
         if range.is_empty() {
             return vec![];
         }
@@ -308,7 +308,7 @@ impl Rescan {
             stop: *range.end(),
             step: MAX_MESSAGE_CFILTERS as Height,
         };
-        let mut requests: Vec<Range<Height>> = Vec::new();
+        let mut requests: Vec<RangeInclusive<Height>> = Vec::new();
 
         // Iterate over requested ranges, taking care that heights are only requested once.
         // If there are gaps in the requested range after the difference is taken, split
@@ -318,17 +318,14 @@ impl Rescan {
 
             for height in heights.difference(&self.requested) {
                 if let Some(r) = requests.last_mut() {
-                    if *height == r.end {
-                        r.end += 1;
+                    if *height == r.end() + 1 {
+                        *r = *r.start()..=r.end() + 1;
                         continue;
                     }
                 }
                 // Either this is the first range request, or there is a gap between the previous
-                // range and this height.
-                requests.push(Range {
-                    start: *height,
-                    end: height + 1,
-                });
+                // range and this height. Start a new range.
+                requests.push(*height..=*height);
             }
         }
         requests
@@ -522,13 +519,13 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             .zip(self.peers.cycle())
         {
             let stop_hash = tree
-                .get_block_by_height(range.end - 1)
+                .get_block_by_height(*range.end())
                 .ok_or(GetFiltersError::InvalidRange)?
                 .block_hash();
             let timeout = self.config.request_timeout;
 
             self.upstream
-                .get_cfilters(*peer, range.start, stop_hash, timeout);
+                .get_cfilters(*peer, *range.start(), stop_hash, timeout);
             self.rescan.requested.extend(range);
         }
 
@@ -671,7 +668,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             });
         };
 
-        let headers = self.filters.get_headers(start_height..stop_height);
+        let headers = self.filters.get_headers(start_height..=stop_height);
         if !headers.is_empty() {
             let hashes = headers.iter().map(|(hash, _)| *hash);
             let prev_header = self.filters.get_prev_header(start_height).expect(
@@ -833,7 +830,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             let stop_height = tree.height();
 
             if let Some((peer, start_height, stop_hash)) =
-                self.send_getcfheaders(start_height..stop_height + 1, tree, time)
+                self.send_getcfheaders(start_height..=stop_height, tree, time)
             {
                 self.upstream.event(Event::Syncing {
                     peer,
@@ -864,23 +861,24 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     /// Send a `getcfheaders` message to a random peer.
     fn send_getcfheaders<T: BlockTree>(
         &mut self,
-        range: Range<Height>,
+        range: RangeInclusive<Height>,
         tree: &T,
         time: LocalTime,
     ) -> Option<(PeerId, Height, BlockHash)> {
-        let count = range.end as usize - range.start as usize;
+        let (start, end) = (*range.start(), *range.end());
+        let count = end as usize - start as usize + 1;
 
-        debug_assert!(range.start < range.end);
+        debug_assert!(start <= end);
         debug_assert!(!range.is_empty());
 
         if range.is_empty() {
             return None;
         }
-        let start_height = range.start;
+        let start_height = start;
 
         // Cap request to `MAX_MESSAGE_CFHEADERS`.
         let stop_hash = if count > MAX_MESSAGE_CFHEADERS {
-            let stop_height = range.start + MAX_MESSAGE_CFHEADERS as Height - 1;
+            let stop_height = start + MAX_MESSAGE_CFHEADERS as Height - 1;
             let stop_block = tree
                 .get_block_by_height(stop_height)
                 .expect("all headers up to the tip exist");
@@ -1262,6 +1260,30 @@ mod tests {
         protocol::test::messages(&outputs)
             .find(|(_, m)| matches!(m, NetworkMessage::GetCFilters(_)))
             .unwrap();
+    }
+
+    #[test]
+    fn test_rescan_requests() {
+        let mut rescan = Rescan::default();
+
+        // Add a range that has already been requested.
+        rescan.requested.extend(4..=5);
+        // Now try to request an overlapping range.
+        assert_eq!(rescan.requests(2..=10), vec![2..=3, 6..=10]);
+
+        rescan.requested.extend(7..=9);
+        rescan.requested.extend(13..=20);
+        assert_eq!(rescan.requests(8..=19), vec![10..=12]);
+
+        rescan.requested.clear();
+        rescan.requested.extend(4..=6);
+        rescan.requested.extend(9..=9);
+        rescan.requested.extend(12..=14);
+
+        assert_eq!(
+            rescan.requests(0..=16),
+            vec![0..=3, 7..=8, 10..=11, 15..=16]
+        );
     }
 
     /// Test that we don't make redundant `getcfilters` requests.

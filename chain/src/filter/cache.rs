@@ -2,7 +2,7 @@
 //! Compact block filter cache.
 
 use std::io;
-use std::ops::Range;
+use std::ops::RangeInclusive;
 
 use bitcoin::consensus::{encode, Decodable, Encodable};
 
@@ -104,11 +104,13 @@ impl<S: Store<Header = StoredHeader>> Filters for FilterCache<S> {
             .map(|s| (s.hash, s.header))
     }
 
-    fn get_headers(&self, range: Range<Height>) -> Vec<(FilterHash, FilterHeader)> {
+    fn get_headers(&self, range: RangeInclusive<Height>) -> Vec<(FilterHash, FilterHeader)> {
+        let (start, end) = (*range.start(), *range.end());
+
         self.headers
             .iter()
-            .skip(range.start as usize)
-            .take(range.end as usize - range.start as usize)
+            .skip(start as usize)
+            .take(end as usize - start as usize + 1)
             .map(|h| (h.hash, h.header))
             .collect()
     }

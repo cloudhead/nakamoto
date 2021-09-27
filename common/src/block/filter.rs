@@ -1,7 +1,7 @@
 //! Compact block filter core types and traits.
 #![warn(missing_docs)]
 
-use std::ops::Range;
+use std::ops::RangeInclusive;
 
 use thiserror::Error;
 
@@ -50,7 +50,7 @@ pub enum Error {
 /// A trait for types that provide read/write access to compact block filters, and filter headers.
 pub trait Filters {
     /// Get filter headers given a block height range.
-    fn get_headers(&self, range: Range<Height>) -> Vec<(FilterHash, FilterHeader)>;
+    fn get_headers(&self, range: RangeInclusive<Height>) -> Vec<(FilterHash, FilterHeader)>;
     /// Get the filter header at the given height. Includes the hash of the filter itself.
     fn get_header(&self, height: Height) -> Option<(FilterHash, FilterHeader)>;
     /// Import filter headers.
