@@ -37,6 +37,9 @@ pub const MAX_MESSAGE_CFHEADERS: usize = 2000;
 /// Maximum filters to be expected in a message.
 pub const MAX_MESSAGE_CFILTERS: usize = 1000;
 
+/// Filter cache capacity in bytes.
+pub const DEFAULT_FILTER_CACHE_SIZE: usize = 1024 * 1024; // 1 MB.
+
 /// An error originating in the CBF manager.
 #[derive(Error, Debug)]
 pub enum Error {
@@ -236,7 +239,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             request_timeout: Timeout::from_secs(30),
-            filter_cache_size: 1024 * 1024, // 1 MB.
+            filter_cache_size: DEFAULT_FILTER_CACHE_SIZE,
         }
     }
 }

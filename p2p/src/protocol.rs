@@ -488,6 +488,8 @@ pub struct Config {
     pub max_inbound_peers: usize,
     /// Ping timeout, after which remotes are disconnected.
     pub ping_timeout: LocalDuration,
+    /// Size in bytes of the compact filter cache.
+    pub filter_cache_size: usize,
     /// Log target.
     pub target: &'static str,
     /// Protocol event hooks.
@@ -508,6 +510,7 @@ impl Default for Config {
             target_outbound_peers: peermgr::TARGET_OUTBOUND_PEERS,
             max_inbound_peers: peermgr::MAX_INBOUND_PEERS,
             ping_timeout: pingmgr::PING_TIMEOUT,
+            filter_cache_size: cbfmgr::DEFAULT_FILTER_CACHE_SIZE,
             user_agent: USER_AGENT,
             target: "self",
             hooks: Hooks::default(),
@@ -584,6 +587,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             target_outbound_peers,
             max_inbound_peers,
             ping_timeout,
+            filter_cache_size,
             user_agent,
             required_services,
             target,
@@ -603,7 +607,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         );
         let pingmgr = PingManager::new(ping_timeout, rng.clone(), upstream.clone());
         let cbfmgr = FilterManager::new(
-            cbfmgr::Config::default(),
+            cbfmgr::Config {
+                filter_cache_size,
+                ..cbfmgr::Config::default()
+            },
             rng.clone(),
             filters,
             upstream.clone(),
