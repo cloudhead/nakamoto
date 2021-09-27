@@ -5,7 +5,7 @@ pub mod block;
 pub mod collections;
 pub mod network;
 pub mod p2p;
-
+mod dns;
 pub use nonempty;
 
 /// Return the function path at the current source location.

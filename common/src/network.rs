@@ -10,6 +10,8 @@ use bitcoin_hashes::sha256d;
 
 use crate::block::Height;
 
+use super::dns;
+
 /// Peer services supported by nakamoto.
 #[derive(Debug, Copy, Clone)]
 pub enum Services {
