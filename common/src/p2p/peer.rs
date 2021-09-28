@@ -45,6 +45,8 @@ pub trait Store {
         seeds: impl Iterator<Item = S>,
         source: Source,
     ) -> io::Result<()> {
+        // TODO(vincenzopalazzo): move this logic inside the dns module in comm
+        // and use this method to add only the list of the socket addrs.
         let mut error = None;
         let mut success = false;
 

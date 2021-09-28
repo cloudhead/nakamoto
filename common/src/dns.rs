@@ -1,5 +1,8 @@
 //! Seed resolution.
-use crate::network::{Network};
+use log::debug;
+use std::net::{SocketAddr, ToSocketAddrs};
+
+use crate::network::Network;
 
 /// DNS feature
 #[derive(Debug, Copy, Clone)]
@@ -21,8 +24,7 @@ impl Default for SeedFeature {
 }
 
 impl SeedFeature {
-
-    pub fn as_code(&self) -> &'static str{
+    pub fn as_code(&self) -> &'static str {
         match self {
             Self::NODE_NETWORK => &"x1",
             Self::NODE_BLOOM => &"x5",
@@ -36,33 +38,30 @@ impl SeedFeature {
 pub struct Seeds<'a> {
     /// The network to work load the dns
     network: Network,
-    /// List of seed with all the feature supported by nakamoto
-    seeds: Vec<&'a str>,
+    /// The default port of the node
+    port: u16,
+    /// List of feature supported by nakamoto
+    features: &'a [SeedFeature],
 }
 
 impl<'a> Seeds<'a> {
     /// Create a new seed with the requirements
-    pub fn new(network: Network, features: &[SeedFeature]) -> Self {
+    pub fn new(network: Network, port: u16, features: &'a [SeedFeature]) -> Self {
         Seeds {
-            network: network,
-            seeds: vec![],
+            network,
+            port,
+            features,
         }
     }
 
-    // FIXME(vincenzopalazzo): Return the iterator of the vetor
-    // to make easy the change in the interface.
-    pub fn iter(&self) -> std::slice::Iter<'a, &str> {
-        self.seeds.iter()
-    }
-
-    pub fn load(&self) -> &[&str] {
-        let seed = self.from_network();
-        seed
+    pub fn load(&self) -> Vec<SocketAddr> {
+        let seeds = self.from_network();
+        self.filter_by_feature(seeds)
     }
 
     fn from_network(&self) -> &[&str] {
         match self.network {
-          Network::Mainnet => &[
+            Network::Mainnet => &[
                 "seed.bitcoin.sipa.be",          // Pieter Wuille
                 "dnsseed.bluematt.me",           // Matt Corallo
                 "dnsseed.bitcoin.dashjr.org",    // Luke Dashjr
@@ -83,5 +82,27 @@ impl<'a> Seeds<'a> {
             Network::Regtest => &[], // No seeds
         }
     }
-}
 
+    fn filter_by_feature(&self, seed_list: &[&str]) -> Vec<SocketAddr> {
+        let mut seeds_addr = Vec::new();
+        for feature in self.features {
+            let feature_code = feature.as_code();
+            debug!("Filtering by feature {}", feature_code);
+
+            for seed in seed_list {
+                let sub_seed = format!("{}.{}:{}", feature_code, seed, self.port);
+                debug!("Sub seed {} checking ...", sub_seed);
+                if let Ok(hosts) = (*sub_seed).to_socket_addrs() {
+                    for host in hosts {
+                        seeds_addr.push(host);
+                    }
+                } else {
+                    // we admit the failure at this point because not all the seed
+                    // support all the feature.
+                    debug!("Seed {} doesn't support feature {}", seed, feature_code);
+                }
+            }
+        }
+        seeds_addr
+    }
+}

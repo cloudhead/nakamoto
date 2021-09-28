@@ -3,9 +3,9 @@
 #![deny(missing_docs, unsafe_code)]
 pub mod block;
 pub mod collections;
+mod dns;
 pub mod network;
 pub mod p2p;
-mod dns;
 pub use nonempty;
 
 /// Return the function path at the current source location.
