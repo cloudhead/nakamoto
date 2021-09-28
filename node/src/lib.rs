@@ -11,8 +11,6 @@ pub use nakamoto_client::Domain;
 
 pub mod logger;
 
-mod dns;
-
 /// The network reactor we're going to use.
 type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
 

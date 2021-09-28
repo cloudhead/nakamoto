@@ -1,6 +1,5 @@
 //! Seed resolution.
-use std::{iter};
-
+use crate::network::{Network};
 
 /// DNS feature
 #[derive(Debug, Copy, Clone)]
@@ -35,21 +34,54 @@ impl SeedFeature {
 
 /// Seeds implementation
 pub struct Seeds<'a> {
-    pub seeds: Vec<&'a str>,
+    /// The network to work load the dns
+    network: Network,
+    /// List of seed with all the feature supported by nakamoto
+    seeds: Vec<&'a str>,
 }
 
 impl<'a> Seeds<'a> {
     /// Create a new seed with the requirements
-    pub fn new(features: &[SeedFeature]) -> Self {
+    pub fn new(network: Network, features: &[SeedFeature]) -> Self {
         Seeds {
-            seeds: vec![]
+            network: network,
+            seeds: vec![],
         }
     }
 
     // FIXME(vincenzopalazzo): Return the iterator of the vetor
     // to make easy the change in the interface.
-    pub fn iter(&self) -> &std::slice::Iter<'a, str> {
-        self.seeds.iter();
+    pub fn iter(&self) -> std::slice::Iter<'a, &str> {
+        self.seeds.iter()
+    }
+
+    pub fn load(&self) -> &[&str] {
+        let seed = self.from_network();
+        seed
+    }
+
+    fn from_network(&self) -> &[&str] {
+        match self.network {
+          Network::Mainnet => &[
+                "seed.bitcoin.sipa.be",          // Pieter Wuille
+                "dnsseed.bluematt.me",           // Matt Corallo
+                "dnsseed.bitcoin.dashjr.org",    // Luke Dashjr
+                "seed.bitcoinstats.com",         // Christian Decker
+                "seed.bitcoin.jonasschnelli.ch", // Jonas Schnelli
+                "seed.btc.petertodd.org",        // Peter Todd
+                "seed.bitcoin.sprovoost.nl",     // Sjors Provoost
+                "dnsseed.emzy.de",               // Stephan Oeste
+                "seed.bitcoin.wiz.biz",          // Jason Maurice
+                "seed.cloudhead.io",             // Alexis Sellier
+            ],
+            Network::Testnet => &[
+                "testnet-seed.bitcoin.jonasschnelli.ch",
+                "seed.tbtc.petertodd.org",
+                "seed.testnet.bitcoin.sprovoost.nl",
+                "testnet-seed.bluematt.me",
+            ],
+            Network::Regtest => &[], // No seeds
+        }
     }
 }
 
