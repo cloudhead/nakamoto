@@ -456,7 +456,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         end: Bound<Height>,
         watch: Vec<Script>,
         tree: &T,
-    ) -> Vec<BlockHash> {
+    ) -> Vec<(Height, BlockHash)> {
         let mut matches = Vec::new();
 
         self.rescan.active = true;
@@ -486,7 +486,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
                         });
 
                     if matched {
-                        matches.push(block_hash);
+                        matches.push((*height, block_hash));
                     }
                 }
             }
@@ -705,7 +705,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         from: &PeerId,
         msg: CFilter,
         tree: &T,
-    ) -> Result<Vec<BlockHash>, Error> {
+    ) -> Result<Vec<(Height, BlockHash)>, Error> {
         let from = *from;
 
         if msg.filter_type != 0x0 {
@@ -948,14 +948,14 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     ///
     /// Checks whether any of the queued filters is next in line (by height) and if so,
     /// processes it and returns the result of trying to match it with the watch list.
-    fn process(&mut self) -> Result<Vec<BlockHash>, bip158::Error> {
+    fn process(&mut self) -> Result<Vec<(Height, BlockHash)>, bip158::Error> {
         let mut matches = Vec::new();
         let mut current = self.rescan.current;
 
         while let Some((filter, block_hash)) = self.rescan.received.remove(&current) {
             let matched = self.rescan.match_filter(&filter, &block_hash)?;
             if matched {
-                matches.push(block_hash);
+                matches.push((current, block_hash));
             }
 
             self.cache.push(current, filter);
@@ -1390,6 +1390,50 @@ mod tests {
         todo!()
     }
 
+    #[test]
+    fn test_cache_update_rescan() {
+        let mut rng = fastrand::Rng::new();
+        let network = Network::Regtest;
+        let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+        let birth = 11;
+        let best = 17;
+
+        let (mut cbfmgr, tree, chain, _upstream) = util::setup(network, best);
+        let time = LocalTime::now();
+
+        // Generate a watchlist and keep track of the matching block heights.
+        let (watch, matches, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+
+        cbfmgr.initialize(time, &tree);
+        cbfmgr.peer_negotiated(
+            Socket::new(remote),
+            best,
+            REQUIRED_SERVICES,
+            Link::Outbound,
+            &time,
+            &tree,
+        );
+        let matched = cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, vec![], &tree);
+        assert!(matched.is_empty());
+
+        for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+        }
+        assert_eq!(cbfmgr.cache.len(), (best - birth) as usize + 1);
+        assert_eq!(cbfmgr.cache.start(), Some(birth));
+        assert_eq!(cbfmgr.cache.end(), Some(best));
+        assert_eq!(cbfmgr.rescan.current, best + 1);
+
+        // After a new rescan with a non-empty watchlist, the scripts are checked against the
+        // cached filters.
+        let matched = cbfmgr.rescan(Bound::Unbounded, Bound::Unbounded, watch.clone(), &tree);
+
+        assert_eq!(matched.len(), matches.len());
+        assert_eq!(matched.iter().map(|(h, _)| *h).collect::<Vec<_>>(), matches);
+        assert_eq!(cbfmgr.rescan.current, best + 1);
+        assert_eq!(cbfmgr.rescan.watch, watch.into_iter().collect());
+    }
+
     /// Test that we re-request all filters after blocks are reverted and eventually
     /// get back in sync.
     #[test]
@@ -1646,7 +1690,7 @@ mod tests {
             matches.extend(
                 hashes
                     .into_iter()
-                    .filter_map(|h| tree.get_block(&h).map(|(height, _)| height)),
+                    .filter_map(|(_, h)| tree.get_block(&h).map(|(height, _)| height)),
             );
             events
                 .find(|e| matches!(e, Event::FilterReceived { height, .. } if height == &h))

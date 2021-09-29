@@ -911,7 +911,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             NetworkMessage::CFilter(msg) => {
                 match self.cbfmgr.received_cfilter(&addr, msg, &self.tree) {
                     Ok(matches) => {
-                        for hash in matches {
+                        for (_, hash) in matches {
                             self.invmgr.get_block(hash);
                         }
                     }
@@ -1107,7 +1107,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
                     debug!(target: self.target, "Received command: Rescan({:?}, {:?})", from, to);
 
                     // A rescan with a new watch list may return matches on cached filters.
-                    for hash in self.cbfmgr.rescan(from, to, watch, &self.tree) {
+                    for (_, hash) in self.cbfmgr.rescan(from, to, watch, &self.tree) {
                         self.invmgr.get_block(hash);
                     }
                 }
