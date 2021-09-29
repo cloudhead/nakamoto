@@ -29,7 +29,7 @@ use bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
-use nakamoto_common::collections::{AddressBook, HashMap};
+use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 
 use super::channel::SetTimeout;
 use super::fees::{FeeEstimate, FeeEstimator};
@@ -638,20 +638,24 @@ mod tests {
             Socket::new(([66, 66, 66, 66], 8333)),
             ServiceFlags::NETWORK,
             true,
+            true,
         );
         invmgr.peer_negotiated(
             Socket::new(([77, 77, 77, 77], 8333)),
             ServiceFlags::NETWORK,
+            true,
             true,
         );
         invmgr.peer_negotiated(
             Socket::new(([88, 88, 88, 88], 8333)),
             ServiceFlags::NETWORK,
             true,
+            true,
         );
         invmgr.peer_negotiated(
             Socket::new(([99, 99, 99, 99], 8333)),
             ServiceFlags::NETWORK,
+            true,
             true,
         );
 
@@ -707,7 +711,7 @@ mod tests {
 
         let mut invmgr = InventoryManager::new(rng, upstream);
 
-        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx);
         invmgr.received_tick(time, &tree);
 
@@ -745,7 +749,7 @@ mod tests {
 
         let mut invmgr = InventoryManager::new(rng, upstream);
 
-        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
 
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
@@ -776,7 +780,7 @@ mod tests {
             .find(|e| matches!(e, Event::TimedOut { peer } if peer == &remote))
             .expect("Peer times out");
 
-        assert!(invmgr.contains(&tx.txid()));
+        assert!(invmgr.contains(&tx.wtxid()));
         assert!(invmgr.peers.is_empty());
     }
 
@@ -806,12 +810,12 @@ mod tests {
         let mut tree = model::Cache::from(headers);
         let mut invmgr = InventoryManager::new(rng, upstream);
 
-        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true);
+        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
         invmgr.get_block(main_block1.block_hash());
         invmgr.received_block(&remote, main_block1, &tree);
 
-        assert!(!invmgr.contains(&tx.txid()));
+        assert!(!invmgr.contains(&tx.wtxid()));
 
         let mut events = events(&receiver);
 
@@ -831,7 +835,7 @@ mod tests {
         .unwrap();
 
         invmgr.block_reverted(height);
-        assert!(invmgr.contains(&tx.txid()));
+        assert!(invmgr.contains(&tx.wtxid()));
 
         events
             .find(|e| {
