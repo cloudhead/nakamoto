@@ -210,7 +210,7 @@ pub struct PeerInfo {
     pub time_offset: TimeOffset,
     /// Whether this peer relays transactions.
     pub relay: bool,
-    // Whether this peer supports transaction relay based on its Witness Transaction ID.
+    /// Whether this peer supports transaction relay based on its Witness Transaction ID.
     pub wtxidrelay: bool,
 
     /// Peer nonce. Used to detect self-connections.
@@ -350,7 +350,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
     }
 
     /// Called when a `wtxidrelay` message was received.
-    pub fn received_wtxidrelay(&mut self, addr: &PeerId) -> Result<(),&'static str> {
+    pub fn received_wtxidrelay(&mut self, addr: &PeerId) {
         if let Some(Peer::Connected {
             peer: Some(peer),
             conn: _,
@@ -358,13 +358,11 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         {
             match peer.state {
                 HandshakeState::ReceivedVersion  { .. } => {
-                    peer.wtxidrelay = true;
+                    peer.wtxidrelay = true
                 }
-                // QUESTION: what is the best way to return an error in received_wtxidrelay?
-                _ => return Err("wtxidrelay must be received before VERACK")
+                _ => self.disconnect(*addr, DisconnectReason::PeerMisbehaving("wtxidrelay must be received before VERACK"))
             }
         }
-        Ok(())
     }
 
     /// Called when a `version` message was received.
@@ -491,6 +489,8 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                         user_agent,
                         state: HandshakeState::ReceivedVersion { since: now },
                         relay,
+                        // configured via wtxidrelay message
+                        wtxidrelay: false,
                     }),
                 },
             );

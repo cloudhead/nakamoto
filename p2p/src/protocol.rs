@@ -814,7 +814,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             }
             NetworkMessage::Verack => {
                 if let Some((peer, conn)) = self.peermgr.received_verack(&addr, now) {
-                    // QUESTION: Would passing PeerInfo to peer_negotiated fn's easier?
                     self.clock.record_offset(conn.socket.addr, peer.time_offset);
                     self.addrmgr
                         .peer_negotiated(&addr, peer.services, conn.link, now);
@@ -937,12 +936,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 (*self.hooks.on_getdata)(addr, invs, &self.upstream);
             }
             NetworkMessage::WtxidRelay => {
-                match self.peermgr.received_wtxidrelay(&addr) {
-                    Err(reason) => {
-                        self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
-                    }
-                    _ => {}
-                }
+                self.peermgr.received_wtxidrelay(&addr);
             }
             _ => {
                 debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);

@@ -199,12 +199,6 @@ impl Peer {
     }
 }
 
-// NOTE
-// What do you think about using a separate bidirectional map for looking up wtxid by txid's and
-// vice-versa?
-//
-// This way, the mempool struct could be replaced with a hashmap and this bimap of keys.
-
 /// Inventory manager state.
 #[derive(Debug)]
 pub struct InventoryManager<U> {
@@ -358,14 +352,11 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
 
                 let mut invs = Vec::with_capacity(peer.outbox.len());
                 if peer.wtxidrelay {
-                    // QUESTION: Why get the id through the mempool's transaction?
                     for wtxid in peer.outbox.keys() {
-                        invs.push(Inventory::WTx(self.mempool.get(wtxid).unwrap().wtxid()));
+                        invs.push(Inventory::WTx(self.mempool[wtxid].wtxid()));
                     }
                 } else {
                     // TODO: Should we send a WitnessTransaction?
-                    // TODO: Send out witness transactions if the peer is configured for them.
-                    // Check out BIP-0144, it depends on what is requested.
                     for wtxid in peer.outbox.keys() {
                         invs.push(Inventory::Transaction(self.mempool.get(wtxid).unwrap().txid()));
                     }
@@ -437,7 +428,6 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                             peer.reset();
                         }
 
-                        // TODO; decide whether to use wtxid for transaction acknowledgement
                         self.upstream.event(Event::Acknowledged {
                             peer: addr,
                             txid: txid,
