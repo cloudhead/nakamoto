@@ -113,7 +113,7 @@ pub trait Handshake {
     /// Send a `verack` message.
     fn verack(&self, addr: PeerId) -> &Self;
     /// Declare BIPS-339 WTXID-based transaction relay support
-    fn wtxrelay(&self, addr: PeerId) -> &Self;
+    fn wtxidrelay(&self, addr: PeerId) -> &Self;
 }
 
 /// Ability to connect to peers.
@@ -472,7 +472,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                     );
             }
             self.upstream
-                .wtxrelay(conn.socket.addr)
+                .wtxidrelay(conn.socket.addr)
                 .verack(conn.socket.addr)
                 .set_timeout(HANDSHAKE_TIMEOUT);
             let conn = conn.clone();
