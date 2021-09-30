@@ -862,6 +862,11 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     }
 
     /// Send a `getcfheaders` message to a random peer.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the range is not within the bounds of the active chain.
+    ///
     fn send_getcfheaders<T: BlockTree>(
         &mut self,
         range: RangeInclusive<Height>,
@@ -869,7 +874,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         time: LocalTime,
     ) -> Option<(PeerId, Height, BlockHash)> {
         let (start, end) = (*range.start(), *range.end());
-        let count = end as usize - start as usize + 1;
 
         debug_assert!(start <= end);
         debug_assert!(!range.is_empty());
@@ -877,21 +881,18 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
         if range.is_empty() {
             return None;
         }
+        // Cap requested header count.
+        let count = usize::min(MAX_MESSAGE_CFHEADERS, (end - start + 1) as usize);
         let start_height = start;
-
-        // Cap request to `MAX_MESSAGE_CFHEADERS`.
-        let stop_hash = if count > MAX_MESSAGE_CFHEADERS {
-            let stop_height = start + MAX_MESSAGE_CFHEADERS as Height - 1;
+        let stop_hash = {
+            let stop_height = start + count as Height - 1;
             let stop_block = tree
                 .get_block_by_height(stop_height)
-                .expect("all headers up to the tip exist");
+                .unwrap_or_else(|| panic!("{}: Stop height is out of bounds", source!()));
 
             stop_block.block_hash()
-        } else {
-            let (hash, _) = tree.tip();
-
-            hash
         };
+
         if self.inflight.contains_key(&stop_hash) {
             // Don't request the same thing twice.
             return None;
