@@ -59,6 +59,8 @@ pub struct Config {
     pub target_outbound_peers: usize,
     /// Maximum number of inbound peers supported.
     pub max_inbound_peers: usize,
+    /// Size in bytes of the compact filter cache.
+    pub filter_cache_size: usize,
     /// Timeout duration for client commands.
     pub timeout: time::Duration,
     /// Client home path, where runtime data is stored, eg. block headers and filters.
@@ -98,6 +100,7 @@ impl From<Config> for p2p::protocol::Config {
             domains: cfg.domains,
             target_outbound_peers: cfg.target_outbound_peers,
             max_inbound_peers: cfg.max_inbound_peers,
+            filter_cache_size: cfg.filter_cache_size,
             services: cfg.services,
             hooks: cfg.hooks,
 
@@ -117,6 +120,7 @@ impl Default for Config {
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
             target_outbound_peers: p2p::protocol::peermgr::TARGET_OUTBOUND_PEERS,
             max_inbound_peers: p2p::protocol::peermgr::MAX_INBOUND_PEERS,
+            filter_cache_size: p2p::protocol::cbfmgr::DEFAULT_FILTER_CACHE_SIZE,
             services: ServiceFlags::NONE,
             name: "self",
             hooks: protocol::Hooks::default(),
