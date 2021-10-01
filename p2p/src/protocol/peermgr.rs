@@ -469,12 +469,16 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                     .version(
                         conn.socket.addr,
                         self.version(conn.socket.addr, conn.local_addr, nonce, height, now),
-                    );
+                    )
+                    .wtxidrelay(conn.socket.addr)
+                    .verack(conn.socket.addr)
+                    .set_timeout(HANDSHAKE_TIMEOUT);
+            } else {
+                self.upstream
+                    .wtxidrelay(conn.socket.addr)
+                    .verack(conn.socket.addr)
+                    .set_timeout(HANDSHAKE_TIMEOUT);
             }
-            self.upstream
-                .wtxidrelay(conn.socket.addr)
-                .verack(conn.socket.addr)
-                .set_timeout(HANDSHAKE_TIMEOUT);
             let conn = conn.clone();
 
             self.peers.insert(
