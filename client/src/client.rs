@@ -92,10 +92,15 @@ impl From<Config> for p2p::protocol::Config {
     fn from(cfg: Config) -> Self {
         Self {
             network: cfg.network,
+            params: cfg.network.params(),
             target: cfg.name,
             connect: cfg.connect,
+            domains: cfg.domains,
             target_outbound_peers: cfg.target_outbound_peers,
             max_inbound_peers: cfg.max_inbound_peers,
+            services: cfg.services,
+            hooks: cfg.hooks,
+
             ..Self::default()
         }
     }
@@ -335,19 +340,7 @@ impl<R: Reactor<Publisher>> Client<R> {
 
             log::info!("{} seeds added to address book", peers.len());
         }
-
-        let cfg = p2p::protocol::Config {
-            network: self.config.network,
-            params: self.config.network.params(),
-            target: self.config.name,
-            connect: self.config.connect,
-            domains: self.config.domains,
-            target_outbound_peers: self.config.target_outbound_peers,
-            max_inbound_peers: self.config.max_inbound_peers,
-            services: self.config.services,
-            hooks: self.config.hooks,
-            ..p2p::protocol::Config::default()
-        };
+        let cfg: protocol::Config = self.config.into();
 
         self.reactor.run(&listen, move |upstream| {
             Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
@@ -363,22 +356,14 @@ impl<R: Reactor<Publisher>> Client<R> {
         B: FnOnce(p2p::protocol::Config, chan::Sender<protocol::Out>) -> P,
         P: p2p::traits::Protocol,
     {
-        let cfg = p2p::protocol::Config {
-            services: self.config.services,
-            hooks: self.config.hooks,
-            domains: self.config.domains,
-            ..p2p::protocol::Config::from(
-                self.config.name,
-                self.config.network,
-                self.config.connect,
-            )
-        };
+        let listen = self.config.listen.clone();
+        let cfg: protocol::Config = self.config.into();
 
         log::info!("Initializing client ({:?})..", cfg.network);
         log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
 
         self.reactor
-            .run::<_, P>(&self.config.listen, |upstream| builder(cfg, upstream))?;
+            .run::<_, P>(&listen, |upstream| builder(cfg, upstream))?;
 
         Ok(())
     }
