@@ -270,16 +270,27 @@ impl Simulation {
 
             let Scheduled { input, node, .. } = next;
 
-            if let Some(ref mut p) = nodes.get_mut(&node) {
-                p.protocol.step(input, self.time);
-                for o in p.upstream.try_iter() {
-                    self.schedule(&node, o);
+            match input {
+                Input::Connected { addr, .. } | Input::Disconnected(addr, _)
+                    if !self.connections.contains_key(&(node, addr.ip())) =>
+                {
+                    // It may be that the node has since disconnected with the remote.
+                    // In that case we shouldn't forward these inputs to it, as it would
+                    // be non-sensical.
                 }
-            } else {
-                panic!(
-                    "Node {} not found when attempting to schedule {:?}",
-                    node, input
-                );
+                _ => {
+                    if let Some(ref mut p) = nodes.get_mut(&node) {
+                        p.protocol.step(input, self.time);
+                        for o in p.upstream.try_iter() {
+                            self.schedule(&node, o);
+                        }
+                    } else {
+                        panic!(
+                            "Node {} not found when attempting to schedule {:?}",
+                            node, input
+                        );
+                    }
+                }
             }
         }
         !self.is_done()
