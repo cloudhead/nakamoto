@@ -766,7 +766,7 @@ fn sim_connect_to_peers() {
     let time = LocalTime::from_block_time(headers.last().unwrap().time);
 
     // Alice will try to connect to enough outbound peers.
-    let mut peers = peer::network(network, peermgr::TARGET_OUTBOUND_PEERS + 1, rng.clone());
+    let mut peers = peer::network(network, peermgr::TARGET_OUTBOUND_PEERS + 2, rng.clone());
     let addrs = peers
         .iter()
         .map(|p| (p.addr, Source::Dns, p.cfg.services))
@@ -777,8 +777,8 @@ fn sim_connect_to_peers() {
         time,
         rng,
         Options {
-            latency: 1..5,      // 1 - 5 seconds
-            failure_rate: 0.04, // 4%
+            latency: 1..9,     // 1 - 9 seconds
+            failure_rate: 0.1, // 10%
         },
     );
     alice.initialize();
