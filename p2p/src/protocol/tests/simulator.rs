@@ -328,8 +328,13 @@ impl Simulation {
                         .map(|(k, _)| *k)
                         .unwrap_or_else(|| self.time);
                     let time = time + latency;
+                    let elapsed = (time - self.start_time).as_millis();
 
-                    info!(target: "sim", "{} -> {}: `{}` ({})", sender_addr, receiver, msg.cmd(), latency);
+                    info!(
+                        target: "sim",
+                        "{:05} {} -> {}: `{}` ({})",
+                        elapsed, sender_addr, receiver, msg.cmd(), latency
+                    );
 
                     self.inbox.insert(
                         time,
