@@ -104,6 +104,14 @@ impl Inbox {
             .next()
             .map(|(time, scheduled)| (*time, scheduled.clone()))
     }
+
+    /// Get the last message sent between two peers. Only checks one direction.
+    fn last(&self, node: &NodeId, remote: &PeerId) -> Option<(&LocalTime, &Scheduled)> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|(_, v)| &v.node == node && &v.remote == remote)
+    }
 }
 
 /// Simulation options.
@@ -300,8 +308,15 @@ impl Simulation {
                         return;
                     }
 
+                    // Schedule message in the future, ensuring messages don't arrive out-of-order
+                    // between two peers.
                     let latency = self.latency(node, receiver.ip());
-                    let time = self.time + latency;
+                    let time = self
+                        .inbox
+                        .last(&receiver.ip(), sender_addr)
+                        .map(|(k, _)| *k)
+                        .unwrap_or_else(|| self.time);
+                    let time = time + latency;
 
                     info!(target: "sim", "{} -> {}: `{}` ({})", sender_addr, receiver, msg.cmd(), latency);
 
