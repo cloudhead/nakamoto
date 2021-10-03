@@ -357,10 +357,11 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         }) = self.peers.get_mut(addr)
         {
             match peer.state {
-                HandshakeState::ReceivedVersion  { .. } => {
-                    peer.wtxidrelay = true
-                }
-                _ => self.disconnect(*addr, DisconnectReason::PeerMisbehaving("wtxidrelay must be received before VERACK"))
+                HandshakeState::ReceivedVersion { .. } => peer.wtxidrelay = true,
+                _ => self.disconnect(
+                    *addr,
+                    DisconnectReason::PeerMisbehaving("wtxidrelay must be received before VERACK"),
+                ),
             }
         }
     }

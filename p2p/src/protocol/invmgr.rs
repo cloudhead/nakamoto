@@ -171,7 +171,7 @@ pub struct Peer {
     /// Peer socket.
     socket: Socket,
     /// Inventories we are attempting to send to this peer.
-    outbox: HashMap<Wtxid,Txid>,
+    outbox: HashMap<Wtxid, Txid>,
     /// Number of times we attempted to send inventories to this peer.
     attempts: usize,
     /// Last time we attempted to send inventories to this peer.
@@ -214,7 +214,7 @@ pub struct InventoryManager<U> {
     estimator: FeeEstimator,
 
     /// Transaction mempool. Stores unconfirmed transactions sent to the network.
-    pub mempool: BTreeMap<Wtxid,Transaction>,
+    pub mempool: BTreeMap<Wtxid, Transaction>,
     /// Blocks requested and the time at which they were last requested.
     pub remaining: HashMap<BlockHash, Option<LocalTime>>,
     /// Blocks received, waiting to be processed.
@@ -253,10 +253,16 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
     }
 
     /// Called when a peer is negotiated.
-    pub fn peer_negotiated(&mut self, socket: Socket, services: ServiceFlags, relay: bool, wtxidrelay: bool) {
+    pub fn peer_negotiated(
+        &mut self,
+        socket: Socket,
+        services: ServiceFlags,
+        relay: bool,
+        wtxidrelay: bool,
+    ) {
         // Add existing inventories to this peer's outbox so that they are announced.
         let mut outbox = HashMap::with_hasher(self.rng.clone().into());
-        for (wtxid,tx) in self.mempool.iter() {
+        for (wtxid, tx) in self.mempool.iter() {
             outbox.insert(*wtxid, tx.txid());
         }
         self.schedule_tick();
@@ -358,7 +364,9 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 } else {
                     // TODO: Should we send a WitnessTransaction?
                     for wtxid in peer.outbox.keys() {
-                        invs.push(Inventory::Transaction(self.mempool.get(wtxid).unwrap().txid()));
+                        invs.push(Inventory::Transaction(
+                            self.mempool.get(wtxid).unwrap().txid(),
+                        ));
                     }
                 }
                 self.upstream.inv(*addr, invs);

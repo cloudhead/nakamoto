@@ -834,8 +834,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         &self.clock,
                         &self.tree,
                     );
-                    self.invmgr
-                        .peer_negotiated(conn.socket.clone(), peer.services, peer.relay, peer.wtxidrelay);
+                    self.invmgr.peer_negotiated(
+                        conn.socket.clone(),
+                        peer.services,
+                        peer.relay,
+                        peer.wtxidrelay,
+                    );
                 }
             }
             NetworkMessage::Ping(nonce) => {
