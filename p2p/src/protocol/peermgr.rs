@@ -494,7 +494,6 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                         user_agent,
                         state: HandshakeState::ReceivedVersion { since: now },
                         relay,
-                        // configured via wtxidrelay message
                         wtxidrelay: false,
                     }),
                 },
@@ -842,6 +841,71 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn test_wtxidrelay_outbound() {
+        let rng = fastrand::Rng::with_seed(1);
+        let time = LocalTime::now();
+
+        let mut addrs = VecDeque::new();
+        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), ());
+
+        let height = 144;
+        let local = ([99, 99, 99, 99], 9999).into();
+        let remote = ([124, 43, 110, 1], 8333).into();
+        let version = VersionMessage {
+            services: ServiceFlags::NETWORK,
+            ..peermgr.version(local, remote, rng.u64(..), height, time)
+        };
+
+        peermgr.initialize(time, &mut addrs);
+        peermgr.connect(&remote, time);
+        peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+        peermgr.received_version(&remote, version, height, time, &mut addrs);
+
+        assert_matches!(
+            peermgr.peers.get(&remote),
+            Some(Peer::Connected{peer: Some(p), ..}) if !p.wtxidrelay
+        );
+
+        peermgr.received_wtxidrelay(&remote);
+        peermgr.received_verack(&remote, time);
+
+        assert_matches!(
+            peermgr.peers.get(&remote),
+            Some(Peer::Connected{peer: Some(p), ..}) if p.wtxidrelay
+        );
+    }
+
+    #[test]
+    fn test_wtxidrelay_outbound_fail() {
+        let rng = fastrand::Rng::with_seed(1);
+        let time = LocalTime::now();
+
+        let mut addrs = VecDeque::new();
+        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), ());
+
+        let height = 144;
+        let local = ([99, 99, 99, 99], 9999).into();
+        let remote = ([124, 43, 110, 1], 8333).into();
+        let version = VersionMessage {
+            services: ServiceFlags::NETWORK,
+            ..peermgr.version(local, remote, rng.u64(..), height, time)
+        };
+
+        peermgr.initialize(time, &mut addrs);
+        peermgr.connect(&remote, time);
+        peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+        peermgr.received_version(&remote, version, height, time, &mut addrs);
+        peermgr.received_verack(&remote, time);
+        peermgr.received_wtxidrelay(&remote);
+
+        assert_matches!(
+            peermgr.peers.get(&remote),
+            Some(Peer::Disconnecting)
+        );
+    }
+
 
     #[test]
     fn test_connect_timeout() {

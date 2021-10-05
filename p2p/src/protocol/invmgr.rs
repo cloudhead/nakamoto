@@ -29,7 +29,7 @@ use bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockTree;
-use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
+use nakamoto_common::collections::{AddressBook, HashMap};
 
 use super::channel::SetTimeout;
 use super::fees::{FeeEstimate, FeeEstimator};
@@ -406,17 +406,17 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                     // inventory broadcast and we no longer need to send it.
                     if let Some(peer) = self.peers.get_mut(&addr) {
                         if let Some(wtxid) = wtxid {
-                            peer.outbox.remove(&wtxid);
+                            if peer.outbox.remove(&wtxid).is_some() {
+                                if peer.outbox.is_empty() {
+                                    // Reset retry state.
+                                    peer.reset();
+                                }
+                                self.upstream.event(Event::Acknowledged {
+                                    peer: addr,
+                                    txid: *txid,
+                                });
+                            }
                         }
-
-                        if peer.outbox.is_empty() {
-                            // Reset retry state.
-                            peer.reset();
-                        }
-                        self.upstream.event(Event::Acknowledged {
-                            peer: addr,
-                            txid: *txid,
-                        });
                     }
                 }
                 Inventory::WTx(wtxid) => {
@@ -429,17 +429,16 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                     // Since we received a `getdata` from the peer, it means it received our
                     // inventory broadcast and we no longer need to send it.
                     if let Some(peer) = self.peers.get_mut(&addr) {
-                        let txid = peer.outbox.remove(wtxid).unwrap();
-
-                        if peer.outbox.is_empty() {
-                            // Reset retry state.
-                            peer.reset();
+                        if let Some(txid) = peer.outbox.remove(wtxid) {
+                            if peer.outbox.is_empty() {
+                                // Reset retry state.
+                                peer.reset();
+                            }
+                            self.upstream.event(Event::Acknowledged {
+                                peer: addr,
+                                txid: txid,
+                            });
                         }
-
-                        self.upstream.event(Event::Acknowledged {
-                            peer: addr,
-                            txid: txid,
-                        });
                     }
                 }
                 _ => {}
@@ -599,10 +598,11 @@ mod tests {
     use crate::protocol::channel::{chan, Channel};
     use crate::protocol::{Network, Out, PROTOCOL_VERSION};
 
+    use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
     use nakamoto_common::nonempty::NonEmpty;
     use nakamoto_test::block::cache::model;
     use nakamoto_test::block::gen;
-    use nakamoto_test::logger;
+    use nakamoto_test::{assert_matches, logger};
 
     fn messages(
         receiver: &chan::Receiver<Out>,
@@ -866,4 +866,84 @@ mod tests {
             })
             .unwrap();
     }
+    #[test]
+    fn test_wtx_inv() {
+        let network = Network::Mainnet;
+        let (sender, receiver) = chan::unbounded::<Out>();
+        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let tree = model::Cache::from(NonEmpty::new(network.genesis()));
+
+        let mut rng = fastrand::Rng::with_seed(1);
+        let mut time = LocalTime::now();
+
+        let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
+        let remote2: net::SocketAddr = ([88, 88, 88, 89], 8333).into();
+        let tx = gen::transaction(&mut rng);
+
+        let mut invmgr = InventoryManager::new(rng, upstream);
+
+        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
+        invmgr.announce(tx.clone());
+
+        invmgr.received_tick(time, &tree);
+        let invs = messages(&receiver)
+            .filter_map(|(_, m)| if let NetworkMessage::Inv(invs) = m {
+                Some(invs)
+            } else {
+                None
+            }
+            ).next().unwrap();
+        assert_matches!(invs.first(), Some(Inventory::WTx(_)));
+
+        invmgr.peer_negotiated(remote2.into(), ServiceFlags::NETWORK, true, false);
+        invmgr.received_tick(time, &tree);
+        let invs = messages(&receiver)
+            .filter_map(|pm|
+                match pm {
+                    (p, NetworkMessage::Inv(invs)) if p == remote2 => Some(invs),
+                    _ => None
+                }
+            ).next().unwrap();
+        assert_matches!(invs.first(), Some(Inventory::Transaction(_)));
+    }
+
+    #[test]
+    fn test_wtx_getdata() {
+        let network = Network::Mainnet;
+        let (sender, receiver) = chan::unbounded::<Out>();
+        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let tree = model::Cache::from(NonEmpty::new(network.genesis()));
+
+        let mut rng = fastrand::Rng::with_seed(1);
+        let mut time = LocalTime::now();
+
+        let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
+        let tx = gen::transaction(&mut rng);
+
+        let mut invmgr = InventoryManager::new(rng, upstream);
+
+        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
+        invmgr.announce(tx.clone());
+
+        invmgr.received_getdata(remote, &[Inventory::Transaction(tx.txid())]);
+        let tr = messages(&receiver)
+            .filter_map(|(_, m)| if let NetworkMessage::Tx(tr) = m {
+                Some(tr)
+            } else {
+                None
+            }
+            ).next().unwrap();
+        assert_eq!(tr.txid(), tx.txid());
+
+        invmgr.received_getdata(remote, &[Inventory::WTx(tx.wtxid())]);
+        let tr = messages(&receiver)
+            .filter_map(|(_, m)| if let NetworkMessage::Tx(tr) = m {
+                Some(tr)
+            } else {
+                None
+            }
+            ).next().unwrap();
+        assert_eq!(tr.wtxid(), tx.wtxid());
+    }
+
 }
