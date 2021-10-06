@@ -900,12 +900,8 @@ mod tests {
         peermgr.received_verack(&remote, time);
         peermgr.received_wtxidrelay(&remote);
 
-        assert_matches!(
-            peermgr.peers.get(&remote),
-            Some(Peer::Disconnecting)
-        );
+        assert_matches!(peermgr.peers.get(&remote), Some(Peer::Disconnecting));
     }
-
 
     #[test]
     fn test_connect_timeout() {
