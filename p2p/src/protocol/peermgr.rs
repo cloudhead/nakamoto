@@ -112,7 +112,7 @@ pub trait Handshake {
     fn version(&self, addr: PeerId, msg: VersionMessage) -> &Self;
     /// Send a `verack` message.
     fn verack(&self, addr: PeerId) -> &Self;
-    /// Declare BIPS-339 WTXID-based transaction relay support
+    /// Send a BIPS-339 `wtxidrelay` message.
     fn wtxidrelay(&self, addr: PeerId) -> &Self;
 }
 
@@ -210,7 +210,7 @@ pub struct PeerInfo {
     pub time_offset: TimeOffset,
     /// Whether this peer relays transactions.
     pub relay: bool,
-    /// Whether this peer supports transaction relay based on its Witness Transaction ID.
+    /// Whether this peer supports BIP-339.
     pub wtxidrelay: bool,
 
     /// Peer nonce. Used to detect self-connections.
@@ -360,7 +360,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 HandshakeState::ReceivedVersion { .. } => peer.wtxidrelay = true,
                 _ => self.disconnect(
                     *addr,
-                    DisconnectReason::PeerMisbehaving("wtxidrelay must be received before VERACK"),
+                    DisconnectReason::PeerMisbehaving("`wtxidrelay` must be received before VERACK"),
                 ),
             }
         }
@@ -465,20 +465,23 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 addrs.record_local_address(addr);
             }
 
-            if conn.link == Link::Inbound {
-                self.upstream
-                    .version(
-                        conn.socket.addr,
-                        self.version(conn.socket.addr, conn.local_addr, nonce, height, now),
-                    )
-                    .wtxidrelay(conn.socket.addr)
-                    .verack(conn.socket.addr)
-                    .set_timeout(HANDSHAKE_TIMEOUT);
-            } else {
-                self.upstream
-                    .wtxidrelay(conn.socket.addr)
-                    .verack(conn.socket.addr)
-                    .set_timeout(HANDSHAKE_TIMEOUT);
+            match conn.link {
+                Link::Inbound => {
+                    self.upstream
+                        .version(
+                            conn.socket.addr,
+                            self.version(conn.socket.addr, conn.local_addr, nonce, height, now),
+                        )
+                        .wtxidrelay(conn.socket.addr)
+                        .verack(conn.socket.addr)
+                        .set_timeout(HANDSHAKE_TIMEOUT);
+                }
+                Link::Outbound => {
+                    self.upstream
+                        .wtxidrelay(conn.socket.addr)
+                        .verack(conn.socket.addr)
+                        .set_timeout(HANDSHAKE_TIMEOUT);
+                }
             }
             let conn = conn.clone();
 
@@ -878,7 +881,7 @@ mod tests {
     }
 
     #[test]
-    fn test_wtxidrelay_outbound_fail() {
+    fn test_wtxidrelay_misbehavior() {
         let rng = fastrand::Rng::with_seed(1);
         let time = LocalTime::now();
 

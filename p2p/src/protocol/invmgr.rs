@@ -393,19 +393,20 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 // than witness inventories, but the `bitcoin` crate doesn't allow us to
                 // omit the witness data, hence we treat them equally here.
                 Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
-                    let mut wtxid = None;
-                    for tx in self.mempool.values() {
+                    let wtxid = self.mempool.values().find_map(|tx| {
                         if tx.txid() == *txid {
-                            wtxid = Some(tx.wtxid());
-                            debug_assert!(self.mempool.contains_key(&wtxid.unwrap()));
+                            let wtxid = tx.wtxid();
+                            debug_assert!(self.mempool.contains_key(&wtxid));
                             self.upstream.tx(addr, tx.clone());
+                            Some(wtxid)
+                        } else {
+                            None
                         }
-                    }
-
-                    // Since we received a `getdata` from the peer, it means it received our
-                    // inventory broadcast and we no longer need to send it.
-                    if let Some(peer) = self.peers.get_mut(&addr) {
-                        if let Some(wtxid) = wtxid {
+                    });
+                    if let Some(wtxid) = wtxid {
+                        // Since we received a `getdata` from the peer, it means it received our
+                        // inventory broadcast and we no longer need to send it.
+                        if let Some(peer) = self.peers.get_mut(&addr) {
                             if peer.outbox.remove(&wtxid).is_some() {
                                 if peer.outbox.is_empty() {
                                     // Reset retry state.
@@ -543,7 +544,6 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
         // All peers we are sending inventories to.
         let mut addrs = Vec::new();
 
-        // while we have lifetime
         let txid = tx.txid();
         let wtxid = tx.wtxid();
 
