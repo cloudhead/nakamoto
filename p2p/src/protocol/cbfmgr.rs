@@ -324,6 +324,7 @@ impl Rescan {
         for range in ranges {
             let heights = range.collect::<BTreeSet<_>>();
 
+            // TODO: Do we have to also make sure not to request already *received* filters?
             for height in heights.difference(&self.requested) {
                 if let Some(r) = requests.last_mut() {
                     if *height == r.end() + 1 {
@@ -485,8 +486,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         watch: Vec<Script>,
         tree: &T,
     ) -> Vec<(Height, BlockHash)> {
-        let mut matches = Vec::new();
-
         self.rescan.active = true;
         self.rescan.start = match start {
             Bound::Unbounded => tree.height() + 1,
@@ -501,31 +500,34 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         self.rescan.current = self.rescan.start;
         self.rescan.watch = watch.into_iter().collect();
 
-        // Match filters in the cache.
-        if !self.rescan.watch.is_empty() {
-            for (height, filter) in self.cache.iter() {
-                if let Some(header) = tree.get_block_by_height(*height) {
-                    let block_hash = header.block_hash();
-                    let matched = self
-                        .rescan
-                        .match_filter(filter, &block_hash)
-                        .unwrap_or_else(|e| {
-                            panic!("{}: Only valid filters should be cached: {}", source!(), e)
-                        });
-
-                    if matched {
-                        matches.push((*height, block_hash));
-                    }
-                }
-            }
+        if self.rescan.watch.is_empty() {
+            return vec![];
         }
 
-        // Nb. If our filter header chain isn't caught up with our block header chain,
-        // this range will be empty, and this will effectively do nothing.
-        self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
-            .ok();
+        let height = self.filters.height();
+        let start = self.rescan.start;
+        let stop = self
+            .rescan
+            .end
+            // Don't request further than the filter chain height.
+            .map(|h| Height::min(h, height))
+            .unwrap_or(height);
+        let range = start..=stop;
 
-        matches
+        if range.is_empty() {
+            return vec![];
+        }
+
+        // Start fetching the filters we can.
+        match self.get_cfilters(range, tree) {
+            Ok(()) => {}
+            Err(GetFiltersError::NotConnected) => {}
+            Err(err) => panic!("{}: Error fetching filters: {}", source!(), err),
+        }
+        // When we reset the rescan range, there is the possibility of getting immediate cache
+        // hits from `get_cfilters`. Hence, process the filter queue.
+        self.process()
+            .unwrap_or_else(|e| panic!("{}: Only valid filters should be cached: {}", source!(), e))
     }
 
     /// Send a `getcfilters` message to a random peer.
@@ -540,6 +542,36 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         if self.peers.is_empty() {
             return Err(GetFiltersError::NotConnected);
         }
+        if range.is_empty() {
+            return Err(GetFiltersError::InvalidRange);
+        }
+        assert!(*range.end() <= self.filters.height());
+        assert!(*range.end() <= self.cache.end().unwrap_or(u64::MAX));
+
+        // Compute a new request range after checking for cache hits.
+        let range = if let Some(intersection) = self.cache.intersection(range.clone()) {
+            for (height, filter) in self.cache.range(intersection.clone()) {
+                if let Some(header) = tree.get_block_by_height(*height) {
+                    let block_hash = header.block_hash();
+                    // Insert the cached filters into the processing queue.
+                    self.rescan
+                        .received
+                        .insert(*height, (filter.clone(), block_hash));
+                }
+            }
+            // 100% cache hit. There's nothing to request.
+            if range.start() == intersection.start() {
+                return Ok(());
+            }
+            assert!(range.start() > &0);
+
+            // Adjust the request range to only include the filters that are not in the cache.
+            // This will deliberately result in an empty range
+            *range.start()..=*intersection.start() - 1
+        } else {
+            // Leave range un-altered.
+            range
+        };
 
         // TODO: Only ask peers synced to a certain height.
         // Choose a different peer for each requested range.
@@ -1361,6 +1393,7 @@ mod tests {
     fn test_rescan_getcfilters() {
         let birth = 11;
         let best = 42;
+        let mut rng = fastrand::Rng::new();
         let time = LocalTime::now();
         let network = Network::Regtest;
         let (mut cbfmgr, tree, chain) = util::setup(network, best, 0);
@@ -1403,7 +1436,12 @@ mod tests {
             .unwrap();
 
         // Start rescan.
-        cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, vec![], &tree);
+        cbfmgr.rescan(
+            Bound::Included(birth),
+            Bound::Unbounded,
+            vec![gen::script(&mut rng)],
+            &tree,
+        );
 
         let expected = GetCFilters {
             filter_type,
@@ -1422,6 +1460,12 @@ mod tests {
     fn test_cfheaders_behind() {
         todo!()
     }
+
+    // TODO: Test cache with partial cache hit
+    // TODO: Test that we panic if we get filters beyond the allowed range
+    // TODO: Test that cached filters are eventually matched once we receive the requested ones
+    // TODO: Test that the cache is built backwards, so if there's an item in the cache it's the head
+    // TODO: Test rescan when the filter header chain is not caught up to the start of the range.
 
     #[test]
     fn test_cache_update_rescan() {
@@ -1446,7 +1490,12 @@ mod tests {
             &time,
             &tree,
         );
-        let matched = cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, vec![], &tree);
+        let matched = cbfmgr.rescan(
+            Bound::Included(birth),
+            Bound::Unbounded,
+            watch.clone(),
+            &tree,
+        );
         assert!(matched.is_empty());
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
@@ -1459,7 +1508,12 @@ mod tests {
 
         // After a new rescan with a non-empty watchlist, the scripts are checked against the
         // cached filters.
-        let matched = cbfmgr.rescan(Bound::Unbounded, Bound::Unbounded, watch.clone(), &tree);
+        let matched = cbfmgr.rescan(
+            Bound::Included(birth),
+            Bound::Unbounded,
+            watch.clone(),
+            &tree,
+        );
 
         assert_eq!(matched.len(), matches.len());
         assert_eq!(matched.iter().map(|(h, _)| *h).collect::<Vec<_>>(), matches);
@@ -1513,7 +1567,7 @@ mod tests {
             assert!(cfilter_req_start >= birth);
             assert!(cfheader_req_start <= cfilter_req_start);
 
-            let mut rng = fastrand::Rng::new();
+            let mut rng = fastrand::Rng::with_seed(60689);
             let network = Network::Regtest;
             let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
@@ -1521,7 +1575,12 @@ mod tests {
             let time = LocalTime::now();
 
             // Generate a watchlist and keep track of the matching block heights.
-            let (watch, _, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+            let watch = loop {
+                let (watch, _, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+                if !watch.is_empty() {
+                    break watch;
+                }
+            };
 
             cbfmgr.initialize(time, &tree);
             cbfmgr.peer_negotiated(
@@ -1638,6 +1697,9 @@ mod tests {
 
         // Generate a watchlist and keep track of the matching block heights.
         let (watch, heights, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+        if watch.is_empty() {
+            return TestResult::discard();
+        }
 
         cbfmgr.filters.clear().unwrap();
         cbfmgr.initialize(time, &tree);
