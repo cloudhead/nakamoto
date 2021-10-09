@@ -1075,6 +1075,7 @@ mod tests {
         pub fn setup(
             network: Network,
             height: Height,
+            filter_cache_size: usize,
         ) -> (
             FilterManager<FilterCache<store::Memory<StoredHeader>>, Outbox>,
             BlockCache<store::Memory<BlockHeader>>,
@@ -1098,9 +1099,13 @@ mod tests {
             cache.verify(network).unwrap();
 
             let upstream = Outbox::new(network, PROTOCOL_VERSION, "channel");
+            let config = Config {
+                filter_cache_size,
+                ..Config::default()
+            };
 
             (
-                FilterManager::new(Config::default(), rng, cache, upstream),
+                FilterManager::new(config, rng, cache, upstream),
                 tree,
                 chain,
             )
@@ -1269,7 +1274,7 @@ mod tests {
         let time = LocalTime::now();
         let network = Network::Regtest;
         let remote: PeerId = ([8, 8, 8, 8], 8333).into();
-        let (mut cbfmgr, tree, _) = util::setup(network, best);
+        let (mut cbfmgr, tree, _) = util::setup(network, best, 0);
 
         // Start rescan with no peers.
         cbfmgr.rescan(
@@ -1358,7 +1363,7 @@ mod tests {
         let best = 42;
         let time = LocalTime::now();
         let network = Network::Regtest;
-        let (mut cbfmgr, tree, chain) = util::setup(network, best);
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, 0);
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
         let tip = tree.get_block_by_height(best).unwrap().block_hash();
         let filter_type = 0x0;
@@ -1426,7 +1431,7 @@ mod tests {
         let birth = 11;
         let best = 17;
 
-        let (mut cbfmgr, tree, chain) = util::setup(network, best);
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
         let time = LocalTime::now();
 
         // Generate a watchlist and keep track of the matching block heights.
@@ -1512,7 +1517,7 @@ mod tests {
             let network = Network::Regtest;
             let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
-            let (mut cbfmgr, mut tree, chain) = util::setup(network, best);
+            let (mut cbfmgr, mut tree, chain) = util::setup(network, best, 0);
             let time = LocalTime::now();
 
             // Generate a watchlist and keep track of the matching block heights.
@@ -1627,7 +1632,7 @@ mod tests {
         let network = Network::Regtest;
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
-        let (mut cbfmgr, tree, chain) = util::setup(network, best);
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, 0);
         let time = LocalTime::now();
         let tip = chain.last().block_hash();
 
