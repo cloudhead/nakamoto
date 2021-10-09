@@ -1,5 +1,6 @@
 //! Compact filter cache.
 use std::collections::VecDeque;
+use std::ops::RangeInclusive;
 
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::Height;
@@ -164,6 +165,97 @@ impl FilterCache {
         None
     }
 
+    /// Returns the range of cached filter heights that intersects with the provided
+    /// range.
+    ///
+    /// Returns [`None`] if there is no overlap.
+    ///
+    /// ```
+    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_common::block::filter::BlockFilter;
+    ///
+    /// let mut cache = FilterCache::new(32);
+    ///
+    /// cache.push(3, BlockFilter::new(&[]));
+    /// cache.push(4, BlockFilter::new(&[]));
+    /// cache.push(5, BlockFilter::new(&[]));
+    ///
+    /// assert_eq!(cache.intersection(1..=4), Some(3..=4));
+    /// assert_eq!(cache.intersection(5..=5), Some(5..=5));
+    /// assert_eq!(cache.intersection(3..=3), Some(3..=3));
+    /// assert_eq!(cache.intersection(1..=8), Some(3..=5));
+    /// assert_eq!(cache.intersection(4..=7), Some(4..=5));
+    ///
+    /// assert_eq!(cache.intersection(9..=11), None);
+    /// assert_eq!(cache.intersection(1..=2), None);
+    ///
+    /// ```
+    pub fn intersection(&self, range: RangeInclusive<Height>) -> Option<RangeInclusive<Height>> {
+        if let (Some(start), Some(end)) = (self.start(), self.end()) {
+            if *range.start() <= end && *range.end() >= start {
+                let start = start.max(*range.start());
+                let end = end.min(*range.end());
+
+                return Some(start..=end);
+            }
+        }
+        None
+    }
+
+    /// Iterate over a range of block filters.
+    ///
+    /// ```
+    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_common::block::filter::BlockFilter;
+    ///
+    /// let mut cache = FilterCache::new(32);
+    ///
+    /// cache.push(3, BlockFilter::new(&[]));
+    /// cache.push(4, BlockFilter::new(&[]));
+    /// cache.push(5, BlockFilter::new(&[]));
+    ///
+    /// assert_eq!(
+    ///     cache.range(0..=6).map(|(h, _)| *h).collect::<Vec<_>>(),
+    ///     vec![3, 4, 5]
+    /// );
+    /// assert_eq!(
+    ///     cache.range(3..=5).map(|(h, _)| *h).collect::<Vec<_>>(),
+    ///     vec![3, 4, 5]
+    /// );
+    /// assert_eq!(
+    ///     cache.range(4..=7).map(|(h, _)| *h).collect::<Vec<_>>(),
+    ///     vec![4, 5]
+    /// );
+    /// assert_eq!(
+    ///     cache.range(2..=4).map(|(h, _)| *h).collect::<Vec<_>>(),
+    ///     vec![3, 4]
+    /// );
+    /// assert_eq!(
+    ///     cache.range(1..=2).map(|(h, _)| *h).collect::<Vec<_>>(),
+    ///     vec![3, 4, 5]
+    /// );
+    /// assert_eq!(
+    ///     FilterCache::new(32).range(1..=4).collect::<Vec<_>>(),
+    ///     vec![]
+    /// );
+    ///
+    /// ```
+    pub fn range(
+        &self,
+        range: RangeInclusive<Height>,
+    ) -> impl Iterator<Item = (&Height, &BlockFilter)> {
+        let start = self.index(range.start()).unwrap_or(0);
+        let end = self
+            .index(range.end())
+            .unwrap_or_else(|| self.cache.len().saturating_sub(1));
+
+        self.cache
+            .iter()
+            .skip(start)
+            .take(end - start + 1)
+            .map(|(h, b)| (h, b))
+    }
+
     /// Rollback the cache to a certain height. Drops all filters with a height greater
     /// than the given height.
     ///
@@ -196,6 +288,16 @@ impl FilterCache {
                 break;
             }
         }
+    }
+
+    /// Get the index of the given height, if available.
+    fn index(&self, height: &Height) -> Option<usize> {
+        if let (Some(start), Some(end)) = (self.start(), self.end()) {
+            if height >= &start && height <= &end {
+                return Some((height - start) as usize);
+            }
+        }
+        None
     }
 }
 
@@ -283,5 +385,21 @@ mod tests {
 
             assert!(contiguous);
         }
+    }
+
+    #[test]
+    fn test_index() {
+        let mut cache = FilterCache::new(0);
+
+        cache.push(3, BlockFilter::new(&[]));
+        cache.push(4, BlockFilter::new(&[]));
+        cache.push(5, BlockFilter::new(&[]));
+
+        assert_eq!(cache.index(&2), None);
+        assert_eq!(cache.index(&6), None);
+
+        assert_eq!(cache.index(&3), Some(0));
+        assert_eq!(cache.index(&4), Some(1));
+        assert_eq!(cache.index(&5), Some(2));
     }
 }
