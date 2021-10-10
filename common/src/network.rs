@@ -106,19 +106,22 @@ impl Network {
         vec![ServiceFlags::NETWORK, ServiceFlags::COMPACT_FILTERS]
     }
 
-    /// Return a list of flag in string slices form
-    fn service_flags(&self) -> vec::Vec<String> {
+    /// Return the flag to compose the seed.
+    // FIXME(vincenzopalazzo): In this case we are missing one case,
+    // where the node not support the combination, but support
+    // the a single case. In this case could be useful return a list
+    // of flags as u64 here, and in the seed method return a list of
+    // list where the internal contains the seed order by flag importance.
+    fn service_flags(&self) -> String {
         let services = self.supported_services();
-        services
+        let combination: u64 = services
             .iter()
             .map(|service| match *service {
-                //FIXME(vincenzopalazzo): The COMPACT_FILTER is it x64? Check in bitcoin core.
-                ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS => {
-                    format!("x{:x}", service.as_u64())
-                }
+                ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS => service.as_u64(),
                 _ => panic!("Unsupported feature!"),
             })
-            .collect()
+            .sum();
+        format!("x{:x}", combination)
     }
 
     /// DNS seeds. Used to bootstrap the client's address book.
@@ -146,11 +149,10 @@ impl Network {
         };
 
         let mut feature_seeds = Vec::new();
-        for flag in self.service_flags() {
-            for seed in seed_list.iter() {
-                let feature_seed = format!("{}.{}", flag, seed);
-                feature_seeds.push(feature_seed);
-            }
+        let flag = self.service_flags();
+        for seed in seed_list.iter() {
+            let feature_seed = format!("{}.{}", flag, seed);
+            feature_seeds.push(feature_seed);
         }
         feature_seeds
     }

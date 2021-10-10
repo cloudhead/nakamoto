@@ -1,12 +1,12 @@
 //! Shared peer types.
 
 use log::debug;
-use microserde as serde;
 use std::io;
 use std::net;
 
 use bitcoin::network::address::Address;
 use bitcoin::network::constants::ServiceFlags;
+use microserde as serde;
 
 use crate::block::time::LocalTime;
 
@@ -59,8 +59,9 @@ pub trait Store {
                             ),
                         );
                     }
+                    debug!("Resolved dns call to {:?}", seed);
                 }
-                Err(err) => debug!("Error received is {}", err),
+                Err(err) => debug!("Error received is {:?}", err),
             }
         }
 
