@@ -301,7 +301,10 @@ impl<R: Reactor<Publisher>> Client<R> {
         if config.protocol.connect.is_empty() && peers.is_empty() {
             log::info!("Address book is empty. Trying DNS seeds..");
             peers.seed(
-                network.seeds().iter().map(|s| (*s, network.port())),
+                    network
+                    .seeds()
+                    .iter()
+                    .map(|s| (s.as_str(), self.config.network.port())),
                 Source::Dns,
             )?;
             peers.flush()?;

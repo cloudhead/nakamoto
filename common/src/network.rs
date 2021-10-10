@@ -1,4 +1,5 @@
 //! Bitcoin peer network. Eg. *Mainnet*.
+use std::vec;
 
 use bitcoin::blockdata::block::{Block, BlockHeader};
 use bitcoin::consensus::params::Params;
@@ -99,10 +100,31 @@ impl Network {
         }
     }
 
+    /// Return a list of services that nakamoto need
+    /// in the DNS resolving
+    fn supported_services(&self) -> vec::Vec<ServiceFlags> {
+        vec![ServiceFlags::NETWORK, ServiceFlags::COMPACT_FILTERS]
+    }
+
+    /// Return a list of flag in string slices form
+    fn service_flags(&self) -> vec::Vec<String> {
+        let services = self.supported_services();
+        services
+            .iter()
+            .map(|service| match *service {
+                //FIXME(vincenzopalazzo): The COMPACT_FILTER is it x64? Check in bitcoin core.
+                ServiceFlags::NETWORK | ServiceFlags::COMPACT_FILTERS => {
+                    format!("x{:x}", service.as_u64())
+                }
+                _ => panic!("Unsupported feature!"),
+            })
+            .collect()
+    }
+
     /// DNS seeds. Used to bootstrap the client's address book.
-    pub fn seeds(&self) -> &[&str] {
-        match self {
-            Network::Mainnet => &[
+    pub fn seeds<'a>(&self) -> Vec<String> {
+        let seed_list = match self {
+            Network::Mainnet => vec![
                 "seed.bitcoin.sipa.be",          // Pieter Wuille
                 "dnsseed.bluematt.me",           // Matt Corallo
                 "dnsseed.bitcoin.dashjr.org",    // Luke Dashjr
@@ -114,14 +136,23 @@ impl Network {
                 "seed.bitcoin.wiz.biz",          // Jason Maurice
                 "seed.cloudhead.io",             // Alexis Sellier
             ],
-            Network::Testnet => &[
+            Network::Testnet => vec![
                 "testnet-seed.bitcoin.jonasschnelli.ch",
                 "seed.tbtc.petertodd.org",
                 "seed.testnet.bitcoin.sprovoost.nl",
                 "testnet-seed.bluematt.me",
             ],
-            Network::Regtest => &[], // No seeds
+            Network::Regtest => vec![], // No seeds
+        };
+
+        let mut feature_seeds = Vec::new();
+        for flag in self.service_flags() {
+            for seed in seed_list.iter() {
+                let feature_seed = format!("{}.{}", flag, seed);
+                feature_seeds.push(feature_seed);
+            }
         }
+        feature_seeds
     }
 }
 
