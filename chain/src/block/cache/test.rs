@@ -16,10 +16,8 @@ use std::iter;
 use std::net;
 use std::sync::{Arc, RwLock};
 
-use quickcheck as qc;
-use quickcheck::{Arbitrary, Gen, QuickCheck};
+use quickcheck::{Arbitrary, Gen};
 use quickcheck_macros::quickcheck;
-use rand::Rng;
 
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::blockdata::constants;
@@ -142,8 +140,8 @@ mod arbitrary {
     }
 
     impl Arbitrary for OrderedHeaders {
-        fn arbitrary<G: Gen>(g: &mut G) -> OrderedHeaders {
-            let height = g.gen_range(1, g.size() + 1) as Height;
+        fn arbitrary(g: &mut Gen) -> OrderedHeaders {
+            let height = Height::arbitrary(g) % g.size() as Height + 1;
             Self {
                 headers: arbitrary_chain(height, g),
             }
@@ -201,18 +199,18 @@ mod arbitrary {
             }
         }
 
-        fn shuffle<G: Gen>(&mut self, g: &mut G) {
-            use rand::seq::SliceRandom;
-            self.headers.shuffle(g);
+        fn shuffle(&mut self, g: &mut fastrand::Rng) {
+            g.shuffle(&mut self.headers);
         }
     }
 
     impl Arbitrary for UnorderedHeaders {
-        fn arbitrary<G: Gen>(g: &mut G) -> UnorderedHeaders {
+        fn arbitrary(g: &mut Gen) -> UnorderedHeaders {
             let OrderedHeaders { headers: ordered } = OrderedHeaders::arbitrary(g);
             let mut unordered = UnorderedHeaders::new(ordered);
+            let rng = &mut fastrand::Rng::with_seed(u64::arbitrary(g));
 
-            unordered.shuffle(g);
+            unordered.shuffle(rng);
             unordered
         }
 
@@ -257,13 +255,13 @@ mod arbitrary {
     }
 }
 
-fn arbitrary_header<G: Gen>(
+fn arbitrary_header(
     prev_blockhash: BlockHash,
     prev_time: BlockTime,
     target: &Target,
-    g: &mut G,
+    g: &mut Gen,
 ) -> BlockHeader {
-    let delta = g.gen_range(TARGET_SPACING / 2, TARGET_SPACING * 2);
+    let delta = u32::arbitrary(g) % (TARGET_SPACING * 2) + TARGET_SPACING / 2;
 
     let time = prev_time + delta;
     let bits = BlockHeader::compact_target_from_u256(target);
@@ -281,7 +279,7 @@ fn arbitrary_header<G: Gen>(
     header
 }
 
-fn arbitrary_chain<G: Gen>(height: Height, g: &mut G) -> NonEmpty<BlockHeader> {
+fn arbitrary_chain(height: Height, g: &mut Gen) -> NonEmpty<BlockHeader> {
     let mut prev_time = 0; // Epoch.
     let mut prev_hash = BlockHash::default();
 
@@ -312,7 +310,7 @@ impl std::fmt::Debug for BlockImport {
 }
 
 impl Arbitrary for BlockImport {
-    fn arbitrary<G: Gen>(g: &mut G) -> BlockImport {
+    fn arbitrary(g: &mut Gen) -> BlockImport {
         let network = bitcoin::Network::Regtest;
         let genesis = constants::genesis_block(network).header;
         let params = Params::new(network);
@@ -565,26 +563,22 @@ fn test_median_time_past() {
     assert_eq!(cache.median_time_past(13), headers[7].time);
 }
 
-#[test]
-fn prop_cache_import_ordered() {
-    fn prop(input: arbitrary::OrderedHeaders) -> bool {
-        let arbitrary::OrderedHeaders { headers } = input;
-        let mut cache = model::Cache::new(headers.head);
-        let tip = *headers.last();
-        let clock = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
+#[quickcheck]
+fn prop_cache_import_ordered(input: arbitrary::OrderedHeaders) -> bool {
+    let arbitrary::OrderedHeaders { headers } = input;
+    let mut cache = model::Cache::new(headers.head);
+    let tip = *headers.last();
+    let clock = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
 
-        cache
-            .import_blocks(headers.tail.iter().cloned(), &clock)
-            .unwrap();
+    cache
+        .import_blocks(headers.tail.iter().cloned(), &clock)
+        .unwrap();
 
-        cache.genesis() == &headers.head
-            && cache.tip() == (tip.block_hash(), tip)
-            && cache
-                .iter()
-                .all(|(i, h)| headers.get(i as usize) == Some(&h))
-    }
-    QuickCheck::with_gen(qc::StdGen::new(rand::thread_rng(), 16))
-        .quickcheck(prop as fn(arbitrary::OrderedHeaders) -> bool);
+    cache.genesis() == &headers.head
+        && cache.tip() == (tip.block_hash(), tip)
+        && cache
+            .iter()
+            .all(|(i, h)| headers.get(i as usize) == Some(&h))
 }
 
 #[derive(Clone)]
@@ -608,8 +602,8 @@ impl Tree {
         }
     }
 
-    fn next(&self, g: &mut impl Rng) -> Tree {
-        let nonce = g.gen::<u32>();
+    fn next(&self, g: &mut fastrand::Rng) -> Tree {
+        let nonce = g.u32(..);
         let mut header = BlockHeader {
             version: 1,
             prev_blockhash: self.hash,
@@ -631,8 +625,8 @@ impl Tree {
         }
     }
 
-    fn next_invalid(&self, g: &mut impl Rng) -> Tree {
-        let nonce = g.gen::<u32>();
+    fn next_invalid(&self, g: &mut fastrand::Rng) -> Tree {
+        let nonce = g.u32(..);
         let mut header = BlockHeader {
             version: 1,
             prev_blockhash: self.hash,
@@ -657,9 +651,9 @@ impl Tree {
         }
     }
 
-    fn sample<G: Gen>(&self, g: &mut G) -> Tree {
+    fn sample(&self, g: &mut Gen) -> Tree {
         let headers = self.headers.read().unwrap();
-        let ix = g.gen_range(0, headers.len());
+        let ix = usize::arbitrary(g) % headers.len();
         let header = headers.values().nth(ix).unwrap();
 
         Tree {
@@ -711,25 +705,26 @@ impl Tree {
 }
 
 impl Arbitrary for Tree {
-    fn arbitrary<G: Gen>(g: &mut G) -> Tree {
+    fn arbitrary(g: &mut Gen) -> Tree {
         let network = bitcoin::Network::Regtest;
         let genesis = constants::genesis_block(network).header;
-        let height = g.gen_range(1, g.size() / 5 + 1);
-        let forks = g.gen_range(0, g.size() / 10);
+        let height = 1 + Height::arbitrary(g) % g.size() as Height / 5;
+        let forks = usize::arbitrary(g) % (g.size() / 10);
+        let rng = &mut fastrand::Rng::with_seed(u64::arbitrary(g));
 
         let mut tree = Tree::new(genesis);
 
         // Generate trunk.
         for _ in 0..height {
-            tree = tree.next(g);
+            tree = tree.next(rng);
         }
         // Generate forks.
         for _ in 0..forks {
             let mut fork = tree.sample(g);
-            let height = g.gen_range(1, g.size() / 5 + 1);
+            let height = rng.u64(1..=g.size() as Height / 5);
 
             for _ in 0..height {
-                fork = fork.next(g);
+                fork = fork.next(rng);
             }
         }
 
@@ -877,7 +872,7 @@ fn test_cache_import_unchanged() {
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
 
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let a0 = Tree::new(genesis);
     let a1 = a0.next(g);
@@ -914,7 +909,7 @@ fn test_cache_import_height_unchanged() {
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
 
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let a0 = Tree::new(genesis);
     let a1 = a0.next(g);
@@ -958,7 +953,7 @@ fn test_cache_import_back_and_forth() {
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
 
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let a0 = Tree::new(genesis);
 
@@ -1085,7 +1080,7 @@ fn test_cache_import_with_checkpoints() {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let tree = Tree::new(genesis);
 
@@ -1127,7 +1122,7 @@ fn test_cache_import_invalid_fork() {
     let store = store::Memory::new(NonEmpty::new(genesis));
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let a0 = Tree::new(genesis);
 
@@ -1182,7 +1177,7 @@ fn test_cache_import_fork_with_checkpoints() {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let a0 = Tree::new(genesis);
 
@@ -1256,7 +1251,7 @@ fn test_cache_import_fork_with_future_checkpoint() {
     let params = Params::new(network);
     let store = store::Memory::new(NonEmpty::new(genesis));
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let a0 = Tree::new(genesis);
 
@@ -1292,7 +1287,7 @@ fn test_cache_import_duplicate() {
     let store = store::Memory::new(NonEmpty::new(genesis));
     let ctx = AdjustedTime::<net::SocketAddr>::new(LOCAL_TIME);
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let tree = Tree::new(genesis);
     let a0 = tree;
@@ -1346,7 +1341,7 @@ fn test_cache_import_unordered() {
     let mut cache = BlockCache::from(store, params, &[]).unwrap();
     let mut model = model::Cache::new(genesis);
 
-    let g = &mut rand::thread_rng();
+    let g = &mut fastrand::Rng::new();
 
     let a0 = Tree::new(genesis);
 
@@ -1394,7 +1389,6 @@ fn test_cache_import_unordered() {
     let d6 = d5.next(g);
 
     let mut headers = a0.headers();
-    let mut rng = rand::thread_rng();
     let len = headers.len();
 
     // Expected longest chain.
@@ -1403,9 +1397,7 @@ fn test_cache_import_unordered() {
     ];
 
     for _ in 0..len * len {
-        use rand::seq::SliceRandom;
-
-        headers.shuffle(&mut rng);
+        g.shuffle(&mut headers);
 
         cache.import_blocks(headers.iter().cloned(), &ctx).unwrap();
         assert_eq!(cache.tip().0, d6.hash);

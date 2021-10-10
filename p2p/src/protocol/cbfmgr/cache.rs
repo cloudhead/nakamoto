@@ -231,7 +231,7 @@ mod tests {
     }
 
     impl Arbitrary for Op {
-        fn arbitrary<G: Gen>(g: &mut G) -> Self {
+        fn arbitrary(g: &mut Gen) -> Self {
             let n = u8::arbitrary(g);
 
             match n % 4 {
