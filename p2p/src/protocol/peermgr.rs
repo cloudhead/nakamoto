@@ -361,7 +361,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 _ => self.disconnect(
                     *addr,
                     DisconnectReason::PeerMisbehaving(
-                        "`wtxidrelay` must be received before VERACK",
+                        "`wtxidrelay` must be received before `verack`",
                     ),
                 ),
             }

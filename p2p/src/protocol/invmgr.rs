@@ -165,7 +165,7 @@ pub struct Peer {
     pub relay: bool,
     /// Peer announced services.
     pub services: ServiceFlags,
-    /// Does this peer use Witness ID's for transaction relay?
+    /// Does this peer use BIP-339?
     pub wtxidrelay: bool,
 
     /// Peer socket.
@@ -365,7 +365,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                     // TODO: Should we send a WitnessTransaction?
                     for wtxid in peer.outbox.keys() {
                         invs.push(Inventory::Transaction(
-                            self.mempool.get(wtxid).unwrap().txid(),
+                            self.mempool[wtxid].txid(),
                         ));
                     }
                 }
