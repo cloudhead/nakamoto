@@ -112,6 +112,8 @@ pub trait Handshake {
     fn version(&self, addr: PeerId, msg: VersionMessage) -> &Self;
     /// Send a `verack` message.
     fn verack(&self, addr: PeerId) -> &Self;
+    /// Send a BIP-339 `wtxidrelay` message.
+    fn wtxidrelay(&self, addr: PeerId) -> &Self;
 }
 
 /// Ability to connect to peers.
@@ -208,6 +210,8 @@ pub struct PeerInfo {
     pub time_offset: TimeOffset,
     /// Whether this peer relays transactions.
     pub relay: bool,
+    /// Whether this peer supports BIP-339.
+    pub wtxidrelay: bool,
 
     /// Peer nonce. Used to detect self-connections.
     nonce: u64,
@@ -345,6 +349,25 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         Events::event(&self.upstream, Event::Disconnected(*addr));
     }
 
+    /// Called when a `wtxidrelay` message was received.
+    pub fn received_wtxidrelay(&mut self, addr: &PeerId) {
+        if let Some(Peer::Connected {
+            peer: Some(peer),
+            conn: _,
+        }) = self.peers.get_mut(addr)
+        {
+            match peer.state {
+                HandshakeState::ReceivedVersion { .. } => peer.wtxidrelay = true,
+                _ => self.disconnect(
+                    *addr,
+                    DisconnectReason::PeerMisbehaving(
+                        "`wtxidrelay` must be received before `verack`",
+                    ),
+                ),
+            }
+        }
+    }
+
     /// Called when a `version` message was received.
     pub fn received_version<A: AddressSource>(
         &mut self,
@@ -445,17 +468,19 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             }
 
             match conn.link {
-                Link::Outbound => {
-                    self.upstream
-                        .verack(conn.socket.addr)
-                        .set_timeout(HANDSHAKE_TIMEOUT);
-                }
                 Link::Inbound => {
                     self.upstream
                         .version(
                             conn.socket.addr,
                             self.version(conn.socket.addr, conn.local_addr, nonce, height, now),
                         )
+                        .wtxidrelay(conn.socket.addr)
+                        .verack(conn.socket.addr)
+                        .set_timeout(HANDSHAKE_TIMEOUT);
+                }
+                Link::Outbound => {
+                    self.upstream
+                        .wtxidrelay(conn.socket.addr)
                         .verack(conn.socket.addr)
                         .set_timeout(HANDSHAKE_TIMEOUT);
                 }
@@ -474,6 +499,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                         user_agent,
                         state: HandshakeState::ReceivedVersion { since: now },
                         relay,
+                        wtxidrelay: false,
                     }),
                 },
             );
@@ -819,6 +845,67 @@ mod tests {
                 whitelist: Whitelist::default(),
             }
         }
+    }
+
+    #[test]
+    fn test_wtxidrelay_outbound() {
+        let rng = fastrand::Rng::with_seed(1);
+        let time = LocalTime::now();
+
+        let mut addrs = VecDeque::new();
+        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), ());
+
+        let height = 144;
+        let local = ([99, 99, 99, 99], 9999).into();
+        let remote = ([124, 43, 110, 1], 8333).into();
+        let version = VersionMessage {
+            services: ServiceFlags::NETWORK,
+            ..peermgr.version(local, remote, rng.u64(..), height, time)
+        };
+
+        peermgr.initialize(time, &mut addrs);
+        peermgr.connect(&remote, time);
+        peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+        peermgr.received_version(&remote, version, height, time, &mut addrs);
+
+        assert_matches!(
+            peermgr.peers.get(&remote),
+            Some(Peer::Connected{peer: Some(p), ..}) if !p.wtxidrelay
+        );
+
+        peermgr.received_wtxidrelay(&remote);
+        peermgr.received_verack(&remote, time);
+
+        assert_matches!(
+            peermgr.peers.get(&remote),
+            Some(Peer::Connected{peer: Some(p), ..}) if p.wtxidrelay
+        );
+    }
+
+    #[test]
+    fn test_wtxidrelay_misbehavior() {
+        let rng = fastrand::Rng::with_seed(1);
+        let time = LocalTime::now();
+
+        let mut addrs = VecDeque::new();
+        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), ());
+
+        let height = 144;
+        let local = ([99, 99, 99, 99], 9999).into();
+        let remote = ([124, 43, 110, 1], 8333).into();
+        let version = VersionMessage {
+            services: ServiceFlags::NETWORK,
+            ..peermgr.version(local, remote, rng.u64(..), height, time)
+        };
+
+        peermgr.initialize(time, &mut addrs);
+        peermgr.connect(&remote, time);
+        peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+        peermgr.received_version(&remote, version, height, time, &mut addrs);
+        peermgr.received_verack(&remote, time);
+        peermgr.received_wtxidrelay(&remote);
+
+        assert_matches!(peermgr.peers.get(&remote), Some(Peer::Disconnecting));
     }
 
     #[test]

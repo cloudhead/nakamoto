@@ -57,8 +57,7 @@ use nakamoto_common::p2p::{peer, Domain};
 use thiserror::Error;
 
 /// Peer-to-peer protocol version.
-/// For now, we only support `70012`, due to lacking `sendcmpct` support.
-pub const PROTOCOL_VERSION: u32 = 70012;
+pub const PROTOCOL_VERSION: u32 = 70016;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.2.0/";
 
@@ -834,8 +833,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         &self.clock,
                         &self.tree,
                     );
-                    self.invmgr
-                        .peer_negotiated(conn.socket.clone(), peer.services, peer.relay);
+                    self.invmgr.peer_negotiated(
+                        conn.socket.clone(),
+                        peer.services,
+                        peer.relay,
+                        peer.wtxidrelay,
+                    );
                 }
             }
             NetworkMessage::Ping(nonce) => {
@@ -934,6 +937,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             NetworkMessage::GetData(invs) => {
                 self.invmgr.received_getdata(addr, &invs);
                 (*self.hooks.on_getdata)(addr, invs, &self.upstream);
+            }
+            NetworkMessage::WtxidRelay => {
+                self.peermgr.received_wtxidrelay(&addr);
             }
             _ => {
                 debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);

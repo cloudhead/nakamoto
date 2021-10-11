@@ -213,6 +213,11 @@ impl peermgr::Handshake for Channel {
         self.message(addr, NetworkMessage::Verack);
         self
     }
+
+    fn wtxidrelay(&self, addr: PeerId) -> &Self {
+        self.message(addr, NetworkMessage::WtxidRelay);
+        self
+    }
 }
 
 impl peermgr::Handshake for () {
@@ -221,6 +226,10 @@ impl peermgr::Handshake for () {
     }
 
     fn verack(&self, _addr: PeerId) -> &Self {
+        self
+    }
+
+    fn wtxidrelay(&self, _addr: PeerId) -> &Self {
         self
     }
 }

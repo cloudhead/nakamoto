@@ -844,14 +844,14 @@ fn test_submit_transactions() {
 
     let (transmit, receive) = chan::bounded(1);
     let tx = gen::transaction(&mut rng);
-    let txid = tx.txid();
-    let inventory = vec![Inventory::Transaction(txid)];
+    let wtxid = tx.txid();
+    let inventory = vec![Inventory::Transaction(wtxid)];
     alice.connect(&remote2, Link::Outbound);
-    alice.command(Command::SubmitTransaction(tx, transmit));
+    alice.command(Command::SubmitTransaction(tx.clone(), transmit));
 
     let remotes = receive.recv().unwrap().unwrap();
     assert_eq!(Vec::from(remotes), vec![remote1.addr]);
-    assert!(alice.protocol.invmgr.contains(&txid));
+    assert!(alice.protocol.invmgr.contains(&tx.wtxid()));
 
     alice.tick();
     alice
@@ -1082,8 +1082,8 @@ fn test_confirmed_transaction() {
     alice.command(Command::SubmitTransaction(tx2.clone(), transmit));
     alice.tick();
 
-    assert!(alice.protocol.invmgr.contains(&tx1.txid()));
-    assert!(alice.protocol.invmgr.contains(&tx2.txid()));
+    assert!(alice.protocol.invmgr.contains(&tx1.wtxid()));
+    assert!(alice.protocol.invmgr.contains(&tx2.wtxid()));
 
     alice.protocol.invmgr.get_block(blk1.block_hash());
     alice.protocol.invmgr.get_block(blk2.block_hash());
@@ -1218,7 +1218,7 @@ fn test_submitted_transaction_filtering() {
     alice.command(Command::SubmitTransaction(tx.clone(), transmit));
     alice.tick();
 
-    assert!(alice.protocol.invmgr.contains(&tx.txid()));
+    assert!(alice.protocol.invmgr.contains(&tx.wtxid()));
 
     // The next block will have the matching transaction.
     let matching = gen::block_with(&chain.last().header, vec![tx.clone()], &mut rng);
@@ -1411,7 +1411,7 @@ fn test_transaction_reverted_reconfirm() {
             })
             .expect("The transaction is reverted");
 
-        assert!(alice.protocol.invmgr.contains(&tx.txid()));
+        assert!(alice.protocol.invmgr.contains(&tx.wtxid()));
 
         alice.tick();
         alice
