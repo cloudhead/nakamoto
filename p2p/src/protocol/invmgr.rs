@@ -364,9 +364,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 } else {
                     // TODO: Should we send a WitnessTransaction?
                     for wtxid in peer.outbox.keys() {
-                        invs.push(Inventory::Transaction(
-                            self.mempool[wtxid].txid(),
-                        ));
+                        invs.push(Inventory::Transaction(self.mempool[wtxid].txid()));
                     }
                 }
                 self.upstream.inv(*addr, invs);
