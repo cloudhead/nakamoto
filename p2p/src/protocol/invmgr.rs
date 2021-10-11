@@ -393,17 +393,11 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 // than witness inventories, but the `bitcoin` crate doesn't allow us to
                 // omit the witness data, hence we treat them equally here.
                 Inventory::Transaction(txid) | Inventory::WitnessTransaction(txid) => {
-                    let wtxid = self.mempool.values().find_map(|tx| {
-                        if tx.txid() == *txid {
-                            let wtxid = tx.wtxid();
-                            debug_assert!(self.mempool.contains_key(&wtxid));
-                            self.upstream.tx(addr, tx.clone());
-                            Some(wtxid)
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(wtxid) = wtxid {
+                    if let Some(tx) = self.mempool.values().find(|tx| tx.txid() == *txid) {
+                        let wtxid = tx.wtxid();
+                        debug_assert!(self.mempool.contains_key(&wtxid));
+                        self.upstream.tx(addr, tx.clone());
+
                         // Since we received a `getdata` from the peer, it means it received our
                         // inventory broadcast and we no longer need to send it.
                         if let Some(peer) = self.peers.get_mut(&addr) {
@@ -422,8 +416,6 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 }
                 Inventory::WTx(wtxid) => {
                     if let Some(tx) = self.mempool.get(wtxid) {
-                        debug_assert!(self.mempool.contains_key(wtxid));
-
                         self.upstream.tx(addr, tx.clone());
                     }
 

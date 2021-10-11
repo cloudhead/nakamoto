@@ -112,7 +112,7 @@ pub trait Handshake {
     fn version(&self, addr: PeerId, msg: VersionMessage) -> &Self;
     /// Send a `verack` message.
     fn verack(&self, addr: PeerId) -> &Self;
-    /// Send a BIPS-339 `wtxidrelay` message.
+    /// Send a BIP-339 `wtxidrelay` message.
     fn wtxidrelay(&self, addr: PeerId) -> &Self;
 }
 
@@ -360,7 +360,9 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 HandshakeState::ReceivedVersion { .. } => peer.wtxidrelay = true,
                 _ => self.disconnect(
                     *addr,
-                    DisconnectReason::PeerMisbehaving("`wtxidrelay` must be received before VERACK"),
+                    DisconnectReason::PeerMisbehaving(
+                        "`wtxidrelay` must be received before VERACK",
+                    ),
                 ),
             }
         }
