@@ -331,7 +331,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     }
 
     /// Find a potential branch starting from the active chain and ending at the given tip.
-    /// The tip must be not be an active block. Returns `None` if no branch was found.
+    /// The tip must not be an active block. Returns `None` if no branch was found.
     ///
     /// # Errors
     ///
