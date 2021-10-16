@@ -179,6 +179,10 @@ impl BlockTree for Cache {
         None
     }
 
+    fn find_branch(&self, _to: &BlockHash) -> Option<(Height, BlockHash, Vec<BlockHeader>)> {
+        unimplemented!()
+    }
+
     fn locate_headers(
         &self,
         _locators: &[BlockHash],

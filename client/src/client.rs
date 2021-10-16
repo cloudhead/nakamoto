@@ -469,6 +469,16 @@ where
         Ok(receive.recv()?)
     }
 
+    fn find_branch(
+        &self,
+        to: &BlockHash,
+    ) -> Result<Option<(Height, BlockHash, Vec<BlockHeader>)>, handle::Error> {
+        let (transmit, receive) = chan::bounded(1);
+        self.command(Command::FindBranch(*to, transmit))?;
+
+        Ok(receive.recv()?)
+    }
+
     fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
         self.command(Command::GetBlock(*hash))?;
 

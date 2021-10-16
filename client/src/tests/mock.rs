@@ -117,6 +117,13 @@ impl Handle for TestHandle {
         receive.recv()?.map_err(handle::Error::GetFilters)
     }
 
+    fn find_branch(
+        &self,
+        _to: &BlockHash,
+    ) -> Result<Option<(Height, BlockHash, Vec<BlockHeader>)>, handle::Error> {
+        unimplemented!()
+    }
+
     fn blocks(&self) -> chan::Receiver<(Block, Height)> {
         self.blocks.clone()
     }

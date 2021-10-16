@@ -70,6 +70,13 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn get_block(&self, hash: &BlockHash) -> Result<(), Error>;
     /// Get compact filters from the network.
     fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), Error>;
+    /// Find a branch from the active chain to the given (stale) block.
+    ///
+    /// See [`nakamoto_common::block::tree::BlockTree::find_branch`].
+    fn find_branch(
+        &self,
+        to: &BlockHash,
+    ) -> Result<Option<(Height, BlockHash, Vec<BlockHeader>)>, Error>;
     /// Subscribe to blocks received.
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.

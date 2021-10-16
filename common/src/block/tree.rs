@@ -120,6 +120,13 @@ pub trait BlockTree {
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)>;
     /// Get a block by height.
     fn get_block_by_height(&self, height: Height) -> Option<&BlockHeader>;
+    /// Find a path from the active chain to the provided (stale) block hash.
+    ///
+    /// If a path is found, the height and hash of the start/fork block is returned, along with the
+    /// headers up to and including the tip, forming the branch.
+    ///
+    /// If the given block is on the active chain, its height, hash and header is returned.
+    fn find_branch(&self, to: &BlockHash) -> Option<(Height, BlockHash, Vec<BlockHeader>)>;
     /// Iterate over the longest chain, starting from genesis.
     fn chain<'a>(&'a self) -> Box<dyn Iterator<Item = BlockHeader> + 'a> {
         Box::new(self.iter().map(|(_, h)| h))

@@ -606,6 +606,28 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         self.chain.get(height as usize).map(|b| &b.header)
     }
 
+    /// Find a branch.
+    fn find_branch(&self, to: &BlockHash) -> Option<(Height, BlockHash, Vec<BlockHeader>)> {
+        // Check active chain first. If there's a match, the path to return is just the block
+        // itself.
+        if let Some((height, header)) = self.get_block(to) {
+            return Some((height, *to, vec![*header]));
+        }
+
+        // Since it's not in the active chain, check stale blocks.
+        if let Some(Candidate {
+            fork_height,
+            fork_hash,
+            headers,
+            ..
+        }) = self.fork(to)
+        {
+            Some((fork_height, fork_hash, headers))
+        } else {
+            None
+        }
+    }
+
     /// Get the best block hash and header.
     fn tip(&self) -> (BlockHash, BlockHeader) {
         (self.chain.last().hash, self.chain.last().header)
