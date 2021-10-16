@@ -606,24 +606,22 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
     }
 
     /// Find a branch.
-    fn find_branch(&self, to: &BlockHash) -> Option<(Height, BlockHash, Vec<BlockHeader>)> {
+    fn find_branch(&self, to: &BlockHash) -> Option<(Height, NonEmpty<BlockHeader>)> {
         // Check active chain first. If there's a match, the path to return is just the block
         // itself.
         if let Some((height, header)) = self.get_block(to) {
-            return Some((height, *to, vec![*header]));
+            return Some((height, NonEmpty::new(*header)));
         }
 
         // Since it's not in the active chain, check stale blocks.
         if let Some(Candidate {
             fork_height,
-            fork_hash,
             fork_header,
-            mut headers,
+            headers,
             ..
         }) = self.fork(to)
         {
-            headers.insert(0, fork_header);
-            Some((fork_height, fork_hash, headers))
+            Some((fork_height, NonEmpty::from((fork_header, headers))))
         } else {
             None
         }

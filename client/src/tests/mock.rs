@@ -120,7 +120,7 @@ impl Handle for TestHandle {
     fn find_branch(
         &self,
         _to: &BlockHash,
-    ) -> Result<Option<(Height, BlockHash, Vec<BlockHeader>)>, handle::Error> {
+    ) -> Result<Option<(Height, NonEmpty<BlockHeader>)>, handle::Error> {
         unimplemented!()
     }
 

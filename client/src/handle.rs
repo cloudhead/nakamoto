@@ -73,10 +73,8 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Find a branch from the active chain to the given (stale) block.
     ///
     /// See [`nakamoto_common::block::tree::BlockTree::find_branch`].
-    fn find_branch(
-        &self,
-        to: &BlockHash,
-    ) -> Result<Option<(Height, BlockHash, Vec<BlockHeader>)>, Error>;
+    fn find_branch(&self, to: &BlockHash)
+        -> Result<Option<(Height, NonEmpty<BlockHeader>)>, Error>;
     /// Subscribe to blocks received.
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.

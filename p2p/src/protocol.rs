@@ -196,7 +196,7 @@ pub enum Command {
     /// Find a branch from the active chain to the (stale) block hash.
     FindBranch(
         BlockHash,
-        chan::Sender<Option<(Height, BlockHash, Vec<BlockHeader>)>>,
+        chan::Sender<Option<(Height, NonEmpty<BlockHeader>)>>,
     ),
     /// Rescan the chain for matching scripts and addresses.
     Rescan {

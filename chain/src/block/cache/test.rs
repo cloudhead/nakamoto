@@ -88,7 +88,7 @@ impl BlockTree for HeightCache {
         self.headers.get(&height)
     }
 
-    fn find_branch(&self, _to: &BlockHash) -> Option<(Height, BlockHash, Vec<BlockHeader>)> {
+    fn find_branch(&self, _to: &BlockHash) -> Option<(Height, NonEmpty<BlockHeader>)> {
         unimplemented!()
     }
 

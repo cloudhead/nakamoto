@@ -472,7 +472,7 @@ where
     fn find_branch(
         &self,
         to: &BlockHash,
-    ) -> Result<Option<(Height, BlockHash, Vec<BlockHeader>)>, handle::Error> {
+    ) -> Result<Option<(Height, NonEmpty<BlockHeader>)>, handle::Error> {
         let (transmit, receive) = chan::bounded(1);
         self.command(Command::FindBranch(*to, transmit))?;
 
