@@ -18,7 +18,7 @@ use nakamoto_chain::{block::cache::BlockCache, filter::BlockFilter};
 
 use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
-use nakamoto_common::block::tree::{self, ImportResult};
+use nakamoto_common::block::tree::{self, BlockReader, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::{Source, Store as _};
@@ -467,6 +467,17 @@ where
         self.command(Command::GetTip(transmit))?;
 
         Ok(receive.recv()?)
+    }
+
+    fn query_tree(
+        &self,
+        query: impl Fn(&dyn BlockReader) + Send + Sync + 'static,
+    ) -> Result<(), handle::Error> {
+        use std::sync::Arc;
+
+        self.command(Command::QueryTree(Arc::new(query)))?;
+
+        Ok(())
     }
 
     fn find_branch(

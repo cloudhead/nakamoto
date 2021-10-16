@@ -46,7 +46,7 @@ use bitcoin::Script;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
-use nakamoto_common::block::tree::{self, BlockTree, ImportResult};
+use nakamoto_common::block::tree::{self, BlockReader, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::block::{BlockTime, Transaction};
 use nakamoto_common::network::{self, Network};
@@ -211,6 +211,8 @@ pub enum Command {
     Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
     /// Send a message to a random peer.
     Query(NetworkMessage, chan::Sender<Option<net::SocketAddr>>),
+    /// Query the block tree.
+    QueryTree(Arc<dyn Fn(&dyn BlockReader) + Send + Sync>),
     /// Connect to a peer.
     Connect(net::SocketAddr),
     /// Disconnect from a peer.
@@ -245,6 +247,7 @@ impl fmt::Debug for Command {
             }
             Self::Broadcast(msg, _, _) => write!(f, "Broadcast({})", msg.cmd()),
             Self::Query(msg, _) => write!(f, "Query({})", msg.cmd()),
+            Self::QueryTree(_) => write!(f, "QueryTree"),
             Self::Connect(addr) => write!(f, "Connect({})", addr),
             Self::Disconnect(addr) => write!(f, "Disconnect({})", addr),
             Self::ImportHeaders(_headers, _) => write!(f, "ImportHeaders(..)"),
@@ -1036,6 +1039,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
                 debug!(target: self.target, "Received command: {:?}", cmd);
 
                 match cmd {
+                    Command::QueryTree(query) => {
+                        query(&self.tree);
+                    }
                     Command::GetBlockByHeight(height, reply) => {
                         let header = self.tree.get_block_by_height(height).map(|h| h.to_owned());
 

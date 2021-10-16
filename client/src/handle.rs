@@ -10,7 +10,7 @@ use crossbeam_channel as chan;
 use thiserror::Error;
 
 use nakamoto_common::block::filter::BlockFilter;
-use nakamoto_common::block::tree::ImportResult;
+use nakamoto_common::block::tree::{BlockReader, ImportResult};
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
@@ -70,6 +70,12 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn get_block(&self, hash: &BlockHash) -> Result<(), Error>;
     /// Get compact filters from the network.
     fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), Error>;
+    /// Query the block tree using the given function. To return results from
+    /// the query function, a channel may be used. For example, [`crate::chan`].
+    fn query_tree(
+        &self,
+        query: impl Fn(&dyn BlockReader) + Send + Sync + 'static,
+    ) -> Result<(), Error>;
     /// Find a branch from the active chain to the given (stale) block.
     ///
     /// See [`nakamoto_common::block::tree::BlockReader::find_branch`].

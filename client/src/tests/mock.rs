@@ -161,6 +161,13 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
+    fn query_tree(
+        &self,
+        _query: impl Fn(&dyn nakamoto_chain::BlockReader) + Send + Sync + 'static,
+    ) -> Result<(), handle::Error> {
+        unimplemented!()
+    }
+
     fn import_headers(
         &self,
         _headers: Vec<BlockHeader>,

@@ -246,3 +246,40 @@ fn test_client_dropped() {
         Err(client::handle::Error::Disconnected)
     ));
 }
+
+#[test]
+fn test_query_headers() {
+    let cfg = Config::default();
+    let genesis = cfg.network.genesis();
+    let params = cfg.network.params();
+    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let handle = client.handle();
+    let store = store::Memory::new((genesis, BITCOIN_HEADERS.tail.clone()).into());
+    let cache = BlockCache::from(store, params, &[]).unwrap();
+    let filters = FilterCache::from(store::Memory::default()).unwrap();
+
+    thread::spawn(|| {
+        let local_time = time::SystemTime::now().into();
+        let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
+        let rng = fastrand::Rng::new();
+
+        client.run_with(|cfg, upstream| {
+            Protocol::new(cache, filters, HashMap::new(), clock, rng, cfg, upstream)
+        })
+    });
+
+    let height = 1;
+    let (tx, rx) = crate::chan::bounded(1);
+
+    handle
+        .query_tree(move |r| {
+            let blk = r.get_block_by_height(height).cloned();
+            tx.send((blk, blk.is_some())).ok();
+        })
+        .unwrap();
+
+    let (header, found) = rx.recv().unwrap();
+
+    assert_eq!(header, BITCOIN_HEADERS.tail.first().cloned());
+    assert!(found);
+}
