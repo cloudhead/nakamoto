@@ -178,7 +178,7 @@ pub enum FeeEstimation {
 }
 
 /// A command or request that can be sent to the protocol.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum Command {
     /// Get block header at height.
     GetBlockByHeight(Height, chan::Sender<Option<BlockHeader>>),
@@ -229,6 +229,30 @@ pub enum Command {
     ),
     /// Shutdown the protocol.
     Shutdown,
+}
+
+impl fmt::Debug for Command {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GetBlockByHeight(height, _) => write!(f, "GetBlockByHeight({})", height),
+            Self::GetPeers(flags, _) => write!(f, "GetPeers({})", flags),
+            Self::GetTip(_) => write!(f, "GetTip"),
+            Self::GetBlock(hash) => write!(f, "GetBlock({})", hash),
+            Self::GetFilters(range, _) => write!(f, "GetFilters({:?})", range),
+            Self::FindBranch(hash, _) => write!(f, "FindBranch({})", hash),
+            Self::Rescan { from, to, watch } => {
+                write!(f, "Rescan({:?}, {:?}, {:?})", from, to, watch)
+            }
+            Self::Broadcast(msg, _, _) => write!(f, "Broadcast({})", msg.cmd()),
+            Self::Query(msg, _) => write!(f, "Query({})", msg.cmd()),
+            Self::Connect(addr) => write!(f, "Connect({})", addr),
+            Self::Disconnect(addr) => write!(f, "Disconnect({})", addr),
+            Self::ImportHeaders(_headers, _) => write!(f, "ImportHeaders(..)"),
+            Self::ImportAddresses(addrs) => write!(f, "ImportAddresses({:?})", addrs),
+            Self::SubmitTransaction(tx, _) => write!(f, "SubmitTransaction({:?})", tx),
+            Self::Shutdown => write!(f, "Shutdown"),
+        }
+    }
 }
 
 /// A generic error resulting from processing a [`Command`].
@@ -1008,128 +1032,109 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
                 self.receive(addr, msg);
             }
             Input::Sent(_addr, _msg) => {}
-            Input::Command(cmd) => match cmd {
-                Command::GetBlockByHeight(height, reply) => {
-                    debug!(target: self.target, "Received command: GetBlockByHeight");
+            Input::Command(cmd) => {
+                debug!(target: self.target, "Received command: {:?}", cmd);
 
-                    let header = self.tree.get_block_by_height(height).map(|h| h.to_owned());
+                match cmd {
+                    Command::GetBlockByHeight(height, reply) => {
+                        let header = self.tree.get_block_by_height(height).map(|h| h.to_owned());
 
-                    reply.send(header).ok();
-                }
-                Command::GetPeers(services, reply) => {
-                    debug!(target: self.target, "Received command: GetPeers");
+                        reply.send(header).ok();
+                    }
+                    Command::GetPeers(services, reply) => {
+                        let peers = self
+                            .peermgr
+                            .peers()
+                            .filter(|(p, _)| p.is_negotiated())
+                            .filter(|(p, _)| p.services.has(services))
+                            .map(Peer::from)
+                            .collect::<Vec<Peer>>();
 
-                    let peers = self
-                        .peermgr
-                        .peers()
-                        .filter(|(p, _)| p.is_negotiated())
-                        .filter(|(p, _)| p.services.has(services))
-                        .map(Peer::from)
-                        .collect::<Vec<Peer>>();
+                        reply.send(peers).ok();
+                    }
+                    Command::Connect(addr) => {
+                        self.peermgr.whitelist(addr);
+                        self.peermgr.connect(&addr, local_time);
+                    }
+                    Command::Disconnect(addr) => {
+                        self.disconnect(addr, DisconnectReason::Command);
+                    }
+                    Command::Query(msg, reply) => {
+                        reply.send(self.query(msg, |_| true)).ok();
+                    }
+                    Command::Broadcast(msg, predicate, reply) => {
+                        let peers = self.broadcast(msg, |p| predicate(p.clone()));
+                        reply.send(peers).ok();
+                    }
+                    Command::ImportHeaders(headers, reply) => {
+                        let result = self.syncmgr.import_blocks(
+                            headers.into_iter(),
+                            &self.clock,
+                            &mut self.tree,
+                        );
 
-                    reply.send(peers).ok();
-                }
-                Command::Connect(addr) => {
-                    debug!(target: self.target, "Received command: Connect({})", addr);
-
-                    self.peermgr.whitelist(addr);
-                    self.peermgr.connect(&addr, local_time);
-                }
-                Command::Disconnect(addr) => {
-                    debug!(target: self.target, "Received command: Disconnect({})", addr);
-
-                    self.disconnect(addr, DisconnectReason::Command);
-                }
-                Command::Query(msg, reply) => {
-                    debug!(target: self.target, "Received command: Query({:?})", msg);
-
-                    reply.send(self.query(msg, |_| true)).ok();
-                }
-                Command::Broadcast(msg, predicate, reply) => {
-                    debug!(target: self.target, "Received command: Broadcast({:?})", msg);
-
-                    let peers = self.broadcast(msg, |p| predicate(p.clone()));
-                    reply.send(peers).ok();
-                }
-                Command::ImportHeaders(headers, reply) => {
-                    debug!(target: self.target, "Received command: ImportHeaders(..)");
-
-                    let result = self.syncmgr.import_blocks(
-                        headers.into_iter(),
-                        &self.clock,
-                        &mut self.tree,
-                    );
-
-                    match result {
-                        Ok(import_result) => {
-                            reply.send(Ok(import_result)).ok();
-                        }
-                        Err(err) => {
-                            reply.send(Err(err)).ok();
+                        match result {
+                            Ok(import_result) => {
+                                reply.send(Ok(import_result)).ok();
+                            }
+                            Err(err) => {
+                                reply.send(Err(err)).ok();
+                            }
                         }
                     }
-                }
-                Command::ImportAddresses(addrs) => {
-                    debug!(target: self.target, "Received command: ImportAddresses(..)");
-
-                    self.addrmgr.insert(
-                        // Nb. For imported addresses, the time last active is not relevant.
-                        addrs.into_iter().map(|a| (BlockTime::default(), a)),
-                        peer::Source::Imported,
-                    );
-                }
-                Command::GetTip(reply) => {
-                    let (_, header) = self.tree.tip();
-                    let height = self.tree.height();
-
-                    reply.send((height, header)).ok();
-                }
-                Command::GetFilters(range, reply) => {
-                    debug!(target: self.target,
-                        "Received command: GetFilters({}...{})", range.start(), range.end());
-
-                    let result = self.cbfmgr.get_cfilters(range, &self.tree);
-                    reply.send(result).ok();
-                }
-                Command::GetBlock(hash) => {
-                    self.invmgr.get_block(hash);
-                }
-                Command::FindBranch(to, reply) => {
-                    let result = self.tree.find_branch(&to);
-                    reply.send(result).ok();
-                }
-                Command::SubmitTransaction(tx, reply) => {
-                    debug!(target: self.target, "Received command: SubmitTransaction(..)");
-
-                    // Update local watchlist to track submitted transactions.
-                    //
-                    // Nb. This is currently non-optimal, as the cfilter matching is based on the
-                    // output scripts. This may trigger false-positives, since the same
-                    // invoice (address) can be re-used by multiple transactions, ie. outputs
-                    // can figure in more than one block.
-                    self.cbfmgr.watch_transaction(&tx);
-
-                    // TODO: For BIP 339 support, we can send a `WTx` inventory here.
-                    let peers = self.invmgr.announce(tx);
-
-                    if let Some(peers) = NonEmpty::from_vec(peers) {
-                        reply.send(Ok(peers)).ok();
-                    } else {
-                        reply.send(Err(CommandError::NotConnected)).ok();
+                    Command::ImportAddresses(addrs) => {
+                        self.addrmgr.insert(
+                            // Nb. For imported addresses, the time last active is not relevant.
+                            addrs.into_iter().map(|a| (BlockTime::default(), a)),
+                            peer::Source::Imported,
+                        );
                     }
-                }
-                Command::Rescan { from, to, watch } => {
-                    debug!(target: self.target, "Received command: Rescan({:?}, {:?})", from, to);
+                    Command::GetTip(reply) => {
+                        let (_, header) = self.tree.tip();
+                        let height = self.tree.height();
 
-                    // A rescan with a new watch list may return matches on cached filters.
-                    for (_, hash) in self.cbfmgr.rescan(from, to, watch, &self.tree) {
+                        reply.send((height, header)).ok();
+                    }
+                    Command::GetFilters(range, reply) => {
+                        let result = self.cbfmgr.get_cfilters(range, &self.tree);
+                        reply.send(result).ok();
+                    }
+                    Command::GetBlock(hash) => {
                         self.invmgr.get_block(hash);
                     }
+                    Command::FindBranch(to, reply) => {
+                        let result = self.tree.find_branch(&to);
+                        reply.send(result).ok();
+                    }
+                    Command::SubmitTransaction(tx, reply) => {
+                        // Update local watchlist to track submitted transactions.
+                        //
+                        // Nb. This is currently non-optimal, as the cfilter matching is based on the
+                        // output scripts. This may trigger false-positives, since the same
+                        // invoice (address) can be re-used by multiple transactions, ie. outputs
+                        // can figure in more than one block.
+                        self.cbfmgr.watch_transaction(&tx);
+
+                        // TODO: For BIP 339 support, we can send a `WTx` inventory here.
+                        let peers = self.invmgr.announce(tx);
+
+                        if let Some(peers) = NonEmpty::from_vec(peers) {
+                            reply.send(Ok(peers)).ok();
+                        } else {
+                            reply.send(Err(CommandError::NotConnected)).ok();
+                        }
+                    }
+                    Command::Rescan { from, to, watch } => {
+                        // A rescan with a new watch list may return matches on cached filters.
+                        for (_, hash) in self.cbfmgr.rescan(from, to, watch, &self.tree) {
+                            self.invmgr.get_block(hash);
+                        }
+                    }
+                    Command::Shutdown => {
+                        self.upstream.push(Out::Shutdown);
+                    }
                 }
-                Command::Shutdown => {
-                    self.upstream.push(Out::Shutdown);
-                }
-            },
+            }
             Input::Tick => {
                 trace!(target: self.target, "Received tick");
 
