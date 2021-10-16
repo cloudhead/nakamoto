@@ -56,6 +56,7 @@ struct Candidate {
     headers: Vec<BlockHeader>,
     fork_height: Height,
     fork_hash: BlockHash,
+    fork_header: BlockHeader,
 }
 
 /// An implementation of [`BlockTree`] using a generic storage backend.
@@ -352,12 +353,13 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             headers.push_front(*header);
         }
 
-        if let Some(height) = self.headers.get(&cursor) {
+        if let Some((fork_height, fork_header)) = self.get_block(&cursor) {
             assert!(!headers.is_empty());
 
             return Some(Candidate {
                 tip,
-                fork_height: *height,
+                fork_height,
+                fork_header: *fork_header,
                 fork_hash: cursor,
                 headers: headers.into(),
             });
@@ -367,13 +369,10 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
     /// Validate a candidate branch. This function is useful for chain selection.
     fn validate_branch(&self, candidate: &Candidate, clock: &impl Clock) -> Result<(), Error> {
-        let fork_header = self
-            .get_block_by_height(candidate.fork_height)
-            .expect("the given candidate must fork from a known block");
         let mut tip = CachedBlock {
             height: candidate.fork_height,
             hash: candidate.fork_hash,
-            header: *fork_header,
+            header: candidate.fork_header,
         };
 
         for header in candidate.headers.iter() {
@@ -618,10 +617,12 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         if let Some(Candidate {
             fork_height,
             fork_hash,
-            headers,
+            fork_header,
+            mut headers,
             ..
         }) = self.fork(to)
         {
+            headers.insert(0, fork_header);
             Some((fork_height, fork_hash, headers))
         } else {
             None
