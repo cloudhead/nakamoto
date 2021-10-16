@@ -126,8 +126,6 @@ pub enum Event {
     },
     /// A new block was discovered via a peer.
     BlockDiscovered(PeerId, BlockHash),
-    /// Headers were imported successfully.
-    HeadersImported(ImportResult),
     /// Started syncing with a peer.
     Syncing(PeerId),
     /// Synced up to the specified hash and height.
@@ -150,9 +148,6 @@ impl std::fmt::Display for Event {
             Event::TimedOut(addr) => write!(fmt, "Peer {} timed out", addr),
             Event::UnsolicitedHeadersReceived(from, count) => {
                 write!(fmt, "Received {} unsolicited headers from {}", count, from)
-            }
-            Event::HeadersImported(import_result) => {
-                write!(fmt, "Headers imported: {:?}", &import_result)
             }
             Event::Synced(hash, height) => {
                 write!(fmt, "Headers synced up to hash={} height={}", hash, height)

@@ -16,7 +16,6 @@ use bitcoin::network::message_network::VersionMessage;
 use bitcoin::Transaction;
 
 use nakamoto_common::block::time::LocalDuration;
-use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
 use crate::protocol::{DisconnectReason, Event, Out, PeerId};
@@ -194,7 +193,7 @@ impl syncmgr::SyncHeaders for Channel {
         debug!(target: self.target, "[sync] {}", &event);
 
         match &event {
-            syncmgr::Event::HeadersImported(ImportResult::TipChanged(_, tip, height, _, _)) => {
+            syncmgr::Event::Synced(tip, height) => {
                 info!(target: self.target, "Block height = {}, tip = {}", height, tip);
             }
             _ => {}
