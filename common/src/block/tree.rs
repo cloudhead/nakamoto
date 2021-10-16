@@ -102,7 +102,7 @@ impl<'a, H: Header> Branch<'a, H> {
 }
 
 /// A representation of all known blocks that keeps track of the longest chain.
-pub trait BlockTree {
+pub trait BlockTree: BlockReader {
     /// Import a chain of block headers into the block tree.
     fn import_blocks<I: Iterator<Item = BlockHeader>, C: Clock>(
         &mut self,
@@ -116,6 +116,10 @@ pub trait BlockTree {
         header: BlockHeader,
         context: &C,
     ) -> Result<ImportResult, Error>;
+}
+
+/// Read block header state.
+pub trait BlockReader {
     /// Get a block by hash.
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)>;
     /// Get a block by height.

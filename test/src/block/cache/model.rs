@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 
 use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader, Filters};
 use nakamoto_common::block::iter::Iter;
-use nakamoto_common::block::tree::{BlockTree, Branch, Error, ImportResult};
+use nakamoto_common::block::tree::{BlockReader, BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::Height;
 use nakamoto_common::nonempty::NonEmpty;
 
@@ -169,7 +169,9 @@ impl BlockTree for Cache {
             Ok(ImportResult::TipUnchanged)
         }
     }
+}
 
+impl BlockReader for Cache {
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         for (height, header) in self.chain.iter().enumerate() {
             if hash == &header.block_hash() {

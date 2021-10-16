@@ -14,7 +14,7 @@ use bitcoin::{Script, Transaction, Txid};
 
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
-use nakamoto_common::block::tree::BlockTree;
+use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
@@ -379,12 +379,12 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     }
 
     /// Initialize the manager. Should only be called once.
-    pub fn initialize<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+    pub fn initialize<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
         self.idle(now, tree);
     }
 
     /// A tick was received.
-    pub fn received_tick<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+    pub fn received_tick<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
         self.idle(now, tree);
 
         let timeout = self.config.request_timeout;
@@ -476,7 +476,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     }
 
     /// Rescan compact block filters.
-    pub fn rescan<T: BlockTree>(
+    pub fn rescan<T: BlockReader>(
         &mut self,
         start: Bound<Height>,
         end: Bound<Height>,
@@ -530,7 +530,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     ///
     /// If the range is greater than [`MAX_MESSAGE_CFILTERS`], requests filters from multiple
     /// peers.
-    pub fn get_cfilters<T: BlockTree>(
+    pub fn get_cfilters<T: BlockReader>(
         &mut self,
         range: RangeInclusive<Height>,
         tree: &T,
@@ -564,7 +564,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     /// Handle a `cfheaders` message from a peer.
     ///
     /// Returns the new filter header height, or an error.
-    pub fn received_cfheaders<T: BlockTree>(
+    pub fn received_cfheaders<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: CFHeaders,
@@ -671,7 +671,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     }
 
     /// Handle a `getcfheaders` message from a peer.
-    pub fn received_getcfheaders<T: BlockTree>(
+    pub fn received_getcfheaders<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: GetCFHeaders,
@@ -726,7 +726,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     /// Handle a `cfilter` message.
     ///
     /// Returns a list of blocks that need to be fetched from the network.
-    pub fn received_cfilter<T: BlockTree>(
+    pub fn received_cfilter<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: CFilter,
@@ -810,7 +810,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     }
 
     /// Called when a new peer was negotiated.
-    pub fn peer_negotiated<T: BlockTree>(
+    pub fn peer_negotiated<T: BlockReader>(
         &mut self,
         socket: Socket,
         height: Height,
@@ -839,7 +839,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     }
 
     /// Attempt to sync the filter header chain.
-    pub fn sync<T: BlockTree>(&mut self, tree: &T, time: LocalTime) {
+    pub fn sync<T: BlockReader>(&mut self, tree: &T, time: LocalTime) {
         let filter_height = self.filters.height();
         let block_height = tree.height();
 
@@ -878,7 +878,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     // PRIVATE METHODS /////////////////////////////////////////////////////////
 
     /// Called periodically. Triggers syncing if necessary.
-    fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+    fn idle<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.sync(tree, now);
             self.last_idle = Some(now);
@@ -892,7 +892,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     ///
     /// Panics if the range is not within the bounds of the active chain.
     ///
-    fn send_getcfheaders<T: BlockTree>(
+    fn send_getcfheaders<T: BlockReader>(
         &mut self,
         range: RangeInclusive<Height>,
         tree: &T,
@@ -950,7 +950,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
     ///
     /// When new headers are imported, we want to download the corresponding compact filters
     /// to check them for matches.
-    fn headers_imported<T: BlockTree>(
+    fn headers_imported<T: BlockReader>(
         &mut self,
         start: Height,
         stop: Height,
@@ -1049,6 +1049,8 @@ mod tests {
     use nakamoto_chain::block::{cache::BlockCache, store};
     use nakamoto_chain::filter::cache::{FilterCache, StoredHeader};
     use nakamoto_common::block::filter::{FilterHash, FilterHeader};
+    use nakamoto_common::block::tree::BlockReader as _;
+    use nakamoto_common::block::tree::BlockTree as _;
     use nakamoto_common::block::tree::ImportResult;
     use nakamoto_common::network::Network;
     use nakamoto_common::nonempty::NonEmpty;

@@ -11,9 +11,9 @@ use log::*;
 
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
-    chan, message, AdjustedTime, BlockHash, BlockHeader, BlockTree as _, Command, Config,
-    DisconnectReason, Event, HashSet, Height, Input, Link, LocalDuration, LocalTime, Network,
-    NetworkMessage, Out, PeerId, RawNetworkMessage, ServiceFlags, VersionMessage,
+    chan, message, AdjustedTime, BlockHash, BlockHeader, Command, Config, DisconnectReason, Event,
+    HashSet, Height, Input, Link, LocalDuration, LocalTime, Network, NetworkMessage, Out, PeerId,
+    RawNetworkMessage, ServiceFlags, VersionMessage,
 };
 use super::{PROTOCOL_VERSION, USER_AGENT};
 
@@ -33,6 +33,7 @@ use nakamoto_chain::block::store;
 use nakamoto_chain::store::Genesis;
 
 use nakamoto_common::block::filter::FilterHeader;
+use nakamoto_common::block::tree::BlockReader as _;
 use nakamoto_common::collections::HashMap;
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;

@@ -1,7 +1,7 @@
 use super::BlockCache;
 
 use nakamoto_common::block::time::{AdjustedTime, Clock, LocalTime};
-use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
+use nakamoto_common::block::tree::{BlockReader, BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockTime, Height, Target};
 use nakamoto_common::nonempty::NonEmpty;
 
@@ -79,7 +79,9 @@ impl BlockTree for HeightCache {
     fn extend_tip<C>(&mut self, _header: BlockHeader, _context: &C) -> Result<ImportResult, Error> {
         unimplemented!()
     }
+}
 
+impl BlockReader for HeightCache {
     fn get_block(&self, _hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         unimplemented!()
     }

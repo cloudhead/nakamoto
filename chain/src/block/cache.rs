@@ -17,7 +17,7 @@ use bitcoin::network::constants::Network;
 use bitcoin::util::BitArray;
 
 use bitcoin::util::uint::Uint256;
-use nakamoto_common::block::tree::{self, BlockTree, Branch, Error, ImportResult};
+use nakamoto_common::block::tree::{self, BlockReader, BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::{
     self,
     iter::Iter,
@@ -591,7 +591,9 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
             Ok(ImportResult::TipUnchanged)
         }
     }
+}
 
+impl<S: Store<Header = BlockHeader>> BlockReader for BlockCache<S> {
     /// Get a block by hash. Only searches the active chain.
     fn get_block(&self, hash: &BlockHash) -> Option<(Height, &BlockHeader)> {
         self.headers

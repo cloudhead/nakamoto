@@ -586,6 +586,7 @@ mod tests {
     use crate::protocol::channel::{chan, Channel};
     use crate::protocol::{Network, Out, PROTOCOL_VERSION};
 
+    use nakamoto_common::block::tree::BlockReader as _;
     use nakamoto_common::collections::HashSet;
     use nakamoto_common::nonempty::NonEmpty;
     use nakamoto_test::block::cache::model;
