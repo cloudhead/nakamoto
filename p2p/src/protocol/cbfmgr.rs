@@ -351,7 +351,7 @@ pub struct FilterManager<F, U> {
     /// Last time we idled.
     last_idle: Option<LocalTime>,
     /// Inflight requests.
-    inflight: HashMap<BlockHash, LocalTime>,
+    inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
     rng: fastrand::Rng,
 }
 
@@ -383,6 +383,27 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
     /// A tick was received.
     pub fn received_tick<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
         self.idle(now, tree);
+
+        let timeout = self.config.request_timeout;
+
+        // Check if any header request expired. If so, retry with a different peer and remove
+        // the unresponsive peer from the set.
+        for (stop_hash, (start_height, addr, expiry)) in &mut self.inflight {
+            if now >= *expiry {
+                let (start_height, stop_hash) = (*start_height, *stop_hash);
+
+                if let Some((peer, _)) = self.peers.sample_with(|p, _| p != addr) {
+                    let peer = *peer;
+
+                    self.peers.remove(addr);
+                    self.upstream
+                        .get_cfheaders(peer, start_height, stop_hash, timeout);
+
+                    *addr = peer;
+                    *expiry = now + timeout;
+                }
+            }
+        }
     }
 
     /// Rollback filter header chain by a given number of headers.
@@ -857,7 +878,6 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
             self.sync(tree, now);
             self.last_idle = Some(now);
             self.upstream.set_timeout(IDLE_TIMEOUT);
-            // TODO: Re-request late inflight cfheaders.
         }
     }
 
@@ -900,13 +920,12 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
 
         // TODO: We should select peers that are caught up to the requested height.
         if let Some((peer, _)) = self.peers.sample() {
-            self.upstream.get_cfheaders(
-                *peer,
-                start_height,
-                stop_hash,
-                self.config.request_timeout,
-            );
-            self.inflight.insert(stop_hash, time);
+            let timeout = self.config.request_timeout;
+
+            self.upstream
+                .get_cfheaders(*peer, start_height, stop_hash, timeout);
+            self.inflight
+                .insert(stop_hash, (start_height, *peer, time + timeout));
 
             return Some((*peer, start_height, stop_hash));
         } else {

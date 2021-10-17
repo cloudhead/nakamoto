@@ -239,7 +239,7 @@ impl cbfmgr::SyncFilters for Channel {
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
-        _timeout: LocalDuration,
+        timeout: LocalDuration,
     ) {
         self.message(
             addr,
@@ -249,6 +249,7 @@ impl cbfmgr::SyncFilters for Channel {
                 stop_hash,
             }),
         );
+        self.set_timeout(timeout);
     }
 
     fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders) {
@@ -260,7 +261,7 @@ impl cbfmgr::SyncFilters for Channel {
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
-        _timeout: LocalDuration,
+        timeout: LocalDuration,
     ) {
         self.message(
             addr,
@@ -270,6 +271,7 @@ impl cbfmgr::SyncFilters for Channel {
                 stop_hash,
             }),
         );
+        self.set_timeout(timeout);
     }
 
     fn send_cfilter(&self, addr: PeerId, cfilter: CFilter) {
