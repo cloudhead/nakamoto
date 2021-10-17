@@ -40,6 +40,9 @@ pub const MAX_MESSAGE_CFILTERS: usize = 1000;
 /// Filter cache capacity in bytes.
 pub const DEFAULT_FILTER_CACHE_SIZE: usize = 1024 * 1024; // 1 MB.
 
+/// How long to wait to receive a reply from a peer.
+pub const DEFAULT_REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(6);
+
 /// An error originating in the CBF manager.
 #[derive(Error, Debug)]
 pub enum Error {
@@ -238,7 +241,7 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            request_timeout: Timeout::from_secs(30),
+            request_timeout: DEFAULT_REQUEST_TIMEOUT,
             filter_cache_size: DEFAULT_FILTER_CACHE_SIZE,
         }
     }
