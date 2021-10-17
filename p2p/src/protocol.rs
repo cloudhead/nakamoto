@@ -193,11 +193,6 @@ pub enum Command {
         RangeInclusive<Height>,
         chan::Sender<Result<(), GetFiltersError>>,
     ),
-    /// Find a branch from the active chain to the (stale) block hash.
-    FindBranch(
-        BlockHash,
-        chan::Sender<Option<(Height, NonEmpty<BlockHeader>)>>,
-    ),
     /// Rescan the chain for matching scripts and addresses.
     Rescan {
         /// Start scan from this height. If unbounded, start at the current height.
@@ -241,7 +236,6 @@ impl fmt::Debug for Command {
             Self::GetTip(_) => write!(f, "GetTip"),
             Self::GetBlock(hash) => write!(f, "GetBlock({})", hash),
             Self::GetFilters(range, _) => write!(f, "GetFilters({:?})", range),
-            Self::FindBranch(hash, _) => write!(f, "FindBranch({})", hash),
             Self::Rescan { from, to, watch } => {
                 write!(f, "Rescan({:?}, {:?}, {:?})", from, to, watch)
             }
@@ -1107,10 +1101,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
                     }
                     Command::GetBlock(hash) => {
                         self.invmgr.get_block(hash);
-                    }
-                    Command::FindBranch(to, reply) => {
-                        let result = self.tree.find_branch(&to);
-                        reply.send(result).ok();
                     }
                     Command::SubmitTransaction(tx, reply) => {
                         // Update local watchlist to track submitted transactions.

@@ -484,8 +484,12 @@ where
         &self,
         to: &BlockHash,
     ) -> Result<Option<(Height, NonEmpty<BlockHeader>)>, handle::Error> {
+        let to = *to;
         let (transmit, receive) = chan::bounded(1);
-        self.command(Command::FindBranch(*to, transmit))?;
+
+        self.query_tree(move |t| {
+            transmit.send(t.find_branch(&to)).ok();
+        })?;
 
         Ok(receive.recv()?)
     }
