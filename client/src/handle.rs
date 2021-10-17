@@ -71,14 +71,14 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Get compact filters from the network.
     fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), Error>;
     /// Query the block tree using the given function. To return results from
-    /// the query function, a channel may be used. For example, [`crate::chan`].
+    /// the query function, a [channel](`crate::chan`) may be used.
     fn query_tree(
         &self,
         query: impl Fn(&dyn BlockReader) + Send + Sync + 'static,
     ) -> Result<(), Error>;
     /// Find a branch from the active chain to the given (stale) block.
     ///
-    /// See [`nakamoto_common::block::tree::BlockReader::find_branch`].
+    /// See [BlockReader::find_branch](`nakamoto_common::block::tree::BlockReader::find_branch`).
     fn find_branch(&self, to: &BlockHash)
         -> Result<Option<(Height, NonEmpty<BlockHeader>)>, Error>;
     /// Subscribe to blocks received.
