@@ -19,8 +19,8 @@ use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
 
-use super::channel::SetTimeout;
-use super::{Link, PeerId, Socket, Timeout};
+use super::channel::{Disconnect, SetTimeout};
+use super::{DisconnectReason, Link, PeerId, Socket, Timeout};
 
 pub mod cache;
 use cache::FilterCache;
@@ -358,7 +358,7 @@ pub struct FilterManager<F, U> {
     rng: fastrand::Rng,
 }
 
-impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
+impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManager<F, U> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -389,8 +389,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
 
         let timeout = self.config.request_timeout;
 
-        // Check if any header request expired. If so, retry with a different peer and remove
-        // the unresponsive peer from the set.
+        // Check if any header request expired. If so, retry with a different peer and disconnect
+        // the unresponsive peer.
         for (stop_hash, (start_height, addr, expiry)) in &mut self.inflight {
             if now >= *expiry {
                 let (start_height, stop_hash) = (*start_height, *stop_hash);
@@ -399,6 +399,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout> FilterManager<F, U> {
                     let peer = *peer;
 
                     self.peers.remove(addr);
+                    self.upstream
+                        .disconnect(*addr, DisconnectReason::PeerTimeout("getcfheaders"));
                     self.upstream
                         .get_cfheaders(peer, start_height, stop_hash, timeout);
 
@@ -1222,7 +1224,7 @@ mod tests {
                     .map(|h| FilterHash::from_hex(h).unwrap())
                     .collect(),
             };
-            cbfmgr.inflight.insert(msg.stop_hash, time);
+            cbfmgr.inflight.insert(msg.stop_hash, (1, *peer, time));
             cbfmgr.received_cfheaders(peer, msg, &tree, time).unwrap();
         }
 
