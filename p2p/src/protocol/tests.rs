@@ -778,7 +778,7 @@ fn sim_connect_to_peers() {
         time,
         rng,
         Options {
-            latency: 1..9,     // 1 - 9 seconds
+            latency: 1..6,     // 1 - 6 seconds
             failure_rate: 0.1, // 10%
         },
     );
@@ -799,12 +799,14 @@ fn sim_connect_to_peers() {
         {
             break;
         }
+
+        if simulator.elapsed() > LocalDuration::from_secs(20) {
+            panic!(
+                "Desired state took too long to reach: {}",
+                simulator.elapsed()
+            )
+        }
     }
-    assert!(
-        simulator.elapsed() < LocalDuration::from_secs(20),
-        "Desired state took too long to reach: {}",
-        simulator.elapsed()
-    );
 }
 
 #[test]
