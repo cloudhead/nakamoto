@@ -915,11 +915,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
             }
             NetworkMessage::Inv(inventory) => {
-                // Receive an `inv` message. This will happen if we are out of sync with a
-                // peer. And blocks are being announced. Otherwise, we expect to receive a
-                // `headers` message.
                 self.syncmgr
                     .received_inv(addr, inventory, &self.clock, &self.tree);
+                // TODO: invmgr: Update block availability for this peer.
             }
             NetworkMessage::CFHeaders(msg) => {
                 match self.cbfmgr.received_cfheaders(&addr, msg, &self.tree, now) {

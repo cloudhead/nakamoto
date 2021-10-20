@@ -16,8 +16,8 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
-use super::channel::SetTimeout;
-use super::{Link, Locators, PeerId, Socket, Timeout};
+use super::channel::{Disconnect, SetTimeout};
+use super::{DisconnectReason, Link, Locators, PeerId, Socket, Timeout};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
@@ -26,6 +26,8 @@ pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 pub const TIP_STALE_DURATION: LocalDuration = LocalDuration::from_mins(60 * 2);
 /// Maximum number of headers sent in a `headers` message.
 pub const MAX_MESSAGE_HEADERS: usize = 2000;
+/// Maximum number of inventories sent in an `inv` message.
+pub const MAX_MESSAGE_INVS: usize = 50000;
 /// Idle timeout.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
 /// Services required from peers for header sync.
@@ -55,6 +57,8 @@ enum OnTimeout {
     Disconnect,
     /// Do nothing on timeout.
     Ignore,
+    /// Retry with a different peer on timeout.
+    Retry,
 }
 
 /// State of a sync peer.
@@ -191,7 +195,7 @@ struct GetHeaders {
     on_timeout: OnTimeout,
 }
 
-impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
+impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     /// Create a new sync manager.
     pub fn new(config: Config, rng: fastrand::Rng, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -224,8 +228,11 @@ impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
 
     /// Called periodically.
     pub fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+        // TODO: Don't wait this long to idle when we're out of sync!
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.sync(now, tree);
+            if !self.sync(now, tree) {
+                self.sample_peers(now, tree);
+            }
             self.last_idle = Some(now);
             self.upstream.set_timeout(IDLE_TIMEOUT);
         }
@@ -390,13 +397,9 @@ impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
                 if length < MAX_MESSAGE_HEADERS {
                     // If these headers were unsolicited, we may already be ready/synced.
                     // Otherwise, we're finally in sync.
-
                     self.broadcast_tip(&tip, tree);
                     self.sync(clock.local_time(), tree);
                 } else {
-                    // TODO: If we're already in the state of asking for this header, don't
-                    // ask again.
-                    // TODO: Should we use stop-hash for the single locator?
                     let locators = (vec![tip], BlockHash::default());
                     let timeout = self.config.request_timeout;
 
@@ -427,6 +430,10 @@ impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
         timeout: Timeout,
         on_timeout: OnTimeout,
     ) {
+        // Don't request more than once from the same peer.
+        if self.inflight.contains_key(&addr) {
+            return;
+        }
         if let Some(peer) = self.peers.get_mut(&addr) {
             debug_assert!(peer.last_asked.as_ref() != Some(&locators));
 
@@ -455,18 +462,32 @@ impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
     ) where
         C: Clock,
     {
-        if !self.peers.contains_key(&addr) {
+        // Don't try to fetch headers from `inv` message while syncing. It's not helpful.
+        if self.is_syncing() {
             return;
         }
+        // Ignore and disconnect peers misbehaving.
+        if inv.len() > MAX_MESSAGE_INVS {
+            return;
+        }
+
+        let peer = if let Some(peer) = self.peers.get_mut(&addr) {
+            peer
+        } else {
+            return;
+        };
         let mut best_block = None;
 
         for i in &inv {
             if let Inventory::Block(hash) = i {
-                // TODO: Update block availability for this peer.
+                peer.tip = *hash;
+
+                // "Headers-first is the primary method of announcement on the network. If a node
+                // fell back to sending blocks by inv, it's probably for a re-org. The final block
+                // hash provided should be the highest."
+
                 if !tree.is_known(hash) {
                     self.upstream.event(Event::BlockDiscovered(addr, *hash));
-                    // The final block hash in the inventory should be the highest. Use
-                    // that one for a `getheaders` call.
                     best_block = Some(hash);
                 }
             }
@@ -483,7 +504,7 @@ impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
                 locators,
                 clock.local_time(),
                 timeout,
-                OnTimeout::Ignore,
+                OnTimeout::Retry,
             );
         }
     }
@@ -496,32 +517,45 @@ impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
             .iter()
             .filter_map(|(peer, req)| {
                 if local_time - req.sent_at >= timeout {
-                    Some((*peer, req.on_timeout))
+                    Some((*peer, req.on_timeout, req.clone()))
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
 
-        for (peer, on_timeout) in &timed_out {
-            self.inflight.remove(peer);
+        let mut sync = false;
+        for (peer, on_timeout, req) in timed_out {
+            self.inflight.remove(&peer);
 
             match on_timeout {
                 OnTimeout::Disconnect => {
-                    self.unregister(peer);
+                    self.unregister(&peer);
+                    self.upstream
+                        .disconnect(peer, DisconnectReason::PeerTimeout("getheaders"));
+
+                    sync = true;
                 }
                 OnTimeout::Ignore => {
                     // It's likely that the peer just didn't have the requested header.
                 }
+                OnTimeout::Retry => {
+                    if let Some((addr, _)) = self.peers.sample_with(|a, p| {
+                        *a != peer && self.is_request_candidate(a, p, &req.locators.0)
+                    }) {
+                        let addr = *addr;
+                        self.request(addr, req.locators, local_time, timeout, on_timeout);
+                    }
+                }
             }
-            self.upstream.event(Event::TimedOut(*peer));
+            self.upstream.event(Event::TimedOut(peer));
         }
 
         // If some of the requests timed out, force a sync, otherwise just idle.
-        if timed_out.is_empty() {
-            self.idle(local_time, tree);
-        } else {
+        if sync {
             self.sync(local_time, tree);
+        } else {
+            self.idle(local_time, tree);
         }
     }
 
@@ -670,7 +704,6 @@ impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
             let height = tree.height();
 
             self.upstream.event(Event::Synced(tip, height));
-            self.sample_peers(now, tree);
 
             return false;
         }
@@ -716,6 +749,9 @@ impl<U: SetTimeout + SyncHeaders> SyncManager<U> {
     /// Ask all our outbound peers whether they have better block headers.
     fn sample_peers<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
         if now - self.last_peer_sample.unwrap_or_default() < PEER_SAMPLE_INTERVAL {
+            return;
+        }
+        if self.stale_tip(now, tree).is_none() {
             return;
         }
         self.last_peer_sample = Some(now);

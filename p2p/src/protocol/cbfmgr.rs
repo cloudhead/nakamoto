@@ -121,8 +121,10 @@ pub enum Event {
     /// Finished syncing filter headers up to the specified height.
     Synced(Height),
     /// A peer has timed out responding to a filter request.
+    /// TODO: Use event or remove.
     TimedOut(PeerId),
     /// Block header chain rollback detected.
+    /// TODO: Use event or remove.
     RollbackDetected(Height),
 }
 

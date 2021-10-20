@@ -7,6 +7,7 @@ use std::net;
 use std::ops::{Bound, Range};
 use std::sync::Arc;
 
+use bitcoin::network::message_blockdata::GetHeadersMessage;
 use log::*;
 
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
@@ -294,9 +295,22 @@ fn test_getheaders_retry() {
         ([77, 77, 77, 77], network.port()).into(),
     ];
     for peer in peers.iter() {
-        alice.connect_addr(peer, Link::Outbound);
+        alice.connect(
+            &PeerDummy {
+                addr: *peer,
+                height: 0, // Make sure not to trigger a sync.
+                protocol_version: alice.protocol.protocol_version,
+                services: syncmgr::REQUIRED_SERVICES,
+                relay: true,
+                time: alice.time,
+            },
+            Link::Outbound,
+        );
     }
-    assert!(alice.protocol.syncmgr.best_height().unwrap() > alice.protocol.tree.height());
+    assert_eq!(
+        alice.protocol.syncmgr.best_height().unwrap(),
+        alice.protocol.tree.height()
+    );
 
     // Peers that have been asked.
     let mut asked = HashSet::new();
@@ -310,7 +324,13 @@ fn test_getheaders_retry() {
     // The first time we ask for headers, we ask the peer who sent us the `inv` message.
     let (addr, _) = alice
         .messages()
-        .find(|(_, m)| matches!(m, NetworkMessage::GetHeaders(_)))
+        .find(|(_, m)| {
+            matches!(
+                m,
+                NetworkMessage::GetHeaders(GetHeadersMessage { stop_hash, .. })
+                if stop_hash == &hash
+            )
+        })
         .expect("Alice asks the first peer for headers");
     assert_eq!(addr, peers[0]);
 
@@ -323,7 +343,13 @@ fn test_getheaders_retry() {
 
         let (addr, _) = alice
             .messages()
-            .find(|(_, m)| matches!(m, NetworkMessage::GetHeaders(_)))
+            .find(|(_, m)| {
+                matches!(
+                    m,
+                    NetworkMessage::GetHeaders(GetHeadersMessage { stop_hash, .. })
+                    if stop_hash == &hash
+                )
+            })
             .expect("Alice asks the next peer for headers");
 
         assert!(
