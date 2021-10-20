@@ -410,9 +410,8 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             let trusted = self.config.whitelist.contains(&addr.ip(), &user_agent)
                 || addrmgr::is_local(&addr.ip());
 
-            // Don't support peers with an older protocol than ours, we won't be
-            // able to handle it correctly.
-            if version < self.config.protocol_version {
+            // Don't support peers with too old of a protocol version.
+            if version < super::MIN_PROTOCOL_VERSION {
                 return self
                     .upstream
                     .disconnect(*addr, DisconnectReason::PeerProtocolVersion(version));
