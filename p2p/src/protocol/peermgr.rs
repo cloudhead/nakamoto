@@ -781,15 +781,23 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections<A: AddressSource>(&mut self, addrs: &mut A, local_time: LocalTime) {
         let delta = self.delta();
+        let negotiated = self.negotiated(Link::Outbound).count();
+        let target = self.config.target_outbound_peers;
 
         // Keep track of new addresses we're connecting to, and loop until
         // we've connected to enough addresses.
         let mut connecting = HashSet::with_hasher(self.rng.clone().into());
 
         while connecting.len() < delta {
-            if let Some((addr, source)) = addrs
-                .sample(self.config.preferred_services)
-                .or_else(|| addrs.sample(self.config.required_services))
+            if let Some((addr, source)) =
+                addrs.sample(self.config.preferred_services).or_else(|| {
+                    // Only try to connect to non-preferred peers if we are below our target.
+                    if negotiated < target {
+                        addrs.sample(self.config.required_services)
+                    } else {
+                        None
+                    }
+                })
             {
                 if let Ok(sockaddr) = addr.socket_addr() {
                     // TODO: Remove this assertion once address manager no longer cares about
