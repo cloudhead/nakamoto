@@ -229,7 +229,8 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
 
     /// Called periodically.
     pub fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
-        // TODO: Don't wait this long to idle when we're out of sync!
+        // Nb. The idle timeout is very long: as long as the block interval.
+        // This shouldn't be a problem, as the sync manager can make progress without it.
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             if !self.sync(now, tree) {
                 self.sample_peers(now, tree);
