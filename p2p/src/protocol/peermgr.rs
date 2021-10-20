@@ -212,6 +212,8 @@ pub struct PeerInfo {
     pub relay: bool,
     /// Whether this peer supports BIP-339.
     pub wtxidrelay: bool,
+    /// The max protocol version supported by both the peer and nakamoto.
+    pub version: u32,
 
     /// Peer nonce. Used to detect self-connections.
     nonce: u64,
@@ -500,6 +502,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                         state: HandshakeState::ReceivedVersion { since: now },
                         relay,
                         wtxidrelay: false,
+                        version: u32::min(self.config.protocol_version, version),
                     }),
                 },
             );
@@ -944,7 +947,6 @@ mod tests {
     fn test_peer_dropped() {
         let rng = fastrand::Rng::with_seed(1);
         let time = LocalTime::now();
-
         let mut addrs = VecDeque::new();
         let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), ());
 

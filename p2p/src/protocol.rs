@@ -967,6 +967,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             NetworkMessage::WtxidRelay => {
                 self.peermgr.received_wtxidrelay(&addr);
             }
+            NetworkMessage::Unknown {
+                command: ref cmd, ..
+            } => {
+                debug!(target: self.target, "{}: Ignoring unknown message {:?}", addr, cmd)
+            }
             _ => {
                 debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);
             }
