@@ -66,6 +66,7 @@ enum OnTimeout {
 struct Peer {
     socket: Socket,
     height: Height,
+    preferred: bool,
     tip: BlockHash,
     link: Link,
     last_active: Option<LocalTime>,
@@ -244,6 +245,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
         socket: Socket,
         height: Height,
         services: ServiceFlags,
+        preferred: bool,
         link: Link,
         clock: &impl Clock,
         tree: &T,
@@ -252,7 +254,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
             return;
         }
         self.upstream.negotiate(socket.addr);
-        self.register(socket, height, link);
+        self.register(socket, height, preferred, link);
         self.sync(clock.local_time(), tree);
     }
 
@@ -627,7 +629,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Register a new peer.
-    fn register(&mut self, socket: Socket, height: Height, link: Link) {
+    fn register(&mut self, socket: Socket, height: Height, preferred: bool, link: Link) {
         let last_active = None;
         let last_asked = None;
         let tip = BlockHash::default();
@@ -639,6 +641,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
                 tip,
                 link,
                 socket,
+                preferred,
                 last_active,
                 last_asked,
             },
@@ -651,18 +654,32 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
         self.peers.remove(id);
     }
 
-    /// Check whether a peer can be synced with using the given locators.
-    fn is_sync_candidate<T: BlockTree>(
-        &self,
-        addr: &PeerId,
-        peer: &Peer,
-        locators: &[BlockHash],
-        tree: &T,
-    ) -> bool {
-        peer.height > tree.height() && self.is_request_candidate(addr, peer, locators)
+    /// Select a random preferred peer.
+    fn preferred_peer<T: BlockTree>(&self, locators: &Locators, tree: &T) -> Option<PeerId> {
+        let peers: Vec<_> = self.peers.shuffled().collect();
+        let height = tree.height();
+        let locators = &locators.0;
+
+        peers
+            .iter()
+            .find(|(a, p)| {
+                p.preferred && p.height > height && self.is_request_candidate(a, p, locators)
+            })
+            .or_else(|| {
+                peers
+                    .iter()
+                    .find(|(a, p)| p.preferred && self.is_request_candidate(a, p, locators))
+            })
+            .or_else(|| {
+                peers
+                    .iter()
+                    .find(|(a, p)| self.is_request_candidate(a, p, locators))
+            })
+            .map(|(a, _)| **a)
     }
 
-    /// Check whether a peer is a good request candidate.
+    /// Check whether a peer is a good request candidate for the given locators.
+    /// This function ensures that we don't ask the same peer twice for the same locators.
     fn is_request_candidate(&self, addr: &PeerId, peer: &Peer, locators: &[BlockHash]) -> bool {
         !self.inflight.contains_key(addr)
             && peer.link.is_outbound()
@@ -717,12 +734,8 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
             return false;
         }
 
-        if let Some((addr, _)) = self
-            .peers
-            .sample_with(|a, p| self.is_sync_candidate(a, p, &locators.0, tree))
-        {
+        if let Some(addr) = self.preferred_peer(&locators, tree) {
             let timeout = self.config.request_timeout;
-            let addr = *addr;
 
             self.request(addr, locators, now, timeout, OnTimeout::Ignore);
             self.upstream.event(Event::Syncing(addr));

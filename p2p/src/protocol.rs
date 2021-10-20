@@ -855,6 +855,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         conn.socket.clone(),
                         peer.height,
                         peer.services,
+                        !peer.services.has(cbfmgr::REQUIRED_SERVICES),
                         conn.link,
                         &self.clock,
                         &self.tree,

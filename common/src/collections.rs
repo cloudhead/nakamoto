@@ -108,10 +108,15 @@ impl<K, V> AddressBook<K, V> {
 
     /// Cycle through the keys at random. The random cycle repeats ad-infintum.
     pub fn cycle(&self) -> impl Iterator<Item = &K> {
-        let mut keys = self.inner.keys().collect::<Vec<_>>();
+        self.shuffled().map(|(k, _)| k).cycle()
+    }
+
+    /// Return a shuffled iterator over the keys.
+    pub fn shuffled(&self) -> std::vec::IntoIter<(&K, &V)> {
+        let mut keys = self.inner.iter().collect::<Vec<_>>();
         self.rng.shuffle(&mut keys);
 
-        keys.into_iter().cycle()
+        keys.into_iter()
     }
 }
 
