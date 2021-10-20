@@ -58,7 +58,7 @@ enum OnTimeout {
     /// Do nothing on timeout.
     Ignore,
     /// Retry with a different peer on timeout.
-    Retry,
+    Retry(usize),
 }
 
 /// State of a sync peer.
@@ -506,7 +506,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
                 locators,
                 clock.local_time(),
                 timeout,
-                OnTimeout::Retry,
+                OnTimeout::Retry(0),
             );
         }
     }
@@ -541,12 +541,21 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
                 OnTimeout::Ignore => {
                     // It's likely that the peer just didn't have the requested header.
                 }
-                OnTimeout::Retry => {
+                OnTimeout::Retry(n) if n >= 3 => {
+                    // Stop retrying after enough attempts.
+                }
+                OnTimeout::Retry(n) => {
                     if let Some((addr, _)) = self.peers.sample_with(|a, p| {
                         *a != peer && self.is_request_candidate(a, p, &req.locators.0)
                     }) {
                         let addr = *addr;
-                        self.request(addr, req.locators, local_time, timeout, on_timeout);
+                        self.request(
+                            addr,
+                            req.locators,
+                            local_time,
+                            timeout,
+                            OnTimeout::Retry(n + 1),
+                        );
                     }
                 }
             }
