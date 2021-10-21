@@ -753,8 +753,8 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
         // Connecting peers.
         let connecting = self.connecting().count();
 
-        // We connect up to the target number of peers plus a margin equal to the number of
-        // secondary peers divided by two. This ensures we have *some* connections to
+        // We connect up to the target number of peers plus an extra margin equal to the number of
+        // target divided by two. This ensures we have *some* connections to
         // primary peers, even if that means exceeding our target. When a secondary peer is
         // dropped, if we have our target number of primary peers connected, there is no need
         // to replace the connection.
@@ -763,19 +763,18 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
         // automatically dropped. This ensures we never have more than the target of secondary
         // peers.
         let target = self.config.target_outbound_peers;
+        let unknown = connecting + connected;
+        let total = primary + secondary + unknown;
+        let max = target + target / 2;
 
-        // Extra connection margin. Try to connect to as many primary peers as possible,
-        // but no more than half of the target above the target.
-        //
-        // The extra margin is only used if we have reached our connection target, but don't have
-        // enough primary peers.
-        let extra = if primary + secondary >= target {
-            usize::min(target - primary, target / 2)
-        } else {
-            0
-        };
+        // If we are somehow connected to more peers than the target or maximum,
+        // don't attempt to connect to more. This can happen if the client has been
+        // requesting connections to specific peers.
+        if total > max || primary + unknown > target {
+            return 0;
+        }
 
-        (target + extra).saturating_sub(primary + secondary + connected + connecting)
+        usize::min(max - total, target - (primary + unknown))
     }
 
     /// Attempt to maintain a certain number of outbound peers.
@@ -819,6 +818,9 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
                 }
             } else {
                 // We're completely out of addresses, give up.
+                // TODO: Fetch from DNS seeds. Make sure we're able to add to address book
+                // even though address manager doesn't like peers with no services if `insert`
+                // is used.
                 break;
             }
         }
@@ -1084,25 +1086,33 @@ mod tests {
             // outbound = 0/4 (0), connecting = 3/4
             ((1, 2, 0, 0), target_outbound_peers - 3),
             // outbound = 1/4 (0), connecting = 2/4
-            ((1, 1, 1, 0), target_outbound_peers - 3),
+            ((1, 1, 1, 0), 2),
             // outbound = 2/4 (1), connecting = 2/4
-            ((1, 1, 1, 1), 0),
+            ((1, 1, 1, 1), 1),
             // outbound = 3/4 (1), connecting = 1/4
-            ((0, 1, 2, 1), 0),
+            ((0, 1, 2, 1), 2),
             // outbound = 4/4 (1), connecting = 0/4, extra = 2
             ((0, 0, 3, 1), 2),
-            // outbound = 8/4 (4), connecting = 0/4
+            // outbound = 6/4 (3), connecting = 0/4
             ((0, 0, 3, 3), 0),
             // outbound = 4/4 (4), connecting = 0/4
             ((0, 0, 0, target_outbound_peers), 0),
-            // outbound = 7/4 (3), connecting = 0/4
-            ((0, 0, 4, 3), 0),
+            // outbound = 6/4 (2), connecting = 0/4
+            ((0, 0, 4, 2), 0),
+            // outbound = 6/4 (3), connecting = 0/4
+            ((0, 0, 2, 4), 0),
             // outbound = 5/4 (2), connecting = 0/4, extra = 1
             ((0, 0, 3, 2), 1),
             // outbound = 0/4 (0), connecting = 4/4
             ((4, 0, 0, 0), 0),
             // outbound = 4/4 (0), connecting = 0/4, extra = 2
             ((0, 0, 4, 0), 2),
+            // outbound = 5/4 (3), connecting = 0/4, extra = 1
+            ((0, 0, 2, 3), 1),
+            // outbound = 5/4 (3), connecting = 1/4, extra = 0
+            ((1, 0, 2, 3), 0),
+            // outbound = 5/4 (3), connecting = 1/4, extra = 0
+            ((0, 1, 2, 3), 0),
         ];
 
         for (case, delta) in cases {
