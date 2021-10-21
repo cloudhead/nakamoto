@@ -793,7 +793,14 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
                 addrs.sample(self.config.preferred_services).or_else(|| {
                     // Only try to connect to non-preferred peers if we are below our target.
                     if negotiated < target {
-                        addrs.sample(self.config.required_services)
+                        addrs
+                            .sample(self.config.required_services)
+                            // If we can't find peers with any kind of useful services, then
+                            // perhaps we should connect to peers that may know of such peers. This
+                            // is especially important when doing an initial DNS sync, since DNS
+                            // addresses don't come with service information. This will draw from
+                            // that pool.
+                            .or_else(|| addrs.sample(ServiceFlags::NONE))
                     } else {
                         None
                     }
