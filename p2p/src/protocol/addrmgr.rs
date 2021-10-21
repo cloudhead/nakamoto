@@ -575,58 +575,56 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         if self.is_empty() {
             return None;
         }
-        // Keep track of the addresses we've visited, to make sure we don't
-        // loop forever.
-        let mut visited = HashSet::with_hasher(self.rng.clone().into());
         let time = self
             .last_idle
             .expect("AddressManager::sample: manager must be initialized before sampling");
         let domains = &self.cfg.domains;
 
-        while visited.len() < self.peers.len() {
-            // First select a random address range.
-            let ix = self.rng.usize(..self.address_ranges.len());
-            let range = self.address_ranges.values().nth(ix)?;
+        let mut ranges: Vec<_> = self.address_ranges.values().collect();
+        self.rng.shuffle(&mut ranges);
 
+        // First select a random address range.
+        for range in ranges.drain(..) {
             assert!(!range.is_empty());
 
+            let mut ips: Vec<_> = range.iter().collect();
+            self.rng.shuffle(&mut ips);
+
             // Then select a random address in that range.
-            let ix = self.rng.usize(..range.len());
-            let ip = range.iter().nth(ix)?;
-            let ka = self.peers.get_mut(ip).expect("address must exist");
+            for ip in ips.drain(..) {
+                let ka = self.peers.get_mut(ip).expect("address must exist");
 
-            visited.insert(ip);
+                // If the address domain is unsupported, skip it.
+                // Nb. this currently skips Tor addresses too.
+                if !ka
+                    .addr
+                    .socket_addr()
+                    .map_or(false, |a| domains.contains(&Domain::for_address(&a)))
+                {
+                    continue;
+                }
 
-            // If the address domain is unsupported, skip it.
-            // Nb. this currently skips Tor addresses too.
-            if !ka
-                .addr
-                .socket_addr()
-                .map_or(false, |a| domains.contains(&Domain::for_address(&a)))
-            {
-                continue;
-            }
+                // If the address was already attempted unsuccessfully, skip it.
+                if ka.last_attempt.is_some() && ka.last_success.is_none() {
+                    continue;
+                }
+                // If we recently sampled this address, don't return it again.
+                if time - ka.last_sampled.unwrap_or_default() < SAMPLE_TIMEOUT {
+                    continue;
+                }
+                // If we're already connected to this address, skip it.
+                if self.connected.contains(ip) {
+                    continue;
+                }
+                // If the provided filter doesn't pass, keep looking.
+                if !predicate(ka) {
+                    continue;
+                }
+                // Ok, we've found a worthy address!
+                ka.last_sampled = Some(time);
 
-            // If the address was already attempted unsuccessfully, skip it.
-            if ka.last_attempt.is_some() && ka.last_success.is_none() {
-                continue;
+                return Some((ka.addr.clone(), ka.source));
             }
-            // If we recently sampled this address, don't return it again.
-            if time - ka.last_sampled.unwrap_or_default() < SAMPLE_TIMEOUT {
-                continue;
-            }
-            // If we're already connected to this address, skip it.
-            if self.connected.contains(ip) {
-                continue;
-            }
-            // If the provided filter doesn't pass, keep looking.
-            if !predicate(ka) {
-                continue;
-            }
-            // Ok, we've found a worthy address!
-            ka.last_sampled = Some(time);
-
-            return Some((ka.addr.clone(), ka.source));
         }
 
         None
