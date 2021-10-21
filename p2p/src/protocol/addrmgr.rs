@@ -157,6 +157,7 @@ impl Default for Config {
 pub struct AddressManager<P, U> {
     /// Peer address store.
     peers: P,
+    bans: HashSet<net::IpAddr>,
     address_ranges: HashMap<u8, HashSet<net::IpAddr>>,
     connected: HashSet<net::IpAddr>,
     sources: HashSet<net::SocketAddr>,
@@ -290,7 +291,7 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
             // Otherwise, we leave it in the address buckets so that it can be chosen
             // in the future.
             if !reason.is_transient() {
-                self.discard(&addr.ip());
+                self.ban(&addr.ip());
             }
         }
     }
@@ -315,6 +316,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         let mut addrmgr = Self {
             cfg,
             peers,
+            bans: HashSet::with_hasher(rng.clone().into()),
             address_ranges: HashMap::with_hasher(rng.clone().into()),
             connected: HashSet::with_hasher(rng.clone().into()),
             sources: HashSet::with_hasher(rng.clone().into()),
@@ -437,6 +439,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
             // Ensure no self-connections.
             if self.local_addrs.contains(&net_addr) {
+                continue;
+            }
+            // No banned addresses.
+            if self.bans.contains(&ip) {
                 continue;
             }
 
@@ -660,15 +666,18 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         key
     }
 
-    /// Remove an address from the address buckets.
-    /// This prevents the address from being sampled again.
-    fn discard(&mut self, addr: &net::IpAddr) -> bool {
+    /// Remove an address from the address book and prevent it from being sampled again.
+    fn ban(&mut self, addr: &net::IpAddr) -> bool {
         debug_assert!(!self.connected.contains(addr));
 
         let key = self::addr_key(addr);
 
         if let Some(range) = self.address_ranges.get_mut(&key) {
             range.remove(addr);
+
+            // TODO: Persist bans.
+            self.peers.remove(addr);
+            self.bans.insert(*addr);
 
             if range.is_empty() {
                 self.address_ranges.remove(&key);
