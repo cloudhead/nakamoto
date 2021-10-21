@@ -14,6 +14,7 @@
 //!   3. Send `verack` message.
 //!   4. Expect `verack` message from remote.
 //!
+use std::cmp;
 use std::net;
 
 use bitcoin::network::address::Address;
@@ -137,8 +138,8 @@ pub struct Config {
     pub whitelist: Whitelist,
     /// Services offered by this implementation.
     pub services: ServiceFlags,
-    /// Peer addresses that should always be retried.
-    pub retry: Vec<net::SocketAddr>,
+    /// Peer addresses to persist connections with.
+    pub persistent: Vec<net::SocketAddr>,
     /// Services required by peers.
     pub required_services: ServiceFlags,
     /// Peer services preferred. We try to maintain as many
@@ -234,6 +235,11 @@ pub struct PeerManager<U> {
     /// Peer manager configuration.
     pub config: Config,
 
+    backoff_delay: HashMap<net::SocketAddr, LocalDuration>,
+    backoff_next_try: Vec<(net::SocketAddr, LocalTime)>,
+    backoff_min_wait: LocalDuration,
+    backoff_max_wait: LocalDuration,
+
     /// Last time we were idle.
     last_idle: Option<LocalTime>,
     /// Connection states.
@@ -250,6 +256,10 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
         Self {
             config,
+            backoff_delay: HashMap::with_hasher(rng.clone().into()),
+            backoff_next_try: Vec::new(),
+            backoff_min_wait: LocalDuration::from_secs(1),
+            backoff_max_wait: LocalDuration::from_mins(60),
             last_idle: None,
             peers,
             upstream,
@@ -260,16 +270,18 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
     /// Initialize the peer manager. Must be called once.
     pub fn initialize<A: AddressSource>(&mut self, time: LocalTime, addrs: &mut A) {
-        let retry = self
+        let peers = self
             .config
-            .retry
+            .persistent
             .iter()
             .take(self.config.target_outbound_peers)
             .cloned()
             .collect::<Vec<_>>();
 
-        for addr in retry {
-            self.connect(&addr, time);
+        for addr in peers {
+            if !self.connect(&addr, time) {
+                log::error!("unable to connect to persistent peer: {}", addr);
+            }
         }
         self.upstream.set_timeout(IDLE_TIMEOUT);
         self.maintain_connections(addrs, time);
@@ -307,6 +319,10 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 peer: None,
             },
         );
+        self.backoff_delay.remove(&addr);
+        if let Some(i) = self.backoff_next_try.iter().position(|(x, _)| x == &addr) {
+            self.backoff_next_try.remove(i);
+        }
 
         match link {
             Link::Inbound => {
@@ -347,6 +363,17 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         // If an outbound peer disconnected, we should make sure to maintain
         // our target outbound connection count.
         self.maintain_connections(addrs, local_time);
+
+        if self.config.persistent.contains(addr) {
+            log::error!("persistent peer disconnected: {}", addr);
+            let x = self
+                .backoff_delay
+                .get_mut(addr)
+                .unwrap_or(&mut self.backoff_min_wait);
+            self.backoff_next_try.push((*addr, local_time + *x));
+            self.backoff_next_try.sort_by(|a, b| a.1.cmp(&b.1));
+            *x = cmp::min(*x * 2, self.backoff_max_wait);
+        }
 
         Events::event(&self.upstream, Event::Disconnected(*addr));
     }
@@ -588,6 +615,17 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             self.maintain_connections(addrs, local_time);
             self.upstream.set_timeout(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
+        }
+
+        let mut i = 0;
+        while i < self.backoff_next_try.len() {
+            let (addr, t) = self.backoff_next_try[i];
+            if t > local_time {
+                break;
+            }
+            self.connect(&addr, local_time);
+            self.backoff_next_try.remove(i);
+            i += 1;
         }
     }
 
@@ -857,7 +895,7 @@ mod tests {
                 max_inbound_peers: MAX_INBOUND_PEERS,
                 domains: Domain::all(),
                 user_agent: crate::protocol::USER_AGENT,
-                retry: vec![],
+                persistent: vec![],
                 services: ServiceFlags::NONE,
                 preferred_services: ServiceFlags::COMPACT_FILTERS | ServiceFlags::NETWORK,
                 required_services: ServiceFlags::NETWORK,

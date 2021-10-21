@@ -647,7 +647,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             peermgr::Config {
                 protocol_version: PROTOCOL_VERSION,
                 whitelist,
-                retry: connect,
+                persistent: connect,
                 domains: domains.clone(),
                 target_outbound_peers,
                 max_inbound_peers,
