@@ -848,7 +848,8 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
         assert!(filter_height <= block_height);
 
         // Don't start syncing filter headers until block headers are synced passed the last
-        // checkpoint.
+        // checkpoint. BIP 157 states that we should sync the full block header chain before
+        // syncing any filter headers, but this seems impractical. We choose a middle-ground.
         if let Some(checkpoint) = tree.checkpoints().keys().next_back() {
             if &block_height < checkpoint {
                 return;

@@ -28,7 +28,7 @@ use bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
 // TODO: Add exponential back-off
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
-use nakamoto_common::block::tree::BlockTree;
+use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::collections::{AddressBook, HashMap};
 
 use super::channel::SetTimeout;
@@ -304,7 +304,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
     }
 
     /// Called when we receive a tick.
-    pub fn received_tick<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+    pub fn received_tick<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
         // Rate-limit how much we run this function.
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
@@ -439,7 +439,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
     /// Returns the list of confirmed [`Txid`].
     ///
     /// Note that the confirmed transactions don't necessarily pertain to this block.
-    pub fn received_block<T: BlockTree>(
+    pub fn received_block<T: BlockReader>(
         &mut self,
         from: &PeerId,
         block: Block,
@@ -586,7 +586,7 @@ mod tests {
     use crate::protocol::channel::{chan, Channel};
     use crate::protocol::{Network, Out, PROTOCOL_VERSION};
 
-    use nakamoto_common::block::tree::BlockReader as _;
+    use nakamoto_common::block::tree::BlockTree as _;
     use nakamoto_common::collections::HashSet;
     use nakamoto_common::nonempty::NonEmpty;
     use nakamoto_test::block::cache::model;

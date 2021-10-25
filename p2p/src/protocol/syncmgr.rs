@@ -11,7 +11,7 @@ use bitcoin::network::message_blockdata::Inventory;
 
 use nakamoto_common::block::store;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
-use nakamoto_common::block::tree::{BlockTree, Error, ImportResult};
+use nakamoto_common::block::tree::{BlockReader, BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
@@ -218,7 +218,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Initialize the sync manager. Should only be called once.
-    pub fn initialize<T: BlockTree>(&mut self, time: LocalTime, tree: &T) {
+    pub fn initialize<T: BlockReader>(&mut self, time: LocalTime, tree: &T) {
         // TODO: `tip` should return the height.
         let (hash, _) = tree.tip();
         let height = tree.height();
@@ -228,7 +228,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Called periodically.
-    pub fn idle<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+    pub fn idle<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
         // Nb. The idle timeout is very long: as long as the block interval.
         // This shouldn't be a problem, as the sync manager can make progress without it.
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
@@ -241,7 +241,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Called when a new peer was negotiated.
-    pub fn peer_negotiated<T: BlockTree>(
+    pub fn peer_negotiated<T: BlockReader>(
         &mut self,
         socket: Socket,
         height: Height,
@@ -265,7 +265,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Called when we received a `getheaders` message from a peer.
-    pub fn received_getheaders<T: BlockTree>(
+    pub fn received_getheaders<T: BlockReader>(
         &self,
         addr: &PeerId,
         (locator_hashes, stop_hash): Locators,
@@ -456,7 +456,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
 
     /// Called when we received an `inv` message. This will happen if we are out of sync with a
     /// peer, and blocks are being announced. Otherwise, we expect to receive a `headers` message.
-    pub fn received_inv<T: BlockTree, C>(
+    pub fn received_inv<T: BlockReader, C>(
         &mut self,
         addr: PeerId,
         inv: Vec<Inventory>,
@@ -513,7 +513,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Called when we received a tick.
-    pub fn received_tick<T: BlockTree>(&mut self, local_time: LocalTime, tree: &T) {
+    pub fn received_tick<T: BlockReader>(&mut self, local_time: LocalTime, tree: &T) {
         let timeout = self.config.request_timeout;
         let timed_out = self
             .inflight
@@ -617,7 +617,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     /// Check whether our current tip is stale.
     ///
     /// *Nb. This doesn't check whether we've already requested new blocks.*
-    fn stale_tip<T: BlockTree>(&self, now: LocalTime, tree: &T) -> Option<LocalTime> {
+    fn stale_tip<T: BlockReader>(&self, now: LocalTime, tree: &T) -> Option<LocalTime> {
         if let Some(last_update) = self.last_tip_update {
             if last_update
                 < now - LocalDuration::from_secs(self.config.params.pow_target_spacing * 3)
@@ -665,7 +665,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Select a random preferred peer.
-    fn preferred_peer<T: BlockTree>(&self, locators: &Locators, tree: &T) -> Option<PeerId> {
+    fn preferred_peer<T: BlockReader>(&self, locators: &Locators, tree: &T) -> Option<PeerId> {
         let peers: Vec<_> = self.peers.shuffled().collect();
         let height = tree.height();
         let locators = &locators.0;
@@ -697,7 +697,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Check whether or not we are in sync with the network.
-    fn is_synced<T: BlockTree>(&mut self, now: LocalTime, tree: &T) -> bool {
+    fn is_synced<T: BlockReader>(&mut self, now: LocalTime, tree: &T) -> bool {
         if let Some(last_update) = self.stale_tip(now, tree) {
             self.upstream.event(Event::StaleTipDetected(last_update));
 
@@ -722,7 +722,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     /// Start syncing if we're out of sync.
     /// Returns `true` if we started syncing, and `false` if we were up to date or not able to
     /// sync.
-    fn sync<T: BlockTree>(&mut self, now: LocalTime, tree: &T) -> bool {
+    fn sync<T: BlockReader>(&mut self, now: LocalTime, tree: &T) -> bool {
         if self.peers.is_empty() {
             return false;
         }
@@ -758,7 +758,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Broadcast our best block header to connected peers who don't have it.
-    fn broadcast_tip<T: BlockTree>(&mut self, hash: &BlockHash, tree: &T) {
+    fn broadcast_tip<T: BlockReader>(&mut self, hash: &BlockHash, tree: &T) {
         if let Some((height, best)) = tree.get_block(hash) {
             for (addr, peer) in &*self.peers {
                 // TODO: Don't broadcast to peer that is currently syncing?
@@ -770,7 +770,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     }
 
     /// Ask all our outbound peers whether they have better block headers.
-    fn sample_peers<T: BlockTree>(&mut self, now: LocalTime, tree: &T) {
+    fn sample_peers<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
         if now - self.last_peer_sample.unwrap_or_default() < PEER_SAMPLE_INTERVAL {
             return;
         }
