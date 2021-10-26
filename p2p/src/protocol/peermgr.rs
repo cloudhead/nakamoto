@@ -287,6 +287,36 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         self.maintain_connections(addrs, time);
     }
 
+    fn backoff_retry_later(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
+        let x = self
+            .backoff_delay
+            .get_mut(addr)
+            .unwrap_or(&mut self.backoff_min_wait);
+        self.backoff_next_try.push((*addr, local_time + *x));
+        self.backoff_next_try.sort_by(|a, b| a.1.cmp(&b.1));
+        *x = cmp::min(*x * 2, self.backoff_max_wait);
+    }
+
+    fn backoff_remove_peer(&mut self, addr: &net::SocketAddr) {
+        self.backoff_delay.remove(addr);
+        if let Some(i) = self.backoff_next_try.iter().position(|(x, _)| x == addr) {
+            self.backoff_next_try.remove(i);
+        }
+    }
+
+    fn backoff_reconnect(&mut self, local_time: LocalTime) {
+        let mut i = 0;
+        while i < self.backoff_next_try.len() {
+            let (addr, t) = self.backoff_next_try[i];
+            if t > local_time {
+                break;
+            }
+            self.connect(&addr, local_time);
+            self.backoff_next_try.remove(i);
+            i += 1;
+        }
+    }
+
     /// Called when a peer connected.
     pub fn peer_connected(
         &mut self,
@@ -319,10 +349,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 peer: None,
             },
         );
-        self.backoff_delay.remove(&addr);
-        if let Some(i) = self.backoff_next_try.iter().position(|(x, _)| x == &addr) {
-            self.backoff_next_try.remove(i);
-        }
+        self.backoff_remove_peer(&addr);
 
         match link {
             Link::Inbound => {
@@ -366,13 +393,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
         if self.config.persistent.contains(addr) {
             log::error!("persistent peer disconnected: {}", addr);
-            let x = self
-                .backoff_delay
-                .get_mut(addr)
-                .unwrap_or(&mut self.backoff_min_wait);
-            self.backoff_next_try.push((*addr, local_time + *x));
-            self.backoff_next_try.sort_by(|a, b| a.1.cmp(&b.1));
-            *x = cmp::min(*x * 2, self.backoff_max_wait);
+            self.backoff_retry_later(&addr, local_time);
         }
 
         Events::event(&self.upstream, Event::Disconnected(*addr));
@@ -617,16 +638,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             self.last_idle = Some(local_time);
         }
 
-        let mut i = 0;
-        while i < self.backoff_next_try.len() {
-            let (addr, t) = self.backoff_next_try[i];
-            if t > local_time {
-                break;
-            }
-            self.connect(&addr, local_time);
-            self.backoff_next_try.remove(i);
-            i += 1;
-        }
+        self.backoff_reconnect(local_time);
     }
 
     /// Whitelist a peer.
