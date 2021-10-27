@@ -71,14 +71,13 @@ pub enum ImportResult {
     /// A new tip was found. This can happen in either of two scenarios:
     ///
     /// 1. The imported block(s) extended the active chain, or
-    /// 2. The imported block(s) caused a chain re-org. In that case, the last field is
-    ///    populated with the now stale blocks.
+    /// 2. The imported block(s) caused a chain re-org.
     ///
     TipChanged(
         BlockHeader,
         BlockHash,
         Height,
-        Vec<(Height, BlockHash)>,
+        Vec<(Height, BlockHeader)>,
         NonEmpty<(Height, BlockHeader)>,
     ),
     /// The block headers were imported successfully, but our best block hasn't changed.

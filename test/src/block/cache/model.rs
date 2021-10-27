@@ -128,7 +128,7 @@ impl BlockTree for Cache {
         if tip != self.tip {
             for (height, header) in old.iter().enumerate() {
                 if !self.chain.contains(header) {
-                    disconnected.push((height as Height, header.block_hash()));
+                    disconnected.push((height as Height, *header));
                 }
             }
             for (height, header) in self.chain.iter().enumerate() {

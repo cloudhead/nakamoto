@@ -1602,14 +1602,14 @@ fn test_block_events() {
 
         assert_matches!(
             events.next().unwrap(),
-            syncmgr::Event::BlockDisconnected { height, hash }
-            if height == height_ as Height && hash == hash_
+            syncmgr::Event::BlockDisconnected { height, header }
+            if height == height_ as Height && header.block_hash() == hash_
         );
     }
     assert_matches!(
         events.next().unwrap(),
-        syncmgr::Event::BlockDisconnected { height, hash }
-        if height == best + 1 && hash == extra.block_hash()
+        syncmgr::Event::BlockDisconnected { height, header }
+        if height == best + 1 && header.block_hash() == extra.block_hash()
     );
 
     // Connected events.

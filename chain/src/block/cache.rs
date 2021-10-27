@@ -462,11 +462,11 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     }
 
     /// Rollback active chain to the given height. Returns the list of rolled-back headers.
-    fn rollback(&mut self, height: Height) -> Result<Vec<(Height, BlockHash)>, Error> {
+    fn rollback(&mut self, height: Height) -> Result<Vec<(Height, BlockHeader)>, Error> {
         let mut stale = Vec::new();
 
         for (block, height) in self.chain.tail.drain(height as usize..).zip(height + 1..) {
-            stale.push((height, block.hash));
+            stale.push((height, block.header));
 
             self.headers.remove(&block.hash);
             self.orphans.insert(block.hash, block.header);
@@ -477,7 +477,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     }
 
     /// Activate a fork candidate. Returns the list of rolled-back (stale) headers.
-    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<Vec<(Height, BlockHash)>, Error> {
+    fn switch_to_fork(&mut self, branch: &Candidate) -> Result<Vec<(Height, BlockHeader)>, Error> {
         let stale = self.rollback(branch.fork_height)?;
 
         for (i, header) in branch.headers.iter().enumerate() {
@@ -519,7 +519,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         context: &C,
     ) -> Result<ImportResult, Error> {
         let mut seen = BTreeSet::new();
-        let mut reverted = BTreeSet::new();
+        let mut reverted = BTreeMap::new();
         let mut connected = BTreeMap::new();
         let mut best_height = self.height();
         let mut best_hash = self.chain.last().hash;
@@ -529,7 +529,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
             match self.import_block(header, context) {
                 Ok(ImportResult::TipChanged(header, hash, height, r, c)) => {
                     seen.extend(c.iter().map(|(_, h)| h.block_hash()));
-                    reverted.extend(r);
+                    reverted.extend(r.into_iter().map(|(i, h)| ((i, h.block_hash()), h)));
                     connected.extend(c);
 
                     best_hash = hash;
@@ -546,7 +546,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         if !connected.is_empty() {
             // Don't return reverted blocks if they were seen as connected at some point, since
             // we only want to include blocks reverted from the main chain.
-            reverted.retain(|(_, h)| !seen.contains(h) && !self.contains(h));
+            reverted.retain(|(_, h), _| !seen.contains(h) && !self.contains(h));
             // Don't return connected blocks if they are not in the main chain.
             connected.retain(|_, h| self.contains(&h.block_hash()));
 
@@ -554,7 +554,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
                 best_header,
                 best_hash,
                 best_height,
-                reverted.into_iter().collect(),
+                reverted.into_iter().map(|((i, _), h)| (i, h)).collect(),
                 NonEmpty::from_vec(connected.into_iter().collect()).expect(
                     "BlockCache::import_blocks: there is always at least one connected block",
                 ),

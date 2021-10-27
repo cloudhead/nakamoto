@@ -126,8 +126,8 @@ pub enum Event {
     BlockDisconnected {
         /// Block height.
         height: Height,
-        /// Block hash.
-        hash: BlockHash,
+        /// Block header.
+        header: BlockHeader,
     },
     /// A new block was discovered via a peer.
     BlockDiscovered(PeerId, BlockHash),
@@ -166,8 +166,13 @@ impl std::fmt::Display for Event {
                     height
                 )
             }
-            Event::BlockDisconnected { height, hash } => {
-                write!(fmt, "Block {} disconnected at height {}", hash, height)
+            Event::BlockDisconnected { height, header } => {
+                write!(
+                    fmt,
+                    "Block {} disconnected at height {}",
+                    header.block_hash(),
+                    height
+                )
             }
             Event::BlockDiscovered(from, hash) => {
                 write!(fmt, "{}: Discovered new block: {}", from, &hash)
@@ -301,9 +306,9 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
                     connected.clone(),
                 );
 
-                for (height, hash) in reverted {
+                for (height, header) in reverted {
                     self.upstream
-                        .event(Event::BlockDisconnected { height, hash });
+                        .event(Event::BlockDisconnected { height, header });
                 }
                 for (height, header) in connected {
                     self.upstream

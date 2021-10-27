@@ -18,6 +18,8 @@ pub enum Event {
     BlockConnected {
         /// Block header.
         header: BlockHeader,
+        /// Block hash.
+        hash: BlockHash,
         /// Height of the block.
         height: Height,
     },
@@ -25,7 +27,9 @@ pub enum Event {
     /// These events will fire from the latest block starting from the tip, to the earliest.
     /// Mark all transactions belonging to this block as *unconfirmed*.
     BlockDisconnected {
-        /// Hash of the block.
+        /// Header of the block.
+        header: BlockHeader,
+        /// Block hash.
         hash: BlockHash,
         /// Height of the block when it was part of the main chain.
         height: Height,
@@ -79,15 +83,10 @@ impl fmt::Display for Event {
             Self::Ready { .. } => {
                 write!(fmt, "ready to process events and commands")
             }
-            Self::BlockConnected { header, height } => {
-                write!(
-                    fmt,
-                    "block {} connected at height {}",
-                    header.block_hash(),
-                    height
-                )
+            Self::BlockConnected { hash, height, .. } => {
+                write!(fmt, "block {} connected at height {}", hash, height)
             }
-            Self::BlockDisconnected { hash, height } => {
+            Self::BlockDisconnected { hash, height, .. } => {
                 write!(fmt, "block {} disconnected at height {}", hash, height)
             }
             Self::BlockMatched { hash, height, .. } => {
