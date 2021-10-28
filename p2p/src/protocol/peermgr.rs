@@ -149,6 +149,10 @@ pub struct Config {
     pub target_outbound_peers: usize,
     /// Maximum number of inbound peer connections.
     pub max_inbound_peers: usize,
+    /// Maximum time to wait between reconnection attempts.
+    pub retry_max_wait: LocalDuration,
+    /// Minimum time to wait between reconnection attempts.
+    pub retry_min_wait: LocalDuration,
     /// Our user agent.
     pub user_agent: &'static str,
     /// Supported communication domains.
@@ -237,8 +241,6 @@ pub struct PeerManager<U> {
 
     retry_at: HashMap<net::SocketAddr, LocalTime>,
     retry_attempts: HashMap<net::SocketAddr, u32>,
-    retry_max_wait: LocalDuration,
-    retry_min_wait: LocalDuration,
 
     /// Last time we were idle.
     last_idle: Option<LocalTime>,
@@ -258,8 +260,6 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             config,
             retry_at: HashMap::with_hasher(rng.clone().into()),
             retry_attempts: HashMap::with_hasher(rng.clone().into()),
-            retry_max_wait: LocalDuration::from_mins(60),
-            retry_min_wait: LocalDuration::from_secs(1),
             last_idle: None,
             peers,
             upstream,
@@ -290,7 +290,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
     fn retrier_add_peer(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
         let attempts = self.retry_attempts.entry(*addr).or_default();
         let delay = LocalDuration::from_secs(2_u64.pow((*attempts).max(63)))
-            .clamp(self.retry_min_wait, self.retry_max_wait);
+            .clamp(self.config.retry_min_wait, self.config.retry_max_wait);
         self.retry_at.insert(*addr, local_time + delay);
         *attempts = *attempts + 1;
     }
@@ -906,6 +906,8 @@ mod tests {
                 domains: Domain::all(),
                 user_agent: crate::protocol::USER_AGENT,
                 persistent: vec![],
+                retry_max_wait: LocalDuration::from_mins(60),
+                retry_min_wait: LocalDuration::from_mins(1),
                 services: ServiceFlags::NONE,
                 preferred_services: ServiceFlags::COMPACT_FILTERS | ServiceFlags::NETWORK,
                 required_services: ServiceFlags::NETWORK,
