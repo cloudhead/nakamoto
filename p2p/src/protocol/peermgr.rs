@@ -236,7 +236,7 @@ pub struct PeerManager<U> {
     pub config: Config,
 
     backoff_delay: HashMap<net::SocketAddr, LocalDuration>,
-    backoff_next_try: Vec<(net::SocketAddr, LocalTime)>,
+    backoff_next_try: HashMap<net::SocketAddr, LocalTime>,
     backoff_min_wait: LocalDuration,
     backoff_max_wait: LocalDuration,
 
@@ -257,7 +257,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         Self {
             config,
             backoff_delay: HashMap::with_hasher(rng.clone().into()),
-            backoff_next_try: Vec::new(),
+            backoff_next_try: HashMap::with_hasher(rng.clone().into()),
             backoff_min_wait: LocalDuration::from_secs(1),
             backoff_max_wait: LocalDuration::from_mins(60),
             last_idle: None,
@@ -292,28 +292,25 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             .backoff_delay
             .get_mut(addr)
             .unwrap_or(&mut self.backoff_min_wait);
-        self.backoff_next_try.push((*addr, local_time + *x));
-        self.backoff_next_try.sort_by(|a, b| a.1.cmp(&b.1));
+        self.backoff_next_try.insert(*addr, local_time + *x);
         *x = cmp::min(*x * 2, self.backoff_max_wait);
     }
 
     fn backoff_remove_peer(&mut self, addr: &net::SocketAddr) {
         self.backoff_delay.remove(addr);
-        if let Some(i) = self.backoff_next_try.iter().position(|(x, _)| x == addr) {
-            self.backoff_next_try.remove(i);
-        }
+        self.backoff_next_try.remove(addr);
     }
 
     fn backoff_reconnect(&mut self, local_time: LocalTime) {
-        let mut i = 0;
-        while i < self.backoff_next_try.len() {
-            let (addr, t) = self.backoff_next_try[i];
-            if t > local_time {
-                break;
-            }
-            self.connect(&addr, local_time);
-            self.backoff_next_try.remove(i);
-            i += 1;
+        let peers: Vec<_> = self
+            .backoff_next_try
+            .iter()
+            .filter(|(_, v)| *v <= &local_time)
+            .map(|(k, _)| *k)
+            .collect();
+        for peer in peers {
+            self.connect(&peer, local_time);
+            self.backoff_next_try.remove(&peer);
         }
     }
 
