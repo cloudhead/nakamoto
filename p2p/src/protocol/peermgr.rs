@@ -14,7 +14,6 @@
 //!   3. Send `verack` message.
 //!   4. Expect `verack` message from remote.
 //!
-use std::cmp;
 use std::net;
 
 use bitcoin::network::address::Address;
@@ -27,6 +26,7 @@ use nakamoto_common::p2p::Domain;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::Height;
 use nakamoto_common::collections::{HashMap, HashSet};
+use nakamoto_common::source;
 
 use crate::protocol::addrmgr;
 
@@ -280,7 +280,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
         for addr in peers {
             if !self.connect(&addr, time) {
-                log::error!("unable to connect to persistent peer: {}", addr);
+                panic!("{}: unable to connect to persistent peer: {}", source!(), addr);
             }
         }
         self.upstream.set_timeout(IDLE_TIMEOUT);
@@ -309,7 +309,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             .map(|(k, _)| *k)
             .collect();
         for peer in peers {
-            self.connect(&peer, local_time);
+            debug_assert!(self.connect(&peer, local_time));
             self.backoff_next_try.remove(&peer);
         }
     }
