@@ -296,6 +296,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
     }
 
     fn backoff_remove_peer(&mut self, addr: &net::SocketAddr) {
+        debug_assert!(self.is_connected(addr));
         self.backoff_delay.remove(addr);
         self.backoff_next_try.remove(addr);
     }
