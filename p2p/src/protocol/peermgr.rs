@@ -235,10 +235,10 @@ pub struct PeerManager<U> {
     /// Peer manager configuration.
     pub config: Config,
 
-    backoff_delay: HashMap<net::SocketAddr, u32>,
-    backoff_next_try: HashMap<net::SocketAddr, LocalTime>,
-    backoff_min_wait: LocalDuration,
-    backoff_max_wait: LocalDuration,
+    retry_at: HashMap<net::SocketAddr, LocalTime>,
+    retry_attempts: HashMap<net::SocketAddr, u32>,
+    retry_max_wait: LocalDuration,
+    retry_min_wait: LocalDuration,
 
     /// Last time we were idle.
     last_idle: Option<LocalTime>,
@@ -256,10 +256,10 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
         Self {
             config,
-            backoff_delay: HashMap::with_hasher(rng.clone().into()),
-            backoff_next_try: HashMap::with_hasher(rng.clone().into()),
-            backoff_min_wait: LocalDuration::from_secs(1),
-            backoff_max_wait: LocalDuration::from_mins(60),
+            retry_at: HashMap::with_hasher(rng.clone().into()),
+            retry_attempts: HashMap::with_hasher(rng.clone().into()),
+            retry_max_wait: LocalDuration::from_mins(60),
+            retry_min_wait: LocalDuration::from_secs(1),
             last_idle: None,
             peers,
             upstream,
@@ -287,30 +287,30 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         self.maintain_connections(addrs, time);
     }
 
-    fn backoff_retry_later(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
-        let attempts = self.backoff_delay.entry(*addr).or_default();
+    fn retrier_add_peer(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
+        let attempts = self.retry_attempts.entry(*addr).or_default();
         let delay = LocalDuration::from_secs(2_u64.pow((*attempts).max(63)))
-            .clamp(self.backoff_min_wait, self.backoff_max_wait);
-        self.backoff_next_try.insert(*addr, local_time + delay);
+            .clamp(self.retry_min_wait, self.retry_max_wait);
+        self.retry_at.insert(*addr, local_time + delay);
         *attempts = *attempts + 1;
     }
 
-    fn backoff_remove_peer(&mut self, addr: &net::SocketAddr) {
+    fn retrier_remove_peer(&mut self, addr: &net::SocketAddr) {
         debug_assert!(self.is_connected(addr));
-        self.backoff_delay.remove(addr);
-        self.backoff_next_try.remove(addr);
+        self.retry_attempts.remove(addr);
+        self.retry_at.remove(addr);
     }
 
-    fn backoff_reconnect(&mut self, local_time: LocalTime) {
+    fn retrier_reconnect(&mut self, local_time: LocalTime) {
         let peers: Vec<_> = self
-            .backoff_next_try
+            .retry_at
             .iter()
             .filter(|(_, v)| *v <= &local_time)
             .map(|(k, _)| *k)
             .collect();
         for peer in peers {
             debug_assert!(self.connect(&peer, local_time));
-            self.backoff_next_try.remove(&peer);
+            self.retry_at.remove(&peer);
         }
     }
 
@@ -346,7 +346,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 peer: None,
             },
         );
-        self.backoff_remove_peer(&addr);
+        self.retrier_remove_peer(&addr);
 
         match link {
             Link::Inbound => {
@@ -387,7 +387,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
         if self.config.persistent.contains(addr) {
             log::error!("persistent peer disconnected: {}", addr);
-            self.backoff_retry_later(&addr, local_time);
+            self.retrier_add_peer(&addr, local_time);
         } else {
             // If an outbound peer disconnected, we should make sure to maintain
             // our target outbound connection count.
@@ -636,7 +636,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             self.last_idle = Some(local_time);
         }
 
-        self.backoff_reconnect(local_time);
+        self.retrier_reconnect(local_time);
     }
 
     /// Whitelist a peer.
