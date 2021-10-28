@@ -292,6 +292,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         let delay = LocalDuration::from_secs(2_u64.pow((*attempts).max(63)))
             .clamp(self.config.retry_min_wait, self.config.retry_max_wait);
         self.retry_at.insert(*addr, local_time + delay);
+        self.upstream.set_timeout(delay);
         *attempts = *attempts + 1;
     }
 
