@@ -235,7 +235,7 @@ pub struct PeerManager<U> {
     /// Peer manager configuration.
     pub config: Config,
 
-    backoff_delay: HashMap<net::SocketAddr, LocalDuration>,
+    backoff_delay: HashMap<net::SocketAddr, u32>,
     backoff_next_try: HashMap<net::SocketAddr, LocalTime>,
     backoff_min_wait: LocalDuration,
     backoff_max_wait: LocalDuration,
@@ -288,12 +288,11 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
     }
 
     fn backoff_retry_later(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
-        let x = self
-            .backoff_delay
-            .get_mut(addr)
-            .unwrap_or(&mut self.backoff_min_wait);
-        self.backoff_next_try.insert(*addr, local_time + *x);
-        *x = cmp::min(*x * 2, self.backoff_max_wait);
+        let attempts = self.backoff_delay.entry(*addr).or_default();
+        let delay = LocalDuration::from_secs(2_u64.pow((*attempts).max(63)))
+            .clamp(self.backoff_min_wait, self.backoff_max_wait);
+        self.backoff_next_try.insert(*addr, local_time + delay);
+        *attempts = *attempts + 1;
     }
 
     fn backoff_remove_peer(&mut self, addr: &net::SocketAddr) {
