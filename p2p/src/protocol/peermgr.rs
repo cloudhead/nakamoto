@@ -383,13 +383,14 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         debug_assert!(!self.is_disconnected(addr));
 
         self.peers.remove(addr);
-        // If an outbound peer disconnected, we should make sure to maintain
-        // our target outbound connection count.
-        self.maintain_connections(addrs, local_time);
 
         if self.config.persistent.contains(addr) {
             log::error!("persistent peer disconnected: {}", addr);
             self.backoff_retry_later(&addr, local_time);
+        } else {
+            // If an outbound peer disconnected, we should make sure to maintain
+            // our target outbound connection count.
+            self.maintain_connections(addrs, local_time);
         }
 
         Events::event(&self.upstream, Event::Disconnected(*addr));
