@@ -293,7 +293,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
     fn retrier_add_peer(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
         let attempts = self.retry_attempts.entry(*addr).or_default();
-        let delay = LocalDuration::from_secs(2_u64.pow((*attempts).max(63)))
+        let delay = LocalDuration::from_secs(2_u64.pow((*attempts).min(63)))
             .clamp(self.config.retry_min_wait, self.config.retry_max_wait);
         self.retry_at.insert(*addr, local_time + delay);
         self.upstream.set_timeout(delay);
@@ -912,13 +912,62 @@ mod tests {
                 user_agent: crate::protocol::USER_AGENT,
                 persistent: vec![],
                 retry_max_wait: LocalDuration::from_mins(60),
-                retry_min_wait: LocalDuration::from_mins(1),
+                retry_min_wait: LocalDuration::from_secs(1),
                 services: ServiceFlags::NONE,
                 preferred_services: ServiceFlags::COMPACT_FILTERS | ServiceFlags::NETWORK,
                 required_services: ServiceFlags::NETWORK,
                 whitelist: Whitelist::default(),
             }
         }
+    }
+
+    #[test]
+    fn test_persistent_client_reconnect() {
+        let rng = fastrand::Rng::with_seed(1);
+        let mut time = LocalTime::now();
+        let height = 144;
+
+        let local = ([99, 99, 99, 99], 9999).into();
+        let remote = ([124, 43, 110, 1], 8333).into();
+
+        let mut addrs = VecDeque::new();
+        let cfg = Config {
+            persistent: vec![remote],
+            ..util::config()
+        };
+        let mut peermgr = PeerManager::new(cfg, rng, Hooks::default(), ());
+
+        peermgr.initialize(time, &mut addrs);
+        peermgr.connect(&remote, time);
+        assert_eq!(peermgr.connecting().next(), Some(&remote));
+
+        peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+        assert_eq!(
+            peermgr.connected().map(|c| &c.socket.addr).next(),
+            Some(&remote)
+        );
+
+        // Confirm first attempt
+        peermgr.peer_disconnected(&remote, &mut addrs, time);
+        assert!(peermgr.is_disconnected(&remote));
+        assert_eq!(peermgr.connected().next(), None);
+
+        time.elapse(LocalDuration::from_secs(1));
+        peermgr.received_tick(time, &mut addrs);
+        assert_eq!(peermgr.connecting().next(), Some(&remote));
+
+        // Confirm exponential backoff after failed first attempt
+        peermgr.peer_disconnected(&remote, &mut addrs, time);
+        assert!(peermgr.is_disconnected(&remote));
+        assert_eq!(peermgr.connecting().next(), None);
+
+        time.elapse(LocalDuration::from_secs(1));
+        peermgr.received_tick(time, &mut addrs);
+        assert_eq!(peermgr.connecting().next(), None);
+
+        time.elapse(LocalDuration::from_secs(1));
+        peermgr.received_tick(time, &mut addrs);
+        assert_eq!(peermgr.connecting().next(), Some(&remote));
     }
 
     #[test]
