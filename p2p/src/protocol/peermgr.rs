@@ -293,7 +293,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             .clamp(self.config.retry_min_wait, self.config.retry_max_wait);
         self.retry_at.insert(*addr, local_time + delay);
         self.upstream.set_timeout(delay);
-        *attempts = *attempts + 1;
+        *attempts += 1;
     }
 
     fn retrier_remove_peer(&mut self, addr: &net::SocketAddr) {
