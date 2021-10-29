@@ -280,7 +280,11 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
         for addr in peers {
             if !self.connect(&addr, time) {
-                panic!("{}: unable to connect to persistent peer: {}", source!(), addr);
+                panic!(
+                    "{}: unable to connect to persistent peer: {}",
+                    source!(),
+                    addr
+                );
             }
         }
         self.upstream.set_timeout(IDLE_TIMEOUT);
