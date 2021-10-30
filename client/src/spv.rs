@@ -11,7 +11,7 @@ use std::{fmt, net};
 
 use p2p::event::Emitter;
 
-use bitcoin::{Block, Txid};
+use nakamoto_common::bitcoin::{Block, Txid};
 
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_p2p as p2p;

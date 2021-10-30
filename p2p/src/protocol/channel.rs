@@ -8,12 +8,14 @@ use std::net;
 
 pub use crossbeam_channel as chan;
 
-use bitcoin::network::address::Address;
-use bitcoin::network::message::NetworkMessage;
-use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
-use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders, GetCFilters};
-use bitcoin::network::message_network::VersionMessage;
-use bitcoin::Transaction;
+use nakamoto_common::bitcoin::network::address::Address;
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
+use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
+use nakamoto_common::bitcoin::network::message_filter::{
+    CFHeaders, CFilter, GetCFHeaders, GetCFilters,
+};
+use nakamoto_common::bitcoin::network::message_network::VersionMessage;
+use nakamoto_common::bitcoin::Transaction;
 
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};

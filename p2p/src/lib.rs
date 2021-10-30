@@ -39,6 +39,5 @@ pub mod error;
 pub mod event;
 pub mod protocol;
 pub mod traits;
-pub use bitcoin;
 
 pub use protocol::{Link, PeerId};

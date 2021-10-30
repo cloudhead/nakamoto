@@ -5,8 +5,9 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use bitcoin::blockdata::constants;
-use bitcoin::consensus::encode::Decodable;
+use nakamoto_common::bitcoin;
+use nakamoto_common::bitcoin::blockdata::constants;
+use nakamoto_common::bitcoin::consensus::encode::Decodable;
 
 use lazy_static::*;
 

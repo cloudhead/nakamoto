@@ -6,7 +6,7 @@ use std::marker::PhantomData;
 use std::mem;
 use std::path::Path;
 
-use bitcoin::consensus::encode::{Decodable, Encodable};
+use nakamoto_common::bitcoin::consensus::encode::{Decodable, Encodable};
 
 use nakamoto_common::block::store::{Error, Store};
 use nakamoto_common::block::Height;

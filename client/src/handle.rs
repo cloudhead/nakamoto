@@ -3,19 +3,21 @@
 use std::net;
 use std::ops::{RangeBounds, RangeInclusive};
 
-use bitcoin::network::constants::ServiceFlags;
-use bitcoin::network::Address;
-use bitcoin::Script;
 use crossbeam_channel as chan;
 use thiserror::Error;
 
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::Address;
+use nakamoto_common::bitcoin::Script;
+
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::{BlockReader, ImportResult};
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::{self, Command, CommandError, GetFiltersError, Peer};
-use nakamoto_p2p::{bitcoin::network::message::NetworkMessage, protocol::Link};
 
 use crate::client::Event;
 

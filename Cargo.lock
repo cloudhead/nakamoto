@@ -252,8 +252,6 @@ dependencies = [
 name = "nakamoto-chain"
 version = "0.2.0"
 dependencies = [
- "bitcoin",
- "bitcoin_hashes",
  "fastrand",
  "log",
  "nakamoto-common",
@@ -268,7 +266,6 @@ dependencies = [
 name = "nakamoto-client"
 version = "0.2.0"
 dependencies = [
- "bitcoin",
  "crossbeam-channel",
  "fastrand",
  "log",
@@ -301,7 +298,6 @@ dependencies = [
 name = "nakamoto-net-poll"
 version = "0.2.0"
 dependencies = [
- "bitcoin",
  "crossbeam-channel",
  "fastrand",
  "lazy_static",
@@ -333,8 +329,6 @@ dependencies = [
 name = "nakamoto-p2p"
 version = "0.2.1"
 dependencies = [
- "bitcoin",
- "bitcoin_hashes",
  "crossbeam-channel",
  "fastrand",
  "log",
@@ -352,8 +346,6 @@ dependencies = [
 name = "nakamoto-test"
 version = "0.2.0"
 dependencies = [
- "bitcoin",
- "bitcoin_hashes",
  "chrono",
  "colored",
  "fastrand",
@@ -367,7 +359,6 @@ name = "nakamoto-wallet"
 version = "0.2.0"
 dependencies = [
  "argh",
- "bitcoin",
  "chrono",
  "crossbeam-channel",
  "log",

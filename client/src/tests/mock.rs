@@ -5,14 +5,14 @@ use std::ops::RangeInclusive;
 use nakamoto_chain::block::Block;
 use nakamoto_chain::filter::BlockFilter;
 
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
+use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::block::tree::{self, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
 
-use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
-use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
-use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;

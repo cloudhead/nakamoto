@@ -11,8 +11,8 @@ use nakamoto_common::nonempty::NonEmpty;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use bitcoin::blockdata::block::BlockHeader;
-use bitcoin::hash_types::BlockHash;
+use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::hash_types::BlockHash;
 
 #[derive(Debug, Clone)]
 pub struct Cache {

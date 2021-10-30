@@ -4,8 +4,8 @@
 #![warn(missing_docs)]
 use std::net;
 
-use bitcoin::network::address::Address;
-use bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::address::Address;
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::BlockTime;
@@ -370,11 +370,10 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// ```
     /// use std::collections::HashMap;
     ///
-    /// use bitcoin::network::address::Address;
-    /// use bitcoin::network::constants::ServiceFlags;
-    ///
     /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
     /// use nakamoto_common::p2p::peer::Source;
+    /// use nakamoto_common::bitcoin::network::address::Address;
+    /// use nakamoto_common::bitcoin::network::constants::ServiceFlags;
     /// use nakamoto_common::block::time::LocalTime;
     ///
     /// let cfg = Config::default();
@@ -488,8 +487,8 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// ```
     /// use std::collections::HashMap;
     ///
-    /// use bitcoin::network::address::Address;
-    /// use bitcoin::network::constants::ServiceFlags;
+    /// use nakamoto_common::bitcoin::network::address::Address;
+    /// use nakamoto_common::bitcoin::network::constants::ServiceFlags;
     ///
     /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
     /// use nakamoto_common::p2p::peer::Source;

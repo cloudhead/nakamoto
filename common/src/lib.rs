@@ -6,6 +6,8 @@ pub mod collections;
 pub mod network;
 pub mod p2p;
 
+pub use bitcoin;
+pub use bitcoin_hashes;
 pub use nonempty;
 
 /// Return the function path at the current source location.

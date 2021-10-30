@@ -16,9 +16,9 @@
 //!
 use std::net;
 
-use bitcoin::network::address::Address;
-use bitcoin::network::constants::ServiceFlags;
-use bitcoin::network::message_network::VersionMessage;
+use nakamoto_common::bitcoin::network::address::Address;
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 
 use nakamoto_common::p2p::peer::{AddressSource, Source};
 use nakamoto_common::p2p::Domain;
@@ -842,9 +842,9 @@ impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bitcoin::network::address::Address;
     use std::collections::VecDeque;
 
+    use nakamoto_common::bitcoin::network::address::Address;
     use nakamoto_test::assert_matches;
 
     mod util {

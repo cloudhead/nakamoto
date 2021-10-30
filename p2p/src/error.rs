@@ -1,6 +1,6 @@
 //! Peer-to-peer protocol errors.
 
-use bitcoin::consensus::encode;
+use nakamoto_common::bitcoin::consensus::encode;
 
 use std::fmt::Debug;
 use std::io;

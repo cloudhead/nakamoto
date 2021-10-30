@@ -1,7 +1,7 @@
 //! Client events.
 use std::fmt;
 
-use bitcoin::{Transaction, Txid};
+use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 
 use crate::spv::TxStatus;

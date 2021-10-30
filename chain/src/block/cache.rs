@@ -10,13 +10,14 @@ pub mod test;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
-use bitcoin::blockdata::block::BlockHeader;
-use bitcoin::consensus::params::Params;
-use bitcoin::hash_types::BlockHash;
-use bitcoin::network::constants::Network;
-use bitcoin::util::BitArray;
+use nakamoto_common::bitcoin;
+use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::consensus::params::Params;
+use nakamoto_common::bitcoin::hash_types::BlockHash;
+use nakamoto_common::bitcoin::network::constants::Network;
+use nakamoto_common::bitcoin::util::BitArray;
 
-use bitcoin::util::uint::Uint256;
+use nakamoto_common::bitcoin::util::uint::Uint256;
 use nakamoto_common::block::tree::{self, BlockReader, BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::{
     self,

@@ -16,6 +16,9 @@ use nakamoto_chain::filter;
 use nakamoto_chain::filter::cache::FilterCache;
 use nakamoto_chain::{block::cache::BlockCache, filter::BlockFilter};
 
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
+use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::tree::{self, BlockReader, ImportResult};
@@ -27,9 +30,6 @@ pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
 
 use nakamoto_p2p as p2p;
-use nakamoto_p2p::bitcoin::network::constants::ServiceFlags;
-use nakamoto_p2p::bitcoin::network::message::NetworkMessage;
-use nakamoto_p2p::bitcoin::network::Address;
 use nakamoto_p2p::protocol::Protocol;
 use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{cbfmgr, invmgr, peermgr, syncmgr};

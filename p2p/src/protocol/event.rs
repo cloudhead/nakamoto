@@ -1,7 +1,7 @@
 //! Protocol events.
 use std::net;
 
-use bitcoin::network::message::NetworkMessage;
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
 use crate::event::Broadcast;
 use crate::protocol::PeerId;

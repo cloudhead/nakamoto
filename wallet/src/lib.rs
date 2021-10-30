@@ -6,7 +6,7 @@ use thiserror::Error;
 use std::collections::HashSet;
 use std::{io, net, thread};
 
-use bitcoin::Address;
+use nakamoto_common::bitcoin::Address;
 
 use nakamoto_client::handle::{self, Handle};
 use nakamoto_client::spv::utxos::Utxos;

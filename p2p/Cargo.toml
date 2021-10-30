@@ -11,10 +11,8 @@ license = "MIT"
 
 [dependencies]
 nakamoto-common = { version = "0.2.0", path = "../common" }
-bitcoin = "0.26.0"
 log = "0.4"
 thiserror = "1.0"
-bitcoin_hashes = "0.9.0"
 crossbeam-channel = { version = "0.4" }
 fastrand = "1.3.5"
 microserde = "0.1"

@@ -2,7 +2,7 @@
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
 
-use bitcoin::{OutPoint, Script, Transaction, TxOut};
+use nakamoto_common::bitcoin::{OutPoint, Script, Transaction, TxOut};
 
 /// A simple UTXO set.
 #[derive(Debug, Clone)]

@@ -11,8 +11,6 @@ license = "MIT"
 
 [dependencies]
 nakamoto-common = { version = "0.2.0", path = "../common", features = ["log"] }
-bitcoin = "0.26.0"
-bitcoin_hashes = "0.9.0"
 thiserror = "1.0"
 log = "0.4"
 

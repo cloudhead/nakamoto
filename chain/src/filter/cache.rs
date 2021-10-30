@@ -4,7 +4,7 @@
 use std::io;
 use std::ops::RangeInclusive;
 
-use bitcoin::consensus::{encode, Decodable, Encodable};
+use nakamoto_common::bitcoin::consensus::{encode, Decodable, Encodable};
 
 pub use nakamoto_common::block::filter::{
     self, BlockFilter, Error, FilterHash, FilterHeader, Filters,

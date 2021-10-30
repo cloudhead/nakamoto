@@ -1,8 +1,8 @@
 //! Types and utilities related to transaction fees and fee rates.
 use std::collections::VecDeque;
 
-use bitcoin::blockdata::constants::WITNESS_SCALE_FACTOR;
-use bitcoin::{Block, OutPoint, Transaction, TxOut};
+use nakamoto_common::bitcoin::blockdata::constants::WITNESS_SCALE_FACTOR;
+use nakamoto_common::bitcoin::{Block, OutPoint, Transaction, TxOut};
 
 use nakamoto_common::collections::HashMap;
 use nakamoto_common::nonempty::NonEmpty;

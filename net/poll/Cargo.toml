@@ -12,7 +12,6 @@ license = "MIT"
 nakamoto-common = { version = "0.2.0", path = "../../common" }
 nakamoto-p2p = { version = "0.2.0", path = "../../p2p" }
 crossbeam-channel = { version = "0.4" }
-bitcoin = "0.26.0"
 popol = "0.5"
 socket2 = "0.4"
 libc = "0.2.71"

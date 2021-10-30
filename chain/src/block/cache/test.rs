@@ -19,13 +19,14 @@ use std::sync::{Arc, RwLock};
 use quickcheck::{Arbitrary, Gen};
 use quickcheck_macros::quickcheck;
 
-use bitcoin::blockdata::block::BlockHeader;
-use bitcoin::blockdata::constants;
-use bitcoin::consensus::params::Params;
-use bitcoin::hash_types::{BlockHash, TxMerkleNode};
-use bitcoin_hashes::hex::FromHex;
+use nakamoto_common::bitcoin;
+use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::blockdata::constants;
+use nakamoto_common::bitcoin::consensus::params::Params;
+use nakamoto_common::bitcoin::hash_types::{BlockHash, TxMerkleNode};
+use nakamoto_common::bitcoin_hashes::hex::FromHex;
 
-use bitcoin::util::uint::Uint256;
+use nakamoto_common::bitcoin::util::uint::Uint256;
 
 /// Sun, 12 Jul 2020 15:03:05 +0000.
 const LOCAL_TIME: LocalTime = LocalTime::from_secs(1594566185);

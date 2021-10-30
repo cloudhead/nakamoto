@@ -7,8 +7,8 @@ use std::net;
 use std::ops::{Bound, Range};
 use std::sync::Arc;
 
-use bitcoin::network::message_blockdata::GetHeadersMessage;
 use log::*;
+use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
@@ -21,11 +21,11 @@ use super::{PROTOCOL_VERSION, USER_AGENT};
 use peer::{Peer, PeerDummy};
 use simulator::{Options, Simulation};
 
-use bitcoin::network::message_blockdata::Inventory;
-use bitcoin::network::message_filter::CFilter;
-use bitcoin::network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters};
-use bitcoin::network::Address;
-use bitcoin_hashes::hex::FromHex;
+use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
+use nakamoto_common::bitcoin::network::message_filter::CFilter;
+use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters};
+use nakamoto_common::bitcoin::network::Address;
+use nakamoto_common::bitcoin_hashes::hex::FromHex;
 
 use quickcheck_macros::quickcheck;
 

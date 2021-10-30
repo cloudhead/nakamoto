@@ -1,6 +1,6 @@
 use argh::FromArgs;
 
-use bitcoin::Address;
+use nakamoto_common::bitcoin::Address;
 
 use nakamoto_common::block::Height;
 use nakamoto_wallet::logger;

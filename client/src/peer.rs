@@ -122,8 +122,8 @@ impl Store for Cache {
 #[cfg(test)]
 mod test {
     use super::*;
-    use bitcoin::network::address::Address;
-    use bitcoin::network::constants::ServiceFlags;
+    use nakamoto_common::bitcoin::network::address::Address;
+    use nakamoto_common::bitcoin::network::constants::ServiceFlags;
     use nakamoto_common::block::time::LocalTime;
 
     #[test]

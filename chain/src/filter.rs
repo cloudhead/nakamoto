@@ -2,4 +2,4 @@
 pub mod cache;
 pub mod store;
 
-pub use bitcoin::util::bip158::BlockFilter;
+pub use nakamoto_common::bitcoin::util::bip158::BlockFilter;

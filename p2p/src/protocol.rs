@@ -34,15 +34,15 @@ use std::net;
 use std::ops::{Bound, RangeInclusive};
 use std::sync::Arc;
 
-use bitcoin::blockdata::block::BlockHeader;
-use bitcoin::consensus::params::Params;
-use bitcoin::network::constants::ServiceFlags;
-use bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
-use bitcoin::network::message_filter::GetCFilters;
-use bitcoin::network::message_network::VersionMessage;
-use bitcoin::network::Address;
-use bitcoin::Script;
+use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::consensus::params::Params;
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
+use nakamoto_common::bitcoin::network::message_filter::GetCFilters;
+use nakamoto_common::bitcoin::network::message_network::VersionMessage;
+use nakamoto_common::bitcoin::network::Address;
+use nakamoto_common::bitcoin::Script;
 
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
@@ -1154,7 +1154,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
 
 #[cfg(test)]
 mod test {
-    use bitcoin::network::message::NetworkMessage;
+    use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
     use super::channel::chan;
     use super::{Out, PeerId};

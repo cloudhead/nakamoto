@@ -1,6 +1,6 @@
 //! Poll-based reactor. This is a single-threaded reactor using a `poll` loop.
-use bitcoin::consensus::encode;
-use bitcoin::network::message::RawNetworkMessage;
+use nakamoto_common::bitcoin::consensus::encode;
+use nakamoto_common::bitcoin::network::message::RawNetworkMessage;
 
 use crossbeam_channel as chan;
 

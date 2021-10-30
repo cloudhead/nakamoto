@@ -1,8 +1,8 @@
 use super::*;
 
-use bitcoin::consensus::Params;
-use bitcoin::network::message_network::VersionMessage;
-use bitcoin::network::Address;
+use nakamoto_common::bitcoin::consensus::Params;
+use nakamoto_common::bitcoin::network::message_network::VersionMessage;
+use nakamoto_common::bitcoin::network::Address;
 
 use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;

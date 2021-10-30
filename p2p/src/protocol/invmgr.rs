@@ -21,8 +21,8 @@
 //!
 use std::collections::BTreeMap;
 
-use bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
-use bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
+use nakamoto_common::bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
+use nakamoto_common::bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
 
 // TODO: Timeout should be configurable
 // TODO: Add exponential back-off
@@ -581,11 +581,11 @@ mod tests {
 
     use std::net;
 
-    use crate::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
     use crate::protocol;
     use crate::protocol::channel::{chan, Channel};
     use crate::protocol::{Network, Out, PROTOCOL_VERSION};
 
+    use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
     use nakamoto_common::block::tree::BlockTree as _;
     use nakamoto_common::collections::HashSet;
     use nakamoto_common::nonempty::NonEmpty;

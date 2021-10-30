@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use bitcoin::blockdata::transaction::{OutPoint, TxOut};
+use nakamoto_common::bitcoin::blockdata::transaction::{OutPoint, TxOut};
 
 use nakamoto_common::block::BlockHeader;
 pub use nakamoto_common::block::*;
@@ -66,8 +66,8 @@ pub mod gen {
     use bitcoin::util::bip158;
     use bitcoin::util::uint::Uint256;
 
-    use bitcoin_hashes::{hash160, Hash as _};
-
+    use nakamoto_common::bitcoin;
+    use nakamoto_common::bitcoin_hashes::{hash160, Hash as _};
     use nakamoto_common::block::filter::{BlockFilter, FilterHash, FilterHeader};
     use nakamoto_common::block::*;
     use nakamoto_common::nonempty::NonEmpty;

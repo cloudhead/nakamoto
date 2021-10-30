@@ -4,9 +4,9 @@ use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::net;
 
-use bitcoin::consensus::encode::Decodable;
-use bitcoin::consensus::encode::{self, Encodable};
-use bitcoin::network::stream_reader::StreamReader;
+use nakamoto_common::bitcoin::consensus::encode::Decodable;
+use nakamoto_common::bitcoin::consensus::encode::{self, Encodable};
+use nakamoto_common::bitcoin::network::stream_reader::StreamReader;
 
 use log::*;
 

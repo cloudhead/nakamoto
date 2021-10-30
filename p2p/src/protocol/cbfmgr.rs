@@ -7,10 +7,10 @@ use std::ops::{Bound, RangeInclusive};
 
 use thiserror::Error;
 
-use bitcoin::network::constants::ServiceFlags;
-use bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
-use bitcoin::util::bip158;
-use bitcoin::{Script, Transaction, Txid};
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
+use nakamoto_common::bitcoin::util::bip158;
+use nakamoto_common::bitcoin::{Script, Transaction, Txid};
 
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
@@ -1038,6 +1038,9 @@ impl Iterator for HeightIterator {
 
 #[cfg(test)]
 mod tests {
+    use nakamoto_common::bitcoin;
+    use nakamoto_common::bitcoin_hashes;
+
     use bitcoin::consensus::Params;
     use bitcoin::network::message::NetworkMessage;
     use bitcoin::network::message_filter::GetCFilters;

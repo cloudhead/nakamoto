@@ -42,7 +42,7 @@ use std::{iter, net, thread};
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
 
-use bitcoin::OutPoint;
+use nakamoto_common::bitcoin::OutPoint;
 
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
