@@ -1,10 +1,6 @@
 //!
 //! Manages header synchronization with peers.
 //!
-#![warn(missing_docs)]
-use std::sync::Arc;
-use std::time::SystemTime;
-
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
@@ -109,12 +105,6 @@ pub struct SyncManager<U> {
 /// An event emitted by the sync manager.
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// Headers received from a peer.
-    HeadersReceived(PeerId, usize),
-    /// Invalid headers received from a peer.
-    InvalidHeadersReceived(PeerId, Arc<Error>),
-    /// Unsolicited headers received.
-    UnsolicitedHeadersReceived(PeerId, usize),
     /// A block was added to the main chain.
     BlockConnected {
         /// Block height.
@@ -131,33 +121,31 @@ pub enum Event {
     },
     /// A new block was discovered via a peer.
     BlockDiscovered(PeerId, BlockHash),
-    /// Started syncing with a peer.
-    Syncing(PeerId),
+    /// Syncing headers.
+    Syncing {
+        /// Current block header height.
+        current: Height,
+        /// Best known block header height.
+        best: Height,
+    },
     /// Synced up to the specified hash and height.
     Synced(BlockHash, Height),
-    /// A peer has timed out responding to a header request.
-    TimedOut(PeerId),
     /// Potential stale tip detected on the active chain.
-    StaleTipDetected(LocalTime),
+    StaleTip(LocalTime),
+    /// Peer misbehaved.
+    PeerMisbehaved(PeerId),
 }
 
 impl std::fmt::Display for Event {
     fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Event::HeadersReceived(addr, count) => {
-                write!(fmt, "{}: Received {} header(s)", addr, count)
-            }
-            Event::InvalidHeadersReceived(addr, error) => {
-                write!(fmt, "{}: Received invalid headers: {}", addr, error)
-            }
-            Event::TimedOut(addr) => write!(fmt, "Peer {} timed out", addr),
-            Event::UnsolicitedHeadersReceived(from, count) => {
-                write!(fmt, "Received {} unsolicited headers from {}", count, from)
+            Event::PeerMisbehaved(addr) => {
+                write!(fmt, "{}: Peer misbehaved", addr)
             }
             Event::Synced(hash, height) => {
                 write!(fmt, "Headers synced up to hash={} height={}", hash, height)
             }
-            Event::Syncing(addr) => write!(fmt, "Syncing headers with {}", addr),
+            Event::Syncing { current, best } => write!(fmt, "Syncing headers {}/{}", current, best),
             Event::BlockConnected { height, header } => {
                 write!(
                     fmt,
@@ -177,13 +165,11 @@ impl std::fmt::Display for Event {
             Event::BlockDiscovered(from, hash) => {
                 write!(fmt, "{}: Discovered new block: {}", from, &hash)
             }
-            Event::StaleTipDetected(last_update) => {
-                let elapsed = LocalTime::from(SystemTime::now()) - *last_update;
-
+            Event::StaleTip(last_update) => {
                 write!(
                     fmt,
-                    "Potential stale tip detected (last update is {} ago)",
-                    elapsed
+                    "Potential stale tip detected (last update was {})",
+                    last_update
                 )
             }
         }
@@ -343,15 +329,17 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
         let length = headers.len();
 
         if length > MAX_MESSAGE_HEADERS {
+            log::debug!("Received more than maximum headers allowed from {}", from);
+
+            self.record_misbehavior(from);
             self.upstream
-                .event(Event::UnsolicitedHeadersReceived(*from, length));
+                .disconnect(*from, DisconnectReason::PeerMisbehaving("too many headers"));
 
             return Ok(ImportResult::TipUnchanged);
         }
         // When unsolicited, we don't want to process too many headers in case of a DoS.
         if length > MAX_UNSOLICITED_HEADERS && request.is_none() {
-            self.upstream
-                .event(Event::UnsolicitedHeadersReceived(*from, length));
+            log::debug!("{}: Received {} unsolicited headers", from, length);
 
             return Ok(ImportResult::TipUnchanged);
         }
@@ -361,8 +349,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
         } else {
             return Ok(ImportResult::TipUnchanged);
         }
-        self.upstream
-            .event(Event::HeadersReceived(*from, headers.len()));
+        log::debug!("{}: Received {} headers", from, length);
 
         let root = headers.first().block_hash();
         let best = headers.last().block_hash();
@@ -565,7 +552,6 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
                     }
                 }
             }
-            self.upstream.event(Event::TimedOut(peer));
         }
 
         // If some of the requests timed out, force a sync, otherwise just idle.
@@ -600,9 +586,11 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
             | Error::InvalidBlockHash(_, _)
             | Error::InvalidBlockHeight(_)
             | Error::InvalidBlockTime(_, _) => {
+                log::debug!("{}: Received invalid headers: {}", from, err);
+
                 self.record_misbehavior(from);
                 self.upstream
-                    .event(Event::InvalidHeadersReceived(*from, Arc::new(err)));
+                    .disconnect(*from, DisconnectReason::PeerMisbehaving("invalid headers"));
 
                 Ok(())
             }
@@ -615,8 +603,8 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
         }
     }
 
-    fn record_misbehavior(&mut self, _peer: &PeerId) {
-        // TODO
+    fn record_misbehavior(&mut self, peer: &PeerId) {
+        self.upstream.event(Event::PeerMisbehaved(*peer));
     }
 
     /// Check whether our current tip is stale.
@@ -704,7 +692,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
     /// Check whether or not we are in sync with the network.
     fn is_synced<T: BlockReader>(&mut self, now: LocalTime, tree: &T) -> bool {
         if let Some(last_update) = self.stale_tip(now, tree) {
-            self.upstream.event(Event::StaleTipDetected(last_update));
+            self.upstream.event(Event::StaleTip(last_update));
 
             return false;
         }
@@ -751,9 +739,11 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
 
         if let Some(addr) = self.preferred_peer(&locators, tree) {
             let timeout = self.config.request_timeout;
+            let current = tree.height();
+            let best = self.best_height().unwrap_or(current);
 
             self.request(addr, locators, now, timeout, OnTimeout::Ignore);
-            self.upstream.event(Event::Syncing(addr));
+            self.upstream.event(Event::Syncing { current, best });
 
             true
         } else {

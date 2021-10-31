@@ -647,8 +647,8 @@ fn test_stale_tip() {
     alice.tick();
     alice
         .events()
-        .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))))
-        .expect("Alice emits a `StaleTipDetected` event");
+        .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTip(_))))
+        .expect("Alice emits a `StaleTip` event");
 
     // Timeout the `getheaders` request.
     alice.time.elapse(syncmgr::REQUEST_TIMEOUT);
@@ -668,8 +668,8 @@ fn test_stale_tip() {
     // Chain update should be stale this time.
     alice
         .events()
-        .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTipDetected(_))))
-        .expect("Alice emits a `StaleTipDetected` event");
+        .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTip(_))))
+        .expect("Alice emits a `StaleTip` event");
 }
 
 #[quickcheck]
