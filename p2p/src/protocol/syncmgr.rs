@@ -499,7 +499,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
                 locators,
                 clock.local_time(),
                 timeout,
-                OnTimeout::Retry(0),
+                OnTimeout::Retry(3),
             );
         }
     }
@@ -524,18 +524,13 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
             self.inflight.remove(&peer);
 
             match on_timeout {
-                OnTimeout::Disconnect => {
-                    self.unregister(&peer);
-                    self.upstream
-                        .disconnect(peer, DisconnectReason::PeerTimeout("getheaders"));
-
-                    sync = true;
-                }
                 OnTimeout::Ignore => {
                     // It's likely that the peer just didn't have the requested header.
                 }
-                OnTimeout::Retry(n) if n >= 3 => {
-                    // Stop retrying after enough attempts.
+                OnTimeout::Retry(0) | OnTimeout::Disconnect => {
+                    self.upstream
+                        .disconnect(peer, DisconnectReason::PeerTimeout("getheaders"));
+                    sync = true;
                 }
                 OnTimeout::Retry(n) => {
                     if let Some((addr, _)) = self.peers.sample_with(|a, p| {
@@ -547,7 +542,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
                             req.locators,
                             local_time,
                             timeout,
-                            OnTimeout::Retry(n + 1),
+                            OnTimeout::Retry(n - 1),
                         );
                     }
                 }
