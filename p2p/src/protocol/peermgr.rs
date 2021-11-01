@@ -293,7 +293,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
     fn retrier_add_peer(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
         let attempts = self.retry_attempts.entry(*addr).or_default();
-        let delay = LocalDuration::from_secs(2_u64.pow((*attempts).min(63)))
+        let delay = LocalDuration::from_secs(2_u64.saturating_pow(*attempts))
             .clamp(self.config.retry_min_wait, self.config.retry_max_wait);
         self.retry_at.insert(*addr, local_time + delay);
         self.upstream.set_timeout(delay);
@@ -314,7 +314,8 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             .map(|(k, _)| *k)
             .collect();
         for peer in peers {
-            debug_assert!(self.connect(&peer, local_time));
+            let connecting = self.connect(&peer, local_time);
+            assert!(connecting);
             self.retry_at.remove(&peer);
         }
     }
@@ -391,7 +392,6 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         self.peers.remove(addr);
 
         if self.config.persistent.contains(addr) {
-            log::error!("persistent peer disconnected: {}", addr);
             self.retrier_add_peer(&addr, local_time);
         } else {
             // If an outbound peer disconnected, we should make sure to maintain
@@ -938,7 +938,6 @@ mod tests {
         let mut peermgr = PeerManager::new(cfg, rng, Hooks::default(), ());
 
         peermgr.initialize(time, &mut addrs);
-        peermgr.connect(&remote, time);
         assert_eq!(peermgr.connecting().next(), Some(&remote));
 
         peermgr.peer_connected(remote, local, Link::Outbound, height, time);
