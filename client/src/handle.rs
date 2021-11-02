@@ -153,7 +153,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
         &self,
         count: usize,
         required_services: impl Into<ServiceFlags>,
-    ) -> Result<(), Error>;
+    ) -> Result<Vec<(net::SocketAddr, Height, ServiceFlags)>, Error>;
     /// Wait for the node's active chain to reach a certain height. The hash at that height
     /// is returned.
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;

@@ -1,6 +1,6 @@
 //! Core nakamoto client functionality. Wraps all the other modules under a unified
 //! interface.
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
@@ -624,30 +624,37 @@ where
         &self,
         count: usize,
         required_services: impl Into<ServiceFlags>,
-    ) -> Result<(), handle::Error> {
+    ) -> Result<Vec<(net::SocketAddr, Height, ServiceFlags)>, handle::Error> {
         let events = self.events();
         let required_services = required_services.into();
 
-        let mut negotiated = self
-            .get_peers(required_services)?
-            .into_iter()
-            .map(|p| p.addr)
-            .collect::<HashSet<_>>(); // Get already connected peers.
-
+        let negotiated = self.get_peers(required_services)?;
         if negotiated.len() == count {
-            return Ok(());
+            return Ok(negotiated
+                .into_iter()
+                .map(|p| (p.addr, p.height, p.services))
+                .collect());
         }
+
+        let mut negotiated = negotiated
+            .into_iter()
+            .map(|p| (p.addr, (p.height, p.services)))
+            .collect::<HashMap<_, _>>(); // Get already connected peers.
 
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::PeerManager(peermgr::Event::Negotiated { addr, services }) => {
+                protocol::Event::PeerManager(peermgr::Event::Negotiated {
+                    addr,
+                    height,
+                    services,
+                }) => {
                     if services.has(required_services) {
-                        negotiated.insert(addr);
+                        negotiated.insert(addr, (height, services));
                     }
 
                     if negotiated.len() == count {
-                        Some(())
+                        Some(negotiated.iter().map(|(a, (h, s))| (*a, *h, *s)).collect())
                     } else {
                         None
                     }
@@ -655,9 +662,8 @@ where
                 _ => None,
             },
             self.timeout,
-        )?;
-
-        Ok(())
+        )
+        .map_err(handle::Error::from)
     }
 
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, handle::Error> {

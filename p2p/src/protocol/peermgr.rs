@@ -69,6 +69,8 @@ pub enum Event {
         addr: PeerId,
         /// Services offered by negotiated peer.
         services: ServiceFlags,
+        /// Peer height.
+        height: Height,
     },
     /// Connecting to a peer found from the specified source.
     Connecting(PeerId, Source, ServiceFlags),
@@ -88,10 +90,14 @@ impl std::fmt::Display for Event {
                 "{}: Peer version = {}, height = {}, agent = {}, services = {}, timestamp = {}",
                 addr, msg.version, msg.start_height, msg.user_agent, msg.services, msg.timestamp
             ),
-            Self::Negotiated { addr, services } => write!(
+            Self::Negotiated {
+                addr,
+                height,
+                services,
+            } => write!(
                 fmt,
-                "{}: Peer negotiated with services {}..",
-                addr, services
+                "{}: Peer negotiated with services {} and height {}..",
+                addr, services, height
             ),
             Self::Connecting(addr, source, services) => {
                 write!(
@@ -523,6 +529,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 self.upstream.event(Event::Negotiated {
                     addr: *addr,
                     services: peer.services,
+                    height: peer.height,
                 });
 
                 peer.state = HandshakeState::ReceivedVerack { since: local_time };

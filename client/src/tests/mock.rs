@@ -197,7 +197,7 @@ impl Handle for TestHandle {
         &self,
         _count: usize,
         _required_services: impl Into<ServiceFlags>,
-    ) -> Result<(), handle::Error> {
+    ) -> Result<Vec<(net::SocketAddr, Height, ServiceFlags)>, handle::Error> {
         unimplemented!()
     }
 

@@ -139,9 +139,11 @@ fn test_wait_for_peers() {
     let nodes = network(&cfgs).unwrap();
     let (handle, _, _) = nodes.first().unwrap();
 
-    handle
+    let peers = handle
         .wait_for_peers(nodes.len() - 1, Services::Chain)
         .unwrap();
+
+    assert_eq!(peers.len(), nodes.len() - 1);
 }
 
 #[test]
