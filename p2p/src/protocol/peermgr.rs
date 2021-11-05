@@ -26,6 +26,7 @@ use nakamoto_common::p2p::Domain;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::Height;
 use nakamoto_common::collections::{HashMap, HashSet};
+use nakamoto_common::source;
 
 use crate::protocol::addrmgr;
 
@@ -143,8 +144,8 @@ pub struct Config {
     pub whitelist: Whitelist,
     /// Services offered by this implementation.
     pub services: ServiceFlags,
-    /// Peer addresses that should always be retried.
-    pub retry: Vec<net::SocketAddr>,
+    /// Peer addresses to persist connections with.
+    pub persistent: Vec<net::SocketAddr>,
     /// Services required by peers.
     pub required_services: ServiceFlags,
     /// Peer services preferred. We try to maintain as many
@@ -154,6 +155,10 @@ pub struct Config {
     pub target_outbound_peers: usize,
     /// Maximum number of inbound peer connections.
     pub max_inbound_peers: usize,
+    /// Maximum time to wait between reconnection attempts.
+    pub retry_max_wait: LocalDuration,
+    /// Minimum time to wait between reconnection attempts.
+    pub retry_min_wait: LocalDuration,
     /// Our user agent.
     pub user_agent: &'static str,
     /// Supported communication domains.
@@ -240,6 +245,9 @@ pub struct PeerManager<U> {
     /// Peer manager configuration.
     pub config: Config,
 
+    retry_at: HashMap<net::SocketAddr, LocalTime>,
+    retry_attempts: HashMap<net::SocketAddr, u32>,
+
     /// Last time we were idle.
     last_idle: Option<LocalTime>,
     /// Connection states.
@@ -256,6 +264,8 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
         Self {
             config,
+            retry_at: HashMap::with_hasher(rng.clone().into()),
+            retry_attempts: HashMap::with_hasher(rng.clone().into()),
             last_idle: None,
             peers,
             upstream,
@@ -266,19 +276,54 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
     /// Initialize the peer manager. Must be called once.
     pub fn initialize<A: AddressSource>(&mut self, time: LocalTime, addrs: &mut A) {
-        let retry = self
+        let peers = self
             .config
-            .retry
+            .persistent
             .iter()
             .take(self.config.target_outbound_peers)
             .cloned()
             .collect::<Vec<_>>();
 
-        for addr in retry {
-            self.connect(&addr, time);
+        for addr in peers {
+            if !self.connect(&addr, time) {
+                panic!(
+                    "{}: unable to connect to persistent peer: {}",
+                    source!(),
+                    addr
+                );
+            }
         }
         self.upstream.set_timeout(IDLE_TIMEOUT);
         self.maintain_connections(addrs, time);
+    }
+
+    fn retrier_add_peer(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
+        let attempts = self.retry_attempts.entry(*addr).or_default();
+        let delay = LocalDuration::from_secs(2_u64.saturating_pow(*attempts))
+            .clamp(self.config.retry_min_wait, self.config.retry_max_wait);
+        self.retry_at.insert(*addr, local_time + delay);
+        self.upstream.set_timeout(delay);
+        *attempts += 1;
+    }
+
+    fn retrier_remove_peer(&mut self, addr: &net::SocketAddr) {
+        debug_assert!(self.is_connected(addr));
+        self.retry_attempts.remove(addr);
+        self.retry_at.remove(addr);
+    }
+
+    fn retrier_reconnect(&mut self, local_time: LocalTime) {
+        let peers: Vec<_> = self
+            .retry_at
+            .iter()
+            .filter(|(_, v)| *v <= &local_time)
+            .map(|(k, _)| *k)
+            .collect();
+        for peer in peers {
+            let connecting = self.connect(&peer, local_time);
+            assert!(connecting);
+            self.retry_at.remove(&peer);
+        }
     }
 
     /// Called when a peer connected.
@@ -313,6 +358,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 peer: None,
             },
         );
+        self.retrier_remove_peer(&addr);
 
         match link {
             Link::Inbound => {
@@ -350,9 +396,14 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         debug_assert!(!self.is_disconnected(addr));
 
         self.peers.remove(addr);
-        // If an outbound peer disconnected, we should make sure to maintain
-        // our target outbound connection count.
-        self.maintain_connections(addrs, local_time);
+
+        if self.config.persistent.contains(addr) {
+            self.retrier_add_peer(addr, local_time);
+        } else {
+            // If an outbound peer disconnected, we should make sure to maintain
+            // our target outbound connection count.
+            self.maintain_connections(addrs, local_time);
+        }
 
         Events::event(&self.upstream, Event::Disconnected(*addr));
     }
@@ -596,6 +647,8 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             self.upstream.set_timeout(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
+
+        self.retrier_reconnect(local_time);
     }
 
     /// Whitelist a peer.
@@ -864,13 +917,63 @@ mod tests {
                 max_inbound_peers: MAX_INBOUND_PEERS,
                 domains: Domain::all(),
                 user_agent: crate::protocol::USER_AGENT,
-                retry: vec![],
+                persistent: vec![],
+                retry_max_wait: LocalDuration::from_mins(60),
+                retry_min_wait: LocalDuration::from_secs(1),
                 services: ServiceFlags::NONE,
                 preferred_services: ServiceFlags::COMPACT_FILTERS | ServiceFlags::NETWORK,
                 required_services: ServiceFlags::NETWORK,
                 whitelist: Whitelist::default(),
             }
         }
+    }
+
+    #[test]
+    fn test_persistent_client_reconnect() {
+        let rng = fastrand::Rng::with_seed(1);
+        let mut time = LocalTime::now();
+        let height = 144;
+
+        let local = ([99, 99, 99, 99], 9999).into();
+        let remote = ([124, 43, 110, 1], 8333).into();
+
+        let mut addrs = VecDeque::new();
+        let cfg = Config {
+            persistent: vec![remote],
+            ..util::config()
+        };
+        let mut peermgr = PeerManager::new(cfg, rng, Hooks::default(), ());
+
+        peermgr.initialize(time, &mut addrs);
+        assert_eq!(peermgr.connecting().next(), Some(&remote));
+
+        peermgr.peer_connected(remote, local, Link::Outbound, height, time);
+        assert_eq!(
+            peermgr.connected().map(|c| &c.socket.addr).next(),
+            Some(&remote)
+        );
+
+        // Confirm first attempt
+        peermgr.peer_disconnected(&remote, &mut addrs, time);
+        assert!(peermgr.is_disconnected(&remote));
+        assert_eq!(peermgr.connected().next(), None);
+
+        time.elapse(LocalDuration::from_secs(1));
+        peermgr.received_tick(time, &mut addrs);
+        assert_eq!(peermgr.connecting().next(), Some(&remote));
+
+        // Confirm exponential backoff after failed first attempt
+        peermgr.peer_disconnected(&remote, &mut addrs, time);
+        assert!(peermgr.is_disconnected(&remote));
+        assert_eq!(peermgr.connecting().next(), None);
+
+        time.elapse(LocalDuration::from_secs(1));
+        peermgr.received_tick(time, &mut addrs);
+        assert_eq!(peermgr.connecting().next(), None);
+
+        time.elapse(LocalDuration::from_secs(1));
+        peermgr.received_tick(time, &mut addrs);
+        assert_eq!(peermgr.connecting().next(), Some(&remote));
     }
 
     #[test]

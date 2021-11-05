@@ -647,10 +647,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             peermgr::Config {
                 protocol_version: PROTOCOL_VERSION,
                 whitelist,
-                retry: connect,
+                persistent: connect,
                 domains: domains.clone(),
                 target_outbound_peers,
                 max_inbound_peers,
+                retry_max_wait: LocalDuration::from_mins(60),
+                retry_min_wait: LocalDuration::from_secs(1),
                 required_services,
                 preferred_services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
                 services,
