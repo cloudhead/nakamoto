@@ -1,8 +1,12 @@
 //! Client events.
 use std::fmt;
+use std::io;
+use std::sync::Arc;
 
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
+use nakamoto_p2p::protocol::{DisconnectReason, Link, PeerId};
 
 use crate::spv::TxStatus;
 
@@ -13,6 +17,42 @@ pub enum Event {
     Ready {
         /// The tip of the block header chain.
         tip: Height,
+    },
+    /// Peer connected. This is fired when the physical TCP/IP connection
+    /// is established. Use [`Event::PeerNegotiated`] to know when the P2P handshake
+    /// has completed.
+    PeerConnected {
+        /// Peer address.
+        addr: PeerId,
+        /// Connection link.
+        link: Link,
+    },
+    /// Peer disconnected after successful connection.
+    PeerDisconnected {
+        /// Peer address.
+        addr: PeerId,
+        /// Reason for disconnection.
+        reason: DisconnectReason,
+    },
+    /// Connection was never established and timed out or failed.
+    PeerConnectionFailed {
+        /// Peer address.
+        addr: PeerId,
+        /// Connection error.
+        error: Arc<io::Error>,
+    },
+    /// Peer handshake completed. The peer connection is fully functional from this point.
+    PeerNegotiated {
+        /// Peer address.
+        addr: PeerId,
+        /// Connection link.
+        link: Link,
+        /// Peer services.
+        services: ServiceFlags,
+        /// Peer height.
+        height: Height,
+        /// Negotiated protocol version.
+        version: u32,
     },
     /// A block was added to the main chain.
     BlockConnected {
@@ -109,6 +149,29 @@ impl fmt::Display for Event {
                 write!(fmt, "transaction {} status changed: {}", txid, status)
             }
             Self::Synced { height, .. } => write!(fmt, "filters synced up to height {}", height),
+            Self::PeerConnected { addr, link } => {
+                write!(fmt, "peer {} connected ({:?})", &addr, link)
+            }
+            Self::PeerConnectionFailed { addr, error } => {
+                write!(
+                    fmt,
+                    "peer connection attempt to {} failed with {}",
+                    &addr, error
+                )
+            }
+            Self::PeerDisconnected { addr, reason } => {
+                write!(fmt, "disconnected from {} ({})", &addr, reason)
+            }
+            Self::PeerNegotiated {
+                addr,
+                height,
+                services,
+                ..
+            } => write!(
+                fmt,
+                "peer {} negotiated with services {} and height {}..",
+                addr, services, height
+            ),
         }
     }
 }

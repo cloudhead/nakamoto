@@ -116,9 +116,33 @@ impl Mapper {
 
     /// Process protocol event and map it to client event(s).
     pub fn process(&mut self, event: protocol::Event, emitter: &Emitter<Event>) {
-        use p2p::protocol::{cbfmgr, invmgr, syncmgr};
+        use p2p::protocol::{cbfmgr, invmgr, peermgr, syncmgr};
 
         match event {
+            protocol::Event::PeerManager(peermgr::Event::Connected(addr, link)) => {
+                emitter.emit(Event::PeerConnected { addr, link });
+            }
+            protocol::Event::PeerManager(peermgr::Event::ConnectionFailed(addr, error)) => {
+                emitter.emit(Event::PeerConnectionFailed { addr, error });
+            }
+            protocol::Event::PeerManager(peermgr::Event::Negotiated {
+                addr,
+                link,
+                services,
+                height,
+                version,
+            }) => {
+                emitter.emit(Event::PeerNegotiated {
+                    addr,
+                    link,
+                    services,
+                    height,
+                    version,
+                });
+            }
+            protocol::Event::PeerManager(peermgr::Event::Disconnected(addr, reason)) => {
+                emitter.emit(Event::PeerDisconnected { addr, reason });
+            }
             protocol::Event::SyncManager(syncmgr::Event::Synced(_, height)) => {
                 self.tip = height;
             }

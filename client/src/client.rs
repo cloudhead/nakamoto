@@ -571,7 +571,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::PeerManager(peermgr::Event::Disconnected(a))
+                protocol::Event::PeerManager(peermgr::Event::Disconnected(a, _))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(())
@@ -648,6 +648,7 @@ where
                     addr,
                     height,
                     services,
+                    ..
                 }) => {
                     if services.has(required_services) {
                         negotiated.insert(addr, (height, services));

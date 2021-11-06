@@ -5,6 +5,7 @@ use nakamoto_common::collections::HashMap;
 
 use std::collections::BTreeMap;
 use std::fmt;
+use std::io;
 
 /// Minimum latency between peers.
 pub const MIN_LATENCY: LocalDuration = LocalDuration::from_millis(1);
@@ -312,7 +313,7 @@ impl Simulation {
                             Out::Disconnect(
                                 receiver,
                                 DisconnectReason::ConnectionError(
-                                    "unexpected I/O error".to_owned(),
+                                    io::Error::from(io::ErrorKind::UnexpectedEof).into(),
                                 ),
                             ),
                         );
@@ -374,7 +375,7 @@ impl Simulation {
                                 input: Input::Disconnected(
                                     remote,
                                     DisconnectReason::ConnectionError(
-                                        "failed to connect".to_owned(),
+                                        io::Error::from(io::ErrorKind::UnexpectedEof).into(),
                                     ),
                                 ),
                             },
@@ -442,7 +443,7 @@ impl Simulation {
                             input: Input::Disconnected(
                                 local_addr,
                                 DisconnectReason::ConnectionError(
-                                    "remote end closed the connection".to_owned(),
+                                    io::Error::from(io::ErrorKind::UnexpectedEof).into(),
                                 ),
                             ),
                         },

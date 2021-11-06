@@ -2,6 +2,7 @@
 pub mod peer;
 pub mod simulator;
 
+use std::io;
 use std::iter;
 use std::net;
 use std::ops::{Bound, Range};
@@ -560,7 +561,7 @@ fn test_connection_error() {
     // Make sure we can handle a disconnection before an established connection.
     peer.step(Input::Disconnected(
         remote.addr,
-        DisconnectReason::ConnectionError(String::from("oops")),
+        DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
     ));
 }
 

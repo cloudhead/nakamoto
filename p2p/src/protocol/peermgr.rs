@@ -15,6 +15,7 @@
 //!   4. Expect `verack` message from remote.
 //!
 use std::net;
+use std::sync::Arc;
 
 use nakamoto_common::bitcoin::network::address::Address;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
@@ -68,19 +69,25 @@ pub enum Event {
     Negotiated {
         /// The peer's id.
         addr: PeerId,
+        /// Connection link.
+        link: Link,
         /// Services offered by negotiated peer.
         services: ServiceFlags,
         /// Peer height.
         height: Height,
+        /// Protocol version.
+        version: u32,
     },
     /// Connecting to a peer found from the specified source.
     Connecting(PeerId, Source, ServiceFlags),
+    /// Connection attempt failed.
+    ConnectionFailed(PeerId, Arc<std::io::Error>),
     /// A new peer has connected and is ready to accept messages.
-    /// This event is triggered *after* the peer handshake
+    /// This event is triggered *before* the peer handshake
     /// has successfully completed.
     Connected(PeerId, Link),
     /// A peer has been disconnected.
-    Disconnected(PeerId),
+    Disconnected(PeerId, DisconnectReason),
 }
 
 impl std::fmt::Display for Event {
@@ -95,6 +102,7 @@ impl std::fmt::Display for Event {
                 addr,
                 height,
                 services,
+                ..
             } => write!(
                 fmt,
                 "{}: Peer negotiated with services {} and height {}..",
@@ -108,7 +116,12 @@ impl std::fmt::Display for Event {
                 )
             }
             Self::Connected(addr, link) => write!(fmt, "{}: Peer connected ({:?})", &addr, link),
-            Self::Disconnected(addr) => write!(fmt, "Disconnected from {}", &addr),
+            Self::ConnectionFailed(addr, err) => {
+                write!(fmt, "{}: Peer connection attempt failed: {}", &addr, err)
+            }
+            Self::Disconnected(addr, reason) => {
+                write!(fmt, "Disconnected from {} ({})", &addr, reason)
+            }
         }
     }
 }
@@ -391,9 +404,20 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         addr: &net::SocketAddr,
         addrs: &mut A,
         local_time: LocalTime,
+        reason: DisconnectReason,
     ) {
         debug_assert!(self.peers.contains_key(addr));
         debug_assert!(!self.is_disconnected(addr));
+
+        if self.is_disconnecting(addr) || self.is_connected(addr) {
+            Events::event(&self.upstream, Event::Disconnected(*addr, reason));
+        } else if self.is_connecting(addr) {
+            // If we haven't yet established a connection, the disconnect reason
+            // should always be a `ConnectionError`.
+            if let DisconnectReason::ConnectionError(err) = reason {
+                Events::event(&self.upstream, Event::ConnectionFailed(*addr, err));
+            }
+        }
 
         self.peers.remove(addr);
 
@@ -404,8 +428,6 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             // our target outbound connection count.
             self.maintain_connections(addrs, local_time);
         }
-
-        Events::event(&self.upstream, Event::Disconnected(*addr));
     }
 
     /// Called when a `wtxidrelay` message was received.
@@ -436,6 +458,19 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         now: LocalTime,
         addrs: &mut A,
     ) {
+        if let Err(reason) = self.handle_version(addr, msg, height, now, addrs) {
+            self._disconnect(*addr, reason);
+        }
+    }
+
+    fn handle_version<A: AddressSource>(
+        &mut self,
+        addr: &PeerId,
+        msg: VersionMessage,
+        height: Height,
+        now: LocalTime,
+        addrs: &mut A,
+    ) -> Result<(), DisconnectReason> {
         if let Some(Peer::Connected { conn, .. }) = self.peers.get(addr) {
             self.upstream.event(Event::VersionReceived {
                 addr: *addr,
@@ -469,18 +504,14 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
             // Don't support peers with too old of a protocol version.
             if version < super::MIN_PROTOCOL_VERSION {
-                return self
-                    .upstream
-                    .disconnect(*addr, DisconnectReason::PeerProtocolVersion(version));
+                return Err(DisconnectReason::PeerProtocolVersion(version));
             }
 
             // Peers that don't advertise the `NETWORK` service are not full nodes.
             // It's not so useful for us to connect to them, because they're likely
             // to be less secure.
             if conn.link.is_outbound() && !services.has(self.config.required_services) && !trusted {
-                return self
-                    .upstream
-                    .disconnect(*addr, DisconnectReason::PeerServices(services));
+                return Err(DisconnectReason::PeerServices(services));
             }
             // If the peer is too far behind, there's no use connecting to it, we'll
             // have to wait for it to catch up.
@@ -488,17 +519,13 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 && height.saturating_sub(start_height as Height) > MAX_STALE_HEIGHT_DIFFERENCE
                 && !trusted
             {
-                return self
-                    .upstream
-                    .disconnect(*addr, DisconnectReason::PeerHeight(start_height as Height));
+                return Err(DisconnectReason::PeerHeight(start_height as Height));
             }
             // Check for self-connections. We only need to check one link direction,
             // since in the case of a self-connection, we will see both link directions.
             for (peer, conn) in self.peers() {
                 if conn.link.is_outbound() && peer.nonce == nonce {
-                    return self
-                        .upstream
-                        .disconnect(*addr, DisconnectReason::SelfConnection);
+                    return Err(DisconnectReason::SelfConnection);
                 }
             }
 
@@ -508,16 +535,12 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 && !services.has(preferred)
                 && self.negotiated(Link::Outbound).count() >= target
             {
-                return self
-                    .upstream
-                    .disconnect(*addr, DisconnectReason::ConnectionLimit);
+                return Err(DisconnectReason::ConnectionLimit);
             }
 
             // Call the user-provided version hook and disconnect if asked.
             if let Err(reason) = (*self.hooks.on_version)(*addr, msg) {
-                return self
-                    .upstream
-                    .disconnect(*addr, DisconnectReason::Other(reason));
+                return Err(DisconnectReason::Other(reason));
             }
 
             // Record the address this peer has of us.
@@ -563,6 +586,8 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 },
             );
         }
+
+        Ok(())
     }
 
     /// Called when a `verack` message was received.
@@ -570,7 +595,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         &mut self,
         addr: &PeerId,
         local_time: LocalTime,
-    ) -> Option<(&PeerInfo, &Connection)> {
+    ) -> Option<(PeerInfo, Connection)> {
         if let Some(Peer::Connected {
             peer: Some(peer),
             conn,
@@ -579,15 +604,17 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             if let HandshakeState::ReceivedVersion { .. } = peer.state {
                 self.upstream.event(Event::Negotiated {
                     addr: *addr,
+                    link: conn.link,
                     services: peer.services,
                     height: peer.height,
+                    version: peer.version,
                 });
 
                 peer.state = HandshakeState::ReceivedVerack { since: local_time };
 
-                return Some((peer, conn));
+                return Some((peer.clone(), conn.clone()));
             } else {
-                self.upstream.disconnect(
+                self._disconnect(
                     *addr,
                     DisconnectReason::PeerMisbehaving("unexpected `verack` message received"),
                 );
@@ -954,7 +981,7 @@ mod tests {
         );
 
         // Confirm first attempt
-        peermgr.peer_disconnected(&remote, &mut addrs, time);
+        peermgr.peer_disconnected(&remote, &mut addrs, time, DisconnectReason::PeerTimeout(""));
         assert!(peermgr.is_disconnected(&remote));
         assert_eq!(peermgr.connected().next(), None);
 
@@ -963,7 +990,7 @@ mod tests {
         assert_eq!(peermgr.connecting().next(), Some(&remote));
 
         // Confirm exponential backoff after failed first attempt
-        peermgr.peer_disconnected(&remote, &mut addrs, time);
+        peermgr.peer_disconnected(&remote, &mut addrs, time, DisconnectReason::PeerTimeout(""));
         assert!(peermgr.is_disconnected(&remote));
         assert_eq!(peermgr.connecting().next(), None);
 
@@ -1090,7 +1117,7 @@ mod tests {
         peermgr.received_version(&remote, version, height, time, &mut addrs);
 
         let (_, conn) = peermgr.received_verack(&remote, time).unwrap();
-        let socket = conn.socket.clone();
+        let socket = conn.socket;
         assert_eq!(socket.refs(), 2);
 
         peermgr
@@ -1120,6 +1147,7 @@ mod tests {
         let remote2 = ([124, 43, 110, 2], 8333).into();
         let remote3 = ([124, 43, 110, 3], 8333).into();
         let remote4 = ([124, 43, 110, 4], 8333).into();
+        let reason = DisconnectReason::PeerTimeout("timeout");
 
         let mut addrs = VecDeque::new();
         let mut peermgr = PeerManager::new(util::config(), rng, Hooks::default(), ());
@@ -1140,7 +1168,7 @@ mod tests {
 
         // Disconnect remote#1 after it has connected.
         addrs.push_back((Address::new(&remote2, services), Source::Dns));
-        peermgr.peer_disconnected(&remote1, &mut addrs, time);
+        peermgr.peer_disconnected(&remote1, &mut addrs, time, reason.clone());
 
         assert!(peermgr.is_disconnected(&remote1));
         assert_eq!(peermgr.connected().next(), None);
@@ -1152,7 +1180,7 @@ mod tests {
 
         // Disconnect remote#2 while still connecting.
         addrs.push_back((Address::new(&remote3, services), Source::Dns));
-        peermgr.peer_disconnected(&remote2, &mut addrs, time);
+        peermgr.peer_disconnected(&remote2, &mut addrs, time, reason.clone());
 
         assert!(peermgr.is_disconnected(&remote2));
         assert_eq!(
@@ -1166,7 +1194,7 @@ mod tests {
 
         peermgr.peer_connected(remote3, local, Link::Outbound, height, time);
         peermgr.disconnect(remote3, DisconnectReason::Command);
-        peermgr.peer_disconnected(&remote3, &mut addrs, time);
+        peermgr.peer_disconnected(&remote3, &mut addrs, time, reason);
 
         assert!(peermgr.is_disconnected(&remote3));
         assert_eq!(

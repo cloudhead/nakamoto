@@ -327,7 +327,7 @@ impl From<Event> for Out {
 }
 
 /// Disconnect reason.
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum DisconnectReason {
     /// Peer is misbehaving.
     PeerMisbehaving(&'static str),
@@ -348,7 +348,7 @@ pub enum DisconnectReason {
     /// Inbound connection limit reached.
     ConnectionLimit,
     /// Error with the underlying connection.
-    ConnectionError(String),
+    ConnectionError(Arc<std::io::Error>),
     /// Peer was forced to disconnect by external command.
     Command,
     /// Peer was disconnected for another reason.
@@ -866,7 +866,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         &self.tree,
                     );
                     self.invmgr.peer_negotiated(
-                        conn.socket.clone(),
+                        conn.socket,
                         peer.services,
                         peer.relay,
                         peer.wtxidrelay,
@@ -1026,10 +1026,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
 
                 self.cbfmgr.peer_disconnected(&addr);
                 self.syncmgr.peer_disconnected(&addr);
-                self.addrmgr.peer_disconnected(&addr, reason);
+                self.addrmgr.peer_disconnected(&addr, reason.clone());
                 self.pingmgr.peer_disconnected(&addr);
                 self.peermgr
-                    .peer_disconnected(&addr, &mut self.addrmgr, local_time);
+                    .peer_disconnected(&addr, &mut self.addrmgr, local_time, reason);
                 self.invmgr.peer_disconnected(&addr);
             }
             Input::Received(addr, msg) => {

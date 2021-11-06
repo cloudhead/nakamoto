@@ -297,7 +297,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                             peer.disconnect().ok();
                             self.unregister_peer(
                                 addr,
-                                DisconnectReason::ConnectionError(err.to_string()),
+                                DisconnectReason::ConnectionError(Arc::new(err)),
                             );
                         }
                     }
@@ -314,7 +314,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                             self.inputs.push_back(Input::Connecting { addr });
                             self.timeouts.register((), local_time + timeout);
                         }
-                        Err(Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
+                        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                             // Ignore. We are already establishing a connection through
                             // this socket.
                         }
@@ -323,7 +323,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
 
                             self.inputs.push_back(Input::Disconnected(
                                 addr,
-                                DisconnectReason::ConnectionError(err.to_string()),
+                                DisconnectReason::ConnectionError(Arc::new(err)),
                             ));
                         }
                     }
@@ -378,17 +378,24 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                     break;
                 }
                 Err(err) => {
-                    match err {
-                        encode::Error::Io(ref err)
-                            if err.kind() == io::ErrorKind::UnexpectedEof =>
-                        {
-                            trace!("{}: Remote peer closed the connection", addr)
+                    let reason = match err {
+                        encode::Error::Io(err) => {
+                            if err.kind() == io::ErrorKind::UnexpectedEof {
+                                trace!("{}: Remote peer closed the connection", addr);
+                            }
+                            DisconnectReason::ConnectionError(Arc::new(err))
                         }
-                        _ => trace!("{}: Read error: {}", addr, err.to_string()),
-                    }
+                        _ => {
+                            trace!("{}: Read error: {}", addr, err.to_string());
+
+                            DisconnectReason::ConnectionError(Arc::new(
+                                io::ErrorKind::InvalidData.into(),
+                            ))
+                        }
+                    };
 
                     socket.disconnect().ok();
-                    self.unregister_peer(*addr, DisconnectReason::ConnectionError(err.to_string()));
+                    self.unregister_peer(*addr, reason);
 
                     break;
                 }
@@ -421,16 +428,16 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
             error!("{}: Write error: {}", addr, err.to_string());
 
             socket.disconnect().ok();
-            self.unregister_peer(*addr, DisconnectReason::ConnectionError(err.to_string()));
+            self.unregister_peer(*addr, DisconnectReason::ConnectionError(Arc::new(err)));
         }
         Ok(())
     }
 }
 
 /// Connect to a peer given a remote address.
-fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
+fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, io::Error> {
     use socket2::{Domain, Socket, Type};
-    fallible! { Error::Io(io::ErrorKind::Other.into()) };
+    fallible! { io::Error::from(io::ErrorKind::Other) };
 
     let domain = if addr.is_ipv4() {
         Domain::IPV4
@@ -447,10 +454,10 @@ fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, Error> {
         Ok(()) => {}
         Err(e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
         Err(e) if e.raw_os_error() == Some(libc::EALREADY) => {
-            return Err(io::Error::from(io::ErrorKind::AlreadyExists).into())
+            return Err(io::Error::from(io::ErrorKind::AlreadyExists))
         }
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-        Err(e) => return Err(e.into()),
+        Err(e) => return Err(e),
     }
     Ok(sock.into())
 }
