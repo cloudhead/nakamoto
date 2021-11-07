@@ -73,6 +73,8 @@ pub enum Event {
         link: Link,
         /// Services offered by negotiated peer.
         services: ServiceFlags,
+        /// Peer user agent.
+        user_agent: String,
         /// Peer height.
         height: Height,
         /// Protocol version.
@@ -606,6 +608,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                     addr: *addr,
                     link: conn.link,
                     services: peer.services,
+                    user_agent: peer.user_agent.clone(),
                     height: peer.height,
                     version: peer.version,
                 });

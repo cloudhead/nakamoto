@@ -129,6 +129,7 @@ impl Mapper {
                 addr,
                 link,
                 services,
+                user_agent,
                 height,
                 version,
             }) => {
@@ -136,6 +137,7 @@ impl Mapper {
                     addr,
                     link,
                     services,
+                    user_agent,
                     height,
                     version,
                 });

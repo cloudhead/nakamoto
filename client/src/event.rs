@@ -51,6 +51,8 @@ pub enum Event {
         services: ServiceFlags,
         /// Peer height.
         height: Height,
+        /// Peer user agent.
+        user_agent: String,
         /// Negotiated protocol version.
         version: u32,
     },
