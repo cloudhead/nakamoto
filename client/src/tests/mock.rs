@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::net;
 use std::ops::RangeInclusive;
 
@@ -12,6 +11,7 @@ use nakamoto_common::block::tree::{self, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_p2p::event;
 
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Command;
@@ -20,6 +20,7 @@ use nakamoto_p2p::protocol::Peer;
 
 use crate::client::{chan, Event};
 use crate::handle::{self, Handle};
+use crate::spv;
 
 pub struct Client {
     // Used by tests.
@@ -27,14 +28,14 @@ pub struct Client {
     pub events: chan::Sender<protocol::Event>,
     pub blocks: chan::Sender<(Block, Height)>,
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
-    pub subscriber: chan::Sender<Event>,
+    pub subscriber: event::Broadcast<protocol::Event, Event>,
     pub commands: chan::Receiver<Command>,
 
     // Used in handle.
     events_: chan::Receiver<protocol::Event>,
     blocks_: chan::Receiver<(Block, Height)>,
     filters_: chan::Receiver<(BlockFilter, BlockHash, Height)>,
-    subscriber_: chan::Receiver<Event>,
+    subscriber_: event::Subscriber<Event>,
     commands_: chan::Sender<Command>,
 }
 
@@ -64,8 +65,9 @@ impl Default for Client {
         let (events, events_) = chan::unbounded();
         let (blocks, blocks_) = chan::unbounded();
         let (filters, filters_) = chan::unbounded();
-        let (subscriber, subscriber_) = chan::unbounded();
         let (commands_, commands) = chan::unbounded();
+        let mut mapper = spv::Mapper::new();
+        let (subscriber, subscriber_) = event::broadcast(move |e, p| mapper.process(e, p));
 
         Self {
             network: Network::default(),
@@ -91,7 +93,7 @@ pub struct TestHandle {
     events: chan::Receiver<protocol::Event>,
     blocks: chan::Receiver<(Block, Height)>,
     filters: chan::Receiver<(BlockFilter, BlockHash, Height)>,
-    subscriber: chan::Receiver<Event>,
+    subscriber: event::Subscriber<Event>,
     commands: chan::Sender<Command>,
 }
 
@@ -133,7 +135,7 @@ impl Handle for TestHandle {
     }
 
     fn subscribe(&self) -> chan::Receiver<Event> {
-        self.subscriber.clone()
+        self.subscriber.subscribe()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {

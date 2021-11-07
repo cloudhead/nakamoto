@@ -68,37 +68,32 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     let network = Network::Regtest;
     let genesis = network.genesis_block();
     let chain = gen::blockchain(genesis, height, &mut rng);
-    let mock = mock::Client::new(network);
+    let mut mock = mock::Client::new(network);
     let mut client = mock.handle();
 
     client.tip = (height, chain[height as usize].header);
 
-    // Build watchlist.
-    // let mut utxos = Utxos::new();
     let mut spent = 0;
     let (watch, heights, balance) = gen::watchlist(birth, chain.iter(), &mut rng);
-
-    let mut spv = super::Mapper::new();
 
     log::debug!(
         "-- Test case with birth = {} and height = {}",
         birth,
         height
     );
+    let subscriber = client.subscribe();
 
-    let (mut publish, subscribe) = p2p::event::broadcast(move |e, p| spv.process(e, p));
-    let subscriber = subscribe.subscribe();
-
-    publish.broadcast(protocol::Event::SyncManager(syncmgr::Event::Synced(
-        chain.last().block_hash(),
-        height,
-    )));
+    mock.subscriber
+        .broadcast(protocol::Event::SyncManager(syncmgr::Event::Synced(
+            chain.last().block_hash(),
+            height,
+        )));
 
     for h in birth..=height {
         let matched = heights.contains(&h);
         let block = chain[h as usize].clone();
 
-        publish.broadcast(protocol::Event::FilterManager(
+        mock.subscriber.broadcast(protocol::Event::FilterManager(
             cbfmgr::Event::FilterProcessed {
                 block: block.block_hash(),
                 height: h,
@@ -107,7 +102,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         ));
 
         if matched {
-            publish.broadcast(protocol::Event::InventoryManager(
+            mock.subscriber.broadcast(protocol::Event::InventoryManager(
                 invmgr::Event::BlockProcessed { block, height: h },
             ));
         }
