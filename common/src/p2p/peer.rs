@@ -42,10 +42,15 @@ pub trait Store {
     /// Fails if *none* of the seeds could be resolved to addresses.
     fn seed<S: net::ToSocketAddrs + std::fmt::Debug>(
         &mut self,
-        seeds: impl Iterator<Item = S>,
+        mut seeds: impl Iterator<Item = S>,
         source: Source,
     ) -> io::Result<()> {
-        for seed in seeds {
+        let mut fail = false;
+        // TODO: Introduce a step that mean how many combination
+        // of services flags we need to try before check the seeds without
+        // services flags.
+        // for the moment it is 2, but we need a more general solution.
+        while let Some(seed) = seeds.next() {
             debug!("Resolving DNS seed {:?}", seed);
             match seed.to_socket_addrs() {
                 Ok(addrs) => {
@@ -59,12 +64,27 @@ pub trait Store {
                             ),
                         );
                     }
-                    debug!("Resolved dns call to {:?}", seed);
+                    // skip the item in position +1 because it is a recovered seed
+                    // in case we receive a failure in match branch
+                    if !fail {
+                        seeds.next();
+                    }
+                    fail = false;
                 }
-                Err(err) => debug!("Error received is {:?}", err),
+                Err(err) => {
+                    debug!("Error During DNS seed resolution {:?}", err);
+                    if fail {
+                        // we fail after a failure, this mean that we fail to resolve the
+                        // recovery seed (seed without service flag)
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("seeds failed to resolve: {}", err),
+                        ));
+                    }
+                    fail = true;
+                }
             }
         }
-
         Ok(())
     }
 
