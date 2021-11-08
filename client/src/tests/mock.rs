@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net;
 use std::ops::RangeInclusive;
 
@@ -7,16 +8,22 @@ use nakamoto_chain::filter::BlockFilter;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::Address;
+use nakamoto_common::block::filter::FilterHeader;
+use nakamoto_common::block::store::Genesis as _;
+use nakamoto_common::block::time::{AdjustedTime, LocalTime};
 use nakamoto_common::block::tree::{self, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_p2p::event;
+use nakamoto_test::block::cache::model;
 
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Peer;
+use nakamoto_p2p::protocol::Protocol;
 
 use crate::client::{chan, Event};
 use crate::handle::{self, Handle};
@@ -30,6 +37,8 @@ pub struct Client {
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
     pub subscriber: event::Broadcast<protocol::Event, Event>,
     pub commands: chan::Receiver<Command>,
+    pub protocol: Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
+    pub outputs: chan::Receiver<protocol::Out>,
 
     // Used in handle.
     events_: chan::Receiver<protocol::Event>,
@@ -58,6 +67,25 @@ impl Client {
             commands: self.commands_.clone(),
         }
     }
+
+    pub fn step(&mut self, input: protocol::Input, local_time: LocalTime) -> Vec<protocol::Out> {
+        use nakamoto_p2p::traits::Protocol as _;
+
+        let mut outputs = Vec::new();
+
+        self.protocol.step(input, local_time);
+
+        for out in self.outputs.try_iter() {
+            match out {
+                protocol::Out::Event(event) => {
+                    self.subscriber.broadcast(event.clone());
+                    self.events.send(event).ok();
+                }
+                _ => outputs.push(out),
+            }
+        }
+        outputs
+    }
 }
 
 impl Default for Client {
@@ -66,11 +94,26 @@ impl Default for Client {
         let (blocks, blocks_) = chan::unbounded();
         let (filters, filters_) = chan::unbounded();
         let (commands_, commands) = chan::unbounded();
+        let (outputs_, outputs) = chan::unbounded();
         let mut mapper = spv::Mapper::new();
         let (subscriber, subscriber_) = event::broadcast(move |e, p| mapper.process(e, p));
+        let network = Network::default();
+        let protocol = {
+            let tree = model::Cache::new(network.genesis());
+            let cfilters = model::FilterCache::new(FilterHeader::genesis(network));
+            let peers = HashMap::new();
+            let time = LocalTime::now();
+            let clock = AdjustedTime::new(time);
+            let rng = fastrand::Rng::new();
+            let cfg = protocol::Config::default();
+
+            Protocol::new(tree, cfilters, peers, clock, rng, cfg, outputs_)
+        };
 
         Self {
-            network: Network::default(),
+            network,
+            protocol,
+            outputs,
             events,
             events_,
             blocks,

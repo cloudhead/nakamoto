@@ -37,26 +37,163 @@
 //!    output.
 //!
 #![allow(unused_imports)]
-use std::{iter, net, thread};
+use std::{io, iter, net, thread};
 
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
 
 use nakamoto_common::bitcoin::OutPoint;
 
+use nakamoto_common::block::time::LocalTime;
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_test::assert_matches;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;
 
-use p2p::protocol::syncmgr;
+use p2p::protocol::{syncmgr, Command, DisconnectReason};
 
-use super::p2p::protocol::{cbfmgr, invmgr};
+use super::p2p::protocol::{cbfmgr, invmgr, Input, Link};
 use super::utxos::Utxos;
+use super::Event;
 use super::*;
 
 use crate::handle::Handle as _;
 use crate::tests::mock;
+
+#[test]
+fn test_peer_connected_disconnected() {
+    let network = Network::Regtest;
+    let mut client = mock::Client::new(network);
+    let handle = client.handle();
+    let remote = ([44, 44, 44, 44], 8333).into();
+    let local_addr = ([0, 0, 0, 0], 16333).into();
+    let local_time = LocalTime::now();
+    let events = handle.subscribe();
+
+    client.step(
+        Input::Connected {
+            addr: remote,
+            local_addr,
+            link: Link::Inbound,
+        },
+        local_time,
+    );
+
+    assert_matches!(
+        events.try_recv(),
+        Ok(Event::PeerConnected { addr, link, .. })
+        if addr == remote && link == Link::Inbound
+    );
+
+    client.step(
+        Input::Disconnected(
+            remote,
+            DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
+        ),
+        local_time,
+    );
+
+    assert_matches!(
+        events.try_recv(),
+        Ok(Event::PeerDisconnected { addr, reason: DisconnectReason::ConnectionError(_) })
+        if addr == remote
+    );
+}
+
+#[test]
+fn test_peer_connection_failed() {
+    let network = Network::Regtest;
+    let mut client = mock::Client::new(network);
+    let handle = client.handle();
+    let remote = ([44, 44, 44, 44], 8333).into();
+    let local_time = LocalTime::now();
+    let events = handle.subscribe();
+
+    client.step(Input::Command(Command::Connect(remote)), local_time);
+    client.step(Input::Connecting { addr: remote }, local_time);
+
+    assert_matches!(events.try_recv(), Err(_));
+
+    client.step(
+        Input::Disconnected(
+            remote,
+            DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
+        ),
+        local_time,
+    );
+
+    assert_matches!(
+        events.try_recv(),
+        Ok(Event::PeerConnectionFailed { addr, error })
+        if addr == remote && error.kind() == io::ErrorKind::UnexpectedEof
+    );
+}
+
+#[test]
+fn test_peer_negotiated() {
+    use nakamoto_common::bitcoin::network::address::Address;
+    use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+    use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use nakamoto_common::bitcoin::network::message_network::VersionMessage;
+
+    let network = Network::default();
+    let mut client = mock::Client::new(network);
+    let handle = client.handle();
+    let remote = ([44, 44, 44, 44], 8333).into();
+    let local_time = LocalTime::now();
+    let local_addr = ([0, 0, 0, 0], 16333).into();
+    let events = handle.subscribe();
+
+    client.step(
+        Input::Connected {
+            addr: remote,
+            local_addr,
+            link: Link::Inbound,
+        },
+        local_time,
+    );
+
+    let version = NetworkMessage::Version(VersionMessage {
+        version: protocol::MIN_PROTOCOL_VERSION,
+        services: protocol::syncmgr::REQUIRED_SERVICES,
+        timestamp: local_time.block_time() as i64,
+        receiver: Address::new(&remote, ServiceFlags::NONE),
+        sender: Address::new(&local_addr, ServiceFlags::NONE),
+        nonce: 42,
+        user_agent: "?".to_owned(),
+        start_height: 42,
+        relay: false,
+    });
+
+    client.step(
+        Input::Received(
+            remote,
+            RawNetworkMessage {
+                magic: network.magic(),
+                payload: version,
+            },
+        ),
+        local_time,
+    );
+    client.step(
+        Input::Received(
+            remote,
+            RawNetworkMessage {
+                magic: network.magic(),
+                payload: NetworkMessage::Verack,
+            },
+        ),
+        local_time,
+    );
+
+    assert_matches!(events.try_recv(), Ok(Event::PeerConnected { .. }));
+    assert_matches!(
+        events.try_recv(),
+        Ok(Event::PeerNegotiated { addr, height, user_agent, .. })
+        if addr == remote && height == 42 && user_agent == "?"
+    );
+}
 
 #[quickcheck]
 fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestResult {
