@@ -55,24 +55,18 @@ pub mod logger {
 
             match record.target() {
                 "test" => {
-                    println!("{}", record.args().to_string().yellow())
+                    println!(
+                        "{} {}",
+                        "test:".yellow(),
+                        record.args().to_string().yellow()
+                    )
                 }
                 "sim" => {
-                    println!(
-                        "<{}>    {}",
-                        record.target(),
-                        record.args().to_string().bold()
-                    )
+                    println!("{}  {}", "sim:".bold(), record.args().to_string().bold())
                 }
                 target => {
                     if self.enabled(record.metadata()) {
-                        let s = format!(
-                            "{:<8} [{}:{}] {}",
-                            format!("<{}>", target),
-                            record.file().unwrap(),
-                            record.line().unwrap(),
-                            record.args()
-                        );
+                        let s = format!("{:<8} {}", format!("<{}>", target), record.args());
                         println!("{}", s.dimmed());
                     }
                 }

@@ -1,7 +1,7 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 use super::*;
 
-use nakamoto_common::collections::HashMap;
+use nakamoto_common::collections::{HashMap, HashSet};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -139,6 +139,8 @@ pub struct Simulation {
     inbox: Inbox,
     /// Simulated latencies between nodes.
     latencies: HashMap<(NodeId, NodeId), LocalDuration>,
+    /// Network partitions between two nodes.
+    partitions: HashSet<(NodeId, NodeId)>,
     /// Map of existing connections between nodes.
     /// We use this to keep track of the local port used when establishing connections,
     /// since each connection is established from a different local port.
@@ -160,6 +162,7 @@ impl Simulation {
             inbox: Inbox {
                 messages: BTreeMap::new(),
             },
+            partitions: HashSet::with_hasher(rng.clone().into()),
             latencies: HashMap::with_hasher(rng.clone().into()),
             connections: HashMap::with_hasher(rng.clone().into()),
             opts,
@@ -250,6 +253,19 @@ impl Simulation {
             }
         }
 
+        // Create and heal partitions.
+        if self.time.block_time() % 10 == 0 {
+            for (i, x) in nodes.keys().enumerate() {
+                for y in nodes.keys().skip(i + 1) {
+                    if self.is_fallible() {
+                        self.partitions.insert((*x, *y));
+                    } else {
+                        self.partitions.remove(&(*x, *y));
+                    }
+                }
+            }
+        }
+
         // Schedule any messages in the pipes.
         for peer in nodes.values() {
             for o in peer.upstream.try_iter() {
@@ -280,6 +296,11 @@ impl Simulation {
                     // be non-sensical.
                 }
                 _ => {
+                    if let Input::Disconnected(addr, _) = input {
+                        self.connections.remove(&(node, addr.ip()));
+                        self.connections.remove(&(addr.ip(), node));
+                    }
+
                     if let Some(ref mut p) = nodes.get_mut(&node) {
                         p.protocol.step(input, self.time);
                         for o in p.upstream.try_iter() {
@@ -304,18 +325,14 @@ impl Simulation {
         match out {
             Out::Message(receiver, msg) => {
                 // If the other end has disconnected the sender with some latency, there may not be
-                // a connection remaining to use.https://github.com/maateen/battery-monitor
+                // a connection remaining to use.
                 if let Some((sender_addr, _)) = self.connections.get(&(node, receiver.ip())) {
-                    // Randomly fail to send a message based on the failure rate.
-                    if self.is_fallible() {
-                        self.schedule(
-                            &node,
-                            Out::Disconnect(
-                                receiver,
-                                DisconnectReason::ConnectionError(
-                                    io::Error::from(io::ErrorKind::UnexpectedEof).into(),
-                                ),
-                            ),
+                    if self.is_partitioned(sender_addr.ip(), receiver.ip()) {
+                        // Drop message if nodes are partitioned.
+                        info!(
+                            target: "sim",
+                            "{} -> {}: `{}` dropped!",
+                             sender_addr, receiver, msg.cmd()
                         );
                         return;
                     }
@@ -363,8 +380,10 @@ impl Simulation {
                     },
                 );
 
-                // Randomly fail to connect based on the failure rate.
-                if self.is_fallible() {
+                // Fail to connect if the nodes are partitioned.
+                if self.is_partitioned(node, remote.ip()) {
+                    log::info!(target: "sim", "{} -/-> {} (partitioned)", node, remote.ip());
+
                     // Sometimes, the protocol gets a failure input, other times it just hangs.
                     if self.rng.bool() {
                         self.inbox.insert(
@@ -417,12 +436,10 @@ impl Simulation {
                 );
             }
             Out::Disconnect(remote, reason) => {
-                // It's possible for disconnects to happen simultaneously from both ends, hence
+                // Nb. It's possible for disconnects to happen simultaneously from both ends, hence
                 // it can be that a node will try to disconnect a remote that is already
                 // disconnected from the other side.
-                if let Some((local_addr, _)) = self.connections.remove(&(node, remote.ip())) {
-                    self.connections.remove(&(remote.ip(), node));
-
+                if let Some((local_addr, _)) = self.connections.get(&(node, remote.ip())) {
                     let latency = self.latency(node, remote.ip());
 
                     // The local node is immediately disconnected.
@@ -439,9 +456,9 @@ impl Simulation {
                         self.time + latency,
                         Scheduled {
                             node: remote.ip(),
-                            remote: local_addr,
+                            remote: *local_addr,
                             input: Input::Disconnected(
-                                local_addr,
+                                *local_addr,
                                 DisconnectReason::ConnectionError(
                                     io::Error::from(io::ErrorKind::UnexpectedEof).into(),
                                 ),
@@ -473,5 +490,10 @@ impl Simulation {
     /// Check whether we should fail the next operation.
     fn is_fallible(&self) -> bool {
         self.rng.f64() % 1.0 < self.opts.failure_rate
+    }
+
+    /// Check whether two nodes are partitioned.
+    fn is_partitioned(&self, a: NodeId, b: NodeId) -> bool {
+        self.partitions.contains(&(a, b)) || self.partitions.contains(&(b, a))
     }
 }

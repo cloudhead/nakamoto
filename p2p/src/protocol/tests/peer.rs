@@ -310,12 +310,12 @@ impl Peer<Protocol> {
 /// Create a network of nodes of the given size.
 /// Populates their respective address books so that they can connect with each other on startup.
 pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Protocol>> {
-    assert!(size <= 10);
+    assert!(size <= 16);
 
     let mut addrs = HashSet::with_hasher(rng.clone().into());
     let names = [
         "peer#0", "peer#1", "peer#2", "peer#3", "peer#4", "peer#5", "peer#6", "peer#7", "peer#8",
-        "peer#9",
+        "peer#9", "peer#A", "peer#B", "peer#C", "peer#D", "peer#E", "peer#F",
     ];
     let reserved = [[88, 88, 88, 88], [44, 44, 44, 44], [48, 48, 48, 48]];
 
