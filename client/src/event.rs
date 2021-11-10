@@ -6,6 +6,7 @@ use std::sync::Arc;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
+use nakamoto_p2p::protocol::fees::FeeEstimate;
 use nakamoto_p2p::protocol::{DisconnectReason, Link, PeerId};
 
 use crate::spv::TxStatus;
@@ -88,6 +89,15 @@ pub enum Event {
         /// Transactions in this block.
         transactions: Vec<Transaction>,
     },
+    /// Transaction fee rate estimated for a block.
+    FeeEstimated {
+        /// Block hash of the estimate.
+        block: BlockHash,
+        /// Block height of the estimate.
+        height: Height,
+        /// Fee estimate.
+        fees: FeeEstimate,
+    },
     /// A filter was processed. If it matched any of the scripts in the watchlist,
     /// the corresponding block was scheduled for download, and a [`Event::BlockMatched`]
     /// event will eventually be fired.
@@ -136,6 +146,13 @@ impl fmt::Display for Event {
                     fmt,
                     "block {} ready to be processed at height {}",
                     hash, height
+                )
+            }
+            Self::FeeEstimated { fees, height, .. } => {
+                write!(
+                    fmt,
+                    "transaction median fee rate for block #{} is {} sat/vB",
+                    height, fees.median,
                 )
             }
             Self::FilterProcessed {

@@ -177,6 +177,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             if let protocol::Event::InventoryManager(invmgr::Event::BlockProcessed {
                 block,
                 height,
+                ..
             }) = e
             {
                 p.emit((block, height));

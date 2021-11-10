@@ -240,7 +240,11 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
 
         if matched {
             mock.subscriber.broadcast(protocol::Event::InventoryManager(
-                invmgr::Event::BlockProcessed { block, height: h },
+                invmgr::Event::BlockProcessed {
+                    block,
+                    height: h,
+                    fees: None,
+                },
             ));
         }
     }

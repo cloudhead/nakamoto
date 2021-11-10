@@ -78,6 +78,8 @@ pub enum Event {
         block: Block, // TODO: Just the block hash?
         /// Block height.
         height: Height,
+        /// Block tx fee estimate.
+        fees: Option<FeeEstimate>,
     },
     /// A peer acknowledged one of our transaction inventories.
     Acknowledged {
@@ -99,15 +101,6 @@ pub enum Event {
     Reverted {
         /// The reverted transaction.
         transaction: Transaction, // TODO: Just the txid?
-    },
-    /// Transaction fee rate estimated for a block.
-    FeeEstimated {
-        /// Block hash of the estimate.
-        block: BlockHash,
-        /// Block height of the estimate.
-        height: Height,
-        /// Fee estimate.
-        fees: FeeEstimate,
     },
     /// A request timed out.
     TimedOut {
@@ -145,13 +138,6 @@ impl std::fmt::Display for Event {
             ),
             Event::Reverted { transaction, .. } => {
                 write!(fmt, "Transaction {} was reverted", transaction.txid(),)
-            }
-            Event::FeeEstimated { fees, height, .. } => {
-                write!(
-                    fmt,
-                    "Transaction median fee rate for block #{} is {} sat/vB",
-                    height, fees.median,
-                )
             }
             Event::TimedOut { peer } => write!(fmt, "Peer {} timed out", peer),
         }
@@ -517,14 +503,13 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                 }
             }
             // Process block through fee estimator.
-            if let Some(fees) = self.estimator.process(block.clone(), height) {
-                self.upstream.event(Event::FeeEstimated {
-                    block: hash,
-                    height,
-                    fees,
-                });
-            }
-            self.upstream.event(Event::BlockProcessed { block, height });
+            let fees = self.estimator.process(block.clone(), height);
+
+            self.upstream.event(Event::BlockProcessed {
+                block,
+                height,
+                fees,
+            });
         }
         confirmed
     }

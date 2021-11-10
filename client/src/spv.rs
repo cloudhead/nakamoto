@@ -162,8 +162,20 @@ impl Mapper {
                     height,
                 });
             }
-            protocol::Event::InventoryManager(invmgr::Event::BlockProcessed { block, height }) => {
-                self.process_block(block, height, emitter);
+            protocol::Event::InventoryManager(invmgr::Event::BlockProcessed {
+                block,
+                height,
+                fees,
+            }) => {
+                let hash = self.process_block(block, height, emitter);
+
+                if let Some(fees) = fees {
+                    emitter.emit(Event::FeeEstimated {
+                        block: hash,
+                        height,
+                        fees,
+                    });
+                }
             }
             protocol::Event::InventoryManager(invmgr::Event::Confirmed {
                 transaction,
@@ -221,12 +233,18 @@ impl Mapper {
     // PRIVATE METHODS /////////////////////////////////////////////////////////
 
     // TODO: Instead of receiving the block, fetch it if matched.
-    fn process_block(&mut self, block: Block, height: Height, emitter: &Emitter<Event>) {
+    fn process_block(
+        &mut self,
+        block: Block,
+        height: Height,
+        emitter: &Emitter<Event>,
+    ) -> BlockHash {
+        let hash = block.block_hash();
+
         if !self.pending.remove(&height) {
             // Received unexpected block.
-            return;
+            return hash;
         }
-        let hash = block.block_hash();
 
         log::debug!("Received block {} at height {}", hash, height);
         debug_assert!(height >= self.block_height);
@@ -239,6 +257,8 @@ impl Mapper {
             header: block.header,
             transactions: block.txdata,
         });
+
+        hash
     }
 
     fn process_filter(
