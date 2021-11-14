@@ -11,7 +11,7 @@ use nakamoto_common::bitcoin::Address;
 use nakamoto_client::handle::{self, Handle};
 use nakamoto_client::spv::utxos::Utxos;
 use nakamoto_client::Network;
-use nakamoto_client::{client, Client, Config, Event};
+use nakamoto_client::{client, protocol, Client, Config, Event};
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
 
@@ -101,7 +101,10 @@ type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
 pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {
     let cfg = Config {
         listen: vec![], // Don't listen for incoming connections.
-        network: Network::Mainnet,
+        protocol: protocol::Config {
+            network: Network::Mainnet,
+            ..protocol::Config::default()
+        },
         ..Config::default()
     };
 

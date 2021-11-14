@@ -22,10 +22,8 @@
 //!
 //! /// Run the light-client.
 //! fn main() -> Result<(), Error> {
-//!     let cfg = Config {
-//!         network: Network::Testnet,
-//!         ..Config::default()
-//!     };
+//!     let cfg = Config::new(Network::Testnet);
+//!
 //!     // Create a client using the above network reactor.
 //!     let client = Client::<Reactor>::new()?;
 //!     let handle = client.handle();

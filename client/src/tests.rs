@@ -37,9 +37,9 @@ fn network(
     let mut handles = Vec::new();
 
     for cfg in cfgs.iter().cloned() {
-        let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
-        let genesis = cfg.network.genesis();
-        let params = cfg.network.params();
+        let checkpoints = cfg.protocol.network.checkpoints().collect::<Vec<_>>();
+        let genesis = cfg.protocol.network.genesis();
+        let params = cfg.protocol.network.params();
 
         let node = Client::new()?;
         let handle = node.handle();
@@ -57,11 +57,10 @@ fn network(
                 let local_time = time::SystemTime::now().into();
                 let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
                 let rng = fastrand::Rng::new();
-                let cfg = cfg.into();
 
                 node.run_with(
                     vec![([0, 0, 0, 0], 0).into()],
-                    Protocol::new(cache, filters, peers, clock, rng, cfg),
+                    Protocol::new(cache, filters, peers, clock, rng, cfg.protocol),
                 )
                 .unwrap();
             }
@@ -96,7 +95,10 @@ fn test_full_sync() {
     fn config(name: &'static str) -> Config {
         Config {
             name,
-            services: syncmgr::REQUIRED_SERVICES,
+            protocol: protocol::Config {
+                services: syncmgr::REQUIRED_SERVICES,
+                ..protocol::Config::default()
+            },
             ..Config::default()
         }
     }
@@ -132,7 +134,10 @@ fn test_wait_for_peers() {
 
     let cfgs = vec![
         Config {
-            services: ServiceFlags::NETWORK,
+            protocol: protocol::Config {
+                services: ServiceFlags::NETWORK,
+                ..protocol::Config::default()
+            },
             ..Default::default()
         };
         5

@@ -475,8 +475,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            network: network::Network::Mainnet,
-            params: Params::new(network::Network::Mainnet.into()),
+            network: network::Network::default(),
+            params: Params::new(network::Network::default().into()),
             connect: Vec::new(),
             domains: Domain::all(),
             services: ServiceFlags::NONE,

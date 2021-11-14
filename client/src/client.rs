@@ -30,12 +30,12 @@ pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
 
 use nakamoto_p2p as p2p;
+use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Protocol;
-use nakamoto_p2p::protocol::{self, Link};
 use nakamoto_p2p::protocol::{cbfmgr, invmgr, peermgr, syncmgr};
 
 pub use nakamoto_p2p::event;
-pub use nakamoto_p2p::protocol::{Command, CommandError, Peer};
+pub use nakamoto_p2p::protocol::{self, Command, CommandError, Peer};
 pub use nakamoto_p2p::traits::Reactor;
 
 pub use crate::error::Error;
@@ -47,31 +47,28 @@ pub use crate::spv;
 /// Client configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
+    /// Client protocol configuration.
+    pub protocol: protocol::Config,
     /// Client listen addresses.
     pub listen: Vec<net::SocketAddr>,
-    /// Bitcoin network.
-    pub network: Network,
-    /// Peers to connect to.
-    pub connect: Vec<net::SocketAddr>,
-    /// Network domains to connect to.
-    pub domains: Vec<Domain>,
-    /// Target number of outbound peers to connect to.
-    pub target_outbound_peers: usize,
-    /// Maximum number of inbound peers supported.
-    pub max_inbound_peers: usize,
-    /// Size in bytes of the compact filter cache.
-    pub filter_cache_size: usize,
     /// Client home path, where runtime data is stored, eg. block headers and filters.
     pub root: PathBuf,
     /// Client name. Used for logging only.
     pub name: &'static str,
-    /// Services offered by this node.
-    pub services: ServiceFlags,
-    /// Protocol hooks.
-    pub hooks: protocol::Hooks,
 }
 
 impl Config {
+    /// Create a new configuration for the given network.
+    pub fn new(network: Network) -> Self {
+        Self {
+            protocol: protocol::Config {
+                network,
+                ..protocol::Config::default()
+            },
+            ..Self::default()
+        }
+    }
+
     /// Add seeds to connect to.
     pub fn seed<T: net::ToSocketAddrs + std::fmt::Debug>(&mut self, seeds: &[T]) -> io::Result<()> {
         let connect = seeds
@@ -82,45 +79,19 @@ impl Config {
             })
             .collect::<io::Result<Vec<_>>>()?;
 
-        self.connect.extend(connect);
+        self.protocol.connect.extend(connect);
 
         Ok(())
-    }
-}
-
-impl From<Config> for p2p::protocol::Config {
-    fn from(cfg: Config) -> Self {
-        Self {
-            network: cfg.network,
-            params: cfg.network.params(),
-            target: cfg.name,
-            connect: cfg.connect,
-            domains: cfg.domains,
-            target_outbound_peers: cfg.target_outbound_peers,
-            max_inbound_peers: cfg.max_inbound_peers,
-            filter_cache_size: cfg.filter_cache_size,
-            services: cfg.services,
-            hooks: cfg.hooks,
-
-            ..Self::default()
-        }
     }
 }
 
 impl Default for Config {
     fn default() -> Self {
         Self {
+            protocol: protocol::Config::default(),
             listen: vec![([0, 0, 0, 0], 0).into()],
-            network: Network::default(),
-            connect: Vec::new(),
-            domains: Domain::all(),
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
-            target_outbound_peers: p2p::protocol::peermgr::TARGET_OUTBOUND_PEERS,
-            max_inbound_peers: p2p::protocol::peermgr::MAX_INBOUND_PEERS,
-            filter_cache_size: p2p::protocol::cbfmgr::DEFAULT_FILTER_CACHE_SIZE,
-            services: ServiceFlags::NONE,
-            name: "self",
-            hooks: protocol::Hooks::default(),
+            name: "client",
         }
     }
 }
@@ -229,16 +200,17 @@ impl<R: Reactor<Publisher>> Client<R> {
     /// Start the client process. This function is meant to be run in its own thread.
     pub fn run(mut self, config: Config) -> Result<(), Error> {
         let home = config.root.join(".nakamoto");
-        let dir = home.join(config.network.as_str());
+        let network = config.protocol.network;
+        let dir = home.join(network.as_str());
         let listen = config.listen.clone();
 
         fs::create_dir_all(&dir)?;
 
-        let genesis = config.network.genesis();
-        let params = config.network.params();
+        let genesis = network.genesis();
+        let params = network.params();
 
-        log::info!("Initializing client ({:?})..", config.network);
-        log::info!("Genesis block hash is {}", config.network.genesis_hash());
+        log::info!("Initializing client ({:?})..", network);
+        log::info!("Genesis block hash is {}", network.genesis_hash());
 
         let path = dir.join("headers.db");
         let store = match store::File::create(&path, genesis) {
@@ -263,14 +235,14 @@ impl<R: Reactor<Publisher>> Client<R> {
         };
 
         let local_time = SystemTime::now().into();
-        let checkpoints = config.network.checkpoints().collect::<Vec<_>>();
+        let checkpoints = network.checkpoints().collect::<Vec<_>>();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let cache = BlockCache::from(store, params, &checkpoints)?;
         let rng = fastrand::Rng::new();
 
         log::info!("Initializing block filters..");
 
-        let cfheaders_genesis = filter::cache::StoredHeader::genesis(config.network);
+        let cfheaders_genesis = filter::cache::StoredHeader::genesis(network);
         let cfheaders_path = dir.join("filters.db");
         let cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
             Ok(store) => {
@@ -295,7 +267,7 @@ impl<R: Reactor<Publisher>> Client<R> {
 
         let filters = FilterCache::from(cfheaders_store)?;
         log::info!("Verifying filter headers..");
-        filters.verify(config.network)?; // Verify store integrity.
+        filters.verify(network)?; // Verify store integrity.
 
         log::info!("Loading peer addresses..");
 
@@ -327,25 +299,20 @@ impl<R: Reactor<Publisher>> Client<R> {
 
         log::trace!("{:#?}", peers);
 
-        if config.connect.is_empty() && peers.is_empty() {
+        if config.protocol.connect.is_empty() && peers.is_empty() {
             log::info!("Address book is empty. Trying DNS seeds..");
             peers.seed(
-                config
-                    .network
-                    .seeds()
-                    .iter()
-                    .map(|s| (*s, config.network.port())),
+                network.seeds().iter().map(|s| (*s, network.port())),
                 Source::Dns,
             )?;
             peers.flush()?;
 
             log::info!("{} seeds added to address book", peers.len());
         }
-        let cfg: protocol::Config = config.into();
 
         self.reactor.run(
             &listen,
-            Protocol::new(cache, filters, peers, clock, rng, cfg),
+            Protocol::new(cache, filters, peers, clock, rng, config.protocol),
         )?;
 
         Ok(())
