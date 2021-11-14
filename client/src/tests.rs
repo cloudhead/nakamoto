@@ -41,7 +41,7 @@ fn network(
         let genesis = cfg.network.genesis();
         let params = cfg.network.params();
 
-        let node = Client::new(cfg)?;
+        let node = Client::new()?;
         let handle = node.handle();
         let events = handle.events();
 
@@ -57,10 +57,12 @@ fn network(
                 let local_time = time::SystemTime::now().into();
                 let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
                 let rng = fastrand::Rng::new();
+                let cfg = cfg.into();
 
-                node.run_with(move |cfg, upstream| {
-                    Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
-                })
+                node.run_with(
+                    vec![([0, 0, 0, 0], 0).into()],
+                    Protocol::new(cache, filters, peers, clock, rng, cfg),
+                )
                 .unwrap();
             }
         });
@@ -148,9 +150,7 @@ fn test_wait_for_peers() {
 
 #[test]
 fn test_send_handle() {
-    let cfg = Config::default();
-
-    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let client: Client<Reactor> = Client::new().unwrap();
     let handle = client.handle();
 
     thread::spawn(move || {
@@ -162,10 +162,10 @@ fn test_send_handle() {
 fn test_multiple_handle_events() {
     use std::time;
 
-    let cfg = Config::default();
+    let cfg = protocol::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
-    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let client: Client<Reactor> = Client::new().unwrap();
     let store = store::Memory::new((genesis, vec![]).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
     let filters = FilterCache::from(store::Memory::default()).unwrap();
@@ -182,9 +182,10 @@ fn test_multiple_handle_events() {
         let rng = fastrand::Rng::new();
 
         client
-            .run_with(|cfg, upstream| {
-                Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
-            })
+            .run_with(
+                vec![([0, 0, 0, 0], 0).into()],
+                Protocol::new(cache, filters, peers, clock, rng, cfg),
+            )
             .unwrap();
     });
 
@@ -211,10 +212,10 @@ fn test_multiple_handle_events() {
 
 #[test]
 fn test_handle_shutdown() {
-    let cfg = Config::default();
+    let cfg = protocol::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
-    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let client: Client<Reactor> = Client::new().unwrap();
     let handle = client.handle();
     let store = store::Memory::new((genesis, vec![]).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
@@ -226,9 +227,10 @@ fn test_handle_shutdown() {
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
 
-        client.run_with(|cfg, upstream| {
-            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
-        })
+        client.run_with(
+            vec![],
+            Protocol::new(cache, filters, peers, clock, rng, cfg),
+        )
     });
 
     handle.shutdown().unwrap();
@@ -237,8 +239,7 @@ fn test_handle_shutdown() {
 
 #[test]
 fn test_client_dropped() {
-    let cfg = Config::default();
-    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let client: Client<Reactor> = Client::new().unwrap();
     let handle = client.handle();
 
     drop(client);
@@ -251,10 +252,10 @@ fn test_client_dropped() {
 
 #[test]
 fn test_query_headers() {
-    let cfg = Config::default();
+    let cfg = protocol::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
-    let client: Client<Reactor> = Client::new(cfg).unwrap();
+    let client: Client<Reactor> = Client::new().unwrap();
     let handle = client.handle();
     let store = store::Memory::new((genesis, BITCOIN_HEADERS.tail.clone()).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
@@ -265,9 +266,10 @@ fn test_query_headers() {
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
 
-        client.run_with(|cfg, upstream| {
-            Protocol::new(cache, filters, HashMap::new(), clock, rng, cfg, upstream)
-        })
+        client.run_with(
+            vec![],
+            Protocol::new(cache, filters, HashMap::new(), clock, rng, cfg),
+        )
     });
 
     let height = 1;

@@ -16,14 +16,15 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;
-use nakamoto_p2p::event;
 use nakamoto_test::block::cache::model;
 
+use nakamoto_p2p::event;
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Peer;
 use nakamoto_p2p::protocol::Protocol;
+use nakamoto_p2p::traits::Protocol as _;
 
 use crate::client::{chan, Event};
 use crate::handle::{self, Handle};
@@ -38,7 +39,6 @@ pub struct Client {
     pub subscriber: event::Broadcast<protocol::Event, Event>,
     pub commands: chan::Receiver<Command>,
     pub protocol: Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
-    pub outputs: chan::Receiver<protocol::Out>,
 
     // Used in handle.
     events_: chan::Receiver<protocol::Event>,
@@ -71,7 +71,7 @@ impl Client {
     pub fn step(&mut self) -> Vec<protocol::Out> {
         let mut outputs = Vec::new();
 
-        for out in self.outputs.try_iter() {
+        for out in self.protocol.drain() {
             match out {
                 protocol::Out::Event(event) => {
                     self.subscriber.broadcast(event.clone());
@@ -90,7 +90,6 @@ impl Default for Client {
         let (blocks, blocks_) = chan::unbounded();
         let (filters, filters_) = chan::unbounded();
         let (commands_, commands) = chan::unbounded();
-        let (outputs_, outputs) = chan::unbounded();
         let mut mapper = spv::Mapper::new();
         let (subscriber, subscriber_) = event::broadcast(move |e, p| mapper.process(e, p));
         let network = Network::default();
@@ -103,13 +102,12 @@ impl Default for Client {
             let rng = fastrand::Rng::new();
             let cfg = protocol::Config::default();
 
-            Protocol::new(tree, cfilters, peers, clock, rng, cfg, outputs_)
+            Protocol::new(tree, cfilters, peers, clock, rng, cfg)
         };
 
         Self {
             network,
             protocol,
-            outputs,
             events,
             events_,
             blocks,
@@ -137,10 +135,6 @@ pub struct TestHandle {
 }
 
 impl Handle for TestHandle {
-    fn network(&self) -> Network {
-        self.network
-    }
-
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
         Ok(self.tip)
     }

@@ -61,8 +61,6 @@ pub struct Config {
     pub max_inbound_peers: usize,
     /// Size in bytes of the compact filter cache.
     pub filter_cache_size: usize,
-    /// Timeout duration for client commands.
-    pub timeout: time::Duration,
     /// Client home path, where runtime data is stored, eg. block headers and filters.
     pub root: PathBuf,
     /// Client name. Used for logging only.
@@ -116,7 +114,6 @@ impl Default for Config {
             network: Network::default(),
             connect: Vec::new(),
             domains: Domain::all(),
-            timeout: time::Duration::from_secs(60),
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
             target_outbound_peers: p2p::protocol::peermgr::TARGET_OUTBOUND_PEERS,
             max_inbound_peers: p2p::protocol::peermgr::MAX_INBOUND_PEERS,
@@ -156,22 +153,20 @@ impl protocol::event::Publisher for Publisher {
 
 /// A light-client process.
 pub struct Client<R: Reactor<Publisher>> {
-    /// Client configuration.
-    pub config: Config,
-
     handle: chan::Sender<Command>,
     events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
     shutdown: chan::Sender<()>,
+    seeds: Vec<net::SocketAddr>,
 
     reactor: R,
 }
 
 impl<R: Reactor<Publisher>> Client<R> {
     /// Create a new client.
-    pub fn new(config: Config) -> Result<Self, Error> {
+    pub fn new() -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(|e, p| p.emit(e));
         let (blocks_pub, blocks) = event::broadcast(|e, p| {
@@ -206,6 +201,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             .register(filters_pub)
             .register(publisher);
 
+        let seeds = Vec::new();
         let (shutdown, shutdown_recv) = chan::bounded(1);
         let reactor = R::new(publisher, commands, shutdown_recv)?;
 
@@ -213,10 +209,10 @@ impl<R: Reactor<Publisher>> Client<R> {
             events,
             handle,
             reactor,
-            config,
             blocks,
             filters,
             subscriber,
+            seeds,
             shutdown,
         })
     }
@@ -225,27 +221,24 @@ impl<R: Reactor<Publisher>> Client<R> {
     pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> Result<(), Error> {
         for seed in seeds.into_iter() {
             let addrs = seed.to_socket_addrs()?;
-            self.config.connect.extend(addrs);
+            self.seeds.extend(addrs);
         }
         Ok(())
     }
 
     /// Start the client process. This function is meant to be run in its own thread.
-    pub fn run(mut self) -> Result<(), Error> {
-        let home = self.config.root.join(".nakamoto");
-        let dir = home.join(self.config.network.as_str());
-        let listen = self.config.listen.clone();
+    pub fn run(mut self, config: Config) -> Result<(), Error> {
+        let home = config.root.join(".nakamoto");
+        let dir = home.join(config.network.as_str());
+        let listen = config.listen.clone();
 
         fs::create_dir_all(&dir)?;
 
-        let genesis = self.config.network.genesis();
-        let params = self.config.network.params();
+        let genesis = config.network.genesis();
+        let params = config.network.params();
 
-        log::info!("Initializing client ({:?})..", self.config.network);
-        log::info!(
-            "Genesis block hash is {}",
-            self.config.network.genesis_hash()
-        );
+        log::info!("Initializing client ({:?})..", config.network);
+        log::info!("Genesis block hash is {}", config.network.genesis_hash());
 
         let path = dir.join("headers.db");
         let store = match store::File::create(&path, genesis) {
@@ -270,14 +263,14 @@ impl<R: Reactor<Publisher>> Client<R> {
         };
 
         let local_time = SystemTime::now().into();
-        let checkpoints = self.config.network.checkpoints().collect::<Vec<_>>();
+        let checkpoints = config.network.checkpoints().collect::<Vec<_>>();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let cache = BlockCache::from(store, params, &checkpoints)?;
         let rng = fastrand::Rng::new();
 
         log::info!("Initializing block filters..");
 
-        let cfheaders_genesis = filter::cache::StoredHeader::genesis(self.config.network);
+        let cfheaders_genesis = filter::cache::StoredHeader::genesis(config.network);
         let cfheaders_path = dir.join("filters.db");
         let cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
             Ok(store) => {
@@ -302,7 +295,7 @@ impl<R: Reactor<Publisher>> Client<R> {
 
         let filters = FilterCache::from(cfheaders_store)?;
         log::info!("Verifying filter headers..");
-        filters.verify(self.config.network)?; // Verify store integrity.
+        filters.verify(config.network)?; // Verify store integrity.
 
         log::info!("Loading peer addresses..");
 
@@ -334,44 +327,37 @@ impl<R: Reactor<Publisher>> Client<R> {
 
         log::trace!("{:#?}", peers);
 
-        if self.config.connect.is_empty() && peers.is_empty() {
+        if config.connect.is_empty() && peers.is_empty() {
             log::info!("Address book is empty. Trying DNS seeds..");
             peers.seed(
-                self.config
+                config
                     .network
                     .seeds()
                     .iter()
-                    .map(|s| (*s, self.config.network.port())),
+                    .map(|s| (*s, config.network.port())),
                 Source::Dns,
             )?;
             peers.flush()?;
 
             log::info!("{} seeds added to address book", peers.len());
         }
-        let cfg: protocol::Config = self.config.into();
+        let cfg: protocol::Config = config.into();
 
-        self.reactor.run(&listen, move |upstream| {
-            Protocol::new(cache, filters, peers, clock, rng, cfg, upstream)
-        })?;
+        self.reactor.run(
+            &listen,
+            Protocol::new(cache, filters, peers, clock, rng, cfg),
+        )?;
 
         Ok(())
     }
 
     /// Start the client process, supplying the block cache. This function is meant to be run in
     /// its own thread.
-    pub fn run_with<B, P>(mut self, builder: B) -> Result<(), Error>
+    pub fn run_with<P>(mut self, listen: Vec<net::SocketAddr>, protocol: P) -> Result<(), Error>
     where
-        B: FnOnce(p2p::protocol::Config, chan::Sender<protocol::Out>) -> P,
         P: p2p::traits::Protocol,
     {
-        let listen = self.config.listen.clone();
-        let cfg: protocol::Config = self.config.into();
-
-        log::info!("Initializing client ({:?})..", cfg.network);
-        log::info!("Genesis block hash is {}", cfg.network.genesis_hash());
-
-        self.reactor
-            .run::<_, P>(&listen, |upstream| builder(cfg, upstream))?;
+        self.reactor.run::<P>(&listen, protocol)?;
 
         Ok(())
     }
@@ -379,11 +365,10 @@ impl<R: Reactor<Publisher>> Client<R> {
     /// Create a new handle to communicate with the client.
     pub fn handle(&self) -> Handle<R> {
         Handle {
-            network: self.config.network,
             events: self.events.clone(),
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
-            timeout: self.config.timeout,
+            timeout: time::Duration::from_secs(60),
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
             subscriber: self.subscriber.clone(),
@@ -394,7 +379,6 @@ impl<R: Reactor<Publisher>> Client<R> {
 
 /// An instance of [`handle::Handle`] for [`Client`].
 pub struct Handle<R: Reactor<Publisher>> {
-    network: Network,
     commands: chan::Sender<Command>,
     events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
@@ -411,7 +395,6 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            network: self.network,
             blocks: self.blocks.clone(),
             commands: self.commands.clone(),
             events: self.events.clone(),
@@ -465,10 +448,6 @@ impl<R: Reactor<Publisher>> handle::Handle for Handle<R>
 where
     R::Waker: Sync,
 {
-    fn network(&self) -> Network {
-        self.network
-    }
-
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
         let (transmit, receive) = chan::bounded::<(Height, BlockHeader)>(1);
         self.command(Command::GetTip(transmit))?;

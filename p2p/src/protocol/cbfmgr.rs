@@ -1046,7 +1046,6 @@ mod tests {
     use bitcoin::network::message_filter::GetCFilters;
     use bitcoin::BlockHeader;
     use bitcoin_hashes::hex::FromHex;
-    use crossbeam_channel as chan;
 
     use nakamoto_chain::store::Genesis;
     use quickcheck::TestResult;
@@ -1081,12 +1080,10 @@ mod tests {
             FilterManager<FilterCache<store::Memory<StoredHeader>>, Channel>,
             BlockCache<store::Memory<BlockHeader>>,
             NonEmpty<bitcoin::Block>,
-            chan::Receiver<Out>,
         ) {
             let mut rng = fastrand::Rng::new();
             let genesis = network.genesis_block();
             let chain = gen::blockchain(genesis, height, &mut rng);
-            let (sender, outputs) = chan::unbounded();
             let tree = {
                 let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
                 let store = store::Memory::new(headers);
@@ -1101,13 +1098,12 @@ mod tests {
             cache.import_headers(cfheaders).unwrap();
             cache.verify(network).unwrap();
 
-            let upstream = Channel::new(network, PROTOCOL_VERSION, "channel", sender);
+            let upstream = Channel::new(network, PROTOCOL_VERSION, "channel");
 
             (
                 FilterManager::new(Config::default(), rng, cache, upstream),
                 tree,
                 chain,
-                outputs,
             )
         }
 
@@ -1152,8 +1148,8 @@ mod tests {
             data.windows(2).all(|w| w[0] <= w[1])
         }
 
-        pub fn events(receiver: &chan::Receiver<Out>) -> impl Iterator<Item = Event> + '_ {
-            receiver.try_iter().filter_map(|o| match o {
+        pub fn events(outputs: impl Iterator<Item = Out>) -> impl Iterator<Item = Event> {
+            outputs.filter_map(|o| match o {
                 Out::Event(protocol::Event::FilterManager(e)) => Some(e),
                 _ => None,
             })
@@ -1205,12 +1201,10 @@ mod tests {
 
             BlockCache::from(store::Memory::new(BITCOIN_HEADERS.clone()), params, &[]).unwrap()
         };
-        let (sender, _receiver) = chan::unbounded();
-
         let mut cbfmgr = {
             let rng = fastrand::Rng::new();
             let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
-            let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+            let upstream = Channel::new(network, PROTOCOL_VERSION, "test");
 
             FilterManager::new(Config::default(), rng, cache, upstream)
         };
@@ -1275,7 +1269,7 @@ mod tests {
         let mut rng = fastrand::Rng::new();
         let time = LocalTime::now();
         let network = Network::Regtest;
-        let (mut cbfmgr, tree, _, outputs) = util::setup(network, best);
+        let (mut cbfmgr, tree, _) = util::setup(network, best);
 
         // Start rescan with no peers.
         cbfmgr.rescan(
@@ -1293,7 +1287,7 @@ mod tests {
             &time,
             &tree,
         );
-        protocol::test::messages(&outputs)
+        protocol::test::messages(cbfmgr.upstream.drain())
             .find(|(_, m)| matches!(m, NetworkMessage::GetCFilters(_)))
             .unwrap();
     }
@@ -1364,8 +1358,8 @@ mod tests {
         let best = 42;
         let time = LocalTime::now();
         let network = Network::Regtest;
-        let (mut cbfmgr, tree, chain, outputs) = util::setup(network, best);
-        let mut msgs = protocol::test::messages(&outputs);
+        let (mut cbfmgr, tree, chain) = util::setup(network, best);
+        let mut msgs = protocol::test::messages(cbfmgr.upstream.drain());
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
         let tip = tree.get_block_by_height(best).unwrap().block_hash();
         let filter_type = 0x0;
@@ -1431,7 +1425,7 @@ mod tests {
         let birth = 11;
         let best = 17;
 
-        let (mut cbfmgr, tree, chain, _upstream) = util::setup(network, best);
+        let (mut cbfmgr, tree, chain) = util::setup(network, best);
         let time = LocalTime::now();
 
         // Generate a watchlist and keep track of the matching block heights.
@@ -1517,7 +1511,7 @@ mod tests {
             let network = Network::Regtest;
             let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
-            let (mut cbfmgr, mut tree, chain, outputs) = util::setup(network, best);
+            let (mut cbfmgr, mut tree, chain) = util::setup(network, best);
             let time = LocalTime::now();
 
             // Generate a watchlist and keep track of the matching block heights.
@@ -1546,9 +1540,9 @@ mod tests {
                 cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
             }
             assert_eq!(cbfmgr.rescan.current, sync_height + 1);
-            outputs.try_iter().for_each(drop);
+            cbfmgr.upstream.drain().for_each(drop);
 
-            let mut msgs = messages(&outputs);
+            let mut msgs = messages(cbfmgr.upstream.drain());
 
             // ... Create a fork ...
 
@@ -1633,7 +1627,7 @@ mod tests {
         let network = Network::Regtest;
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
-        let (mut cbfmgr, tree, chain, outputs) = util::setup(network, best);
+        let (mut cbfmgr, tree, chain) = util::setup(network, best);
         let time = LocalTime::now();
         let tip = chain.last().block_hash();
 
@@ -1652,8 +1646,8 @@ mod tests {
         );
         cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
 
-        let mut msgs = messages(&outputs);
-        let mut events = util::events(&outputs);
+        let mut msgs = messages(cbfmgr.upstream.drain());
+        let mut events = util::events(cbfmgr.upstream.drain());
 
         msgs.find(|(_, m)| {
             matches!(

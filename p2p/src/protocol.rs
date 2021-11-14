@@ -551,7 +551,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         clock: AdjustedTime<PeerId>,
         rng: fastrand::Rng,
         config: Config,
-        upstream: chan::Sender<Out>,
     ) -> Self {
         let Config {
             network,
@@ -571,7 +570,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             hooks,
         } = config;
 
-        let upstream = Upstream::new(network, protocol_version, target, upstream);
+        let upstream = Upstream::new(network, protocol_version, target);
         let syncmgr = SyncManager::new(
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
@@ -692,6 +691,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
 }
 
 impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
+    type Upstream = channel::Iter;
+
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
         self.addrmgr.initialize(time);
@@ -720,13 +721,13 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
 
         info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
 
-        self.cbfmgr.peer_disconnected(&addr);
-        self.syncmgr.peer_disconnected(&addr);
-        self.addrmgr.peer_disconnected(&addr, reason.clone());
-        self.pingmgr.peer_disconnected(&addr);
+        self.cbfmgr.peer_disconnected(addr);
+        self.syncmgr.peer_disconnected(addr);
+        self.addrmgr.peer_disconnected(addr, reason.clone());
+        self.pingmgr.peer_disconnected(addr);
         self.peermgr
-            .peer_disconnected(&addr, &mut self.addrmgr, local_time, reason);
-        self.invmgr.peer_disconnected(&addr);
+            .peer_disconnected(addr, &mut self.addrmgr, local_time, reason);
+        self.invmgr.peer_disconnected(addr);
     }
 
     fn received(&mut self, addr: &net::SocketAddr, msg: RawNetworkMessage) {
@@ -1089,19 +1090,21 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
             self.last_tick = local_time;
         }
     }
+
+    fn drain(&mut self) -> channel::Iter {
+        self.upstream.drain()
+    }
 }
 
 #[cfg(test)]
 mod test {
+    use super::{Out, PeerId};
     use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
-    use super::channel::chan;
-    use super::{Out, PeerId};
-
     pub fn messages(
-        receiver: &chan::Receiver<Out>,
-    ) -> impl Iterator<Item = (PeerId, NetworkMessage)> + '_ {
-        receiver.try_iter().filter_map(|o| match o {
+        outputs: impl Iterator<Item = Out>,
+    ) -> impl Iterator<Item = (PeerId, NetworkMessage)> {
+        outputs.filter_map(|o| match o {
             Out::Message(a, m) => Some((a, m.payload)),
             _ => None,
         })

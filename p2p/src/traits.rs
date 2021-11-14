@@ -13,6 +13,9 @@ use crate::protocol::{Command, DisconnectReason, Link, Out};
 ///
 /// This trait is implemented by the core P2P protocol in [`crate::protocol::Protocol`].
 pub trait Protocol {
+    /// Return type of [`Protocol::drain`].
+    type Upstream: Iterator<Item = Out>;
+
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
         // "He was alone. He was unheeded, happy and near to the wild heart of life. He was alone
@@ -43,6 +46,8 @@ pub trait Protocol {
     /// Used to advance the state machine after some wall time has passed, typically
     /// after a timer rings.
     fn tock(&mut self, local_time: LocalTime);
+    /// Drain all protocol outputs since the last call.
+    fn drain(&mut self) -> Self::Upstream;
 }
 
 /// Any network reactor that can drive the light-client protocol.
@@ -62,13 +67,11 @@ pub trait Reactor<E: Publisher> {
         Self: Sized;
 
     /// Run the given protocol state machine with the reactor.
-    ///
-    /// The protocol is supplied via a "builder" function that takes the protocol output
-    /// channel as its only parameter.
-    fn run<B, P>(&mut self, listen_addrs: &[net::SocketAddr], builder: B) -> Result<(), Error>
-    where
-        P: Protocol,
-        B: FnOnce(chan::Sender<Out>) -> P;
+    fn run<P: Protocol>(
+        &mut self,
+        listen_addrs: &[net::SocketAddr],
+        protocol: P,
+    ) -> Result<(), Error>;
 
     /// Used to wake certain types of reactors.
     fn wake(waker: &Self::Waker) -> io::Result<()>;

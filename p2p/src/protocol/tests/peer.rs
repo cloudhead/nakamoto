@@ -65,7 +65,6 @@ impl PeerDummy {
 #[derive(Debug)]
 pub struct Peer<P> {
     pub protocol: P,
-    pub upstream: chan::Receiver<Out>,
     pub addr: PeerId,
     pub cfg: Config,
 
@@ -150,13 +149,11 @@ impl Peer<Protocol> {
         let tree = BlockCache::from(store, cfg.params.clone(), &[]).unwrap();
         let filters = model::FilterCache::from(cfheaders);
 
-        let (tx, rx) = chan::unbounded();
         let addr = (ip.into(), network.port()).into();
-        let protocol = Protocol::new(tree, filters, peers, clock, rng, cfg.clone(), tx);
+        let protocol = Protocol::new(tree, filters, peers, clock, rng, cfg.clone());
 
         Self {
             protocol,
-            upstream: rx,
             time,
             addr,
             initialized: false,
@@ -206,18 +203,18 @@ impl Peer<Protocol> {
     }
 
     pub fn outputs(&mut self) -> impl Iterator<Item = Out> + '_ {
-        self.upstream.try_iter()
+        self.protocol.drain()
     }
 
     pub fn messages(&mut self) -> impl Iterator<Item = (PeerId, NetworkMessage)> + '_ {
-        self.upstream.try_iter().filter_map(|o| match o {
+        self.protocol.drain().filter_map(|o| match o {
             Out::Message(a, m) => Some((a, m.payload)),
             _ => None,
         })
     }
 
     pub fn events(&mut self) -> impl Iterator<Item = Event> + '_ {
-        self.upstream.try_iter().filter_map(|o| match o {
+        self.protocol.drain().filter_map(|o| match o {
             Out::Event(e) => Some(e),
             _ => None,
         })
@@ -234,7 +231,7 @@ impl Peer<Protocol> {
     }
 
     pub fn drain(&mut self) {
-        self.upstream.try_iter().for_each(drop);
+        self.protocol.drain().for_each(drop);
     }
 
     pub fn connect(&mut self, remote: &PeerDummy, link: Link) {
@@ -258,9 +255,10 @@ impl Peer<Protocol> {
             msg.raw(NetworkMessage::Version(remote.version(local, rng.u64(..)))),
         );
 
+        let mut outputs = self.protocol.drain();
+
         // Expect `version` to be sent in response.
-        self.upstream
-            .try_iter()
+        outputs
             .find(|o| {
                 matches!(
                     o,
@@ -276,8 +274,7 @@ impl Peer<Protocol> {
             .expect("`version` should be sent");
 
         // Expect `verack`.
-        self.upstream
-            .try_iter()
+        outputs
             .find(|o| {
                 matches!(
                     o,
@@ -296,8 +293,8 @@ impl Peer<Protocol> {
         self.received(remote.addr, NetworkMessage::Verack);
 
         // Expect hanshake event.
-        self.upstream
-            .try_iter()
+        self.protocol
+            .drain()
             .find(|o| {
                 matches!(
                     o,

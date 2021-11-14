@@ -4,7 +4,10 @@
 //! with specific capabilities, eg. peer disconnection, message sending etc. to
 //! communicate with the main protocol and network.
 use log::*;
+use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::net;
+use std::rc::Rc;
 
 pub use crossbeam_channel as chan;
 
@@ -31,7 +34,7 @@ pub struct Channel {
     /// Protocol version.
     version: u32,
     /// Output channel.
-    outbound: chan::Sender<Out>,
+    outbound: Rc<RefCell<VecDeque<Out>>>,
     /// Network magic number.
     builder: message::Builder,
     /// Log target.
@@ -40,15 +43,10 @@ pub struct Channel {
 
 impl Channel {
     /// Create a new channel.
-    pub fn new(
-        network: Network,
-        version: u32,
-        target: &'static str,
-        outbound: chan::Sender<Out>,
-    ) -> Self {
+    pub fn new(network: Network, version: u32, target: &'static str) -> Self {
         Self {
             version,
-            outbound,
+            outbound: Rc::new(RefCell::new(VecDeque::new())),
             builder: message::Builder::new(network),
             target,
         }
@@ -56,7 +54,14 @@ impl Channel {
 
     /// Push an output to the channel.
     pub fn push(&self, output: Out) {
-        self.outbound.send(output).unwrap();
+        self.outbound.borrow_mut().push_back(output);
+    }
+
+    /// Drain the outbound queue.
+    pub fn drain(&mut self) -> Iter {
+        Iter {
+            items: self.outbound.clone(),
+        }
     }
 
     /// Push a message to the channel.
@@ -70,6 +75,19 @@ impl Channel {
     /// Push an event to the channel.
     pub fn event(&self, event: Event) {
         self.push(Out::Event(event));
+    }
+}
+
+/// Iterator over outbound channel queue.
+pub struct Iter {
+    items: Rc<RefCell<VecDeque<Out>>>,
+}
+
+impl Iterator for Iter {
+    type Item = Out;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.items.borrow_mut().pop_front()
     }
 }
 

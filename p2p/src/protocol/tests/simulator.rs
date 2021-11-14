@@ -282,8 +282,8 @@ impl Simulation {
         }
 
         // Schedule any messages in the pipes.
-        for peer in nodes.values() {
-            for o in peer.upstream.try_iter() {
+        for peer in nodes.values_mut() {
+            for o in peer.upstream.drain() {
                 self.schedule(&peer.addr.ip(), o);
             }
         }
@@ -332,7 +332,7 @@ impl Simulation {
                             Input::Tock => p.protocol.tock(self.time),
                             Input::Received(addr, msg) => p.protocol.received(&addr, msg),
                         }
-                        for o in p.upstream.try_iter() {
+                        for o in p.upstream.drain() {
                             self.schedule(&node, o);
                         }
                     } else {

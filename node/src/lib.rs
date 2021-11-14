@@ -3,7 +3,6 @@
 
 use std::net;
 use std::path::PathBuf;
-use std::time;
 
 pub use nakamoto_client::client::{self, Client, Config, Network};
 pub use nakamoto_client::error::Error;
@@ -32,7 +31,6 @@ pub fn run(
         },
         connect: connect.to_vec(),
         domains: domains.to_vec(),
-        timeout: time::Duration::from_secs(30),
         ..Config::default()
     };
     if let Some(path) = root {
@@ -42,5 +40,5 @@ pub fn run(
         cfg.target_outbound_peers = connect.len();
     }
 
-    Client::<Reactor>::new(cfg)?.run()
+    Client::<Reactor>::new()?.run(cfg)
 }

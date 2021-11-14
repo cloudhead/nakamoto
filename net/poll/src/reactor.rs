@@ -110,9 +110,8 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
     }
 
     /// Run the given protocol with the reactor.
-    fn run<B, P>(&mut self, listen_addrs: &[net::SocketAddr], builder: B) -> Result<(), Error>
+    fn run<P>(&mut self, listen_addrs: &[net::SocketAddr], mut protocol: P) -> Result<(), Error>
     where
-        B: FnOnce(chan::Sender<Out>) -> P,
         P: Protocol,
     {
         let listener = if listen_addrs.is_empty() {
@@ -132,13 +131,10 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
 
         info!("Initializing protocol..");
 
-        let (tx, rx) = chan::unbounded();
-        let mut protocol = builder(tx);
         let local_time = SystemTime::now().into();
-
         protocol.initialize(local_time);
 
-        self.process(&mut protocol, &rx, local_time);
+        self.process(&mut protocol, local_time);
 
         // I/O readiness events populated by `popol::Sources::wait_timeout`.
         let mut events = popol::Events::new();
@@ -242,7 +238,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
                 }
                 Err(err) => return Err(err.into()),
             }
-            self.process(&mut protocol, &rx, local_time);
+            self.process(&mut protocol, local_time);
         }
     }
 
@@ -261,13 +257,13 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
 
 impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
     /// Process protocol state machine outputs.
-    fn process<P>(&mut self, protocol: &mut P, outputs: &chan::Receiver<Out>, local_time: LocalTime)
+    fn process<P>(&mut self, protocol: &mut P, local_time: LocalTime)
     where
         P: Protocol,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
-        for out in outputs.try_iter() {
+        for out in protocol.drain() {
             match out {
                 Out::Message(addr, msg) => {
                     if let Some(peer) = self.peers.get_mut(&addr) {

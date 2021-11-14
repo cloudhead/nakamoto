@@ -106,7 +106,7 @@ pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {
     };
 
     // Create a new client using `Reactor` for networking.
-    let client = Client::<Reactor>::new(cfg)?;
+    let client = Client::<Reactor>::new()?;
     let handle = client.handle();
 
     // Create a new wallet and rescan the chain from the provided `birth` height for
@@ -114,7 +114,7 @@ pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {
     let mut wallet = Wallet::new(handle.clone(), addresses);
 
     // Start the network client in the background.
-    thread::spawn(|| client.run().unwrap());
+    thread::spawn(|| client.run(cfg).unwrap());
 
     wallet.rescan(birth)?;
 

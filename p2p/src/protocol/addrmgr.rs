@@ -778,7 +778,6 @@ mod tests {
     use std::collections::HashMap;
     use std::iter;
 
-    use crossbeam_channel as chan;
     use nakamoto_common::network::Network;
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
@@ -976,11 +975,9 @@ mod tests {
         if size > 24 {
             return TestResult::discard();
         }
-        let (sender, _receiver) = chan::unbounded();
 
         let mut addrmgr = {
-            let upstream =
-                crate::protocol::channel::Channel::new(Network::Mainnet, 0, "test", sender);
+            let upstream = crate::protocol::channel::Channel::new(Network::Mainnet, 0, "test");
 
             AddressManager::new(
                 Config::default(),

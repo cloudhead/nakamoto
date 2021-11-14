@@ -567,7 +567,8 @@ mod tests {
     use std::net;
 
     use crate::protocol;
-    use crate::protocol::channel::{chan, Channel};
+    use crate::protocol::channel::Channel;
+    use crate::protocol::test::messages;
     use crate::protocol::{Network, Out, PROTOCOL_VERSION};
 
     use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
@@ -578,17 +579,8 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::{assert_matches, logger};
 
-    fn messages(
-        receiver: &chan::Receiver<Out>,
-    ) -> impl Iterator<Item = (PeerId, NetworkMessage)> + '_ {
-        receiver.try_iter().filter_map(|o| match o {
-            Out::Message(a, m) => Some((a, m.payload)),
-            _ => None,
-        })
-    }
-
-    fn events(receiver: &chan::Receiver<Out>) -> impl Iterator<Item = Event> + '_ {
-        receiver.try_iter().filter_map(|o| match o {
+    fn events(outputs: impl Iterator<Item = Out>) -> impl Iterator<Item = Event> {
+        outputs.filter_map(|o| match o {
             Out::Event(protocol::Event::InventoryManager(e)) => Some(e),
             _ => None,
         })
@@ -599,9 +591,8 @@ mod tests {
         logger::init(log::Level::Debug);
 
         let network = Network::Regtest;
-        let (sender, receiver) = chan::unbounded::<Out>();
-        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
 
+        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
         let mut rng = fastrand::Rng::new();
         let mut time = LocalTime::now();
 
@@ -614,7 +605,7 @@ mod tests {
         let inv = vec![Inventory::Block(hash)];
         let block = chain.iter().find(|b| b.block_hash() == hash).unwrap();
 
-        let mut invmgr = InventoryManager::new(rng.clone(), upstream);
+        let mut invmgr = InventoryManager::new(rng.clone(), upstream.clone());
 
         invmgr.peer_negotiated(
             Socket::new(([66, 66, 66, 66], 8333)),
@@ -651,7 +642,7 @@ mod tests {
             invmgr.received_tick(time, &tree);
             assert!(!invmgr.remaining.is_empty());
 
-            if let Some((addr, _)) = messages(&receiver)
+            if let Some((addr, _)) = messages(upstream.drain())
                 .find(|(_, m)| matches!(m, NetworkMessage::GetData(i) if i == &inv))
             {
                 assert!(
@@ -668,7 +659,7 @@ mod tests {
                 invmgr.received_block(&addr, block.clone(), &tree);
 
                 assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
-                events(&receiver)
+                events(upstream.drain())
                     .find(|e| matches!(e, Event::BlockReceived { .. }))
                     .expect("An event is emitted when a block is received");
 
@@ -676,14 +667,17 @@ mod tests {
             }
         }
         invmgr.received_tick(time + REQUEST_TIMEOUT, &tree);
-        assert_eq!(messages(&receiver).count(), 0, "No more requests are sent");
+        assert_eq!(
+            messages(upstream.drain()).count(),
+            0,
+            "No more requests are sent"
+        );
     }
 
     #[test]
     fn test_rebroadcast_timeout() {
         let network = Network::Mainnet;
-        let (sender, receiver) = chan::unbounded::<Out>();
-        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let mut rng = fastrand::Rng::with_seed(1);
@@ -691,25 +685,25 @@ mod tests {
         let time = LocalTime::now();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream);
+        let mut invmgr = InventoryManager::new(rng, upstream.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx);
         invmgr.received_tick(time, &tree);
 
         assert_eq!(
-            messages(&receiver)
+            messages(upstream.drain())
                 .filter(|(a, m)| matches!(m, NetworkMessage::Inv(_)) && a == &remote)
                 .count(),
             1
         );
 
         invmgr.received_tick(time, &tree);
-        assert_eq!(receiver.try_iter().count(), 0, "Timeout hasn't lapsed");
+        assert_eq!(upstream.drain().count(), 0, "Timeout hasn't lapsed");
 
         invmgr.received_tick(time + REBROADCAST_TIMEOUT, &tree);
         assert_eq!(
-            messages(&receiver)
+            messages(upstream.drain())
                 .filter(|(a, m)| matches!(m, NetworkMessage::Inv(_)) && a == &remote)
                 .count(),
             1
@@ -719,8 +713,7 @@ mod tests {
     #[test]
     fn test_max_attemps() {
         let network = Network::Mainnet;
-        let (sender, receiver) = chan::unbounded::<Out>();
-        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
@@ -729,7 +722,7 @@ mod tests {
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream);
+        let mut invmgr = InventoryManager::new(rng, upstream.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
@@ -737,8 +730,8 @@ mod tests {
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
             invmgr.received_tick(time, &tree);
-            receiver
-                .try_iter()
+            upstream
+                .drain()
                 .find(|o| {
                     matches!(
                         o,
@@ -758,7 +751,7 @@ mod tests {
 
         // The next time we time out, we disconnect the peer.
         invmgr.received_tick(time, &tree);
-        events(&receiver)
+        events(upstream.drain())
             .find(|e| matches!(e, Event::TimedOut { peer } if peer == &remote))
             .expect("Peer times out");
 
@@ -770,7 +763,6 @@ mod tests {
     fn test_block_reverted() {
         let network = Network::Regtest;
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
-        let (sender, receiver) = chan::unbounded::<Out>();
         let mut rng = fastrand::Rng::new();
 
         let mut main = gen::blockchain(network.genesis_block(), 16, &mut rng);
@@ -786,11 +778,11 @@ mod tests {
         let fork_block1 = gen::block_with(&tip, vec![tx.clone()], &mut rng);
         let fork_block2 = gen::block(&fork_block1.header, &mut rng);
 
-        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
         let time = LocalTime::now();
 
         let mut tree = model::Cache::from(headers);
-        let mut invmgr = InventoryManager::new(rng, upstream);
+        let mut invmgr = InventoryManager::new(rng, upstream.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
@@ -799,7 +791,7 @@ mod tests {
 
         assert!(!invmgr.contains(&tx.wtxid()));
 
-        let mut events = events(&receiver);
+        let mut events = events(upstream.drain());
 
         events
             .find(|e| {
@@ -843,8 +835,7 @@ mod tests {
     #[test]
     fn test_wtx_inv() {
         let network = Network::Mainnet;
-        let (sender, receiver) = chan::unbounded::<Out>();
-        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
@@ -854,13 +845,13 @@ mod tests {
         let remote2: net::SocketAddr = ([88, 88, 88, 89], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream);
+        let mut invmgr = InventoryManager::new(rng, upstream.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx);
 
         invmgr.received_tick(time, &tree);
-        let invs = messages(&receiver)
+        let invs = messages(upstream.drain())
             .filter_map(|(_, m)| {
                 if let NetworkMessage::Inv(invs) = m {
                     Some(invs)
@@ -874,7 +865,7 @@ mod tests {
 
         invmgr.peer_negotiated(remote2.into(), ServiceFlags::NETWORK, true, false);
         invmgr.received_tick(time, &tree);
-        let invs = messages(&receiver)
+        let invs = messages(upstream.drain())
             .filter_map(|pm| match pm {
                 (p, NetworkMessage::Inv(invs)) if p == remote2 => Some(invs),
                 _ => None,
@@ -887,21 +878,20 @@ mod tests {
     #[test]
     fn test_wtx_getdata() {
         let network = Network::Mainnet;
-        let (sender, receiver) = chan::unbounded::<Out>();
-        let upstream = Channel::new(network, PROTOCOL_VERSION, "test", sender);
+        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
 
         let mut rng = fastrand::Rng::with_seed(1);
 
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream);
+        let mut invmgr = InventoryManager::new(rng, upstream.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx.clone());
 
         invmgr.received_getdata(remote, &[Inventory::Transaction(tx.txid())]);
-        let tr = messages(&receiver)
+        let tr = messages(upstream.drain())
             .filter_map(|(_, m)| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)
@@ -914,7 +904,7 @@ mod tests {
         assert_eq!(tr.txid(), tx.txid());
 
         invmgr.received_getdata(remote, &[Inventory::WTx(tx.wtxid())]);
-        let tr = messages(&receiver)
+        let tr = messages(upstream.drain())
             .filter_map(|(_, m)| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)
