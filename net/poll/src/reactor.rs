@@ -8,11 +8,12 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
 use nakamoto_p2p::error::Error;
 use nakamoto_p2p::protocol;
-use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Input, Link, Out};
+use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Link, Out};
 
 use log::*;
+use nakamoto_p2p::traits::Protocol;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::io;
 use std::io::prelude::*;
@@ -33,13 +34,6 @@ const WRITE_TIMEOUT: time::Duration = time::Duration::from_secs(3);
 /// Maximum amount of time to wait for i/o.
 const WAIT_TIMEOUT: LocalDuration = LocalDuration::from_mins(60);
 
-#[must_use]
-#[derive(Debug, PartialEq, Eq)]
-enum Control {
-    Continue,
-    Shutdown,
-}
-
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum Source {
     Peer(net::SocketAddr),
@@ -51,12 +45,12 @@ enum Source {
 pub struct Reactor<R: Write + Read, E> {
     peers: HashMap<net::SocketAddr, Socket<R, RawNetworkMessage>>,
     connecting: HashSet<net::SocketAddr>,
-    inputs: VecDeque<Input>,
     commands: chan::Receiver<Command>,
     publisher: E,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
     timeouts: TimeoutManager<()>,
+    shutdown: chan::Receiver<()>,
 }
 
 /// The `R` parameter represents the underlying stream type, eg. `net::TcpStream`.
@@ -69,11 +63,19 @@ impl<R: Write + Read + AsRawFd, E> Reactor<R, E> {
     }
 
     /// Unregister a peer from the reactor.
-    fn unregister_peer(&mut self, addr: net::SocketAddr, reason: DisconnectReason) {
+    fn unregister_peer<P>(
+        &mut self,
+        addr: net::SocketAddr,
+        reason: DisconnectReason,
+        protocol: &mut P,
+    ) where
+        P: Protocol,
+    {
         self.connecting.remove(&addr);
-        self.inputs.push_back(Input::Disconnected(addr, reason));
         self.sources.unregister(&Source::Peer(addr));
         self.peers.remove(&addr);
+
+        protocol.disconnected(&addr, reason);
     }
 }
 
@@ -83,9 +85,12 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
     type Waker = Arc<popol::Waker>;
 
     /// Construct a new reactor, given a channel to send events on.
-    fn new(publisher: E, commands: chan::Receiver<Command>) -> Result<Self, io::Error> {
+    fn new(
+        publisher: E,
+        commands: chan::Receiver<Command>,
+        shutdown: chan::Receiver<()>,
+    ) -> Result<Self, io::Error> {
         let peers = HashMap::new();
-        let inputs: VecDeque<Input> = VecDeque::new();
 
         let mut sources = popol::Sources::new();
         let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
@@ -96,11 +101,11 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
             peers,
             connecting,
             sources,
-            inputs,
             commands,
             publisher,
             waker,
             timeouts,
+            shutdown,
         })
     }
 
@@ -108,7 +113,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
     fn run<B, P>(&mut self, listen_addrs: &[net::SocketAddr], builder: B) -> Result<(), Error>
     where
         B: FnOnce(chan::Sender<Out>) -> P,
-        P: nakamoto_p2p::traits::Protocol,
+        P: Protocol,
     {
         let listener = if listen_addrs.is_empty() {
             None
@@ -133,18 +138,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
 
         protocol.initialize(local_time);
 
-        if let Control::Shutdown = self.process(&rx, local_time) {
-            return Ok(());
-        }
-
-        // Drain input events in case some were added during the processing of outputs.
-        while let Some(event) = self.inputs.pop_front() {
-            protocol.step(event, local_time);
-
-            if let Control::Shutdown = self.process(&rx, local_time) {
-                return Ok(());
-            }
-        }
+        self.process(&mut protocol, &rx, local_time);
 
         // I/O readiness events populated by `popol::Sources::wait_timeout`.
         let mut events = popol::Events::new();
@@ -168,6 +162,8 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
 
             match result {
                 Ok(()) => {
+                    protocol.tick(local_time);
+
                     for (source, ev) in events.iter() {
                         match source {
                             Source::Peer(addr) => {
@@ -186,10 +182,10 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
                                 }
 
                                 if ev.writable {
-                                    self.handle_writable(addr, source)?;
+                                    self.handle_writable(addr, source, &mut protocol)?;
                                 }
                                 if ev.readable {
-                                    self.handle_readable(addr);
+                                    self.handle_readable(addr, &mut protocol);
                                 }
                             }
                             Source::Listener => loop {
@@ -211,22 +207,24 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
                                     let local_addr = conn.local_addr()?;
                                     let link = Link::Inbound;
 
-                                    self.inputs.push_back(Input::Connected {
-                                        addr,
-                                        local_addr,
-                                        link,
-                                    });
                                     self.register_peer(addr, conn, link);
+
+                                    protocol.connected(addr, &local_addr, link);
                                 }
                             },
                             Source::Waker => {
                                 trace!("Woken up by waker ({} command(s))", self.commands.len());
-                                debug_assert!(!self.commands.is_empty());
 
+                                // Exit reactor loop if a shutdown was received.
+                                if let Ok(()) = self.shutdown.try_recv() {
+                                    return Ok(());
+                                }
                                 popol::Waker::reset(ev.source).ok();
 
+                                debug_assert!(!self.commands.is_empty());
+
                                 for cmd in self.commands.try_iter() {
-                                    self.inputs.push_back(Input::Command(cmd));
+                                    protocol.command(cmd);
                                 }
                             }
                         }
@@ -239,19 +237,12 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
 
                     if !timeouts.is_empty() {
                         timeouts.clear();
-                        self.inputs.push_back(Input::Tick);
+                        protocol.tock(local_time);
                     }
                 }
                 Err(err) => return Err(err.into()),
             }
-
-            while let Some(event) = self.inputs.pop_front() {
-                protocol.step(event, local_time);
-
-                if let Control::Shutdown = self.process(&rx, local_time) {
-                    return Ok(());
-                }
-            }
+            self.process(&mut protocol, &rx, local_time);
         }
     }
 
@@ -270,7 +261,10 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
 
 impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
     /// Process protocol state machine outputs.
-    fn process(&mut self, outputs: &chan::Receiver<Out>, local_time: LocalTime) -> Control {
+    fn process<P>(&mut self, protocol: &mut P, outputs: &chan::Receiver<Out>, local_time: LocalTime)
+    where
+        P: Protocol,
+    {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
         for out in outputs.try_iter() {
@@ -291,13 +285,14 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
 
                         peer.queue(msg);
 
-                        if let Err(err) = peer.drain(&mut self.inputs, src) {
+                        if let Err(err) = peer.drain(src) {
                             error!("{}: Write error: {}", addr, err.to_string());
 
                             peer.disconnect().ok();
                             self.unregister_peer(
                                 addr,
                                 DisconnectReason::ConnectionError(Arc::new(err)),
+                                protocol,
                             );
                         }
                     }
@@ -311,8 +306,9 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
 
                             self.register_peer(addr, stream, Link::Outbound);
                             self.connecting.insert(addr);
-                            self.inputs.push_back(Input::Connecting { addr });
                             self.timeouts.register((), local_time + timeout);
+
+                            protocol.attempted(&addr);
                         }
                         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                             // Ignore. We are already establishing a connection through
@@ -321,10 +317,10 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         Err(err) => {
                             error!("{}: Connection error: {}", addr, err.to_string());
 
-                            self.inputs.push_back(Input::Disconnected(
-                                addr,
+                            protocol.disconnected(
+                                &addr,
                                 DisconnectReason::ConnectionError(Arc::new(err)),
-                            ));
+                            );
                         }
                     }
                 }
@@ -338,7 +334,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         // possible errors relate to an invalid file descriptor.
                         peer.disconnect().ok();
 
-                        self.unregister_peer(addr, reason);
+                        self.unregister_peer(addr, reason, protocol);
                     }
                 }
                 Out::SetTimeout(timeout) => {
@@ -349,17 +345,14 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
 
                     self.publisher.publish(event);
                 }
-                Out::Shutdown => {
-                    info!("Shutdown received");
-
-                    return Control::Shutdown;
-                }
             }
         }
-        Control::Continue
     }
 
-    fn handle_readable(&mut self, addr: &net::SocketAddr) {
+    fn handle_readable<P>(&mut self, addr: &net::SocketAddr, protocol: &mut P)
+    where
+        P: Protocol,
+    {
         let socket = self.peers.get_mut(addr).unwrap();
 
         trace!("{}: Socket is readable", addr);
@@ -372,7 +365,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
         loop {
             match socket.read() {
                 Ok(msg) => {
-                    self.inputs.push_back(Input::Received(*addr, msg));
+                    protocol.received(addr, msg);
                 }
                 Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
                     break;
@@ -395,7 +388,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                     };
 
                     socket.disconnect().ok();
-                    self.unregister_peer(*addr, reason);
+                    self.unregister_peer(*addr, reason, protocol);
 
                     break;
                 }
@@ -403,7 +396,12 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
         }
     }
 
-    fn handle_writable(&mut self, addr: &net::SocketAddr, source: &Source) -> io::Result<()> {
+    fn handle_writable<P: Protocol>(
+        &mut self,
+        addr: &net::SocketAddr,
+        source: &Source,
+        protocol: &mut P,
+    ) -> io::Result<()> {
         trace!("{}: Socket is writable", addr);
 
         let src = self.sources.get_mut(source).unwrap();
@@ -417,18 +415,18 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
         if self.connecting.remove(addr) {
             let local_addr = socket.local_address()?;
 
-            self.inputs.push_back(Input::Connected {
-                addr: socket.address,
-                local_addr,
-                link: socket.link,
-            });
+            protocol.connected(socket.address, &local_addr, socket.link);
         }
 
-        if let Err(err) = socket.drain(&mut self.inputs, src) {
+        if let Err(err) = socket.drain(src) {
             error!("{}: Write error: {}", addr, err.to_string());
 
             socket.disconnect().ok();
-            self.unregister_peer(*addr, DisconnectReason::ConnectionError(Arc::new(err)));
+            self.unregister_peer(
+                *addr,
+                DisconnectReason::ConnectionError(Arc::new(err)),
+                protocol,
+            );
         }
         Ok(())
     }

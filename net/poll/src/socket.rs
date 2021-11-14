@@ -10,7 +10,7 @@ use nakamoto_common::bitcoin::network::stream_reader::StreamReader;
 
 use log::*;
 
-use nakamoto_p2p::protocol::{Input, Link};
+use nakamoto_p2p::protocol::Link;
 
 use crate::fallible;
 
@@ -93,15 +93,11 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    pub fn drain(
-        &mut self,
-        inputs: &mut VecDeque<Input>,
-        source: &mut popol::Source,
-    ) -> Result<(), io::Error> {
+    pub fn drain(&mut self, source: &mut popol::Source) -> Result<(), io::Error> {
         while let Some(msg) = self.queue.pop_front() {
             match self.write(&msg) {
-                Ok(n) => {
-                    inputs.push_back(Input::Sent(self.address, n));
+                Ok(_n) => {
+                    // TODO: Keep count of bytes written.
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     source.set(popol::interest::WRITE);

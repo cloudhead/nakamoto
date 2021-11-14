@@ -68,12 +68,8 @@ impl Client {
         }
     }
 
-    pub fn step(&mut self, input: protocol::Input, local_time: LocalTime) -> Vec<protocol::Out> {
-        use nakamoto_p2p::traits::Protocol as _;
-
+    pub fn step(&mut self) -> Vec<protocol::Out> {
         let mut outputs = Vec::new();
-
-        self.protocol.step(input, local_time);
 
         for out in self.outputs.try_iter() {
             match out {
@@ -255,6 +251,6 @@ impl Handle for TestHandle {
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {
-        self.command(Command::Shutdown)
+        Ok(())
     }
 }

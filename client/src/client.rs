@@ -164,6 +164,7 @@ pub struct Client<R: Reactor<Publisher>> {
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
+    shutdown: chan::Sender<()>,
 
     reactor: R,
 }
@@ -205,7 +206,8 @@ impl<R: Reactor<Publisher>> Client<R> {
             .register(filters_pub)
             .register(publisher);
 
-        let reactor = R::new(publisher, commands)?;
+        let (shutdown, shutdown_recv) = chan::bounded(1);
+        let reactor = R::new(publisher, commands, shutdown_recv)?;
 
         Ok(Self {
             events,
@@ -215,6 +217,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             blocks,
             filters,
             subscriber,
+            shutdown,
         })
     }
 
@@ -384,6 +387,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
             subscriber: self.subscriber.clone(),
+            shutdown: self.shutdown.clone(),
         }
     }
 }
@@ -398,6 +402,7 @@ pub struct Handle<R: Reactor<Publisher>> {
     subscriber: event::Subscriber<Event>,
     waker: R::Waker,
     timeout: time::Duration,
+    shutdown: chan::Sender<()>,
 }
 
 impl<R: Reactor<Publisher>> Clone for Handle<R>
@@ -414,6 +419,7 @@ where
             subscriber: self.subscriber.clone(),
             timeout: self.timeout,
             waker: self.waker.clone(),
+            shutdown: self.shutdown.clone(),
         }
     }
 }
@@ -694,7 +700,8 @@ where
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {
-        self.command(Command::Shutdown)?;
+        self.shutdown.send(())?;
+        R::wake(&self.waker)?;
 
         Ok(())
     }

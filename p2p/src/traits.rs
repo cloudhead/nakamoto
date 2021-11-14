@@ -1,12 +1,13 @@
 //! P2P related traits.
 use std::{io, net};
 
+use nakamoto_common::bitcoin::network::message::RawNetworkMessage;
 use nakamoto_common::block::time::LocalTime;
 
 use crate::error::Error;
 use crate::protocol::channel::chan;
 use crate::protocol::event::Publisher;
-use crate::protocol::{Command, Input, Out};
+use crate::protocol::{Command, DisconnectReason, Link, Out};
 
 /// A protocol state-machine.
 ///
@@ -19,8 +20,29 @@ pub trait Protocol {
         // and the sea-harvest of shells and tangle and veiled grey sunlight and gayclad lightclad
         // figures of children and girls and voices childish and girlish in the air." -JJ
     }
-    /// Process the next input and advance the state machine by one step.
-    fn step(&mut self, input: Input, local_time: LocalTime);
+    /// Received a message from a peer.
+    fn received(&mut self, addr: &net::SocketAddr, msg: RawNetworkMessage);
+    /// Connection attempt underway.
+    ///
+    /// This is only encountered when an outgoing connection attempt is made,
+    /// and is always called before [`Protocol::connected`].
+    ///
+    /// For incoming connections, [`Protocol::connected`] is called directly.
+    fn attempted(&mut self, addr: &net::SocketAddr);
+    /// New connection with a peer.
+    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link);
+    /// Disconnected from peer.
+    fn disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason);
+    /// An external command has been received.
+    fn command(&mut self, cmd: Command);
+    /// Used to update the protocol's internal clock.
+    ///
+    /// "a regular short, sharp sound, especially that made by a clock or watch, typically
+    /// every second."
+    fn tick(&mut self, local_time: LocalTime);
+    /// Used to advance the state machine after some wall time has passed, typically
+    /// after a timer rings.
+    fn tock(&mut self, local_time: LocalTime);
 }
 
 /// Any network reactor that can drive the light-client protocol.
@@ -29,8 +51,12 @@ pub trait Reactor<E: Publisher> {
     type Waker: Send + Clone;
 
     /// Create a new reactor, initializing it with a publisher for protocol events,
-    /// a channel to receive commands, and a context.
-    fn new(publisher: E, commands: chan::Receiver<Command>) -> Result<Self, io::Error>
+    /// a channel to receive commands, and a channel to shut it down.
+    fn new(
+        publisher: E,
+        commands: chan::Receiver<Command>,
+        shutdown: chan::Receiver<()>,
+    ) -> Result<Self, io::Error>
     where
         E: Publisher,
         Self: Sized;

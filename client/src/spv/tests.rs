@@ -52,8 +52,9 @@ use nakamoto_test::block::gen;
 use nakamoto_test::logger;
 
 use p2p::protocol::{syncmgr, Command, DisconnectReason};
+use p2p::traits::Protocol as _;
 
-use super::p2p::protocol::{cbfmgr, invmgr, Input, Link};
+use super::p2p::protocol::{cbfmgr, invmgr, Link};
 use super::utxos::Utxos;
 use super::Event;
 use super::*;
@@ -68,17 +69,12 @@ fn test_peer_connected_disconnected() {
     let handle = client.handle();
     let remote = ([44, 44, 44, 44], 8333).into();
     let local_addr = ([0, 0, 0, 0], 16333).into();
-    let local_time = LocalTime::now();
     let events = handle.subscribe();
 
-    client.step(
-        Input::Connected {
-            addr: remote,
-            local_addr,
-            link: Link::Inbound,
-        },
-        local_time,
-    );
+    client
+        .protocol
+        .connected(remote, &local_addr, Link::Inbound);
+    client.step();
 
     assert_matches!(
         events.try_recv(),
@@ -86,13 +82,11 @@ fn test_peer_connected_disconnected() {
         if addr == remote && link == Link::Inbound
     );
 
-    client.step(
-        Input::Disconnected(
-            remote,
-            DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
-        ),
-        local_time,
+    client.protocol.disconnected(
+        &remote,
+        DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
     );
+    client.step();
 
     assert_matches!(
         events.try_recv(),
@@ -107,21 +101,19 @@ fn test_peer_connection_failed() {
     let mut client = mock::Client::new(network);
     let handle = client.handle();
     let remote = ([44, 44, 44, 44], 8333).into();
-    let local_time = LocalTime::now();
     let events = handle.subscribe();
 
-    client.step(Input::Command(Command::Connect(remote)), local_time);
-    client.step(Input::Connecting { addr: remote }, local_time);
+    client.protocol.command(Command::Connect(remote));
+    client.protocol.attempted(&remote);
+    client.step();
 
     assert_matches!(events.try_recv(), Err(_));
 
-    client.step(
-        Input::Disconnected(
-            remote,
-            DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
-        ),
-        local_time,
+    client.protocol.disconnected(
+        &remote,
+        DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
     );
+    client.step();
 
     assert_matches!(
         events.try_recv(),
@@ -145,14 +137,10 @@ fn test_peer_negotiated() {
     let local_addr = ([0, 0, 0, 0], 16333).into();
     let events = handle.subscribe();
 
-    client.step(
-        Input::Connected {
-            addr: remote,
-            local_addr,
-            link: Link::Inbound,
-        },
-        local_time,
-    );
+    client
+        .protocol
+        .connected(remote, &local_addr, Link::Inbound);
+    client.step();
 
     let version = NetworkMessage::Version(VersionMessage {
         version: protocol::MIN_PROTOCOL_VERSION,
@@ -166,26 +154,21 @@ fn test_peer_negotiated() {
         relay: false,
     });
 
-    client.step(
-        Input::Received(
-            remote,
-            RawNetworkMessage {
-                magic: network.magic(),
-                payload: version,
-            },
-        ),
-        local_time,
+    client.protocol.received(
+        &remote,
+        RawNetworkMessage {
+            magic: network.magic(),
+            payload: version,
+        },
     );
-    client.step(
-        Input::Received(
-            remote,
-            RawNetworkMessage {
-                magic: network.magic(),
-                payload: NetworkMessage::Verack,
-            },
-        ),
-        local_time,
+    client.protocol.received(
+        &remote,
+        RawNetworkMessage {
+            magic: network.magic(),
+            payload: NetworkMessage::Verack,
+        },
     );
+    client.step();
 
     assert_matches!(events.try_recv(), Ok(Event::PeerConnected { .. }));
     assert_matches!(

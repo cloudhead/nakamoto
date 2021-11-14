@@ -171,15 +171,6 @@ impl Link {
     }
 }
 
-/// Fee estimation strategy.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum FeeEstimation {
-    /// High-bandwidth high precision fee estimate.
-    Conservative,
-    /// Low-bandwidth rough fee estimate. Best for mobile use.
-    Economical,
-}
-
 /// A command or request that can be sent to the protocol.
 #[derive(Clone)]
 pub enum Command {
@@ -227,8 +218,6 @@ pub enum Command {
         Transaction,
         chan::Sender<Result<NonEmpty<PeerId>, CommandError>>,
     ),
-    /// Shutdown the protocol.
-    Shutdown,
 }
 
 impl fmt::Debug for Command {
@@ -250,7 +239,6 @@ impl fmt::Debug for Command {
             Self::ImportHeaders(_headers, _) => write!(f, "ImportHeaders(..)"),
             Self::ImportAddresses(addrs) => write!(f, "ImportAddresses({:?})", addrs),
             Self::SubmitTransaction(tx, _) => write!(f, "SubmitTransaction({:?})", tx),
-            Self::Shutdown => write!(f, "Shutdown"),
         }
     }
 }
@@ -265,44 +253,6 @@ pub enum CommandError {
 
 pub use cbfmgr::GetFiltersError;
 
-/// A protocol input event, parametrized over the network message type.
-/// These are input events generated outside of the protocol.
-#[derive(Debug, Clone)]
-pub enum Input {
-    /// Connection attempt underway.
-    ///
-    /// This input is only encountered when an outgoing connection attempt is made,
-    /// and is always received before the `Connected` input.
-    ///
-    /// For incoming connections, the `Connected` input is received directly.
-    Connecting {
-        /// Remote peer address.
-        addr: net::SocketAddr,
-    },
-    /// New connection with a peer.
-    Connected {
-        /// Remote peer id.
-        addr: PeerId,
-        /// Local peer id.
-        local_addr: PeerId,
-        /// Link direction.
-        link: Link,
-    },
-    /// Disconnected from peer.
-    Disconnected(PeerId, DisconnectReason),
-    /// Received a message from a remote peer.
-    Received(PeerId, RawNetworkMessage),
-    /// Sent a message to a remote peer, of the given size.
-    Sent(PeerId, usize),
-    /// An external command has been received.
-    Command(Command),
-    /// Used to advance the state machine after some wall time has passed.
-    ///
-    /// "a regular short, sharp sound, especially that made by a clock or watch, typically
-    /// every second."
-    Tick,
-}
-
 /// Output of a state transition (step) of the `Protocol` state machine.
 #[derive(Debug)]
 pub enum Out {
@@ -316,8 +266,6 @@ pub enum Out {
     SetTimeout(Timeout),
     /// An event has occurred.
     Event(Event),
-    /// Shutdown protocol.
-    Shutdown,
 }
 
 impl From<Event> for Out {
@@ -734,84 +682,57 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         }
     }
 
-    fn tick(&mut self, local_time: LocalTime) {
-        // The local time is set from outside the protocol.
-        self.clock.set_local_time(local_time);
+    fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
+        // TODO: Trigger disconnection everywhere, as if peer disconnected. This
+        // avoids being in a state where we know a peer is about to get disconnected,
+        // but we still process messages from it as normal.
 
-        #[cfg(not(test))]
-        if local_time - self.last_tick >= LocalDuration::from_secs(10) {
-            let (tip, _) = self.tree.tip();
-            let height = self.tree.height();
-            let best = self
-                .syncmgr
-                .best_height()
-                .unwrap_or_else(|| self.tree.height());
-            let sync = if best > 0 {
-                height as f64 / best as f64 * 100.
-            } else {
-                0.
-            };
-            let outbound = self.peermgr.negotiated(Link::Outbound).count();
-            let inbound = self.peermgr.negotiated(Link::Inbound).count();
-            let connecting = self.peermgr.connecting().count();
-            let target = self.peermgr.config.target_outbound_peers;
-            let max_inbound = self.peermgr.config.max_inbound_peers;
-            let addresses = self.addrmgr.len();
-            let preferred = self
-                .peermgr
-                .negotiated(Link::Outbound)
-                .filter(|(p, _)| p.services.has(self.peermgr.config.preferred_services))
-                .count();
+        self.peermgr.disconnect(addr, reason);
+    }
+}
 
-            // TODO: Add cache sizes on disk
-            // TODO: Add protocol state(s)
-            // TODO: Trim block hash
-            // TODO: Add average headers/s or bandwidth
-
-            let mut msg = Vec::new();
-
-            msg.push(format!("tip = {}", tip));
-            msg.push(format!("headers = {}/{} ({:.1}%)", height, best, sync));
-            msg.push(format!(
-                "cfheaders = {}/{}",
-                self.cbfmgr.filters.height(),
-                height
-            ));
-            msg.push(format!("inbound = {}/{}", inbound, max_inbound));
-            msg.push(format!(
-                "outbound = {}/{} ({})",
-                outbound, target, preferred,
-            ));
-            msg.push(format!("connecting = {}/{}", connecting, target));
-            msg.push(format!("addresses = {}", addresses));
-
-            log::info!("{}", msg.join(", "));
-
-            if self.cbfmgr.rescan.active {
-                let rescan = &self.cbfmgr.rescan;
-                log::info!(
-                    "rescan current = {}, watch = {}, txs = {}, filter queue = {}, requested = {}",
-                    rescan.current,
-                    rescan.watch.len(),
-                    rescan.transactions.len(),
-                    rescan.received.len(),
-                    rescan.requested.len()
-                );
-            }
-            log::info!(
-                "inventory block queue = {}, requested = {}, mempool = {}",
-                self.invmgr.received.len(),
-                self.invmgr.remaining.len(),
-                self.invmgr.mempool.len(),
-            );
-
-            self.last_tick = local_time;
-        }
+impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
+    fn initialize(&mut self, time: LocalTime) {
+        self.clock.set_local_time(time);
+        self.addrmgr.initialize(time);
+        self.syncmgr.initialize(time, &self.tree);
+        self.peermgr.initialize(time, &mut self.addrmgr);
+        self.cbfmgr.initialize(time, &self.tree);
     }
 
-    fn receive(&mut self, addr: PeerId, msg: RawNetworkMessage) {
+    fn attempted(&mut self, addr: &net::SocketAddr) {
+        self.addrmgr.peer_attempted(addr, self.clock.local_time());
+        self.peermgr.peer_attempted(addr);
+    }
+
+    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link) {
+        let height = self.tree.height();
+        let local_time = self.clock.local_time();
+
+        self.addrmgr.record_local_address(*local_addr);
+        self.addrmgr.peer_connected(&addr, local_time);
+        self.peermgr
+            .peer_connected(addr, *local_addr, link, height, local_time);
+    }
+
+    fn disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
+        let local_time = self.clock.local_time();
+
+        info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
+
+        self.cbfmgr.peer_disconnected(&addr);
+        self.syncmgr.peer_disconnected(&addr);
+        self.addrmgr.peer_disconnected(&addr, reason.clone());
+        self.pingmgr.peer_disconnected(&addr);
+        self.peermgr
+            .peer_disconnected(&addr, &mut self.addrmgr, local_time, reason);
+        self.invmgr.peer_disconnected(&addr);
+    }
+
+    fn received(&mut self, addr: &net::SocketAddr, msg: RawNetworkMessage) {
         let now = self.clock.local_time();
         let cmd = msg.cmd();
+        let addr = *addr;
 
         if msg.magic != self.network.magic() {
             return self.disconnect(addr, DisconnectReason::PeerMagic(msg.magic));
@@ -982,175 +903,191 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         }
     }
 
-    fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
-        // TODO: Trigger disconnection everywhere, as if peer disconnected. This
-        // avoids being in a state where we know a peer is about to get disconnected,
-        // but we still process messages from it as normal.
+    fn command(&mut self, cmd: Command) {
+        debug!(target: self.target, "Received command: {:?}", cmd);
 
-        self.peermgr.disconnect(addr, reason);
-    }
-}
-
-impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
-    fn initialize(&mut self, time: LocalTime) {
-        self.clock.set_local_time(time);
-        self.addrmgr.initialize(time);
-        self.syncmgr.initialize(time, &self.tree);
-        self.peermgr.initialize(time, &mut self.addrmgr);
-        self.cbfmgr.initialize(time, &self.tree);
-    }
-
-    fn step(&mut self, input: Input, local_time: LocalTime) {
-        self.tick(local_time);
-
-        match input {
-            Input::Connecting { addr } => {
-                self.addrmgr.peer_attempted(&addr, local_time);
-                self.peermgr.peer_attempted(&addr);
+        match cmd {
+            Command::QueryTree(query) => {
+                query(&self.tree);
             }
-            Input::Connected {
-                addr,
-                local_addr,
-                link,
-            } => {
-                let height = self.tree.height();
-                // This is usually not that useful, except when our local address is actually the
-                // address our peers see.
-                self.addrmgr.record_local_address(local_addr);
-                self.addrmgr.peer_connected(&addr, local_time);
-                self.peermgr
-                    .peer_connected(addr, local_addr, link, height, local_time);
+            Command::GetBlockByHeight(height, reply) => {
+                let header = self.tree.get_block_by_height(height).map(|h| h.to_owned());
+
+                reply.send(header).ok();
             }
-            Input::Disconnected(addr, reason) => {
-                info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
+            Command::GetPeers(services, reply) => {
+                let peers = self
+                    .peermgr
+                    .peers()
+                    .filter(|(p, _)| p.is_negotiated())
+                    .filter(|(p, _)| p.services.has(services))
+                    .map(Peer::from)
+                    .collect::<Vec<Peer>>();
 
-                self.cbfmgr.peer_disconnected(&addr);
-                self.syncmgr.peer_disconnected(&addr);
-                self.addrmgr.peer_disconnected(&addr, reason.clone());
-                self.pingmgr.peer_disconnected(&addr);
-                self.peermgr
-                    .peer_disconnected(&addr, &mut self.addrmgr, local_time, reason);
-                self.invmgr.peer_disconnected(&addr);
+                reply.send(peers).ok();
             }
-            Input::Received(addr, msg) => {
-                self.upstream
-                    .event(Event::Received(addr, msg.payload.clone()));
-                self.receive(addr, msg);
+            Command::Connect(addr) => {
+                self.peermgr.whitelist(addr);
+                self.peermgr.connect(&addr, self.clock.local_time());
             }
-            Input::Sent(_addr, _msg) => {}
-            Input::Command(cmd) => {
-                debug!(target: self.target, "Received command: {:?}", cmd);
+            Command::Disconnect(addr) => {
+                self.disconnect(addr, DisconnectReason::Command);
+            }
+            Command::Query(msg, reply) => {
+                reply.send(self.query(msg, |_| true)).ok();
+            }
+            Command::Broadcast(msg, predicate, reply) => {
+                let peers = self.broadcast(msg, |p| predicate(p.clone()));
+                reply.send(peers).ok();
+            }
+            Command::ImportHeaders(headers, reply) => {
+                let result =
+                    self.syncmgr
+                        .import_blocks(headers.into_iter(), &self.clock, &mut self.tree);
 
-                match cmd {
-                    Command::QueryTree(query) => {
-                        query(&self.tree);
+                match result {
+                    Ok(import_result) => {
+                        reply.send(Ok(import_result)).ok();
                     }
-                    Command::GetBlockByHeight(height, reply) => {
-                        let header = self.tree.get_block_by_height(height).map(|h| h.to_owned());
-
-                        reply.send(header).ok();
-                    }
-                    Command::GetPeers(services, reply) => {
-                        let peers = self
-                            .peermgr
-                            .peers()
-                            .filter(|(p, _)| p.is_negotiated())
-                            .filter(|(p, _)| p.services.has(services))
-                            .map(Peer::from)
-                            .collect::<Vec<Peer>>();
-
-                        reply.send(peers).ok();
-                    }
-                    Command::Connect(addr) => {
-                        self.peermgr.whitelist(addr);
-                        self.peermgr.connect(&addr, local_time);
-                    }
-                    Command::Disconnect(addr) => {
-                        self.disconnect(addr, DisconnectReason::Command);
-                    }
-                    Command::Query(msg, reply) => {
-                        reply.send(self.query(msg, |_| true)).ok();
-                    }
-                    Command::Broadcast(msg, predicate, reply) => {
-                        let peers = self.broadcast(msg, |p| predicate(p.clone()));
-                        reply.send(peers).ok();
-                    }
-                    Command::ImportHeaders(headers, reply) => {
-                        let result = self.syncmgr.import_blocks(
-                            headers.into_iter(),
-                            &self.clock,
-                            &mut self.tree,
-                        );
-
-                        match result {
-                            Ok(import_result) => {
-                                reply.send(Ok(import_result)).ok();
-                            }
-                            Err(err) => {
-                                reply.send(Err(err)).ok();
-                            }
-                        }
-                    }
-                    Command::ImportAddresses(addrs) => {
-                        self.addrmgr.insert(
-                            // Nb. For imported addresses, the time last active is not relevant.
-                            addrs.into_iter().map(|a| (BlockTime::default(), a)),
-                            peer::Source::Imported,
-                        );
-                    }
-                    Command::GetTip(reply) => {
-                        let (_, header) = self.tree.tip();
-                        let height = self.tree.height();
-
-                        reply.send((height, header)).ok();
-                    }
-                    Command::GetFilters(range, reply) => {
-                        let result = self.cbfmgr.get_cfilters(range, &self.tree);
-                        reply.send(result).ok();
-                    }
-                    Command::GetBlock(hash) => {
-                        self.invmgr.get_block(hash);
-                    }
-                    Command::SubmitTransaction(tx, reply) => {
-                        // Update local watchlist to track submitted transactions.
-                        //
-                        // Nb. This is currently non-optimal, as the cfilter matching is based on the
-                        // output scripts. This may trigger false-positives, since the same
-                        // invoice (address) can be re-used by multiple transactions, ie. outputs
-                        // can figure in more than one block.
-                        self.cbfmgr.watch_transaction(&tx);
-
-                        // TODO: For BIP 339 support, we can send a `WTx` inventory here.
-                        let peers = self.invmgr.announce(tx);
-
-                        if let Some(peers) = NonEmpty::from_vec(peers) {
-                            reply.send(Ok(peers)).ok();
-                        } else {
-                            reply.send(Err(CommandError::NotConnected)).ok();
-                        }
-                    }
-                    Command::Rescan { from, to, watch } => {
-                        // A rescan with a new watch list may return matches on cached filters.
-                        for (_, hash) in self.cbfmgr.rescan(from, to, watch, &self.tree) {
-                            self.invmgr.get_block(hash);
-                        }
-                    }
-                    Command::Shutdown => {
-                        self.upstream.push(Out::Shutdown);
+                    Err(err) => {
+                        reply.send(Err(err)).ok();
                     }
                 }
             }
-            Input::Tick => {
-                trace!(target: self.target, "Received tick");
-
-                self.invmgr.received_tick(local_time, &self.tree);
-                self.syncmgr.received_tick(local_time, &self.tree);
-                self.pingmgr.received_tick(local_time);
-                self.addrmgr.received_tick(local_time);
-                self.peermgr.received_tick(local_time, &mut self.addrmgr);
-                self.cbfmgr.received_tick(local_time, &self.tree);
+            Command::ImportAddresses(addrs) => {
+                self.addrmgr.insert(
+                    // Nb. For imported addresses, the time last active is not relevant.
+                    addrs.into_iter().map(|a| (BlockTime::default(), a)),
+                    peer::Source::Imported,
+                );
             }
-        };
+            Command::GetTip(reply) => {
+                let (_, header) = self.tree.tip();
+                let height = self.tree.height();
+
+                reply.send((height, header)).ok();
+            }
+            Command::GetFilters(range, reply) => {
+                let result = self.cbfmgr.get_cfilters(range, &self.tree);
+                reply.send(result).ok();
+            }
+            Command::GetBlock(hash) => {
+                self.invmgr.get_block(hash);
+            }
+            Command::SubmitTransaction(tx, reply) => {
+                // Update local watchlist to track submitted transactions.
+                //
+                // Nb. This is currently non-optimal, as the cfilter matching is based on the
+                // output scripts. This may trigger false-positives, since the same
+                // invoice (address) can be re-used by multiple transactions, ie. outputs
+                // can figure in more than one block.
+                self.cbfmgr.watch_transaction(&tx);
+
+                // TODO: For BIP 339 support, we can send a `WTx` inventory here.
+                let peers = self.invmgr.announce(tx);
+
+                if let Some(peers) = NonEmpty::from_vec(peers) {
+                    reply.send(Ok(peers)).ok();
+                } else {
+                    reply.send(Err(CommandError::NotConnected)).ok();
+                }
+            }
+            Command::Rescan { from, to, watch } => {
+                // A rescan with a new watch list may return matches on cached filters.
+                for (_, hash) in self.cbfmgr.rescan(from, to, watch, &self.tree) {
+                    self.invmgr.get_block(hash);
+                }
+            }
+        }
+    }
+
+    fn tick(&mut self, local_time: LocalTime) {
+        trace!(target: self.target, "Received tick");
+
+        self.clock.set_local_time(local_time);
+    }
+
+    fn tock(&mut self, local_time: LocalTime) {
+        self.clock.set_local_time(local_time);
+
+        trace!(target: self.target, "Received tock");
+
+        self.invmgr.received_tick(local_time, &self.tree);
+        self.syncmgr.received_tick(local_time, &self.tree);
+        self.pingmgr.received_tick(local_time);
+        self.addrmgr.received_tick(local_time);
+        self.peermgr.received_tick(local_time, &mut self.addrmgr);
+        self.cbfmgr.received_tick(local_time, &self.tree);
+
+        #[cfg(not(test))]
+        if local_time - self.last_tick >= LocalDuration::from_secs(10) {
+            let (tip, _) = self.tree.tip();
+            let height = self.tree.height();
+            let best = self
+                .syncmgr
+                .best_height()
+                .unwrap_or_else(|| self.tree.height());
+            let sync = if best > 0 {
+                height as f64 / best as f64 * 100.
+            } else {
+                0.
+            };
+            let outbound = self.peermgr.negotiated(Link::Outbound).count();
+            let inbound = self.peermgr.negotiated(Link::Inbound).count();
+            let connecting = self.peermgr.connecting().count();
+            let target = self.peermgr.config.target_outbound_peers;
+            let max_inbound = self.peermgr.config.max_inbound_peers;
+            let addresses = self.addrmgr.len();
+            let preferred = self
+                .peermgr
+                .negotiated(Link::Outbound)
+                .filter(|(p, _)| p.services.has(self.peermgr.config.preferred_services))
+                .count();
+
+            // TODO: Add cache sizes on disk
+            // TODO: Add protocol state(s)
+            // TODO: Trim block hash
+            // TODO: Add average headers/s or bandwidth
+
+            let mut msg = Vec::new();
+
+            msg.push(format!("tip = {}", tip));
+            msg.push(format!("headers = {}/{} ({:.1}%)", height, best, sync));
+            msg.push(format!(
+                "cfheaders = {}/{}",
+                self.cbfmgr.filters.height(),
+                height
+            ));
+            msg.push(format!("inbound = {}/{}", inbound, max_inbound));
+            msg.push(format!(
+                "outbound = {}/{} ({})",
+                outbound, target, preferred,
+            ));
+            msg.push(format!("connecting = {}/{}", connecting, target));
+            msg.push(format!("addresses = {}", addresses));
+
+            log::info!("{}", msg.join(", "));
+
+            if self.cbfmgr.rescan.active {
+                let rescan = &self.cbfmgr.rescan;
+                log::info!(
+                    "rescan current = {}, watch = {}, txs = {}, filter queue = {}, requested = {}",
+                    rescan.current,
+                    rescan.watch.len(),
+                    rescan.transactions.len(),
+                    rescan.received.len(),
+                    rescan.requested.len()
+                );
+            }
+            log::info!(
+                "inventory block queue = {}, requested = {}, mempool = {}",
+                self.invmgr.received.len(),
+                self.invmgr.remaining.len(),
+                self.invmgr.mempool.len(),
+            );
+
+            self.last_tick = local_time;
+        }
     }
 }
 

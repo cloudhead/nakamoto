@@ -1,3 +1,5 @@
+use std::ops::{Deref, DerefMut};
+
 use super::*;
 
 use nakamoto_common::bitcoin::consensus::Params;
@@ -64,30 +66,24 @@ impl PeerDummy {
 pub struct Peer<P> {
     pub protocol: P,
     pub upstream: chan::Receiver<Out>,
-    pub time: LocalTime,
     pub addr: PeerId,
     pub cfg: Config,
 
+    time: LocalTime,
     initialized: bool,
 }
 
-impl Peer<Protocol> {
-    pub fn step(&mut self, input: Input) {
-        self.initialize();
-        self.protocol.step(input, self.time)
+impl<P> Deref for Peer<P> {
+    type Target = P;
+
+    fn deref(&self) -> &P {
+        &self.protocol
     }
+}
 
-    pub fn tick(&mut self) {
-        self.protocol.step(Input::Tick, self.time);
-    }
-
-    pub fn initialize(&mut self) {
-        if !self.initialized {
-            info!(target: self.cfg.target, "Initializing: address = {}", self.addr);
-
-            self.initialized = true;
-            self.protocol.initialize(self.time);
-        }
+impl<P> DerefMut for Peer<P> {
+    fn deref_mut(&mut self) -> &mut P {
+        &mut self.protocol
     }
 }
 
@@ -168,6 +164,24 @@ impl Peer<Protocol> {
         }
     }
 
+    pub fn initialize(&mut self) {
+        if !self.initialized {
+            info!(target: self.cfg.target, "Initializing: address = {}", self.addr);
+
+            self.initialized = true;
+            self.protocol.initialize(self.time);
+        }
+    }
+
+    pub fn tick(&mut self, local_time: LocalTime) {
+        self.time = local_time;
+        self.protocol.tick(local_time);
+    }
+
+    pub fn local_time(&self) -> LocalTime {
+        self.protocol.clock.local_time()
+    }
+
     pub fn connect_addr(&mut self, addr: &PeerId, link: Link) {
         self.connect(
             &PeerDummy {
@@ -176,14 +190,19 @@ impl Peer<Protocol> {
                 protocol_version: self.protocol.protocol_version,
                 services: cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
                 relay: true,
-                time: self.time,
+                time: self.local_time(),
             },
             link,
         );
     }
 
-    pub fn command(&mut self, cmd: Command) {
-        self.protocol.step(Input::Command(cmd), self.time);
+    pub fn elapse(&mut self, duration: LocalDuration) {
+        self.time.elapse(duration);
+        self.protocol.tock(self.time);
+    }
+
+    pub fn tock(&mut self) {
+        self.protocol.tock(self.time);
     }
 
     pub fn outputs(&mut self) -> impl Iterator<Item = Out> + '_ {
@@ -204,16 +223,13 @@ impl Peer<Protocol> {
         })
     }
 
-    pub fn receive(&mut self, remote: net::SocketAddr, payload: NetworkMessage) {
-        self.protocol.step(
-            Input::Received(
-                remote,
-                RawNetworkMessage {
-                    magic: self.protocol.network.magic(),
-                    payload,
-                },
-            ),
-            self.time,
+    pub fn received(&mut self, remote: net::SocketAddr, payload: NetworkMessage) {
+        self.protocol.received(
+            &remote,
+            RawNetworkMessage {
+                magic: self.protocol.network.magic(),
+                payload,
+            },
         );
     }
 
@@ -227,29 +243,19 @@ impl Peer<Protocol> {
         let local = self.addr;
         let msg = message::Builder::new(self.protocol.network);
         let rng = self.protocol.rng.clone();
-        let time = self.time;
+        let time = self.local_time();
 
         if link.is_outbound() {
             self.protocol.peermgr.connect(&remote.addr, time);
         }
 
         // Initiate connection.
-        self.protocol.step(
-            Input::Connected {
-                addr: remote.addr,
-                local_addr: local,
-                link,
-            },
-            time,
-        );
+        self.protocol.connected(remote.addr, &local, link);
 
         // Receive `version`.
-        self.protocol.step(
-            Input::Received(
-                remote.addr,
-                msg.raw(NetworkMessage::Version(remote.version(local, rng.u64(..)))),
-            ),
-            time,
+        self.protocol.received(
+            &remote.addr,
+            msg.raw(NetworkMessage::Version(remote.version(local, rng.u64(..)))),
         );
 
         // Expect `version` to be sent in response.
@@ -287,10 +293,7 @@ impl Peer<Protocol> {
             .expect("`verack` should be sent");
 
         // Receive `verack`.
-        self.protocol.step(
-            Input::Received(remote.addr, msg.raw(NetworkMessage::Verack)),
-            time,
-        );
+        self.received(remote.addr, NetworkMessage::Verack);
 
         // Expect hanshake event.
         self.upstream

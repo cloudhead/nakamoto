@@ -14,6 +14,31 @@ pub const MIN_LATENCY: LocalDuration = LocalDuration::from_millis(1);
 /// The simulator requires each peer to have a distinct IP address.
 type NodeId = std::net::IpAddr;
 
+/// Simulated protocol input.
+#[derive(Debug, Clone)]
+pub enum Input {
+    /// Connection attempt underway.
+    Connecting {
+        /// Remote peer address.
+        addr: net::SocketAddr,
+    },
+    /// New connection with a peer.
+    Connected {
+        /// Remote peer id.
+        addr: PeerId,
+        /// Local peer id.
+        local_addr: PeerId,
+        /// Link direction.
+        link: Link,
+    },
+    /// Disconnected from peer.
+    Disconnected(PeerId, DisconnectReason),
+    /// Received a message from a remote peer.
+    Received(PeerId, RawNetworkMessage),
+    /// Used to advance the state machine after some wall time has passed.
+    Tock,
+}
+
 /// A scheduled protocol input.
 #[derive(Debug, Clone)]
 pub struct Scheduled {
@@ -29,7 +54,6 @@ pub struct Scheduled {
 impl fmt::Display for Scheduled {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.input {
-            Input::Sent(to, msg) => write!(f, "{} -> {}: {:?}", self.node, to, msg),
             Input::Received(from, msg) => {
                 let s = match &msg.payload {
                     NetworkMessage::Headers(vec) => {
@@ -64,11 +88,8 @@ impl fmt::Display for Scheduled {
             Input::Disconnected(addr, reason) => {
                 write!(f, "{} =/= {}: Disconnected: {}", self.node, addr, reason)
             }
-            Input::Tick => {
-                write!(f, "{}: Tick", self.node)
-            }
-            _ => {
-                write!(f, "{:?}", self)
+            Input::Tock => {
+                write!(f, "{}: Tock", self.node)
             }
         }
     }
@@ -83,12 +104,6 @@ pub struct Inbox {
 }
 
 impl Inbox {
-    /// Iterate over all scheduled inputs.
-    #[allow(dead_code)]
-    pub fn iter(&self) -> impl Iterator<Item = &Scheduled> {
-        self.messages.values()
-    }
-
     /// Add a scheduled input to the inbox.
     fn insert(&mut self, mut time: LocalTime, msg: Scheduled) {
         // Make sure we don't overwrite an existing message by using the same time slot.
@@ -190,7 +205,7 @@ impl Simulation {
         self.inbox
             .messages
             .iter()
-            .all(|(_, s)| matches!(s.input, Input::Tick))
+            .all(|(_, s)| matches!(s.input, Input::Tock))
     }
 
     /// Get the latency between two nodes. The minimum latency between nodes is 1 millisecond.
@@ -275,7 +290,7 @@ impl Simulation {
 
         if let Some((time, next)) = self.inbox.next() {
             let elapsed = (time - self.start_time).as_millis();
-            if matches!(next.input, Input::Tick) {
+            if matches!(next.input, Input::Tock) {
                 trace!(target: "sim", "{:05} {}", elapsed, next);
             } else {
                 info!(target: "sim", "{:05} {} ({})", elapsed, next, self.inbox.messages.len());
@@ -302,7 +317,21 @@ impl Simulation {
                     }
 
                     if let Some(ref mut p) = nodes.get_mut(&node) {
-                        p.protocol.step(input, self.time);
+                        p.protocol.tick(time);
+
+                        match input {
+                            Input::Connecting { addr } => p.protocol.attempted(&addr),
+                            Input::Connected {
+                                addr,
+                                local_addr,
+                                link,
+                            } => p.protocol.connected(addr, &local_addr, link),
+                            Input::Disconnected(addr, reason) => {
+                                p.protocol.disconnected(&addr, reason)
+                            }
+                            Input::Tock => p.protocol.tock(self.time),
+                            Input::Received(addr, msg) => p.protocol.received(&addr, msg),
+                        }
                         for o in p.upstream.try_iter() {
                             self.schedule(&node, o);
                         }
@@ -474,15 +503,12 @@ impl Simulation {
                         node,
                         // The remote is not applicable for this type of output.
                         remote: ([0, 0, 0, 0], 0).into(),
-                        input: Input::Tick,
+                        input: Input::Tock,
                     },
                 );
             }
             Out::Event(_) => {
                 // Ignored.
-            }
-            Out::Shutdown => {
-                unimplemented! {}
             }
         }
     }
