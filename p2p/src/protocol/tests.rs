@@ -14,7 +14,7 @@ use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
     chan, message, AdjustedTime, BlockHash, BlockHeader, Command, Config, DisconnectReason, Event,
-    HashSet, Height, Link, LocalDuration, LocalTime, Network, NetworkMessage, Out, PeerId,
+    HashSet, Height, Io, Link, LocalDuration, LocalTime, Network, NetworkMessage, PeerId,
     RawNetworkMessage, ServiceFlags, VersionMessage,
 };
 use super::{PROTOCOL_VERSION, USER_AGENT};
@@ -147,7 +147,7 @@ fn test_idle_disconnect() {
     peer.elapse(pingmgr::PING_INTERVAL);
     peer.outputs()
         .find(|o| {
-            matches!(o, Out::Message(
+            matches!(o, Io::Message(
                 addr,
                 RawNetworkMessage {
                     payload: NetworkMessage::Ping(_), ..
@@ -161,7 +161,7 @@ fn test_idle_disconnect() {
     // Peer now decides to disconnect remote.
     peer.outputs()
         .find(|o| {
-            matches!(o, Out::Disconnect(
+            matches!(o, Io::Disconnect(
                 addr,
                 DisconnectReason::PeerTimeout("ping")
             ) if addr == &remote)
@@ -188,7 +188,7 @@ fn test_inv_getheaders() {
         .find(|o| matches!(o, (_, NetworkMessage::GetHeaders(_))))
         .expect("a `getheaders` message should be returned");
     peer.outputs()
-        .find(|o| matches!(o, Out::SetTimeout(_)))
+        .find(|o| matches!(o, Io::Wakeup(_)))
         .expect("a timer should be returned");
 }
 
@@ -209,7 +209,7 @@ fn test_bad_magic() {
     );
 
     peer.outputs()
-        .find(|o| matches!(o, Out::Disconnect(addr, DisconnectReason::PeerMagic(_)) if addr == &remote))
+        .find(|o| matches!(o, Io::Disconnect(addr, DisconnectReason::PeerMagic(_)) if addr == &remote))
         .expect("peer should be disconnected");
 }
 
@@ -256,7 +256,7 @@ fn test_maintain_connections() {
         let addr = alice
             .outputs()
             .find_map(|o| match o {
-                Out::Connect(addr, _) => Some(addr),
+                Io::Connect(addr, _) => Some(addr),
                 _ => None,
             })
             .expect("Alice connects to a new peer");
@@ -363,12 +363,12 @@ fn test_handshake_version_timeout() {
         }
         peer.protocol.connected(remote, &peer.addr, *link);
         peer.outputs()
-            .find(|o| matches!(o, Out::SetTimeout(_)))
+            .find(|o| matches!(o, Io::Wakeup(_)))
             .expect("a timer should be returned");
 
         peer.elapse(peermgr::HANDSHAKE_TIMEOUT);
         peer.outputs().find(
-            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote)
+            |o| matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote)
         ).expect("peer should disconnect when no `version` is received");
 
         peer.disconnected(&remote, DisconnectReason::PeerTimeout("test"));
@@ -396,12 +396,12 @@ fn test_handshake_verack_timeout() {
             NetworkMessage::Version(remote.version(peer.addr, 0)),
         );
         peer.outputs()
-            .find(|o| matches!(o, Out::SetTimeout(_)))
+            .find(|o| matches!(o, Io::Wakeup(_)))
             .expect("a timer should be returned");
 
         peer.elapse(LocalDuration::from_secs(60));
         peer.outputs().find(
-            |o| matches!(o, Out::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote.addr)
+            |o| matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote.addr)
         ).expect("peer should disconnect if no `verack` is received");
 
         peer.disconnected(&remote.addr, DisconnectReason::PeerTimeout("verack"));
@@ -435,7 +435,7 @@ fn test_handshake_version_hook() {
         }),
     );
     peer.outputs()
-        .find(|o| matches!(o, Out::Disconnect(a, DisconnectReason::Other("craig is not satoshi")) if *a == craig.addr))
+        .find(|o| matches!(o, Io::Disconnect(a, DisconnectReason::Other("craig is not satoshi")) if *a == craig.addr))
         .expect("peer should disconnect when the 'on_version' hook returns an error");
 
     peer.protocol
@@ -500,7 +500,7 @@ fn test_connection_error() {
 
     peer.command(Command::Connect(remote.addr));
     peer.outputs()
-        .find(|o| matches!(o, Out::Connect(addr, _) if *addr == remote.addr))
+        .find(|o| matches!(o, Io::Connect(addr, _) if *addr == remote.addr))
         .expect("Alice should try to connect to remote");
     peer.attempted(&remote.addr);
     // Make sure we can handle a disconnection before an established connection.
@@ -555,7 +555,7 @@ fn test_getaddr() {
 
     alice
         .outputs()
-        .find(|o| matches!(o, Out::Connect(addr, _) if addr == &toto))
+        .find(|o| matches!(o, Io::Connect(addr, _) if addr == &toto))
         .expect("Alice tries to connect to Toto");
 }
 
@@ -688,7 +688,7 @@ fn prop_connect_timeout(seed: u64) {
 
     let result = alice
         .outputs()
-        .filter(|o| matches!(o, Out::Connect(_, _)))
+        .filter(|o| matches!(o, Io::Connect(_, _)))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -699,7 +699,7 @@ fn prop_connect_timeout(seed: u64) {
     let mut attempted: Vec<net::SocketAddr> = result
         .into_iter()
         .map(|r| match r {
-            Out::Connect(addr, _) => addr,
+            Io::Connect(addr, _) => addr,
             _ => panic!(),
         })
         .collect();
@@ -713,7 +713,7 @@ fn prop_connect_timeout(seed: u64) {
     alice.elapse(peermgr::IDLE_TIMEOUT);
 
     assert!(alice.outputs().all(|o| match o {
-        Out::Connect(addr, _) => !attempted.contains(&addr),
+        Io::Connect(addr, _) => !attempted.contains(&addr),
         _ => true,
     }));
 }

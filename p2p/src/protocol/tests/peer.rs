@@ -202,20 +202,20 @@ impl Peer<Protocol> {
         self.protocol.tock(self.time);
     }
 
-    pub fn outputs(&mut self) -> impl Iterator<Item = Out> + '_ {
+    pub fn outputs(&mut self) -> impl Iterator<Item = Io> + '_ {
         self.protocol.drain()
     }
 
     pub fn messages(&mut self) -> impl Iterator<Item = (PeerId, NetworkMessage)> + '_ {
         self.protocol.drain().filter_map(|o| match o {
-            Out::Message(a, m) => Some((a, m.payload)),
+            Io::Message(a, m) => Some((a, m.payload)),
             _ => None,
         })
     }
 
     pub fn events(&mut self) -> impl Iterator<Item = Event> + '_ {
         self.protocol.drain().filter_map(|o| match o {
-            Out::Event(e) => Some(e),
+            Io::Event(e) => Some(e),
             _ => None,
         })
     }
@@ -262,7 +262,7 @@ impl Peer<Protocol> {
             .find(|o| {
                 matches!(
                     o,
-                    Out::Message(
+                    Io::Message(
                         addr,
                         RawNetworkMessage {
                             payload: NetworkMessage::Version(_),
@@ -278,7 +278,7 @@ impl Peer<Protocol> {
             .find(|o| {
                 matches!(
                     o,
-                    Out::Message(
+                    Io::Message(
                         addr,
                         RawNetworkMessage {
                             payload: NetworkMessage::Verack,
@@ -298,7 +298,7 @@ impl Peer<Protocol> {
             .find(|o| {
                 matches!(
                     o,
-                    Out::Event(
+                    Io::Event(
                         Event::PeerManager(peermgr::Event::Negotiated { addr, services, .. })
                     ) if addr == &remote.addr && services.has(ServiceFlags::NETWORK)
                 )

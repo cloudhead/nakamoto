@@ -31,7 +31,7 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::collections::{AddressBook, HashMap};
 
-use super::channel::SetTimeout;
+use super::channel::Wakeup;
 use super::fees::{FeeEstimate, FeeEstimator};
 use super::{Height, PeerId, Socket};
 
@@ -211,7 +211,7 @@ pub struct InventoryManager<U> {
     upstream: U,
 }
 
-impl<U: Inventories + SetTimeout> InventoryManager<U> {
+impl<U: Inventories + Wakeup> InventoryManager<U> {
     /// Create a new inventory manager.
     pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
         Self {
@@ -354,7 +354,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
                     }
                 }
                 self.upstream.inv(*addr, invs);
-                self.upstream.set_timeout(self.timeout);
+                self.upstream.wakeup(self.timeout);
             }
         }
 
@@ -544,7 +544,7 @@ impl<U: Inventories + SetTimeout> InventoryManager<U> {
 
     fn schedule_tick(&mut self) {
         self.last_tick = None; // Disable rate-limiting for the next tick.
-        self.upstream.set_timeout(LocalDuration::from_secs(1));
+        self.upstream.wakeup(LocalDuration::from_secs(1));
     }
 
     /// Request a block from a random peer.
@@ -569,7 +569,7 @@ mod tests {
     use crate::protocol;
     use crate::protocol::channel::Channel;
     use crate::protocol::test::messages;
-    use crate::protocol::{Network, Out, PROTOCOL_VERSION};
+    use crate::protocol::{Io, Network, PROTOCOL_VERSION};
 
     use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
     use nakamoto_common::block::tree::BlockTree as _;
@@ -579,9 +579,9 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::{assert_matches, logger};
 
-    fn events(outputs: impl Iterator<Item = Out>) -> impl Iterator<Item = Event> {
+    fn events(outputs: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
         outputs.filter_map(|o| match o {
-            Out::Event(protocol::Event::InventoryManager(e)) => Some(e),
+            Io::Event(protocol::Event::InventoryManager(e)) => Some(e),
             _ => None,
         })
     }
@@ -735,7 +735,7 @@ mod tests {
                 .find(|o| {
                     matches!(
                         o,
-                        Out::Message(
+                        Io::Message(
                             _,
                             RawNetworkMessage {
                                 payload: NetworkMessage::Inv(_),

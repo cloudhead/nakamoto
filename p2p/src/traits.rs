@@ -7,14 +7,14 @@ use nakamoto_common::block::time::LocalTime;
 use crate::error::Error;
 use crate::protocol::channel::chan;
 use crate::protocol::event::Publisher;
-use crate::protocol::{Command, DisconnectReason, Link, Out};
+use crate::protocol::{Command, DisconnectReason, Io, Link};
 
 /// A protocol state-machine.
 ///
 /// This trait is implemented by the core P2P protocol in [`crate::protocol::Protocol`].
 pub trait Protocol {
     /// Return type of [`Protocol::drain`].
-    type Upstream: Iterator<Item = Out>;
+    type Upstream: Iterator<Item = Io>;
 
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {

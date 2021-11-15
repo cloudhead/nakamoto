@@ -147,9 +147,6 @@ impl From<(&peermgr::PeerInfo, &peermgr::Connection)> for Peer {
     }
 }
 
-/// A timeout.
-pub type Timeout = LocalDuration;
-
 /// Link direction of the peer connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Link {
@@ -255,22 +252,22 @@ pub use cbfmgr::GetFiltersError;
 
 /// Output of a state transition (step) of the `Protocol` state machine.
 #[derive(Debug)]
-pub enum Out {
+pub enum Io {
     /// Send a message to a peer.
     Message(PeerId, RawNetworkMessage),
     /// Connect to a peer.
-    Connect(PeerId, Timeout),
+    Connect(PeerId, LocalDuration),
     /// Disconnect from a peer.
     Disconnect(PeerId, DisconnectReason),
-    /// Set a timeout.
-    SetTimeout(Timeout),
+    /// Ask for a wakeup in a specified amount of time.
+    Wakeup(LocalDuration),
     /// An event has occurred.
     Event(Event),
 }
 
-impl From<Event> for Out {
+impl From<Event> for Io {
     fn from(event: Event) -> Self {
-        Out::Event(event)
+        Io::Event(event)
     }
 }
 
@@ -351,8 +348,8 @@ mod message {
             }
         }
 
-        pub fn message(&self, addr: net::SocketAddr, payload: NetworkMessage) -> Out {
-            Out::Message(addr, self.raw(payload))
+        pub fn message(&self, addr: net::SocketAddr, payload: NetworkMessage) -> Io {
+            Io::Message(addr, self.raw(payload))
         }
 
         pub fn raw(&self, payload: NetworkMessage) -> RawNetworkMessage {
@@ -1098,14 +1095,14 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
 
 #[cfg(test)]
 mod test {
-    use super::{Out, PeerId};
+    use super::{Io, PeerId};
     use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
     pub fn messages(
-        outputs: impl Iterator<Item = Out>,
+        outputs: impl Iterator<Item = Io>,
     ) -> impl Iterator<Item = (PeerId, NetworkMessage)> {
         outputs.filter_map(|o| match o {
-            Out::Message(a, m) => Some((a, m.payload)),
+            Io::Message(a, m) => Some((a, m.payload)),
             _ => None,
         })
     }

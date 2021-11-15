@@ -23,7 +23,7 @@ use nakamoto_common::bitcoin::Transaction;
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
-use crate::protocol::{DisconnectReason, Event, Out, PeerId};
+use crate::protocol::{DisconnectReason, Event, Io, PeerId};
 
 use super::network::Network;
 use super::{addrmgr, cbfmgr, invmgr, message, peermgr, pingmgr, syncmgr, Locators};
@@ -34,7 +34,7 @@ pub struct Channel {
     /// Protocol version.
     version: u32,
     /// Output channel.
-    outbound: Rc<RefCell<VecDeque<Out>>>,
+    outbound: Rc<RefCell<VecDeque<Io>>>,
     /// Network magic number.
     builder: message::Builder,
     /// Log target.
@@ -53,7 +53,7 @@ impl Channel {
     }
 
     /// Push an output to the channel.
-    pub fn push(&self, output: Out) {
+    pub fn push(&self, output: Io) {
         self.outbound.borrow_mut().push_back(output);
     }
 
@@ -74,17 +74,17 @@ impl Channel {
 
     /// Push an event to the channel.
     pub fn event(&self, event: Event) {
-        self.push(Out::Event(event));
+        self.push(Io::Event(event));
     }
 }
 
 /// Iterator over outbound channel queue.
 pub struct Iter {
-    items: Rc<RefCell<VecDeque<Out>>>,
+    items: Rc<RefCell<VecDeque<Io>>>,
 }
 
 impl Iterator for Iter {
-    type Item = Out;
+    type Item = Io;
 
     fn next(&mut self) -> Option<Self::Item> {
         self.items.borrow_mut().pop_front()
@@ -100,7 +100,7 @@ pub trait Disconnect {
 impl Disconnect for Channel {
     fn disconnect(&self, addr: net::SocketAddr, reason: DisconnectReason) {
         debug!(target: self.target, "{}: Disconnecting: {}", addr, reason);
-        self.push(Out::Disconnect(addr, reason));
+        self.push(Io::Disconnect(addr, reason));
     }
 }
 
@@ -108,21 +108,21 @@ impl Disconnect for () {
     fn disconnect(&self, _addr: net::SocketAddr, _reason: DisconnectReason) {}
 }
 
-/// The ability to set timeouts.
-pub trait SetTimeout {
-    /// Set a timeout. Returns the unique timeout identifier.
-    fn set_timeout(&self, timeout: LocalDuration) -> &Self;
+/// The ability to be woken up in the future.
+pub trait Wakeup {
+    /// Ask to be woken up in a predefined amount of time.
+    fn wakeup(&self, duration: LocalDuration) -> &Self;
 }
 
-impl SetTimeout for Channel {
-    fn set_timeout(&self, timeout: LocalDuration) -> &Self {
-        self.push(Out::SetTimeout(timeout));
+impl Wakeup for Channel {
+    fn wakeup(&self, duration: LocalDuration) -> &Self {
+        self.push(Io::Wakeup(duration));
         self
     }
 }
 
-impl SetTimeout for () {
-    fn set_timeout(&self, _timeout: LocalDuration) -> &Self {
+impl Wakeup for () {
+    fn wakeup(&self, _timeout: LocalDuration) -> &Self {
         self
     }
 }
@@ -140,7 +140,7 @@ impl addrmgr::SyncAddresses for Channel {
 impl peermgr::Connect for Channel {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
         info!(target: self.target, "[conn] {}: Connecting..", addr);
-        self.push(Out::Connect(addr, timeout));
+        self.push(Io::Connect(addr, timeout));
     }
 }
 
@@ -269,7 +269,7 @@ impl cbfmgr::SyncFilters for Channel {
                 stop_hash,
             }),
         );
-        self.set_timeout(timeout);
+        self.wakeup(timeout);
     }
 
     fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders) {
@@ -291,7 +291,7 @@ impl cbfmgr::SyncFilters for Channel {
                 stop_hash,
             }),
         );
-        self.set_timeout(timeout);
+        self.wakeup(timeout);
     }
 
     fn send_cfilter(&self, addr: PeerId, cfilter: CFilter) {

@@ -12,8 +12,8 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
-use super::channel::{Disconnect, SetTimeout};
-use super::{DisconnectReason, Link, Locators, PeerId, Socket, Timeout};
+use super::channel::{Disconnect, Wakeup};
+use super::{DisconnectReason, Link, Locators, PeerId, Socket};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
@@ -187,7 +187,7 @@ struct GetHeaders {
     on_timeout: OnTimeout,
 }
 
-impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
+impl<U: Wakeup + Disconnect + SyncHeaders> SyncManager<U> {
     /// Create a new sync manager.
     pub fn new(config: Config, rng: fastrand::Rng, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -227,7 +227,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
                 self.sample_peers(now, tree);
             }
             self.last_idle = Some(now);
-            self.upstream.set_timeout(IDLE_TIMEOUT);
+            self.upstream.wakeup(IDLE_TIMEOUT);
         }
     }
 
@@ -422,7 +422,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
         addr: PeerId,
         locators: Locators,
         sent_at: LocalTime,
-        timeout: Timeout,
+        timeout: LocalDuration,
         on_timeout: OnTimeout,
     ) {
         // Don't request more than once from the same peer.
@@ -442,7 +442,7 @@ impl<U: SetTimeout + Disconnect + SyncHeaders> SyncManager<U> {
 
             self.inflight.insert(addr, req.clone());
             self.upstream.get_headers(addr, req.locators);
-            self.upstream.set_timeout(timeout);
+            self.upstream.wakeup(timeout);
         }
     }
 

@@ -32,8 +32,8 @@ use nakamoto_common::source;
 use crate::protocol::addrmgr;
 
 use super::{
-    channel::{Disconnect, SetTimeout},
-    DisconnectReason, Timeout,
+    channel::{Disconnect, Wakeup},
+    DisconnectReason,
 };
 use super::{Hooks, Link, PeerId, Socket, Whitelist};
 
@@ -141,7 +141,7 @@ pub trait Handshake {
 /// Ability to connect to peers.
 pub trait Connect {
     /// Connect to peer.
-    fn connect(&self, addr: net::SocketAddr, timeout: Timeout);
+    fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration);
 }
 
 /// The ability to emit peer related events.
@@ -272,7 +272,7 @@ pub struct PeerManager<U> {
     hooks: Hooks,
 }
 
-impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
+impl<U: Handshake + Wakeup + Connect + Disconnect + Events> PeerManager<U> {
     /// Create a new peer manager.
     pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, upstream: U) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
@@ -308,7 +308,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                 );
             }
         }
-        self.upstream.set_timeout(IDLE_TIMEOUT);
+        self.upstream.wakeup(IDLE_TIMEOUT);
         self.maintain_connections(addrs, time);
     }
 
@@ -317,7 +317,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
         let delay = LocalDuration::from_secs(2_u64.saturating_pow(*attempts))
             .clamp(self.config.retry_min_wait, self.config.retry_max_wait);
         self.retry_at.insert(*addr, local_time + delay);
-        self.upstream.set_timeout(delay);
+        self.upstream.wakeup(delay);
         *attempts += 1;
     }
 
@@ -396,7 +396,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
             }
         }
         // Set a timeout for receiving the `version` message.
-        self.upstream.set_timeout(HANDSHAKE_TIMEOUT);
+        self.upstream.wakeup(HANDSHAKE_TIMEOUT);
         self.upstream.event(Event::Connected(addr, link));
     }
 
@@ -559,13 +559,13 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
                         )
                         .wtxidrelay(conn.socket.addr)
                         .verack(conn.socket.addr)
-                        .set_timeout(HANDSHAKE_TIMEOUT);
+                        .wakeup(HANDSHAKE_TIMEOUT);
                 }
                 Link::Outbound => {
                     self.upstream
                         .wtxidrelay(conn.socket.addr)
                         .verack(conn.socket.addr)
-                        .set_timeout(HANDSHAKE_TIMEOUT);
+                        .wakeup(HANDSHAKE_TIMEOUT);
                 }
             }
             let conn = conn.clone();
@@ -674,7 +674,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.maintain_connections(addrs, local_time);
-            self.upstream.set_timeout(IDLE_TIMEOUT);
+            self.upstream.wakeup(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
 
@@ -722,7 +722,7 @@ impl<U: Handshake + SetTimeout + Connect + Disconnect + Events> PeerManager<U> {
 }
 
 /// Connection management functions.
-impl<U: Connect + SetTimeout + Disconnect + Events> PeerManager<U> {
+impl<U: Connect + Wakeup + Disconnect + Events> PeerManager<U> {
     /// Called when a peer is being connected to.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr) {
         // Since all "attempts" are made from this module, we expect that when a peer is

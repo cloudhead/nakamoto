@@ -13,7 +13,7 @@ use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::p2p::peer::{AddressSource, KnownAddress, Source, Store};
 use nakamoto_common::p2p::Domain;
 
-use super::channel::SetTimeout;
+use super::channel::Wakeup;
 use super::{DisconnectReason, Link, PeerId};
 
 /// Time to wait until a request times out.
@@ -171,7 +171,7 @@ pub struct AddressManager<P, U> {
     rng: fastrand::Rng,
 }
 
-impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
+impl<P: Store, U: SyncAddresses + Wakeup + Events> AddressManager<P, U> {
     /// Initialize the address manager.
     pub fn initialize(&mut self, local_time: LocalTime) {
         self.idle(local_time);
@@ -219,7 +219,7 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
 
             self.get_addresses();
             self.last_request = Some(local_time);
-            self.upstream.set_timeout(REQUEST_TIMEOUT);
+            self.upstream.wakeup(REQUEST_TIMEOUT);
         }
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
@@ -305,7 +305,7 @@ impl<P: Store, U: SyncAddresses + SetTimeout + Events> AddressManager<P, U> {
                 .event(Event::Error(format!("flush to disk failed: {}", err)));
         }
         self.last_idle = Some(local_time);
-        self.upstream.set_timeout(IDLE_TIMEOUT);
+        self.upstream.wakeup(IDLE_TIMEOUT);
     }
 }
 
@@ -687,7 +687,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     }
 }
 
-impl<P: Store, U: Events + SyncAddresses + SetTimeout> AddressSource for AddressManager<P, U> {
+impl<P: Store, U: Events + SyncAddresses + Wakeup> AddressSource for AddressManager<P, U> {
     fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
         AddressManager::sample(self, services)
     }

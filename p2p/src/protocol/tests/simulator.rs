@@ -348,11 +348,11 @@ impl Simulation {
     }
 
     /// Process a protocol output event from a node.
-    pub fn schedule(&mut self, node: &NodeId, out: Out) {
+    pub fn schedule(&mut self, node: &NodeId, out: Io) {
         let node = *node;
 
         match out {
-            Out::Message(receiver, msg) => {
+            Io::Message(receiver, msg) => {
                 // If the other end has disconnected the sender with some latency, there may not be
                 // a connection remaining to use.
                 if let Some((sender_addr, _)) = self.connections.get(&(node, receiver.ip())) {
@@ -393,7 +393,7 @@ impl Simulation {
                     );
                 }
             }
-            Out::Connect(remote, _timeout) => {
+            Io::Connect(remote, _timeout) => {
                 assert!(remote.ip() != node, "self-connections are not allowed");
 
                 // Create an ephemeral sockaddr for the connecting (local) node.
@@ -464,7 +464,7 @@ impl Simulation {
                     },
                 );
             }
-            Out::Disconnect(remote, reason) => {
+            Io::Disconnect(remote, reason) => {
                 // Nb. It's possible for disconnects to happen simultaneously from both ends, hence
                 // it can be that a node will try to disconnect a remote that is already
                 // disconnected from the other side.
@@ -496,7 +496,7 @@ impl Simulation {
                     );
                 }
             }
-            Out::SetTimeout(duration) => {
+            Io::Wakeup(duration) => {
                 self.inbox.insert(
                     self.time + duration,
                     Scheduled {
@@ -507,7 +507,7 @@ impl Simulation {
                     },
                 );
             }
-            Out::Event(_) => {
+            Io::Event(_) => {
                 // Ignored.
             }
         }

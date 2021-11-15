@@ -68,12 +68,12 @@ impl Client {
         }
     }
 
-    pub fn step(&mut self) -> Vec<protocol::Out> {
+    pub fn step(&mut self) -> Vec<protocol::Io> {
         let mut outputs = Vec::new();
 
         for out in self.protocol.drain() {
             match out {
-                protocol::Out::Event(event) => {
+                protocol::Io::Event(event) => {
                     self.subscriber.broadcast(event.clone());
                     self.events.send(event).ok();
                 }

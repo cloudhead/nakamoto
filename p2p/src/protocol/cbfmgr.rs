@@ -19,8 +19,8 @@ use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
 
-use super::channel::{Disconnect, SetTimeout};
-use super::{DisconnectReason, Link, PeerId, Socket, Timeout};
+use super::channel::{Disconnect, Wakeup};
+use super::{DisconnectReason, Link, PeerId, Socket};
 
 pub mod cache;
 use cache::FilterCache;
@@ -198,7 +198,7 @@ pub trait SyncFilters {
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
-        timeout: Timeout,
+        timeout: LocalDuration,
     );
     /// Get compact filters from a peer.
     fn get_cfilters(
@@ -206,7 +206,7 @@ pub trait SyncFilters {
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
-        timeout: Timeout,
+        timeout: LocalDuration,
     );
     /// Send compact filter headers to a peer.
     fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders);
@@ -235,7 +235,7 @@ pub enum GetFiltersError {
 #[derive(Debug)]
 pub struct Config {
     /// How long to wait for a response from a peer.
-    pub request_timeout: Timeout,
+    pub request_timeout: LocalDuration,
     /// Filter cache size, in bytes.
     pub filter_cache_size: usize,
 }
@@ -360,7 +360,7 @@ pub struct FilterManager<F, U> {
     rng: fastrand::Rng,
 }
 
-impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManager<F, U> {
+impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F, U> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -885,7 +885,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.sync(tree, now);
             self.last_idle = Some(now);
-            self.upstream.set_timeout(IDLE_TIMEOUT);
+            self.upstream.wakeup(IDLE_TIMEOUT);
         }
     }
 
@@ -1008,7 +1008,7 @@ impl<F: Filters, U: SyncFilters + Events + SetTimeout + Disconnect> FilterManage
 
     fn schedule_tick(&mut self) {
         self.last_idle = None; // Disable rate-limiting for the next tick.
-        self.upstream.set_timeout(LocalDuration::from_secs(1));
+        self.upstream.wakeup(LocalDuration::from_secs(1));
     }
 }
 
@@ -1066,7 +1066,7 @@ mod tests {
     use crate::protocol::channel::Channel;
     use crate::protocol::test::messages;
     use crate::protocol::PROTOCOL_VERSION;
-    use crate::protocol::{self, Out};
+    use crate::protocol::{self, Io};
 
     use super::*;
 
@@ -1148,9 +1148,9 @@ mod tests {
             data.windows(2).all(|w| w[0] <= w[1])
         }
 
-        pub fn events(outputs: impl Iterator<Item = Out>) -> impl Iterator<Item = Event> {
+        pub fn events(outputs: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
             outputs.filter_map(|o| match o {
-                Out::Event(protocol::Event::FilterManager(e)) => Some(e),
+                Io::Event(protocol::Event::FilterManager(e)) => Some(e),
                 _ => None,
             })
         }

@@ -8,7 +8,7 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 
 use nakamoto_p2p::error::Error;
 use nakamoto_p2p::protocol;
-use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Link, Out};
+use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Io, Link};
 
 use log::*;
 use nakamoto_p2p::traits::Protocol;
@@ -265,7 +265,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
         // disconnected.
         for out in protocol.drain() {
             match out {
-                Out::Message(addr, msg) => {
+                Io::Message(addr, msg) => {
                     if let Some(peer) = self.peers.get_mut(&addr) {
                         let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
 
@@ -293,7 +293,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         }
                     }
                 }
-                Out::Connect(addr, timeout) => {
+                Io::Connect(addr, timeout) => {
                     trace!("Connecting to {}...", &addr);
 
                     match self::dial(&addr) {
@@ -320,7 +320,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         }
                     }
                 }
-                Out::Disconnect(addr, reason) => {
+                Io::Disconnect(addr, reason) => {
                     if let Some(peer) = self.peers.get(&addr) {
                         trace!("{}: Disconnecting: {}", addr, reason);
 
@@ -333,10 +333,10 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         self.unregister_peer(addr, reason, protocol);
                     }
                 }
-                Out::SetTimeout(timeout) => {
+                Io::Wakeup(timeout) => {
                     self.timeouts.register((), local_time + timeout);
                 }
-                Out::Event(event) => {
+                Io::Event(event) => {
                     trace!("Event: {:?}", event);
 
                     self.publisher.publish(event);
