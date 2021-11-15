@@ -110,16 +110,16 @@ impl Network {
     pub fn seeds(&self) -> Vec<String> {
         let seed_list = match self {
             Network::Mainnet => vec![
-                "seed.bitcoin.sipa.be",          // Pieter Wuille
-                "dnsseed.bluematt.me",           // Matt Corallo
-                "dnsseed.bitcoin.dashjr.org",    // Luke Dashjr
-                "seed.bitcoinstats.com",         // Christian Decker
-                "seed.bitcoin.jonasschnelli.ch", // Jonas Schnelli
-                "seed.btc.petertodd.org",        // Peter Todd
-                "seed.bitcoin.sprovoost.nl",     // Sjors Provoost
-                "dnsseed.emzy.de",               // Stephan Oeste
-                "seed.bitcoin.wiz.biz",          // Jason Maurice
-                "seed.cloudhead.io",             // Alexis Sellier
+                "seed.bitcoin.sipa.be",       // Pieter Wuille
+                "dnsseed.bluematt.me",        // Matt Corallo
+                "dnsseed.bitcoin.dashjr.org", // Luke Dashjr
+                "seed.bitcoinstats.com",      // Christian Decker
+                //                "seed.bitcoin.jonasschnelli.ch", // Jonas Schnelli
+                "seed.btc.petertodd.org",    // Peter Todd
+                "seed.bitcoin.sprovoost.nl", // Sjors Provoost
+                "dnsseed.emzy.de",           // Stephan Oeste
+                "seed.bitcoin.wiz.biz",      // Jason Maurice
+                "seed.cloudhead.io",         // Alexis Sellier
             ],
             Network::Testnet => vec![
                 "testnet-seed.bitcoin.jonasschnelli.ch",

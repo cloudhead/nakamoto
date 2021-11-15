@@ -46,6 +46,7 @@ pub trait Store {
         source: Source,
     ) -> io::Result<()> {
         let mut fail = false;
+        let mut success = false;
         // TODO: Introduce a step that mean how many combination
         // of services flags we need to try before check the seeds without
         // services flags.
@@ -54,6 +55,7 @@ pub trait Store {
             debug!("Resolving DNS seed {:?}", seed);
             match seed.to_socket_addrs() {
                 Ok(addrs) => {
+                    success = true;
                     for addr in addrs {
                         self.insert(
                             addr.ip(),
@@ -73,17 +75,15 @@ pub trait Store {
                 }
                 Err(err) => {
                     debug!("Error During DNS seed resolution {:?}", err);
-                    if fail {
-                        // we fail after a failure, this mean that we fail to resolve the
-                        // recovery seed (seed without service flag)
-                        return Err(io::Error::new(
-                            io::ErrorKind::Other,
-                            format!("seeds failed to resolve: {}", err),
-                        ));
-                    }
                     fail = true;
                 }
             }
+        }
+        if !success {
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "All seeds failed to resolve",
+            ));
         }
         Ok(())
     }
