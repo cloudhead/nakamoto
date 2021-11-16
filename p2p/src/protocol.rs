@@ -256,7 +256,7 @@ pub enum Io {
     /// Send a message to a peer.
     Message(PeerId, RawNetworkMessage),
     /// Connect to a peer.
-    Connect(PeerId, LocalDuration),
+    Connect(PeerId),
     /// Disconnect from a peer.
     Disconnect(PeerId, DisconnectReason),
     /// Ask for a wakeup in a specified amount of time.

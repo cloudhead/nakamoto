@@ -140,7 +140,8 @@ impl addrmgr::SyncAddresses for Channel {
 impl peermgr::Connect for Channel {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
         info!(target: self.target, "[conn] {}: Connecting..", addr);
-        self.push(Io::Connect(addr, timeout));
+        self.push(Io::Connect(addr));
+        self.push(Io::Wakeup(timeout));
     }
 }
 

@@ -293,7 +293,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         }
                     }
                 }
-                Io::Connect(addr, timeout) => {
+                Io::Connect(addr) => {
                     trace!("Connecting to {}...", &addr);
 
                     match self::dial(&addr) {
@@ -302,7 +302,6 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
 
                             self.register_peer(addr, stream, Link::Outbound);
                             self.connecting.insert(addr);
-                            self.timeouts.register((), local_time + timeout);
 
                             protocol.attempted(&addr);
                         }

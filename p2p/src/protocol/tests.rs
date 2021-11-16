@@ -256,7 +256,7 @@ fn test_maintain_connections() {
         let addr = alice
             .outputs()
             .find_map(|o| match o {
-                Io::Connect(addr, _) => Some(addr),
+                Io::Connect(addr) => Some(addr),
                 _ => None,
             })
             .expect("Alice connects to a new peer");
@@ -500,7 +500,7 @@ fn test_connection_error() {
 
     peer.command(Command::Connect(remote.addr));
     peer.outputs()
-        .find(|o| matches!(o, Io::Connect(addr, _) if *addr == remote.addr))
+        .find(|o| matches!(o, Io::Connect(addr) if *addr == remote.addr))
         .expect("Alice should try to connect to remote");
     peer.attempted(&remote.addr);
     // Make sure we can handle a disconnection before an established connection.
@@ -555,7 +555,7 @@ fn test_getaddr() {
 
     alice
         .outputs()
-        .find(|o| matches!(o, Io::Connect(addr, _) if addr == &toto))
+        .find(|o| matches!(o, Io::Connect(addr) if addr == &toto))
         .expect("Alice tries to connect to Toto");
 }
 
@@ -688,7 +688,7 @@ fn prop_connect_timeout(seed: u64) {
 
     let result = alice
         .outputs()
-        .filter(|o| matches!(o, Io::Connect(_, _)))
+        .filter(|o| matches!(o, Io::Connect(_)))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -699,7 +699,7 @@ fn prop_connect_timeout(seed: u64) {
     let mut attempted: Vec<net::SocketAddr> = result
         .into_iter()
         .map(|r| match r {
-            Io::Connect(addr, _) => addr,
+            Io::Connect(addr) => addr,
             _ => panic!(),
         })
         .collect();
@@ -713,7 +713,7 @@ fn prop_connect_timeout(seed: u64) {
     alice.elapse(peermgr::IDLE_TIMEOUT);
 
     assert!(alice.outputs().all(|o| match o {
-        Io::Connect(addr, _) => !attempted.contains(&addr),
+        Io::Connect(addr) => !attempted.contains(&addr),
         _ => true,
     }));
 }

@@ -10,6 +10,9 @@ use std::io;
 /// Minimum latency between peers.
 pub const MIN_LATENCY: LocalDuration = LocalDuration::from_millis(1);
 
+/// Port used for all nodes.
+const PORT: u16 = 8333;
+
 /// Identifier for a simulated node/peer.
 /// The simulator requires each peer to have a distinct IP address.
 type NodeId = std::net::IpAddr;
@@ -156,10 +159,10 @@ pub struct Simulation {
     latencies: HashMap<(NodeId, NodeId), LocalDuration>,
     /// Network partitions between two nodes.
     partitions: HashSet<(NodeId, NodeId)>,
-    /// Map of existing connections between nodes.
-    /// We use this to keep track of the local port used when establishing connections,
-    /// since each connection is established from a different local port.
-    connections: HashMap<(NodeId, NodeId), (net::SocketAddr, net::SocketAddr)>,
+    /// Set of existing connections between nodes.
+    connections: HashSet<(NodeId, NodeId)>,
+    /// Set of connection attempts.
+    attempts: HashSet<(NodeId, NodeId)>,
     /// Simulation options.
     opts: Options,
     /// Start time of simulation.
@@ -179,7 +182,8 @@ impl Simulation {
             },
             partitions: HashSet::with_hasher(rng.clone().into()),
             latencies: HashMap::with_hasher(rng.clone().into()),
-            connections: HashMap::with_hasher(rng.clone().into()),
+            connections: HashSet::with_hasher(rng.clone().into()),
+            attempts: HashSet::with_hasher(rng.clone().into()),
             opts,
             start_time: time,
             time,
@@ -293,6 +297,9 @@ impl Simulation {
             if matches!(next.input, Input::Tock) {
                 trace!(target: "sim", "{:05} {}", elapsed, next);
             } else {
+                // TODO: This can be confusing, since this event may not actually be passed to
+                // the protocol. It would be best to only log the events that are being sent
+                // to the protocol, or to log when an input is being dropped.
                 info!(target: "sim", "{:05} {} ({})", elapsed, next, self.inbox.messages.len());
             }
             assert!(time >= self.time, "Time only moves forwards!");
@@ -302,46 +309,51 @@ impl Simulation {
 
             let Scheduled { input, node, .. } = next;
 
-            match input {
-                Input::Connected { addr, .. } | Input::Disconnected(addr, _)
-                    if !self.connections.contains_key(&(node, addr.ip())) =>
-                {
-                    // It may be that the node has since disconnected with the remote.
-                    // In that case we shouldn't forward these inputs to it, as it would
-                    // be non-sensical.
-                }
-                _ => {
-                    if let Input::Disconnected(addr, _) = input {
-                        self.connections.remove(&(node, addr.ip()));
-                        self.connections.remove(&(addr.ip(), node));
+            if let Some(ref mut p) = nodes.get_mut(&node) {
+                p.protocol.tick(time);
+
+                match input {
+                    Input::Connecting { addr } => {
+                        if self.attempts.insert((node, addr.ip())) {
+                            p.protocol.attempted(&addr);
+                        }
                     }
+                    Input::Connected {
+                        addr,
+                        local_addr,
+                        link,
+                    } => {
+                        let conn = (node, addr.ip());
 
-                    if let Some(ref mut p) = nodes.get_mut(&node) {
-                        p.protocol.tick(time);
-
-                        match input {
-                            Input::Connecting { addr } => p.protocol.attempted(&addr),
-                            Input::Connected {
-                                addr,
-                                local_addr,
-                                link,
-                            } => p.protocol.connected(addr, &local_addr, link),
-                            Input::Disconnected(addr, reason) => {
-                                p.protocol.disconnected(&addr, reason)
+                        if self.connections.insert(conn) {
+                            let attempted = link.is_outbound() && self.attempts.contains(&conn);
+                            if attempted || link.is_inbound() {
+                                p.protocol.connected(addr, &local_addr, link);
                             }
-                            Input::Tock => p.protocol.tock(self.time),
-                            Input::Received(addr, msg) => p.protocol.received(&addr, msg),
                         }
-                        for o in p.upstream.drain() {
-                            self.schedule(&node, o);
+                    }
+                    Input::Disconnected(addr, reason) => {
+                        let conn = (node, addr.ip());
+                        let attempt = self.attempts.remove(&conn);
+                        let connection = self.connections.remove(&conn);
+
+                        if attempt || connection {
+                            p.protocol.disconnected(&addr, reason);
                         }
-                    } else {
-                        panic!(
-                            "Node {} not found when attempting to schedule {:?}",
-                            node, input
-                        );
+                    }
+                    Input::Tock => p.protocol.tock(self.time),
+                    Input::Received(addr, msg) => {
+                        p.protocol.received(&addr, msg);
                     }
                 }
+                for o in p.upstream.drain() {
+                    self.schedule(&node, o);
+                }
+            } else {
+                panic!(
+                    "Node {} not found when attempting to schedule {:?}",
+                    node, input
+                );
             }
         }
         !self.is_done()
@@ -355,49 +367,52 @@ impl Simulation {
             Io::Message(receiver, msg) => {
                 // If the other end has disconnected the sender with some latency, there may not be
                 // a connection remaining to use.
-                if let Some((sender_addr, _)) = self.connections.get(&(node, receiver.ip())) {
-                    if self.is_partitioned(sender_addr.ip(), receiver.ip()) {
-                        // Drop message if nodes are partitioned.
-                        info!(
-                            target: "sim",
-                            "{} -> {}: `{}` dropped!",
-                             sender_addr, receiver, msg.cmd()
-                        );
-                        return;
-                    }
+                if !self.connections.contains(&(node, receiver.ip())) {
+                    return;
+                }
 
-                    // Schedule message in the future, ensuring messages don't arrive out-of-order
-                    // between two peers.
-                    let latency = self.latency(node, receiver.ip());
-                    let time = self
-                        .inbox
-                        .last(&receiver.ip(), sender_addr)
-                        .map(|(k, _)| *k)
-                        .unwrap_or_else(|| self.time);
-                    let time = time + latency;
-                    let elapsed = (time - self.start_time).as_millis();
-
+                let sender: net::SocketAddr = (node, PORT).into();
+                if self.is_partitioned(sender.ip(), receiver.ip()) {
+                    // Drop message if nodes are partitioned.
                     info!(
                         target: "sim",
-                        "{:05} {} -> {}: `{}` ({})",
-                        elapsed, sender_addr, receiver, msg.cmd(), latency
+                        "{} -> {}: `{}` (DROPPED)",
+                         sender, receiver, msg.cmd()
                     );
-
-                    self.inbox.insert(
-                        time,
-                        Scheduled {
-                            remote: *sender_addr,
-                            node: receiver.ip(),
-                            input: Input::Received(*sender_addr, msg),
-                        },
-                    );
+                    return;
                 }
+
+                // Schedule message in the future, ensuring messages don't arrive out-of-order
+                // between two peers.
+                let latency = self.latency(node, receiver.ip());
+                let time = self
+                    .inbox
+                    .last(&receiver.ip(), &sender)
+                    .map(|(k, _)| *k)
+                    .unwrap_or_else(|| self.time);
+                let time = time + latency;
+                let elapsed = (time - self.start_time).as_millis();
+
+                info!(
+                    target: "sim",
+                    "{:05} {} -> {}: `{}` ({})",
+                    elapsed, sender, receiver, msg.cmd(), latency
+                );
+
+                self.inbox.insert(
+                    time,
+                    Scheduled {
+                        remote: sender,
+                        node: receiver.ip(),
+                        input: Input::Received(sender, msg),
+                    },
+                );
             }
-            Io::Connect(remote, _timeout) => {
+            Io::Connect(remote) => {
                 assert!(remote.ip() != node, "self-connections are not allowed");
 
                 // Create an ephemeral sockaddr for the connecting (local) node.
-                let local_addr: net::SocketAddr = net::SocketAddr::new(node, self.rng.u16(8192..));
+                let local_addr: net::SocketAddr = net::SocketAddr::new(node, PORT);
                 let latency = self.latency(node, remote.ip());
 
                 self.inbox.insert(
@@ -432,11 +447,6 @@ impl Simulation {
                     return;
                 }
 
-                self.connections
-                    .insert((node, remote.ip()), (local_addr, remote));
-                self.connections
-                    .insert((remote.ip(), node), (remote, local_addr));
-
                 self.inbox.insert(
                     // The remote will get the connection attempt with some latency.
                     self.time + latency,
@@ -468,44 +478,53 @@ impl Simulation {
                 // Nb. It's possible for disconnects to happen simultaneously from both ends, hence
                 // it can be that a node will try to disconnect a remote that is already
                 // disconnected from the other side.
-                if let Some((local_addr, _)) = self.connections.get(&(node, remote.ip())) {
-                    let latency = self.latency(node, remote.ip());
+                let local_addr: net::SocketAddr = (node, PORT).into();
+                let latency = self.latency(node, remote.ip());
 
-                    // The local node is immediately disconnected.
-                    self.inbox.insert(
-                        self.time,
-                        Scheduled {
-                            remote,
-                            node,
-                            input: Input::Disconnected(remote, reason),
-                        },
-                    );
-                    // The remote node receives the disconnection with some delay.
-                    self.inbox.insert(
-                        self.time + latency,
-                        Scheduled {
-                            node: remote.ip(),
-                            remote: *local_addr,
-                            input: Input::Disconnected(
-                                *local_addr,
-                                DisconnectReason::ConnectionError(
-                                    io::Error::from(io::ErrorKind::UnexpectedEof).into(),
-                                ),
+                // The local node is immediately disconnected.
+                self.inbox.insert(
+                    self.time,
+                    Scheduled {
+                        remote,
+                        node,
+                        input: Input::Disconnected(remote, reason),
+                    },
+                );
+                // The remote node receives the disconnection with some delay.
+                self.inbox.insert(
+                    self.time + latency,
+                    Scheduled {
+                        node: remote.ip(),
+                        remote: local_addr,
+                        input: Input::Disconnected(
+                            local_addr,
+                            DisconnectReason::ConnectionError(
+                                io::Error::from(io::ErrorKind::UnexpectedEof).into(),
                             ),
+                        ),
+                    },
+                );
+            }
+            Io::Wakeup(duration) => {
+                let time = self.time + duration;
+
+                if !matches!(
+                    self.inbox.messages.get(&time),
+                    Some(Scheduled {
+                        input: Input::Tock,
+                        ..
+                    })
+                ) {
+                    self.inbox.insert(
+                        time,
+                        Scheduled {
+                            node,
+                            // The remote is not applicable for this type of output.
+                            remote: ([0, 0, 0, 0], 0).into(),
+                            input: Input::Tock,
                         },
                     );
                 }
-            }
-            Io::Wakeup(duration) => {
-                self.inbox.insert(
-                    self.time + duration,
-                    Scheduled {
-                        node,
-                        // The remote is not applicable for this type of output.
-                        remote: ([0, 0, 0, 0], 0).into(),
-                        input: Input::Tock,
-                    },
-                );
             }
             Io::Event(_) => {
                 // Ignored.
