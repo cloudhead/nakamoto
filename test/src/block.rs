@@ -9,7 +9,7 @@ pub use nakamoto_common::block::*;
 pub fn solve(header: &mut BlockHeader) {
     let target = header.target();
     while header.validate_pow(&target).is_err() {
-        header.nonce += 1;
+        header.nonce = header.nonce.wrapping_add(1);
     }
 }
 
@@ -232,7 +232,7 @@ pub mod gen {
         let mut header = BlockHeader {
             version: 1,
             time,
-            nonce: 0,
+            nonce: rng.u32(..),
             bits,
             merkle_root,
             prev_blockhash: prev_header.block_hash(),
