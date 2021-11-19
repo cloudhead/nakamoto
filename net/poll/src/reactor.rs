@@ -1,5 +1,4 @@
 //! Poll-based reactor. This is a single-threaded reactor using a `poll` loop.
-use nakamoto_common::bitcoin::consensus::encode;
 use nakamoto_common::bitcoin::network::message::RawNetworkMessage;
 
 use crossbeam_channel as chan;
@@ -33,6 +32,8 @@ const READ_TIMEOUT: time::Duration = time::Duration::from_secs(6);
 const WRITE_TIMEOUT: time::Duration = time::Duration::from_secs(3);
 /// Maximum amount of time to wait for i/o.
 const WAIT_TIMEOUT: LocalDuration = LocalDuration::from_mins(60);
+/// Socket read buffer size.
+const READ_BUFFER_SIZE: usize = 1024 * 192;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum Source {
@@ -349,41 +350,30 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
         P: Protocol,
     {
         let socket = self.peers.get_mut(addr).unwrap();
+        let mut buffer = [0; READ_BUFFER_SIZE];
 
         trace!("{}: Socket is readable", addr);
 
-        // Nb. Normally, since `poll`, which `popol` is based on, is
-        // level-triggered, we would be notified again if there was
-        // still data to be read on the socket. However, since our
-        // socket abstraction actually returns *decoded messages*, this
-        // doesn't apply. Thus, we have to loop to not miss messages.
         loop {
-            match socket.read() {
-                Ok(msg) => {
-                    protocol.received(addr, msg);
+            match socket.read(&mut buffer) {
+                Ok(count) if count > 0 => {
+                    protocol.received_bytes(addr, &buffer[..count]);
                 }
-                Err(encode::Error::Io(err)) if err.kind() == io::ErrorKind::WouldBlock => {
+                Ok(_) => {
+                    break;
+                }
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     break;
                 }
                 Err(err) => {
-                    let reason = match err {
-                        encode::Error::Io(err) => {
-                            if err.kind() == io::ErrorKind::UnexpectedEof {
-                                trace!("{}: Remote peer closed the connection", addr);
-                            }
-                            DisconnectReason::ConnectionError(Arc::new(err))
-                        }
-                        _ => {
-                            trace!("{}: Read error: {}", addr, err.to_string());
-
-                            DisconnectReason::ConnectionError(Arc::new(
-                                io::ErrorKind::InvalidData.into(),
-                            ))
-                        }
-                    };
+                    trace!("{}: Read error: {}", addr, err.to_string());
 
                     socket.disconnect().ok();
-                    self.unregister_peer(*addr, reason, protocol);
+                    self.unregister_peer(
+                        *addr,
+                        DisconnectReason::ConnectionError(Arc::new(err)),
+                        protocol,
+                    );
 
                     break;
                 }

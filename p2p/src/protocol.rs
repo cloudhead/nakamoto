@@ -18,23 +18,25 @@ mod tests;
 
 use addrmgr::AddressManager;
 use cbfmgr::FilterManager;
-use channel::Channel;
+use channel::{Channel, Disconnect as _};
 use invmgr::InventoryManager;
 use peermgr::PeerManager;
 use pingmgr::PingManager;
 use syncmgr::SyncManager;
 
+use crate::stream;
 use crate::traits;
 
 pub use event::Event;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug};
 use std::net;
 use std::ops::{Bound, RangeInclusive};
 use std::sync::Arc;
 
 use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::consensus::encode;
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
@@ -63,6 +65,9 @@ pub const PROTOCOL_VERSION: u32 = 70016;
 pub const MIN_PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.2.0/";
+
+/// Starting size of peer inbox buffer.
+const INBOX_BUFFER_SIZE: usize = 1024 * 64;
 
 /// Block locators. Consists of starting hashes and a stop hash.
 type Locators = (Vec<BlockHash>, BlockHash);
@@ -294,6 +299,8 @@ pub enum DisconnectReason {
     ConnectionLimit,
     /// Error with the underlying connection.
     ConnectionError(Arc<std::io::Error>),
+    /// Error trying to decode incoming message.
+    DecodeError(Arc<encode::Error>),
     /// Peer was forced to disconnect by external command.
     Command,
     /// Peer was disconnected for another reason.
@@ -327,6 +334,7 @@ impl fmt::Display for DisconnectReason {
             Self::SelfConnection => write!(f, "detected self-connection"),
             Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
             Self::ConnectionError(err) => write!(f, "connection error: {}", err),
+            Self::DecodeError(err) => write!(f, "message decode error: {}", err),
             Self::Command => write!(f, "received external command"),
             Self::Other(reason) => write!(f, "{}", reason),
         }
@@ -408,6 +416,8 @@ pub struct Protocol<T, F, P> {
     protocol_version: u32,
     /// Consensus parameters.
     params: Params,
+    /// Peer message inboxes.
+    inbox: HashMap<PeerId, stream::Decoder>,
     /// Peer address manager.
     addrmgr: AddressManager<P, Upstream>,
     /// Blockchain synchronization manager.
@@ -568,6 +578,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         } = config;
 
         let upstream = Upstream::new(network, protocol_version, target);
+        let inbox = HashMap::new();
         let syncmgr = SyncManager::new(
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
@@ -624,6 +635,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             target,
             params,
             clock,
+            inbox,
             addrmgr,
             syncmgr,
             pingmgr,
@@ -711,6 +723,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
         self.addrmgr.peer_connected(&addr, local_time);
         self.peermgr
             .peer_connected(addr, *local_addr, link, height, local_time);
+        self.inbox
+            .insert(addr, stream::Decoder::new(INBOX_BUFFER_SIZE));
     }
 
     fn disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
@@ -725,6 +739,30 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
         self.peermgr
             .peer_disconnected(addr, &mut self.addrmgr, local_time, reason);
         self.invmgr.peer_disconnected(addr);
+    }
+
+    fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]) {
+        if let Some(stream) = self.inbox.get_mut(addr) {
+            stream.input(bytes);
+
+            let mut msgs = Vec::with_capacity(1);
+
+            loop {
+                match stream.decode_next() {
+                    Ok(Some(msg)) => msgs.push(msg),
+                    Ok(None) => break,
+
+                    Err(err) => {
+                        self.upstream
+                            .disconnect(*addr, DisconnectReason::DecodeError(Arc::new(err)));
+                        return;
+                    }
+                }
+            }
+            for msg in msgs {
+                self.received(addr, msg);
+            }
+        }
     }
 
     fn received(&mut self, addr: &net::SocketAddr, msg: RawNetworkMessage) {

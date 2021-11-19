@@ -38,6 +38,7 @@
 pub mod error;
 pub mod event;
 pub mod protocol;
+pub mod stream;
 pub mod traits;
 
 pub use protocol::{Link, PeerId};

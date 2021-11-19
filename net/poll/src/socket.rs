@@ -4,9 +4,7 @@ use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::net;
 
-use nakamoto_common::bitcoin::consensus::encode::Decodable;
-use nakamoto_common::bitcoin::consensus::encode::{self, Encodable};
-use nakamoto_common::bitcoin::network::stream_reader::StreamReader;
+use nakamoto_common::bitcoin::consensus::encode::Encodable;
 
 use log::*;
 
@@ -23,7 +21,7 @@ pub struct Socket<R: Read + Write, M> {
     pub address: net::SocketAddr,
     pub link: Link,
 
-    raw: StreamReader<R>,
+    raw: R,
     queue: VecDeque<M>,
 }
 
@@ -33,20 +31,19 @@ impl<M> Socket<net::TcpStream, M> {
     }
 
     pub fn local_address(&self) -> io::Result<net::SocketAddr> {
-        self.raw.stream.local_addr()
+        self.raw.local_addr()
     }
 }
 
-impl<M: Encodable + Decodable + Debug> Socket<net::TcpStream, M> {
+impl<M: Encodable + Debug> Socket<net::TcpStream, M> {
     pub fn disconnect(&self) -> io::Result<()> {
-        self.raw.stream.shutdown(net::Shutdown::Both)
+        self.raw.shutdown(net::Shutdown::Both)
     }
 }
 
-impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
+impl<R: Read + Write, M: Encodable + Debug> Socket<R, M> {
     /// Create a new socket from a `io::Read` and an address pair.
-    pub fn from(r: R, address: net::SocketAddr, link: Link) -> Self {
-        let raw = StreamReader::new(r, Some(MAX_MESSAGE_SIZE));
+    pub fn from(raw: R, address: net::SocketAddr, link: Link) -> Self {
         let queue = VecDeque::new();
 
         Self {
@@ -57,17 +54,8 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
         }
     }
 
-    pub fn read(&mut self) -> Result<M, encode::Error> {
-        fallible! { io::Error::from(io::ErrorKind::Other) };
-
-        match self.raw.read_next::<M>() {
-            Ok(msg) => {
-                trace!("{}: (read) {:?}", self.address, msg);
-
-                Ok(msg)
-            }
-            Err(err) => Err(err),
-        }
+    pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
+        self.raw.read(buf)
     }
 
     pub fn write(&mut self, msg: &M) -> Result<usize, io::Error> {
@@ -81,8 +69,8 @@ impl<R: Read + Write, M: Encodable + Decodable + Debug> Socket<R, M> {
 
                 // TODO: Is it possible to get a `WriteZero` here, given
                 // the non-blocking socket?
-                self.raw.stream.write_all(&buf[..len])?;
-                self.raw.stream.flush()?;
+                self.raw.write_all(&buf[..len])?;
+                self.raw.flush()?;
 
                 Ok(len)
             }

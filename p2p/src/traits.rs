@@ -25,6 +25,8 @@ pub trait Protocol {
     }
     /// Received a message from a peer.
     fn received(&mut self, addr: &net::SocketAddr, msg: RawNetworkMessage);
+    /// Received bytes from a peer.
+    fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]);
     /// Connection attempt underway.
     ///
     /// This is only encountered when an outgoing connection attempt is made,
