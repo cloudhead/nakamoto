@@ -653,124 +653,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         }
     }
 
-    /// Send a message to a all peers matching the predicate.
-    fn broadcast<Q>(&mut self, msg: NetworkMessage, predicate: Q) -> Vec<PeerId>
-    where
-        Q: Fn(&Peer) -> bool,
-    {
-        let mut peers = Vec::new();
-
-        for peer in self.peermgr.peers().map(Peer::from) {
-            if predicate(&peer) {
-                peers.push(peer.addr);
-                self.upstream.message(peer.addr, msg.clone());
-            }
-        }
-        peers
-    }
-
-    /// Send a message to a random outbound peer. Returns the peer id.
-    fn query<Q>(&mut self, msg: NetworkMessage, f: Q) -> Option<PeerId>
-    where
-        Q: Fn(&Peer) -> bool,
-    {
-        let peers = self
-            .peermgr
-            .negotiated(Link::Outbound)
-            .map(Peer::from)
-            .filter(f)
-            .collect::<Vec<_>>();
-
-        match peers.len() {
-            n if n > 0 => {
-                let r = self.rng.usize(..n);
-                let p = peers.get(r).unwrap();
-
-                self.upstream.message(p.addr, msg);
-
-                Some(p.addr)
-            }
-            _ => None,
-        }
-    }
-
-    fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
-        // TODO: Trigger disconnection everywhere, as if peer disconnected. This
-        // avoids being in a state where we know a peer is about to get disconnected,
-        // but we still process messages from it as normal.
-
-        self.peermgr.disconnect(addr, reason);
-    }
-}
-
-impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
-    type Upstream = channel::Drain;
-
-    fn initialize(&mut self, time: LocalTime) {
-        self.clock.set_local_time(time);
-        self.addrmgr.initialize(time);
-        self.syncmgr.initialize(time, &self.tree);
-        self.peermgr.initialize(time, &mut self.addrmgr);
-        self.cbfmgr.initialize(time, &self.tree);
-    }
-
-    fn attempted(&mut self, addr: &net::SocketAddr) {
-        self.addrmgr.peer_attempted(addr, self.clock.local_time());
-        self.peermgr.peer_attempted(addr);
-    }
-
-    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link) {
-        let height = self.tree.height();
-        let local_time = self.clock.local_time();
-
-        self.addrmgr.record_local_address(*local_addr);
-        self.addrmgr.peer_connected(&addr, local_time);
-        self.peermgr
-            .peer_connected(addr, *local_addr, link, height, local_time);
-        self.inbox
-            .insert(addr, stream::Decoder::new(INBOX_BUFFER_SIZE));
-    }
-
-    fn disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
-        let local_time = self.clock.local_time();
-
-        info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
-
-        self.cbfmgr.peer_disconnected(addr);
-        self.syncmgr.peer_disconnected(addr);
-        self.addrmgr.peer_disconnected(addr, reason.clone());
-        self.pingmgr.peer_disconnected(addr);
-        self.peermgr
-            .peer_disconnected(addr, &mut self.addrmgr, local_time, reason);
-        self.invmgr.peer_disconnected(addr);
-
-        self.upstream.unregister(addr);
-    }
-
-    fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]) {
-        if let Some(stream) = self.inbox.get_mut(addr) {
-            stream.input(bytes);
-
-            let mut msgs = Vec::with_capacity(1);
-
-            loop {
-                match stream.decode_next() {
-                    Ok(Some(msg)) => msgs.push(msg),
-                    Ok(None) => break,
-
-                    Err(err) => {
-                        self.upstream
-                            .disconnect(*addr, DisconnectReason::DecodeError(Arc::new(err)));
-                        return;
-                    }
-                }
-            }
-            for msg in msgs {
-                self.received(addr, msg);
-            }
-        }
-    }
-
     fn received(&mut self, addr: &net::SocketAddr, msg: RawNetworkMessage) {
         let now = self.clock.local_time();
         let cmd = msg.cmd();
@@ -941,6 +823,124 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
             }
             _ => {
                 debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);
+            }
+        }
+    }
+
+    /// Send a message to a all peers matching the predicate.
+    fn broadcast<Q>(&mut self, msg: NetworkMessage, predicate: Q) -> Vec<PeerId>
+    where
+        Q: Fn(&Peer) -> bool,
+    {
+        let mut peers = Vec::new();
+
+        for peer in self.peermgr.peers().map(Peer::from) {
+            if predicate(&peer) {
+                peers.push(peer.addr);
+                self.upstream.message(peer.addr, msg.clone());
+            }
+        }
+        peers
+    }
+
+    /// Send a message to a random outbound peer. Returns the peer id.
+    fn query<Q>(&mut self, msg: NetworkMessage, f: Q) -> Option<PeerId>
+    where
+        Q: Fn(&Peer) -> bool,
+    {
+        let peers = self
+            .peermgr
+            .negotiated(Link::Outbound)
+            .map(Peer::from)
+            .filter(f)
+            .collect::<Vec<_>>();
+
+        match peers.len() {
+            n if n > 0 => {
+                let r = self.rng.usize(..n);
+                let p = peers.get(r).unwrap();
+
+                self.upstream.message(p.addr, msg);
+
+                Some(p.addr)
+            }
+            _ => None,
+        }
+    }
+
+    fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
+        // TODO: Trigger disconnection everywhere, as if peer disconnected. This
+        // avoids being in a state where we know a peer is about to get disconnected,
+        // but we still process messages from it as normal.
+
+        self.peermgr.disconnect(addr, reason);
+    }
+}
+
+impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
+    type Upstream = channel::Drain;
+
+    fn initialize(&mut self, time: LocalTime) {
+        self.clock.set_local_time(time);
+        self.addrmgr.initialize(time);
+        self.syncmgr.initialize(time, &self.tree);
+        self.peermgr.initialize(time, &mut self.addrmgr);
+        self.cbfmgr.initialize(time, &self.tree);
+    }
+
+    fn attempted(&mut self, addr: &net::SocketAddr) {
+        self.addrmgr.peer_attempted(addr, self.clock.local_time());
+        self.peermgr.peer_attempted(addr);
+    }
+
+    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link) {
+        let height = self.tree.height();
+        let local_time = self.clock.local_time();
+
+        self.addrmgr.record_local_address(*local_addr);
+        self.addrmgr.peer_connected(&addr, local_time);
+        self.peermgr
+            .peer_connected(addr, *local_addr, link, height, local_time);
+        self.inbox
+            .insert(addr, stream::Decoder::new(INBOX_BUFFER_SIZE));
+    }
+
+    fn disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
+        let local_time = self.clock.local_time();
+
+        info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
+
+        self.cbfmgr.peer_disconnected(addr);
+        self.syncmgr.peer_disconnected(addr);
+        self.addrmgr.peer_disconnected(addr, reason.clone());
+        self.pingmgr.peer_disconnected(addr);
+        self.peermgr
+            .peer_disconnected(addr, &mut self.addrmgr, local_time, reason);
+        self.invmgr.peer_disconnected(addr);
+
+        self.upstream.unregister(addr);
+    }
+
+    fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]) {
+        if let Some(stream) = self.inbox.get_mut(addr) {
+            stream.input(bytes);
+
+            let mut msgs = Vec::with_capacity(1);
+
+            loop {
+                match stream.decode_next() {
+                    Ok(Some(msg)) => msgs.push(msg),
+                    Ok(None) => break,
+
+                    Err(err) => {
+                        self.upstream
+                            .disconnect(*addr, DisconnectReason::DecodeError(Arc::new(err)));
+                        return;
+                    }
+                }
+            }
+            for msg in msgs {
+                self.received(addr, msg);
             }
         }
     }

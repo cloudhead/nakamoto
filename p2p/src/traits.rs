@@ -1,7 +1,6 @@
 //! P2P related traits.
 use std::{io, net};
 
-use nakamoto_common::bitcoin::network::message::RawNetworkMessage;
 use nakamoto_common::block::time::LocalTime;
 
 use crate::error::Error;
@@ -23,8 +22,6 @@ pub trait Protocol {
         // and the sea-harvest of shells and tangle and veiled grey sunlight and gayclad lightclad
         // figures of children and girls and voices childish and girlish in the air." -JJ
     }
-    /// Received a message from a peer.
-    fn received(&mut self, addr: &net::SocketAddr, msg: RawNetworkMessage);
     /// Received bytes from a peer.
     fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]);
     /// Connection attempt underway.

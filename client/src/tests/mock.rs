@@ -5,8 +5,9 @@ use std::ops::RangeInclusive;
 use nakamoto_chain::block::Block;
 use nakamoto_chain::filter::BlockFilter;
 
+use nakamoto_common::bitcoin::consensus::encode::Encodable as _;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-use nakamoto_common::bitcoin::network::message::NetworkMessage;
+use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::block::filter::FilterHeader;
 use nakamoto_common::block::store::Genesis as _;
@@ -66,6 +67,18 @@ impl Client {
             subscriber: self.subscriber_.clone(),
             commands: self.commands_.clone(),
         }
+    }
+
+    pub fn received(&mut self, remote: &net::SocketAddr, payload: NetworkMessage) {
+        let mut bytes = Vec::new();
+        RawNetworkMessage {
+            magic: self.network.magic(),
+            payload,
+        }
+        .consensus_encode(&mut bytes)
+        .unwrap();
+
+        self.protocol.received_bytes(remote, &bytes);
     }
 
     pub fn step(&mut self) -> Vec<protocol::Io> {

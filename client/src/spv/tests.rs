@@ -154,20 +154,8 @@ fn test_peer_negotiated() {
         relay: false,
     });
 
-    client.protocol.received(
-        &remote,
-        RawNetworkMessage {
-            magic: network.magic(),
-            payload: version,
-        },
-    );
-    client.protocol.received(
-        &remote,
-        RawNetworkMessage {
-            magic: network.magic(),
-            payload: NetworkMessage::Verack,
-        },
-    );
+    client.received(&remote, version);
+    client.received(&remote, NetworkMessage::Verack);
     client.step();
 
     assert_matches!(events.try_recv(), Ok(Event::PeerConnected { .. }));
