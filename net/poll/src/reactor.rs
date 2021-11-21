@@ -324,21 +324,29 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
     where
         P: Protocol,
     {
-        let socket = self.peers.get_mut(addr).unwrap();
-        let mut buffer = [0; READ_BUFFER_SIZE];
+        // Nb. If the socket was readable and writable at the same time, and it was disconnected
+        // during an attempt to write, it will no longer be registered and hence available
+        // for reads.
+        if let Some(socket) = self.peers.get_mut(addr) {
+            let mut buffer = [0; READ_BUFFER_SIZE];
 
-        trace!("{}: Socket is readable", addr);
+            trace!("{}: Socket is readable", addr);
 
-        loop {
+            // Nb. Since `poll`, which this reactor is based on, is *level-triggered*,
+            // we will be notified again if there is still data to be read on the socket.
+            // Hence, there is no use in putting this socket read in a loop, as the second
+            // invocation would likely block.
             match socket.read(&mut buffer) {
                 Ok(count) if count > 0 => {
+                    trace!("{}: Read {} bytes", addr, count);
+
                     protocol.received_bytes(addr, &buffer[..count]);
                 }
-                Ok(_) => {
-                    break;
-                }
+                Ok(_) => {}
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                    break;
+                    // This shouldn't normally happen, since this function is only called
+                    // when there's data on the socket. We leave it here in case external
+                    // conditions change.
                 }
                 Err(err) => {
                     trace!("{}: Read error: {}", addr, err.to_string());
@@ -349,8 +357,6 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         DisconnectReason::ConnectionError(Arc::new(err)),
                         protocol,
                     );
-
-                    break;
                 }
             }
         }
