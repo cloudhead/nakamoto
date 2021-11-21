@@ -37,7 +37,7 @@ pub enum Input {
     /// Disconnected from peer.
     Disconnected(PeerId, DisconnectReason),
     /// Received a message from a remote peer.
-    Received(PeerId, RawNetworkMessage),
+    Received(PeerId, Vec<u8>),
     /// Used to advance the state machine after some wall time has passed.
     Tock,
 }
@@ -57,21 +57,8 @@ pub struct Scheduled {
 impl fmt::Display for Scheduled {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.input {
-            Input::Received(from, msg) => {
-                let s = match &msg.payload {
-                    NetworkMessage::Headers(vec) => {
-                        format!("Headers({})", vec.len())
-                    }
-                    NetworkMessage::Verack
-                    | NetworkMessage::SendHeaders
-                    | NetworkMessage::GetAddr => {
-                        format!("")
-                    }
-                    msg => {
-                        format!("{:?}", msg)
-                    }
-                };
-                write!(f, "{} <- {}: `{}` {}", self.node, from, msg.cmd(), s)
+            Input::Received(from, bytes) => {
+                write!(f, "{} <- {} ({}B)", self.node, from, bytes.len())
             }
             Input::Connected {
                 addr,
@@ -288,7 +275,7 @@ impl Simulation {
         // Schedule any messages in the pipes.
         for peer in nodes.values_mut() {
             for o in peer.upstream.drain() {
-                self.schedule(&peer.addr.ip(), o);
+                self.schedule(&peer.addr.ip(), o, peer);
             }
         }
 
@@ -343,11 +330,11 @@ impl Simulation {
                     }
                     Input::Tock => p.protocol.tock(self.time),
                     Input::Received(addr, msg) => {
-                        p.protocol.received(&addr, msg);
+                        p.protocol.received_bytes(&addr, &msg);
                     }
                 }
                 for o in p.upstream.drain() {
-                    self.schedule(&node, o);
+                    self.schedule(&node, o, p);
                 }
             } else {
                 panic!(
@@ -360,11 +347,11 @@ impl Simulation {
     }
 
     /// Process a protocol output event from a node.
-    pub fn schedule(&mut self, node: &NodeId, out: Io) {
+    pub fn schedule(&mut self, node: &NodeId, out: Io, protocol: &mut Protocol) {
         let node = *node;
 
         match out {
-            Io::Message(receiver, msg) => {
+            Io::Write(receiver) => {
                 // If the other end has disconnected the sender with some latency, there may not be
                 // a connection remaining to use.
                 if !self.connections.contains(&(node, receiver.ip())) {
@@ -376,8 +363,8 @@ impl Simulation {
                     // Drop message if nodes are partitioned.
                     info!(
                         target: "sim",
-                        "{} -> {}: `{}` (DROPPED)",
-                         sender, receiver, msg.cmd()
+                        "{} -> {} (DROPPED)",
+                         sender, receiver,
                     );
                     return;
                 }
@@ -393,10 +380,13 @@ impl Simulation {
                 let time = time + latency;
                 let elapsed = (time - self.start_time).as_millis();
 
+                let mut msg = Vec::new();
+                protocol.write(&receiver, &mut msg).unwrap();
+
                 info!(
                     target: "sim",
-                    "{:05} {} -> {}: `{}` ({})",
-                    elapsed, sender, receiver, msg.cmd(), latency
+                    "{:05} {} -> {}: ({})",
+                    elapsed, sender, receiver, latency
                 );
 
                 self.inbox.insert(

@@ -131,11 +131,11 @@ impl std::fmt::Display for Event {
 /// The ability to negotiate protocols between peers.
 pub trait Handshake {
     /// Send a `version` message.
-    fn version(&self, addr: PeerId, msg: VersionMessage) -> &Self;
+    fn version(&mut self, addr: PeerId, msg: VersionMessage) -> &mut Self;
     /// Send a `verack` message.
-    fn verack(&self, addr: PeerId) -> &Self;
+    fn verack(&mut self, addr: PeerId) -> &mut Self;
     /// Send a BIP-339 `wtxidrelay` message.
-    fn wtxidrelay(&self, addr: PeerId) -> &Self;
+    fn wtxidrelay(&mut self, addr: PeerId) -> &mut Self;
 }
 
 /// Ability to connect to peers.

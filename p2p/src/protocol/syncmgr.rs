@@ -37,11 +37,11 @@ const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
 /// The ability to get and send headers.
 pub trait SyncHeaders {
     /// Get headers from a peer.
-    fn get_headers(&self, addr: PeerId, locators: Locators);
+    fn get_headers(&mut self, addr: PeerId, locators: Locators);
     /// Send headers to a peer.
-    fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>);
+    fn send_headers(&mut self, addr: PeerId, headers: Vec<BlockHeader>);
     /// Send initial post-negotiation messages, eg. `sendheaders`.
-    fn negotiate(&self, addr: PeerId);
+    fn negotiate(&mut self, addr: PeerId);
     /// Emit a sync-related event.
     fn event(&self, event: Event);
 }
@@ -257,7 +257,7 @@ impl<U: Wakeup + Disconnect + SyncHeaders> SyncManager<U> {
 
     /// Called when we received a `getheaders` message from a peer.
     pub fn received_getheaders<T: BlockReader>(
-        &self,
+        &mut self,
         addr: &PeerId,
         (locator_hashes, stop_hash): Locators,
         tree: &T,

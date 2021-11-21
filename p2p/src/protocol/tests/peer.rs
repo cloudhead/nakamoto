@@ -206,11 +206,11 @@ impl Peer<Protocol> {
         self.protocol.drain()
     }
 
-    pub fn messages(&mut self) -> impl Iterator<Item = (PeerId, NetworkMessage)> + '_ {
-        self.protocol.drain().filter_map(|o| match o {
-            Io::Message(a, m) => Some((a, m.payload)),
-            _ => None,
-        })
+    pub fn messages(
+        &mut self,
+        addr: &net::SocketAddr,
+    ) -> impl Iterator<Item = NetworkMessage> + '_ {
+        crate::protocol::channel::test::messages(&mut self.protocol.upstream, addr)
     }
 
     pub fn events(&mut self) -> impl Iterator<Item = Event> + '_ {
@@ -221,13 +221,12 @@ impl Peer<Protocol> {
     }
 
     pub fn received(&mut self, remote: net::SocketAddr, payload: NetworkMessage) {
-        self.protocol.received(
-            &remote,
-            RawNetworkMessage {
-                magic: self.protocol.network.magic(),
-                payload,
-            },
-        );
+        let msg = message::Builder::new(self.protocol.network);
+
+        let mut buf = Vec::new();
+        msg.write(payload, &mut buf).unwrap();
+
+        self.protocol.received_bytes(&remote, &buf);
     }
 
     pub fn drain(&mut self) {
@@ -238,7 +237,6 @@ impl Peer<Protocol> {
         self.initialize();
 
         let local = self.addr;
-        let msg = message::Builder::new(self.protocol.network);
         let rng = self.protocol.rng.clone();
         let time = self.local_time();
 
@@ -250,44 +248,24 @@ impl Peer<Protocol> {
         self.protocol.connected(remote.addr, &local, link);
 
         // Receive `version`.
-        self.protocol.received(
-            &remote.addr,
-            msg.raw(NetworkMessage::Version(remote.version(local, rng.u64(..)))),
+        self.received(
+            remote.addr,
+            NetworkMessage::Version(remote.version(local, rng.u64(..))),
         );
 
-        let mut outputs = self.protocol.drain();
+        {
+            let mut messages = self.messages(&remote.addr);
 
-        // Expect `version` to be sent in response.
-        outputs
-            .find(|o| {
-                matches!(
-                    o,
-                    Io::Message(
-                        addr,
-                        RawNetworkMessage {
-                            payload: NetworkMessage::Version(_),
-                            ..
-                        },
-                    ) if addr == &remote.addr
-                )
-            })
-            .expect("`version` should be sent");
+            // Expect `version` to be sent in response.
+            messages
+                .find(|m| matches!(m, NetworkMessage::Version(_)))
+                .expect("`version` should be sent");
 
-        // Expect `verack`.
-        outputs
-            .find(|o| {
-                matches!(
-                    o,
-                    Io::Message(
-                        addr,
-                        RawNetworkMessage {
-                            payload: NetworkMessage::Verack,
-                            ..
-                        },
-                    ) if addr == &remote.addr
-                )
-            })
-            .expect("`verack` should be sent");
+            // Expect `verack`.
+            messages
+                .find(|m| matches!(m, NetworkMessage::Verack))
+                .expect("`verack` should be sent");
+        }
 
         // Receive `verack`.
         self.received(remote.addr, NetworkMessage::Verack);

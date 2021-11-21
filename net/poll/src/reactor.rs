@@ -1,6 +1,4 @@
 //! Poll-based reactor. This is a single-threaded reactor using a `poll` loop.
-use nakamoto_common::bitcoin::network::message::RawNetworkMessage;
-
 use crossbeam_channel as chan;
 
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
@@ -44,7 +42,7 @@ enum Source {
 
 /// A single-threaded non-blocking reactor.
 pub struct Reactor<R: Write + Read, E> {
-    peers: HashMap<net::SocketAddr, Socket<R, RawNetworkMessage>>,
+    peers: HashMap<net::SocketAddr, Socket<R>>,
     connecting: HashSet<net::SocketAddr>,
     commands: chan::Receiver<Command>,
     publisher: E,
@@ -266,32 +264,9 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
         // disconnected.
         for out in protocol.drain() {
             match out {
-                Io::Message(addr, msg) => {
-                    if let Some(peer) = self.peers.get_mut(&addr) {
-                        let src = self.sources.get_mut(&Source::Peer(addr)).unwrap();
-
-                        {
-                            let mut s = format!("{:?}", msg.payload);
-
-                            if s.len() > 96 {
-                                s.truncate(96);
-                                s.push_str("...");
-                            }
-                            trace!("{}: Sending: {}", addr, s);
-                        }
-
-                        peer.queue(msg);
-
-                        if let Err(err) = peer.drain(src) {
-                            error!("{}: Write error: {}", addr, err.to_string());
-
-                            peer.disconnect().ok();
-                            self.unregister_peer(
-                                addr,
-                                DisconnectReason::ConnectionError(Arc::new(err)),
-                                protocol,
-                            );
-                        }
+                Io::Write(addr) => {
+                    if let Some(source) = self.sources.get_mut(&Source::Peer(addr)) {
+                        source.set(popol::interest::WRITE);
                     }
                 }
                 Io::Connect(addr) => {
@@ -389,8 +364,8 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
     ) -> io::Result<()> {
         trace!("{}: Socket is writable", addr);
 
-        let src = self.sources.get_mut(source).unwrap();
-        let socket = self.peers.get_mut(addr).unwrap();
+        let source = self.sources.get_mut(source).unwrap();
+        let mut socket = self.peers.get_mut(addr).unwrap();
 
         // "A file descriptor for a socket that is connecting asynchronously shall indicate
         // that it is ready for writing, once a connection has been established."
@@ -403,15 +378,31 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
             protocol.connected(socket.address, &local_addr, socket.link);
         }
 
-        if let Err(err) = socket.drain(src) {
-            error!("{}: Write error: {}", addr, err.to_string());
+        match protocol.write(addr, &mut socket) {
+            // In this case, we've written all the data, we
+            // are no longer interested in writing to this
+            // socket.
+            Ok(()) => {
+                source.unset(popol::interest::WRITE);
+            }
+            // In this case, the write couldn't complete. Set
+            // our interest to `WRITE` to be notified when the
+            // socket is ready to write again.
+            Err(err)
+                if [io::ErrorKind::WouldBlock, io::ErrorKind::WriteZero].contains(&err.kind()) =>
+            {
+                source.set(popol::interest::WRITE);
+            }
+            Err(err) => {
+                error!("{}: Write error: {}", addr, err.to_string());
 
-            socket.disconnect().ok();
-            self.unregister_peer(
-                *addr,
-                DisconnectReason::ConnectionError(Arc::new(err)),
-                protocol,
-            );
+                socket.disconnect().ok();
+                self.unregister_peer(
+                    *addr,
+                    DisconnectReason::ConnectionError(Arc::new(err)),
+                    protocol,
+                );
+            }
         }
         Ok(())
     }

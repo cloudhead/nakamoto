@@ -5,9 +5,9 @@
 //! communicate with the main protocol and network.
 use log::*;
 use std::cell::RefCell;
-use std::collections::VecDeque;
-use std::net;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::{io, net};
 
 pub use crossbeam_channel as chan;
 
@@ -33,9 +33,11 @@ use super::{addrmgr, cbfmgr, invmgr, message, peermgr, pingmgr, syncmgr, Locator
 pub struct Channel {
     /// Protocol version.
     version: u32,
-    /// Output channel.
+    /// Output queue.
     outbound: Rc<RefCell<VecDeque<Io>>>,
-    /// Network magic number.
+    /// Message outbox.
+    outbox: Rc<RefCell<HashMap<PeerId, Vec<u8>>>>,
+    /// Network message builder.
     builder: message::Builder,
     /// Log target.
     target: &'static str,
@@ -47,6 +49,7 @@ impl Channel {
         Self {
             version,
             outbound: Rc::new(RefCell::new(VecDeque::new())),
+            outbox: Rc::new(RefCell::new(HashMap::new())),
             builder: message::Builder::new(network),
             target,
         }
@@ -57,18 +60,49 @@ impl Channel {
         self.outbound.borrow_mut().push_back(output);
     }
 
+    /// Unregister peer. Clears the outbox.
+    pub fn unregister(&mut self, peer: &PeerId) {
+        if let Some(outbox) = self.outbox.borrow_mut().remove(peer) {
+            if !outbox.is_empty() {
+                debug!(target: self.target, "{}: Dropping outbox with {} bytes", peer, outbox.len());
+            }
+        }
+    }
+
     /// Drain the outbound queue.
-    pub fn drain(&mut self) -> Iter {
-        Iter {
+    pub fn drain(&mut self) -> Drain {
+        Drain {
             items: self.outbound.clone(),
         }
     }
 
+    /// Write the peer's output buffer to the given writer.
+    pub fn write<W: io::Write>(&mut self, peer: &PeerId, mut writer: W) -> io::Result<()> {
+        if let Some(buf) = self.outbox.borrow_mut().get_mut(peer) {
+            while !buf.is_empty() {
+                match writer.write(buf) {
+                    Err(e) => return Err(e),
+
+                    Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
+                    Ok(n) => {
+                        buf.drain(..n);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Push a message to the channel.
-    pub fn message(&self, addr: PeerId, message: NetworkMessage) -> &Self {
+    pub fn message(&mut self, addr: PeerId, message: NetworkMessage) -> &Self {
         debug!(target: self.target, "{}: Sending {:?}", addr, message.cmd());
 
-        self.push(self.builder.message(addr, message));
+        let mut outbox = self.outbox.borrow_mut();
+        let buffer = outbox.entry(addr).or_insert_with(Vec::new);
+
+        // Nb. writing to a vector cannot result in an error.
+        self.builder.write(message, buffer).ok();
+        self.push(Io::Write(addr));
         self
     }
 
@@ -78,12 +112,12 @@ impl Channel {
     }
 }
 
-/// Iterator over outbound channel queue.
-pub struct Iter {
+/// Draining iterator over outbound channel queue.
+pub struct Drain {
     items: Rc<RefCell<VecDeque<Io>>>,
 }
 
-impl Iterator for Iter {
+impl Iterator for Drain {
     type Item = Io;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -128,11 +162,11 @@ impl Wakeup for () {
 }
 
 impl addrmgr::SyncAddresses for Channel {
-    fn get_addresses(&self, addr: PeerId) {
+    fn get_addresses(&mut self, addr: PeerId) {
         self.message(addr, NetworkMessage::GetAddr);
     }
 
-    fn send_addresses(&self, addr: PeerId, addrs: Vec<(BlockTime, Address)>) {
+    fn send_addresses(&mut self, addr: PeerId, addrs: Vec<(BlockTime, Address)>) {
         self.message(addr, NetworkMessage::Addr(addrs));
     }
 }
@@ -176,19 +210,19 @@ impl peermgr::Events for Channel {
 }
 
 impl pingmgr::Ping for Channel {
-    fn ping(&self, addr: net::SocketAddr, nonce: u64) -> &Self {
+    fn ping(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self {
         self.message(addr, NetworkMessage::Ping(nonce));
         self
     }
 
-    fn pong(&self, addr: net::SocketAddr, nonce: u64) -> &Self {
+    fn pong(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self {
         self.message(addr, NetworkMessage::Pong(nonce));
         self
     }
 }
 
 impl syncmgr::SyncHeaders for Channel {
-    fn get_headers(&self, addr: PeerId, (locator_hashes, stop_hash): Locators) {
+    fn get_headers(&mut self, addr: PeerId, (locator_hashes, stop_hash): Locators) {
         let msg = NetworkMessage::GetHeaders(GetHeadersMessage {
             version: self.version,
             // Starting hashes, highest heights first.
@@ -200,13 +234,11 @@ impl syncmgr::SyncHeaders for Channel {
         self.message(addr, msg);
     }
 
-    fn send_headers(&self, addr: PeerId, headers: Vec<BlockHeader>) {
-        let msg = self.builder.message(addr, NetworkMessage::Headers(headers));
-
-        self.push(msg);
+    fn send_headers(&mut self, addr: PeerId, headers: Vec<BlockHeader>) {
+        self.message(addr, NetworkMessage::Headers(headers));
     }
 
-    fn negotiate(&self, addr: PeerId) {
+    fn negotiate(&mut self, addr: PeerId) {
         self.message(addr, NetworkMessage::SendHeaders);
     }
 
@@ -224,39 +256,39 @@ impl syncmgr::SyncHeaders for Channel {
 }
 
 impl peermgr::Handshake for Channel {
-    fn version(&self, addr: PeerId, msg: VersionMessage) -> &Self {
+    fn version(&mut self, addr: PeerId, msg: VersionMessage) -> &mut Self {
         self.message(addr, NetworkMessage::Version(msg));
         self
     }
 
-    fn verack(&self, addr: PeerId) -> &Self {
+    fn verack(&mut self, addr: PeerId) -> &mut Self {
         self.message(addr, NetworkMessage::Verack);
         self
     }
 
-    fn wtxidrelay(&self, addr: PeerId) -> &Self {
+    fn wtxidrelay(&mut self, addr: PeerId) -> &mut Self {
         self.message(addr, NetworkMessage::WtxidRelay);
         self
     }
 }
 
 impl peermgr::Handshake for () {
-    fn version(&self, _addr: PeerId, _msg: VersionMessage) -> &Self {
+    fn version(&mut self, _addr: PeerId, _msg: VersionMessage) -> &mut Self {
         self
     }
 
-    fn verack(&self, _addr: PeerId) -> &Self {
+    fn verack(&mut self, _addr: PeerId) -> &mut Self {
         self
     }
 
-    fn wtxidrelay(&self, _addr: PeerId) -> &Self {
+    fn wtxidrelay(&mut self, _addr: PeerId) -> &mut Self {
         self
     }
 }
 
 impl cbfmgr::SyncFilters for Channel {
     fn get_cfheaders(
-        &self,
+        &mut self,
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
@@ -273,12 +305,12 @@ impl cbfmgr::SyncFilters for Channel {
         self.wakeup(timeout);
     }
 
-    fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders) {
+    fn send_cfheaders(&mut self, addr: PeerId, headers: CFHeaders) {
         self.message(addr, NetworkMessage::CFHeaders(headers));
     }
 
     fn get_cfilters(
-        &self,
+        &mut self,
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
@@ -295,21 +327,21 @@ impl cbfmgr::SyncFilters for Channel {
         self.wakeup(timeout);
     }
 
-    fn send_cfilter(&self, addr: PeerId, cfilter: CFilter) {
+    fn send_cfilter(&mut self, addr: PeerId, cfilter: CFilter) {
         self.message(addr, NetworkMessage::CFilter(cfilter));
     }
 }
 
 impl invmgr::Inventories for Channel {
-    fn inv(&self, addr: PeerId, inventories: Vec<Inventory>) {
+    fn inv(&mut self, addr: PeerId, inventories: Vec<Inventory>) {
         self.message(addr, NetworkMessage::Inv(inventories));
     }
 
-    fn getdata(&self, addr: PeerId, inventories: Vec<Inventory>) {
+    fn getdata(&mut self, addr: PeerId, inventories: Vec<Inventory>) {
         self.message(addr, NetworkMessage::GetData(inventories));
     }
 
-    fn tx(&self, addr: PeerId, tx: Transaction) {
+    fn tx(&mut self, addr: PeerId, tx: Transaction) {
         self.message(addr, NetworkMessage::Tx(tx));
     }
 
@@ -331,5 +363,28 @@ impl cbfmgr::Events for Channel {
         }
 
         self.event(Event::FilterManager(event));
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+    use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+
+    pub fn messages(
+        channel: &mut Channel,
+        addr: &net::SocketAddr,
+    ) -> impl Iterator<Item = NetworkMessage> {
+        let mut bytes = Vec::new();
+        let mut stream = crate::stream::Decoder::new(2048);
+        let mut msgs = Vec::new();
+
+        channel.write(addr, &mut bytes).unwrap();
+        stream.input(&bytes);
+
+        while let Some(msg) = stream.decode_next::<RawNetworkMessage>().unwrap() {
+            msgs.push(msg.payload);
+        }
+        msgs.into_iter()
     }
 }

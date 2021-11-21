@@ -53,11 +53,11 @@ pub const TRANSACTION_PRUNE_DEPTH: Height = 12;
 /// The ability to send and receive inventory data.
 pub trait Inventories {
     /// Sends an `inv` message to a peer.
-    fn inv(&self, addr: PeerId, inventories: Vec<Inventory>);
+    fn inv(&mut self, addr: PeerId, inventories: Vec<Inventory>);
     /// Sends a `getdata` message to a peer.
-    fn getdata(&self, addr: PeerId, inventories: Vec<Inventory>);
+    fn getdata(&mut self, addr: PeerId, inventories: Vec<Inventory>);
     /// Sends a `tx` message to a peer.
-    fn tx(&self, addr: PeerId, tx: Transaction);
+    fn tx(&mut self, addr: PeerId, tx: Transaction);
     /// Fire an event.
     fn event(&self, event: Event);
 }
@@ -363,8 +363,16 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
             self.upstream.event(Event::TimedOut { peer: addr });
         }
         for block_hash in requests {
-            if let Some(_peer) = self.request(block_hash) {
-                // TODO: Fire event.
+            if let Some((addr, _)) = self
+                .peers
+                .sample_with(|_, p| p.services.has(ServiceFlags::NETWORK))
+            {
+                log::debug!("Requesting block {} from {}", block_hash, addr);
+
+                self.upstream
+                    .getdata(*addr, vec![Inventory::Block(block_hash)]);
+            } else {
+                // TODO: Log that we couldn't find a peer?
             }
         }
     }
@@ -546,18 +554,6 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
         self.last_tick = None; // Disable rate-limiting for the next tick.
         self.upstream.wakeup(LocalDuration::from_secs(1));
     }
-
-    /// Request a block from a random peer.
-    fn request(&self, block: BlockHash) -> Option<PeerId> {
-        self.peers
-            .sample_with(|_, p| p.services.has(ServiceFlags::NETWORK))
-            .map(|(addr, _)| {
-                log::debug!("Requesting block {} from {}", block, addr);
-
-                self.upstream.getdata(*addr, vec![Inventory::Block(block)]);
-                *addr
-            })
-    }
 }
 
 #[cfg(test)]
@@ -567,11 +563,10 @@ mod tests {
     use std::net;
 
     use crate::protocol;
-    use crate::protocol::channel::Channel;
-    use crate::protocol::test::messages;
+    use crate::protocol::channel::{self, Channel};
     use crate::protocol::{Io, Network, PROTOCOL_VERSION};
 
-    use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use nakamoto_common::bitcoin::network::message::NetworkMessage;
     use nakamoto_common::block::tree::BlockTree as _;
     use nakamoto_common::collections::HashSet;
     use nakamoto_common::nonempty::NonEmpty;
@@ -642,33 +637,48 @@ mod tests {
             invmgr.received_tick(time, &tree);
             assert!(!invmgr.remaining.is_empty());
 
-            if let Some((addr, _)) = messages(upstream.drain())
-                .find(|(_, m)| matches!(m, NetworkMessage::GetData(i) if i == &inv))
+            if let Some(addr) = upstream
+                .drain()
+                .filter_map(|o| {
+                    if let Io::Write(addr) = o {
+                        Some(addr)
+                    } else {
+                        None
+                    }
+                })
+                .next()
             {
-                assert!(
-                    time - last_request >= REQUEST_TIMEOUT,
-                    "Requests are never made within the request timeout"
-                );
-                last_request = time;
+                if channel::test::messages(&mut upstream, &addr)
+                    .any(|m| matches!(m, NetworkMessage::GetData(i) if i == inv))
+                {
+                    assert!(
+                        time - last_request >= REQUEST_TIMEOUT,
+                        "Requests are never made within the request timeout"
+                    );
+                    last_request = time;
 
-                requested.insert(addr);
-                if requested.len() < invmgr.peers.len() {
-                    // We're not done until we've requested all peers.
-                    continue;
+                    requested.insert(addr);
+                    if requested.len() < invmgr.peers.len() {
+                        // We're not done until we've requested all peers.
+                        continue;
+                    }
+                    invmgr.received_block(&addr, block.clone(), &tree);
+
+                    assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
+                    events(upstream.drain())
+                        .find(|e| matches!(e, Event::BlockReceived { .. }))
+                        .expect("An event is emitted when a block is received");
+
+                    break;
                 }
-                invmgr.received_block(&addr, block.clone(), &tree);
-
-                assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
-                events(upstream.drain())
-                    .find(|e| matches!(e, Event::BlockReceived { .. }))
-                    .expect("An event is emitted when a block is received");
-
-                break;
             }
         }
         invmgr.received_tick(time + REQUEST_TIMEOUT, &tree);
         assert_eq!(
-            messages(upstream.drain()).count(),
+            upstream
+                .drain()
+                .filter(|o| matches!(o, Io::Write(_)))
+                .count(),
             0,
             "No more requests are sent"
         );
@@ -691,9 +701,11 @@ mod tests {
         invmgr.announce(tx);
         invmgr.received_tick(time, &tree);
 
+        upstream.drain().for_each(drop);
+
         assert_eq!(
-            messages(upstream.drain())
-                .filter(|(a, m)| matches!(m, NetworkMessage::Inv(_)) && a == &remote)
+            channel::test::messages(&mut upstream, &remote)
+                .filter(|m| matches!(m, NetworkMessage::Inv(_)))
                 .count(),
             1
         );
@@ -702,9 +714,10 @@ mod tests {
         assert_eq!(upstream.drain().count(), 0, "Timeout hasn't lapsed");
 
         invmgr.received_tick(time + REBROADCAST_TIMEOUT, &tree);
+        assert!(upstream.drain().count() > 0, "Timeout has lapsed");
         assert_eq!(
-            messages(upstream.drain())
-                .filter(|(a, m)| matches!(m, NetworkMessage::Inv(_)) && a == &remote)
+            channel::test::messages(&mut upstream, &remote)
+                .filter(|m| matches!(m, NetworkMessage::Inv(_)))
                 .count(),
             1
         );
@@ -730,20 +743,8 @@ mod tests {
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
             invmgr.received_tick(time, &tree);
-            upstream
-                .drain()
-                .find(|o| {
-                    matches!(
-                        o,
-                        Io::Message(
-                            _,
-                            RawNetworkMessage {
-                                payload: NetworkMessage::Inv(_),
-                                ..
-                            }
-                        )
-                    )
-                })
+            channel::test::messages(&mut upstream, &remote)
+                .find(|m| matches!(m, NetworkMessage::Inv(_),))
                 .expect("Inventory is announced");
 
             time.elapse(REBROADCAST_TIMEOUT);
@@ -851,8 +852,8 @@ mod tests {
         invmgr.announce(tx);
 
         invmgr.received_tick(time, &tree);
-        let invs = messages(upstream.drain())
-            .filter_map(|(_, m)| {
+        let invs = channel::test::messages(&mut upstream, &remote)
+            .filter_map(|m| {
                 if let NetworkMessage::Inv(invs) = m {
                     Some(invs)
                 } else {
@@ -865,9 +866,9 @@ mod tests {
 
         invmgr.peer_negotiated(remote2.into(), ServiceFlags::NETWORK, true, false);
         invmgr.received_tick(time, &tree);
-        let invs = messages(upstream.drain())
-            .filter_map(|pm| match pm {
-                (p, NetworkMessage::Inv(invs)) if p == remote2 => Some(invs),
+        let invs = channel::test::messages(&mut upstream, &remote2)
+            .filter_map(|m| match m {
+                NetworkMessage::Inv(invs) => Some(invs),
                 _ => None,
             })
             .next()
@@ -891,8 +892,8 @@ mod tests {
         invmgr.announce(tx.clone());
 
         invmgr.received_getdata(remote, &[Inventory::Transaction(tx.txid())]);
-        let tr = messages(upstream.drain())
-            .filter_map(|(_, m)| {
+        let tr = channel::test::messages(&mut upstream, &remote)
+            .filter_map(|m| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)
                 } else {
@@ -904,8 +905,8 @@ mod tests {
         assert_eq!(tr.txid(), tx.txid());
 
         invmgr.received_getdata(remote, &[Inventory::WTx(tx.wtxid())]);
-        let tr = messages(upstream.drain())
-            .filter_map(|(_, m)| {
+        let tr = channel::test::messages(&mut upstream, &remote)
+            .filter_map(|m| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)
                 } else {

@@ -39,14 +39,14 @@ pub trait Events {
 /// Capability of getting new addresses.
 pub trait SyncAddresses {
     /// Get new addresses from a peer.
-    fn get_addresses(&self, addr: PeerId);
+    fn get_addresses(&mut self, addr: PeerId);
     /// Send addresses to a peer.
-    fn send_addresses(&self, addr: PeerId, addrs: Vec<(BlockTime, Address)>);
+    fn send_addresses(&mut self, addr: PeerId, addrs: Vec<(BlockTime, Address)>);
 }
 
 impl SyncAddresses for () {
-    fn get_addresses(&self, _addr: PeerId) {}
-    fn send_addresses(&self, _addr: PeerId, _addrs: Vec<(BlockTime, Address)>) {}
+    fn get_addresses(&mut self, _addr: PeerId) {}
+    fn send_addresses(&mut self, _addr: PeerId, _addrs: Vec<(BlockTime, Address)>) {}
 }
 
 impl Events for () {
@@ -183,7 +183,7 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events> AddressManager<P, U> {
     }
 
     /// Get addresses from peers.
-    pub fn get_addresses(&self) {
+    pub fn get_addresses(&mut self) {
         for peer in &self.sources {
             self.upstream.get_addresses(*peer);
         }

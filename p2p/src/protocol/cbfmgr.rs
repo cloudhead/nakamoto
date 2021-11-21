@@ -194,7 +194,7 @@ pub trait SyncFilters {
     /// Get compact filter headers from peer, starting at the start height, and ending at the
     /// stop hash.
     fn get_cfheaders(
-        &self,
+        &mut self,
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
@@ -202,16 +202,16 @@ pub trait SyncFilters {
     );
     /// Get compact filters from a peer.
     fn get_cfilters(
-        &self,
+        &mut self,
         addr: PeerId,
         start_height: Height,
         stop_hash: BlockHash,
         timeout: LocalDuration,
     );
     /// Send compact filter headers to a peer.
-    fn send_cfheaders(&self, addr: PeerId, headers: CFHeaders);
+    fn send_cfheaders(&mut self, addr: PeerId, headers: CFHeaders);
     /// Send a compact filter to a peer.
-    fn send_cfilter(&self, addr: PeerId, filter: CFilter);
+    fn send_cfilter(&mut self, addr: PeerId, filter: CFilter);
 }
 
 /// The ability to emit CBF related events.
@@ -1063,8 +1063,7 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::BITCOIN_HEADERS;
 
-    use crate::protocol::channel::Channel;
-    use crate::protocol::test::messages;
+    use crate::protocol::channel::{self, Channel};
     use crate::protocol::PROTOCOL_VERSION;
     use crate::protocol::{self, Io};
 
@@ -1269,6 +1268,7 @@ mod tests {
         let mut rng = fastrand::Rng::new();
         let time = LocalTime::now();
         let network = Network::Regtest;
+        let remote: PeerId = ([8, 8, 8, 8], 8333).into();
         let (mut cbfmgr, tree, _) = util::setup(network, best);
 
         // Start rescan with no peers.
@@ -1280,15 +1280,15 @@ mod tests {
         );
 
         cbfmgr.peer_negotiated(
-            Socket::new(([8, 8, 8, 8], 8333)),
+            Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
             &time,
             &tree,
         );
-        protocol::test::messages(cbfmgr.upstream.drain())
-            .find(|(_, m)| matches!(m, NetworkMessage::GetCFilters(_)))
+        channel::test::messages(&mut cbfmgr.upstream, &remote)
+            .find(|m| matches!(m, NetworkMessage::GetCFilters(_)))
             .unwrap();
     }
 
@@ -1359,7 +1359,6 @@ mod tests {
         let time = LocalTime::now();
         let network = Network::Regtest;
         let (mut cbfmgr, tree, chain) = util::setup(network, best);
-        let mut msgs = protocol::test::messages(cbfmgr.upstream.drain());
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
         let tip = tree.get_block_by_height(best).unwrap().block_hash();
         let filter_type = 0x0;
@@ -1380,7 +1379,8 @@ mod tests {
             &time,
             &tree,
         );
-        msgs.find(|(_, m)| matches!(m, NetworkMessage::GetCFHeaders(_)))
+        channel::test::messages(&mut cbfmgr.upstream, &remote)
+            .find(|m| matches!(m, NetworkMessage::GetCFHeaders(_)))
             .unwrap();
 
         cbfmgr
@@ -1405,7 +1405,8 @@ mod tests {
             start_height: birth as u32,
             stop_hash: tip,
         };
-        msgs.find(|(_, m)| matches!(m, NetworkMessage::GetCFilters(msg) if msg == &expected))
+        channel::test::messages(&mut cbfmgr.upstream, &remote)
+            .find(|m| matches!(m, NetworkMessage::GetCFilters(msg) if msg == &expected))
             .expect("Rescanning should trigger filters to be fetched");
     }
 
@@ -1541,8 +1542,7 @@ mod tests {
             }
             assert_eq!(cbfmgr.rescan.current, sync_height + 1);
             cbfmgr.upstream.drain().for_each(drop);
-
-            let mut msgs = messages(cbfmgr.upstream.drain());
+            cbfmgr.upstream.unregister(&remote);
 
             // ... Create a fork ...
 
@@ -1585,12 +1585,12 @@ mod tests {
 
             // Check that filter headers are requested.
             assert_matches!(
-                msgs.next().unwrap(),
-                (_, NetworkMessage::GetCFHeaders(GetCFHeaders {
+                channel::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
+                NetworkMessage::GetCFHeaders(GetCFHeaders {
                     start_height,
                     stop_hash,
                     ..
-                })) if start_height as Height == cfheader_req_start && stop_hash == tip,
+                }) if start_height as Height == cfheader_req_start && stop_hash == tip,
                 "expected {} and {}", cfheader_req_start, tip
             );
 
@@ -1604,12 +1604,12 @@ mod tests {
             // Check that corresponding filters are requested within the scope of the
             // current rescan.
             assert_matches!(
-                msgs.next().unwrap(),
-                (_, NetworkMessage::GetCFilters(GetCFilters {
+                channel::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
+                NetworkMessage::GetCFilters(GetCFilters {
                     start_height,
                     stop_hash,
                     ..
-                })) if start_height as Height == cfilter_req_start && stop_hash == tip,
+                }) if start_height as Height == cfilter_req_start && stop_hash == tip,
                 "expected {} and {}", cfilter_req_start, tip
             );
         }
@@ -1646,10 +1646,10 @@ mod tests {
         );
         cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
 
-        let mut msgs = messages(cbfmgr.upstream.drain());
+        let mut msgs = channel::test::messages(&mut cbfmgr.upstream, &remote);
         let mut events = util::events(cbfmgr.upstream.drain());
 
-        msgs.find(|(_, m)| {
+        msgs.find(|m| {
             matches!(
                 m,
                 NetworkMessage::GetCFHeaders(GetCFHeaders {
@@ -1664,7 +1664,7 @@ mod tests {
         // If the birth height is `0`, we already have the header and can thus request
         // the filter.
         if birth == 0 {
-            msgs.find(|(_, m)| {
+            msgs.find(|m| {
                 matches!(
                     m,
                     NetworkMessage::GetCFilters(GetCFilters {
@@ -1684,20 +1684,21 @@ mod tests {
 
         assert_eq!(height, best, "The new height is the best height");
 
-        msgs.find(|(_, m)| {
-            // If the birth height is `0`, we've already requested the filter, so start at `1`.
-            let start = if birth == 0 { 1 } else { birth };
+        channel::test::messages(&mut cbfmgr.upstream, &remote)
+            .find(|m| {
+                // If the birth height is `0`, we've already requested the filter, so start at `1`.
+                let start = if birth == 0 { 1 } else { birth };
 
-            matches!(
-                m,
-                NetworkMessage::GetCFilters(GetCFilters {
-                    start_height,
-                    stop_hash,
-                    ..
-                }) if *start_height as Height == start && stop_hash == &tip
-            )
-        })
-        .unwrap();
+                matches!(
+                    m,
+                    NetworkMessage::GetCFilters(GetCFilters {
+                        start_height,
+                        stop_hash,
+                        ..
+                    }) if *start_height as Height == start && stop_hash == &tip
+                )
+            })
+            .unwrap();
 
         events
             .find(|e| matches!(e, Event::Synced(height) if height == &best))

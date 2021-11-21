@@ -31,9 +31,9 @@ pub use event::Event;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug};
-use std::net;
 use std::ops::{Bound, RangeInclusive};
 use std::sync::Arc;
+use std::{io, net};
 
 use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
 use nakamoto_common::bitcoin::consensus::encode;
@@ -255,18 +255,18 @@ pub enum CommandError {
 
 pub use cbfmgr::GetFiltersError;
 
-/// Output of a state transition (step) of the `Protocol` state machine.
+/// Output of a state transition of the `Protocol` state machine.
 #[derive(Debug)]
 pub enum Io {
-    /// Send a message to a peer.
-    Message(PeerId, RawNetworkMessage),
+    /// There are some bytes ready to be sent to a peer.
+    Write(PeerId),
     /// Connect to a peer.
     Connect(PeerId),
     /// Disconnect from a peer.
     Disconnect(PeerId, DisconnectReason),
     /// Ask for a wakeup in a specified amount of time.
     Wakeup(LocalDuration),
-    /// An event has occurred.
+    /// Emit an event.
     Event(Event),
 }
 
@@ -342,7 +342,10 @@ impl fmt::Display for DisconnectReason {
 }
 
 mod message {
+    use nakamoto_common::bitcoin::consensus::Encodable;
+
     use super::*;
+    use std::io;
 
     #[derive(Debug, Clone)]
     pub struct Builder {
@@ -356,15 +359,16 @@ mod message {
             }
         }
 
-        pub fn message(&self, addr: net::SocketAddr, payload: NetworkMessage) -> Io {
-            Io::Message(addr, self.raw(payload))
-        }
-
-        pub fn raw(&self, payload: NetworkMessage) -> RawNetworkMessage {
+        pub fn write<W: io::Write>(
+            &self,
+            payload: NetworkMessage,
+            writer: W,
+        ) -> Result<usize, io::Error> {
             RawNetworkMessage {
                 payload,
                 magic: self.magic,
             }
+            .consensus_encode(writer)
         }
     }
 }
@@ -650,7 +654,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     }
 
     /// Send a message to a all peers matching the predicate.
-    fn broadcast<Q>(&self, msg: NetworkMessage, predicate: Q) -> Vec<PeerId>
+    fn broadcast<Q>(&mut self, msg: NetworkMessage, predicate: Q) -> Vec<PeerId>
     where
         Q: Fn(&Peer) -> bool,
     {
@@ -666,7 +670,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     }
 
     /// Send a message to a random outbound peer. Returns the peer id.
-    fn query<Q>(&self, msg: NetworkMessage, f: Q) -> Option<PeerId>
+    fn query<Q>(&mut self, msg: NetworkMessage, f: Q) -> Option<PeerId>
     where
         Q: Fn(&Peer) -> bool,
     {
@@ -700,7 +704,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
 }
 
 impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
-    type Upstream = channel::Iter;
+    type Upstream = channel::Drain;
 
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
@@ -739,6 +743,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
         self.peermgr
             .peer_disconnected(addr, &mut self.addrmgr, local_time, reason);
         self.invmgr.peer_disconnected(addr);
+
+        self.upstream.unregister(addr);
     }
 
     fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]) {
@@ -1126,22 +1132,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
         }
     }
 
-    fn drain(&mut self) -> channel::Iter {
+    fn drain(&mut self) -> channel::Drain {
         self.upstream.drain()
     }
-}
 
-#[cfg(test)]
-mod test {
-    use super::{Io, PeerId};
-    use nakamoto_common::bitcoin::network::message::NetworkMessage;
-
-    pub fn messages(
-        outputs: impl Iterator<Item = Io>,
-    ) -> impl Iterator<Item = (PeerId, NetworkMessage)> {
-        outputs.filter_map(|o| match o {
-            Io::Message(a, m) => Some((a, m.payload)),
-            _ => None,
-        })
+    fn write<W: io::Write>(&mut self, addr: &net::SocketAddr, writer: W) -> io::Result<()> {
+        self.upstream.write(addr, writer)
     }
 }

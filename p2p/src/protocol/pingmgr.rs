@@ -28,9 +28,9 @@ const MAX_RECORDED_LATENCIES: usize = 64;
 /// The ability to send `ping` and `pong` messages.
 pub trait Ping {
     /// Send a `ping` message.
-    fn ping(&self, addr: net::SocketAddr, nonce: u64) -> &Self;
+    fn ping(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self;
     /// Send a `pong` message.
-    fn pong(&self, addr: net::SocketAddr, nonce: u64) -> &Self;
+    fn pong(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self;
 }
 
 #[derive(Debug)]

@@ -50,6 +50,10 @@ pub trait Protocol {
     fn tock(&mut self, local_time: LocalTime);
     /// Drain all protocol outputs since the last call.
     fn drain(&mut self) -> Self::Upstream;
+    /// Write the peer's output buffer to the given writer.
+    ///
+    /// May return [`io::ErrorKind::WriteZero`] if it isn't able to write the entire buffer.
+    fn write<W: io::Write>(&mut self, addr: &net::SocketAddr, writer: W) -> io::Result<()>;
 }
 
 /// Any network reactor that can drive the light-client protocol.

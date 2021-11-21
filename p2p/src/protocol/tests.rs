@@ -145,15 +145,8 @@ fn test_idle_disconnect() {
 
     // Let a certain amount of time pass.
     peer.elapse(pingmgr::PING_INTERVAL);
-    peer.outputs()
-        .find(|o| {
-            matches!(o, Io::Message(
-                addr,
-                RawNetworkMessage {
-                    payload: NetworkMessage::Ping(_), ..
-                },
-            ) if addr == &remote)
-        })
+    peer.messages(&remote)
+        .find(|o| matches!(o, NetworkMessage::Ping(_)))
         .expect("`ping` is sent");
 
     // More time passes, and the remote doesn't `pong` back.
@@ -184,8 +177,8 @@ fn test_inv_getheaders() {
     peer.connect_addr(&remote, Link::Outbound);
     peer.received(remote, NetworkMessage::Inv(vec![Inventory::Block(hash)]));
 
-    peer.messages()
-        .find(|o| matches!(o, (_, NetworkMessage::GetHeaders(_))))
+    peer.messages(&remote)
+        .find(|o| matches!(o, NetworkMessage::GetHeaders(_)))
         .expect("a `getheaders` message should be returned");
     peer.outputs()
         .find(|o| matches!(o, Io::Wakeup(_)))
@@ -308,9 +301,9 @@ fn test_getheaders_retry() {
     alice.received(peers[0], NetworkMessage::Inv(vec![Inventory::Block(hash)]));
 
     // The first time we ask for headers, we ask the peer who sent us the `inv` message.
-    let (addr, _) = alice
-        .messages()
-        .find(|(_, m)| {
+    alice
+        .messages(&peers[0])
+        .find(|m| {
             matches!(
                 m,
                 NetworkMessage::GetHeaders(GetHeadersMessage { stop_hash, .. })
@@ -318,31 +311,31 @@ fn test_getheaders_retry() {
             )
         })
         .expect("Alice asks the first peer for headers");
-    assert_eq!(addr, peers[0]);
 
-    asked.insert(addr);
+    asked.insert(peers[0]);
 
     // While there's still peers to ask...
     while asked.len() < peers.len() {
         alice.elapse(syncmgr::REQUEST_TIMEOUT);
 
-        let (addr, _) = alice
-            .messages()
-            .find(|(_, m)| {
-                matches!(
-                    m,
-                    NetworkMessage::GetHeaders(GetHeadersMessage { stop_hash, .. })
-                    if stop_hash == &hash
-                )
+        let addr = peers
+            .iter()
+            .find(|peer| {
+                alice.messages(peer).any(|m| {
+                    matches!(
+                        m,
+                        NetworkMessage::GetHeaders(GetHeadersMessage { stop_hash, .. })
+                        if stop_hash == hash
+                    )
+                })
             })
             .expect("Alice asks the next peer for headers");
 
         assert!(
-            !asked.contains(&addr),
+            !asked.contains(addr),
             "Alice shouldn't ask the same peer twice"
         );
-
-        asked.insert(addr);
+        asked.insert(*addr);
     }
 }
 
@@ -447,8 +440,8 @@ fn test_handshake_version_hook() {
             ..satoshi.version(peer.addr, 0)
         }),
     );
-    peer.messages()
-        .find(|m| matches!(m, (a, NetworkMessage::Verack) if *a == satoshi.addr))
+    peer.messages(&satoshi.addr)
+        .find(|m| matches!(m, NetworkMessage::Verack))
         .expect("peer should send a 'verack' message back");
 }
 
@@ -482,13 +475,13 @@ fn test_handshake_initial_messages() {
     );
     peer.received(remote.addr, NetworkMessage::Verack);
 
-    let msgs = peer.messages().collect::<Vec<_>>();
+    let msgs = peer.messages(&remote.addr).collect::<Vec<_>>();
 
-    assert!(msgs.contains(&(remote.addr, NetworkMessage::SendHeaders)));
-    assert!(msgs.contains(&(remote.addr, NetworkMessage::GetAddr)));
+    assert!(msgs.contains(&NetworkMessage::SendHeaders));
+    assert!(msgs.contains(&NetworkMessage::GetAddr));
     assert!(msgs
         .iter()
-        .any(|msg| matches!(msg, (addr, NetworkMessage::Ping(_)) if addr == &remote.addr)));
+        .any(|msg| matches!(msg, NetworkMessage::Ping(_))));
 }
 
 #[test]
@@ -536,8 +529,8 @@ fn test_getaddr() {
     // When we receive a timeout, we fetch new addresses, since our addresses have been exhausted.
     alice.tock();
     alice
-        .messages()
-        .find(|msg| matches!(msg, (_, NetworkMessage::GetAddr)))
+        .messages(&eve)
+        .find(|msg| matches!(msg, NetworkMessage::GetAddr))
         .expect("Alice should send `getaddr`");
 
     // We respond to the `getaddr` with a new peer address, Toto.
@@ -576,8 +569,8 @@ fn test_stale_tip() {
             .unwrap()]),
     );
     alice
-        .messages()
-        .find(|(_, msg)| matches!(msg, NetworkMessage::GetHeaders(_)))
+        .messages(&remote)
+        .find(|msg| matches!(msg, NetworkMessage::GetHeaders(_)))
         .expect("Alice sends a `getheaders` message");
 
     // Timeout the request.
@@ -637,9 +630,9 @@ fn prop_addrs(seed: u64) {
 
     // Let's query Alice to see if she has these addresses.
     alice.received(bob, NetworkMessage::GetAddr);
-    let (_, msg) = alice
-        .messages()
-        .find(|o| matches!(o, (_, NetworkMessage::Addr(_))))
+    let msg = alice
+        .messages(&bob)
+        .find(|o| matches!(o, NetworkMessage::Addr(_)))
         .expect("peer should respond with `addr`");
 
     let addrs = match msg {
@@ -826,15 +819,15 @@ fn test_submit_transactions() {
 
     alice.tock();
     alice
-        .messages()
-        .find(|(peer, msg)| msg == &NetworkMessage::Inv(inventory.clone()) && peer == &remote1.addr)
+        .messages(&remote1.addr)
+        .find(|msg| msg == &NetworkMessage::Inv(inventory.clone()))
         .expect("Alice sends an `inv` message");
 
     alice.elapse(LocalDuration::from_secs(30));
     alice.received(remote1.addr, NetworkMessage::GetData(inventory));
     alice
-        .messages()
-        .find(|(_, msg)| matches!(msg, NetworkMessage::Tx(_)))
+        .messages(&remote1.addr)
+        .find(|msg| matches!(msg, NetworkMessage::Tx(_)))
         .expect("Alice responds to `getdata` with a `tx` message");
 }
 
@@ -858,11 +851,11 @@ fn test_inv_rebroadcast() {
     alice.command(Command::SubmitTransaction(tx2, transmit));
     alice.tock(); // Broadcasting doesn't happen immediately
     alice
-        .messages()
+        .messages(&remote1)
         .find(|m| {
             matches! {
-                m, (addr, NetworkMessage::Inv(inv))
-                if inv.len() == 2 && addr == &remote1
+                m, NetworkMessage::Inv(inv)
+                if inv.len() == 2
             }
         })
         .expect("Alice sends an initial `inv`");
@@ -871,40 +864,31 @@ fn test_inv_rebroadcast() {
     alice.connect_addr(&remote2, Link::Outbound); // A new peer connects
     alice.tock(); // No delay until invs are sent to it
     alice
-        .messages()
-        .find(|m| matches!(m, (a, NetworkMessage::Inv(_)) if a == &remote2))
+        .messages(&remote2)
+        .find(|m| matches!(m, NetworkMessage::Inv(_)))
         .expect("Alice sends a first `inv` message to the new peer");
 
     // Let some time pass.
     alice.drain();
     alice.elapse(LocalDuration::from_mins(5));
 
-    let msgs = alice
-        .messages()
-        .filter(|m| matches!(m, (_, NetworkMessage::Inv(_))))
-        .collect::<Vec<_>>();
-
-    assert_eq!(
-        msgs.len(),
-        2,
-        "Two `inv` messages are sent, one for each peer"
-    );
-
-    msgs.iter()
-        .find(|(addr, _)| addr == &remote1)
+    alice
+        .messages(&remote1)
+        .find(|m| matches!(m, NetworkMessage::Inv(_)))
         .expect("Alice sends a second `inv` message to the first peer");
-    msgs.iter()
-        .find(|(addr, _)| addr == &remote2)
+
+    alice
+        .messages(&remote2)
+        .find(|m| matches!(m, NetworkMessage::Inv(_)))
         .expect("Alice sends a second `inv` message to the second peer");
 
     // Let some more time pass.
     alice.elapse(LocalDuration::from_mins(5));
     alice
-        .messages()
+        .messages(&remote1)
         .find(|m| {
             matches! {
-                m, (addr, NetworkMessage::Inv(_))
-                if addr == &remote1
+                m, NetworkMessage::Inv(_)
             }
         })
         .expect("Alice sends a third `inv` message to the first peer");
@@ -941,21 +925,20 @@ fn test_inv_partial_broadcast() {
         NetworkMessage::GetData(vec![Inventory::Transaction(tx2.txid())]),
     );
 
-    let messages = alice.messages().collect::<Vec<_>>();
-    messages
-        .iter()
-        .find(|(addr, msg)| {
+    alice
+        .messages(&remote1)
+        .find(|msg| {
             if let NetworkMessage::Tx(tx) = msg {
-                return addr == &remote1 && tx.txid() == tx1.txid();
+                return tx.txid() == tx1.txid();
             }
             false
         })
         .expect("Alice responds with only the requested inventory to peer#1");
-    messages
-        .iter()
-        .find(|(addr, msg)| {
+    alice
+        .messages(&remote2)
+        .find(|msg| {
             if let NetworkMessage::Tx(tx) = msg {
-                return addr == &remote2 && tx.txid() == tx2.txid();
+                return tx.txid() == tx2.txid();
             }
             false
         })
@@ -965,22 +948,21 @@ fn test_inv_partial_broadcast() {
     alice.drain();
     alice.elapse(LocalDuration::from_mins(5));
 
-    let messages = alice.messages().collect::<Vec<_>>();
-    messages
-        .iter()
+    alice
+        .messages(&remote1)
         .find(|m| {
             matches! {
-                m, (addr, NetworkMessage::Inv(inv))
-                if inv.first() == Some(&Inventory::Transaction(tx2.txid())) && addr == &remote1
+                m, NetworkMessage::Inv(inv)
+                if inv.first() == Some(&Inventory::Transaction(tx2.txid()))
             }
         })
         .expect("Alice re-sends the missing inv to peer#1");
-    messages
-        .iter()
+    alice
+        .messages(&remote2)
         .find(|m| {
             matches! {
-                m, (addr, NetworkMessage::Inv(inv))
-                if inv.first() == Some(&Inventory::Transaction(tx1.txid())) && addr == &remote2
+                m, NetworkMessage::Inv(inv)
+                if inv.first() == Some(&Inventory::Transaction(tx1.txid()))
             }
         })
         .expect("Alice re-sends the missing inv to peer#2");
@@ -1001,12 +983,20 @@ fn test_inv_partial_broadcast() {
 
     assert_eq!(
         alice
-            .messages()
-            .filter(|(_, m)| matches!(m, NetworkMessage::Inv(_)))
+            .messages(&remote1)
+            .filter(|m| matches!(m, NetworkMessage::Inv(_)))
             .count(),
         0,
         "Alice has nothing more to send"
-    )
+    );
+    assert_eq!(
+        alice
+            .messages(&remote2)
+            .filter(|m| matches!(m, NetworkMessage::Inv(_)))
+            .count(),
+        0,
+        "Alice has nothing more to send"
+    );
 }
 
 #[test]
@@ -1181,8 +1171,8 @@ fn test_submitted_transaction_filtering() {
     alice.received(remote, NetworkMessage::Headers(vec![matching.header]));
 
     alice
-        .messages()
-        .find(|(_, m)| matches!(m, NetworkMessage::GetCFHeaders(_)))
+        .messages(&remote)
+        .find(|m| matches!(m, NetworkMessage::GetCFHeaders(_)))
         .expect("Alice asks for the matching cfheaders");
 
     // Alice receives the cfheaders.
@@ -1197,8 +1187,8 @@ fn test_submitted_transaction_filtering() {
     );
 
     alice
-        .messages()
-        .find(|(_, m)| matches!(m, NetworkMessage::GetCFilters(_)))
+        .messages(&remote)
+        .find(|m| matches!(m, NetworkMessage::GetCFilters(_)))
         .expect("Alice asks for the cfilter");
 
     // Alice receives the cfilter, which we expect to match.
@@ -1216,8 +1206,8 @@ fn test_submitted_transaction_filtering() {
 
     alice.tock();
     alice
-        .messages()
-        .find(|(_, m)| matches!(m, NetworkMessage::GetData(data) if data == &expected))
+        .messages(&remote)
+        .find(|m| matches!(m, NetworkMessage::GetData(data) if data == &expected))
         .expect("Alice asks for the matching block");
     alice.received(remote, NetworkMessage::Block(matching));
 
@@ -1366,8 +1356,8 @@ fn test_transaction_reverted_reconfirm() {
 
         alice.tock();
         alice
-            .messages()
-            .find(|(_, m)| {
+            .messages(&remote)
+            .find(|m| {
                 matches!(
                     m,
                     NetworkMessage::GetCFHeaders(GetCFHeaders { stop_hash, .. })
@@ -1386,8 +1376,8 @@ fn test_transaction_reverted_reconfirm() {
             }),
         );
         alice
-            .messages()
-            .find(|(_, m)| {
+            .messages(&remote)
+            .find(|m| {
                 matches!(
                     m,
                     NetworkMessage::GetCFilters(GetCFilters { stop_hash, .. })
