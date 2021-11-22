@@ -13,9 +13,9 @@ use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
-    chan, message, AdjustedTime, BlockHash, BlockHeader, Command, Config, DisconnectReason, Event,
-    HashSet, Height, Io, Link, LocalDuration, LocalTime, Network, NetworkMessage, PeerId,
-    RawNetworkMessage, ServiceFlags, VersionMessage,
+    chan, network::Network, output::message, AdjustedTime, BlockHash, BlockHeader, Command, Config,
+    DisconnectReason, Event, HashSet, Height, Io, Link, LocalDuration, LocalTime, NetworkMessage,
+    PeerId, RawNetworkMessage, ServiceFlags, VersionMessage,
 };
 use super::{PROTOCOL_VERSION, USER_AGENT};
 

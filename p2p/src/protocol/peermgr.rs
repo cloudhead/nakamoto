@@ -32,7 +32,7 @@ use nakamoto_common::source;
 use crate::protocol::addrmgr;
 
 use super::{
-    channel::{Disconnect, Wakeup},
+    output::{Disconnect, Wakeup},
     DisconnectReason,
 };
 use super::{Hooks, Link, PeerId, Socket, Whitelist};

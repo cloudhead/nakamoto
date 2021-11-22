@@ -1,17 +1,22 @@
-//! A channel for communicating between the main protocol and the sub-protocols.
+//! Protocol output capabilities.
 //!
-//! Each sub-protocol, eg. the "ping" or "handshake" protocols are given a channel
+//! See [`Outbox`] type.
+//!
+//! Each sub-protocol, eg. the "ping" or "handshake" protocols are given a copy of this outbox
 //! with specific capabilities, eg. peer disconnection, message sending etc. to
-//! communicate with the main protocol and network.
+//! communicate with the network.
 use log::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
-use std::{io, net};
+use std::sync::Arc;
+use std::{fmt, io, net};
 
 pub use crossbeam_channel as chan;
 
+use nakamoto_common::bitcoin::consensus::encode;
 use nakamoto_common::bitcoin::network::address::Address;
+use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use nakamoto_common::bitcoin::network::message_filter::{
@@ -23,14 +28,133 @@ use nakamoto_common::bitcoin::Transaction;
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
-use crate::protocol::{DisconnectReason, Event, Io, PeerId};
+use crate::protocol::{Event, PeerId};
 
 use super::network::Network;
-use super::{addrmgr, cbfmgr, invmgr, message, peermgr, pingmgr, syncmgr, Locators};
+use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr, Locators};
 
-/// Used to construct a protocol output.
+/// Output of a state transition of the `Protocol` state machine.
+#[derive(Debug)]
+pub enum Io {
+    /// There are some bytes ready to be sent to a peer.
+    Write(PeerId),
+    /// Connect to a peer.
+    Connect(PeerId),
+    /// Disconnect from a peer.
+    Disconnect(PeerId, DisconnectReason),
+    /// Ask for a wakeup in a specified amount of time.
+    Wakeup(LocalDuration),
+    /// Emit an event.
+    Event(Event),
+}
+
+impl From<Event> for Io {
+    fn from(event: Event) -> Self {
+        Io::Event(event)
+    }
+}
+
+/// Disconnect reason.
 #[derive(Debug, Clone)]
-pub struct Channel {
+pub enum DisconnectReason {
+    /// Peer is misbehaving.
+    PeerMisbehaving(&'static str),
+    /// Peer protocol version is too old or too recent.
+    PeerProtocolVersion(u32),
+    /// Peer doesn't have the required services.
+    PeerServices(ServiceFlags),
+    /// Peer chain is too far behind.
+    PeerHeight(Height),
+    /// Peer magic is invalid.
+    PeerMagic(u32),
+    /// Peer timed out.
+    PeerTimeout(&'static str),
+    /// Peer was dropped by all sub-protocols.
+    PeerDropped,
+    /// Connection to self was detected.
+    SelfConnection,
+    /// Inbound connection limit reached.
+    ConnectionLimit,
+    /// Error with the underlying connection.
+    ConnectionError(Arc<std::io::Error>),
+    /// Error trying to decode incoming message.
+    DecodeError(Arc<encode::Error>),
+    /// Peer was forced to disconnect by external command.
+    Command,
+    /// Peer was disconnected for another reason.
+    Other(&'static str),
+}
+
+impl DisconnectReason {
+    /// Check whether the disconnect reason is transient, ie. may no longer be applicable
+    /// after some time.
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionLimit
+                | Self::PeerTimeout(_)
+                | Self::PeerHeight(_)
+                | Self::ConnectionError(_)
+        )
+    }
+}
+
+impl fmt::Display for DisconnectReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PeerMisbehaving(reason) => write!(f, "peer misbehaving: {}", reason),
+            Self::PeerProtocolVersion(_) => write!(f, "peer protocol version mismatch"),
+            Self::PeerServices(_) => write!(f, "peer doesn't have the required services"),
+            Self::PeerHeight(_) => write!(f, "peer is too far behind"),
+            Self::PeerMagic(magic) => write!(f, "received message with invalid magic: {}", magic),
+            Self::PeerTimeout(s) => write!(f, "peer timed out: {:?}", s),
+            Self::PeerDropped => write!(f, "peer dropped"),
+            Self::SelfConnection => write!(f, "detected self-connection"),
+            Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
+            Self::ConnectionError(err) => write!(f, "connection error: {}", err),
+            Self::DecodeError(err) => write!(f, "message decode error: {}", err),
+            Self::Command => write!(f, "received external command"),
+            Self::Other(reason) => write!(f, "{}", reason),
+        }
+    }
+}
+
+pub(crate) mod message {
+    use nakamoto_common::bitcoin::consensus::Encodable;
+    use nakamoto_common::bitcoin::network::message::RawNetworkMessage;
+
+    use super::*;
+    use std::io;
+
+    #[derive(Debug, Clone)]
+    pub struct Builder {
+        magic: u32,
+    }
+
+    impl Builder {
+        pub fn new(network: Network) -> Self {
+            Builder {
+                magic: network.magic(),
+            }
+        }
+
+        pub fn write<W: io::Write>(
+            &self,
+            payload: NetworkMessage,
+            writer: W,
+        ) -> Result<usize, io::Error> {
+            RawNetworkMessage {
+                payload,
+                magic: self.magic,
+            }
+            .consensus_encode(writer)
+        }
+    }
+}
+
+/// Holds protocol outputs and pending I/O.
+#[derive(Debug, Clone)]
+pub struct Outbox {
     /// Protocol version.
     version: u32,
     /// Output queue.
@@ -43,7 +167,7 @@ pub struct Channel {
     target: &'static str,
 }
 
-impl Channel {
+impl Outbox {
     /// Create a new channel.
     pub fn new(network: Network, version: u32, target: &'static str) -> Self {
         Self {
@@ -131,7 +255,7 @@ pub trait Disconnect {
     fn disconnect(&self, addr: net::SocketAddr, reason: DisconnectReason);
 }
 
-impl Disconnect for Channel {
+impl Disconnect for Outbox {
     fn disconnect(&self, addr: net::SocketAddr, reason: DisconnectReason) {
         debug!(target: self.target, "{}: Disconnecting: {}", addr, reason);
         self.push(Io::Disconnect(addr, reason));
@@ -148,7 +272,7 @@ pub trait Wakeup {
     fn wakeup(&self, duration: LocalDuration) -> &Self;
 }
 
-impl Wakeup for Channel {
+impl Wakeup for Outbox {
     fn wakeup(&self, duration: LocalDuration) -> &Self {
         self.push(Io::Wakeup(duration));
         self
@@ -161,7 +285,7 @@ impl Wakeup for () {
     }
 }
 
-impl addrmgr::SyncAddresses for Channel {
+impl addrmgr::SyncAddresses for Outbox {
     fn get_addresses(&mut self, addr: PeerId) {
         self.message(addr, NetworkMessage::GetAddr);
     }
@@ -171,7 +295,7 @@ impl addrmgr::SyncAddresses for Channel {
     }
 }
 
-impl peermgr::Connect for Channel {
+impl peermgr::Connect for Outbox {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
         info!(target: self.target, "[conn] {}: Connecting..", addr);
         self.push(Io::Connect(addr));
@@ -187,7 +311,7 @@ impl peermgr::Events for () {
     fn event(&self, _event: peermgr::Event) {}
 }
 
-impl addrmgr::Events for Channel {
+impl addrmgr::Events for Outbox {
     fn event(&self, event: addrmgr::Event) {
         match &event {
             addrmgr::Event::Error(msg) => error!(target: self.target, "[addr] {}", msg),
@@ -202,14 +326,14 @@ impl addrmgr::Events for Channel {
     }
 }
 
-impl peermgr::Events for Channel {
+impl peermgr::Events for Outbox {
     fn event(&self, event: peermgr::Event) {
         info!(target: self.target, "[peer] {}", &event);
         self.event(Event::PeerManager(event));
     }
 }
 
-impl pingmgr::Ping for Channel {
+impl pingmgr::Ping for Outbox {
     fn ping(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self {
         self.message(addr, NetworkMessage::Ping(nonce));
         self
@@ -221,7 +345,7 @@ impl pingmgr::Ping for Channel {
     }
 }
 
-impl syncmgr::SyncHeaders for Channel {
+impl syncmgr::SyncHeaders for Outbox {
     fn get_headers(&mut self, addr: PeerId, (locator_hashes, stop_hash): Locators) {
         let msg = NetworkMessage::GetHeaders(GetHeadersMessage {
             version: self.version,
@@ -255,7 +379,7 @@ impl syncmgr::SyncHeaders for Channel {
     }
 }
 
-impl peermgr::Handshake for Channel {
+impl peermgr::Handshake for Outbox {
     fn version(&mut self, addr: PeerId, msg: VersionMessage) -> &mut Self {
         self.message(addr, NetworkMessage::Version(msg));
         self
@@ -286,7 +410,7 @@ impl peermgr::Handshake for () {
     }
 }
 
-impl cbfmgr::SyncFilters for Channel {
+impl cbfmgr::SyncFilters for Outbox {
     fn get_cfheaders(
         &mut self,
         addr: PeerId,
@@ -332,7 +456,7 @@ impl cbfmgr::SyncFilters for Channel {
     }
 }
 
-impl invmgr::Inventories for Channel {
+impl invmgr::Inventories for Outbox {
     fn inv(&mut self, addr: PeerId, inventories: Vec<Inventory>) {
         self.message(addr, NetworkMessage::Inv(inventories));
     }
@@ -351,7 +475,7 @@ impl invmgr::Inventories for Channel {
     }
 }
 
-impl cbfmgr::Events for Channel {
+impl cbfmgr::Events for Outbox {
     fn event(&self, event: cbfmgr::Event) {
         debug!(target: self.target, "[spv] {}", &event);
 
@@ -372,7 +496,7 @@ pub mod test {
     use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 
     pub fn messages(
-        channel: &mut Channel,
+        channel: &mut Outbox,
         addr: &net::SocketAddr,
     ) -> impl Iterator<Item = NetworkMessage> {
         let mut bytes = Vec::new();

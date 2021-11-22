@@ -13,7 +13,7 @@ use nakamoto_common::collections::HashMap;
 use crate::protocol::PeerId;
 
 use super::{
-    channel::{Disconnect, Wakeup},
+    output::{Disconnect, Wakeup},
     DisconnectReason,
 };
 

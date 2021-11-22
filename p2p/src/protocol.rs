@@ -5,10 +5,10 @@ use log::*;
 
 pub mod addrmgr;
 pub mod cbfmgr;
-pub mod channel;
 pub mod event;
 pub mod fees;
 pub mod invmgr;
+pub mod output;
 pub mod peermgr;
 pub mod pingmgr;
 pub mod syncmgr;
@@ -18,8 +18,8 @@ mod tests;
 
 use addrmgr::AddressManager;
 use cbfmgr::FilterManager;
-use channel::{Channel, Disconnect as _};
 use invmgr::InventoryManager;
+use output::{Disconnect as _, Outbox};
 use peermgr::PeerManager;
 use pingmgr::PingManager;
 use syncmgr::SyncManager;
@@ -28,6 +28,7 @@ use crate::stream;
 use crate::traits;
 
 pub use event::Event;
+pub use output::{DisconnectReason, Io};
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug};
@@ -36,7 +37,6 @@ use std::sync::Arc;
 use std::{io, net};
 
 use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
-use nakamoto_common::bitcoin::consensus::encode;
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
@@ -51,7 +51,7 @@ use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockReader, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::block::{BlockTime, Transaction};
-use nakamoto_common::network::{self, Network};
+use nakamoto_common::network;
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::AddressSource;
 use nakamoto_common::p2p::{peer, Domain};
@@ -71,9 +71,6 @@ const INBOX_BUFFER_SIZE: usize = 1024 * 64;
 
 /// Block locators. Consists of starting hashes and a stop hash.
 type Locators = (Vec<BlockHash>, BlockHash);
-
-/// Upstream communication channel. The protocol interacts with the peer network via this channel.
-type Upstream = Channel;
 
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
@@ -255,138 +252,20 @@ pub enum CommandError {
 
 pub use cbfmgr::GetFiltersError;
 
-/// Output of a state transition of the `Protocol` state machine.
-#[derive(Debug)]
-pub enum Io {
-    /// There are some bytes ready to be sent to a peer.
-    Write(PeerId),
-    /// Connect to a peer.
-    Connect(PeerId),
-    /// Disconnect from a peer.
-    Disconnect(PeerId, DisconnectReason),
-    /// Ask for a wakeup in a specified amount of time.
-    Wakeup(LocalDuration),
-    /// Emit an event.
-    Event(Event),
-}
-
-impl From<Event> for Io {
-    fn from(event: Event) -> Self {
-        Io::Event(event)
-    }
-}
-
-/// Disconnect reason.
-#[derive(Debug, Clone)]
-pub enum DisconnectReason {
-    /// Peer is misbehaving.
-    PeerMisbehaving(&'static str),
-    /// Peer protocol version is too old or too recent.
-    PeerProtocolVersion(u32),
-    /// Peer doesn't have the required services.
-    PeerServices(ServiceFlags),
-    /// Peer chain is too far behind.
-    PeerHeight(Height),
-    /// Peer magic is invalid.
-    PeerMagic(u32),
-    /// Peer timed out.
-    PeerTimeout(&'static str),
-    /// Peer was dropped by all sub-protocols.
-    PeerDropped,
-    /// Connection to self was detected.
-    SelfConnection,
-    /// Inbound connection limit reached.
-    ConnectionLimit,
-    /// Error with the underlying connection.
-    ConnectionError(Arc<std::io::Error>),
-    /// Error trying to decode incoming message.
-    DecodeError(Arc<encode::Error>),
-    /// Peer was forced to disconnect by external command.
-    Command,
-    /// Peer was disconnected for another reason.
-    Other(&'static str),
-}
-
-impl DisconnectReason {
-    /// Check whether the disconnect reason is transient, ie. may no longer be applicable
-    /// after some time.
-    pub fn is_transient(&self) -> bool {
-        matches!(
-            self,
-            Self::ConnectionLimit
-                | Self::PeerTimeout(_)
-                | Self::PeerHeight(_)
-                | Self::ConnectionError(_)
-        )
-    }
-}
-
-impl fmt::Display for DisconnectReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::PeerMisbehaving(reason) => write!(f, "peer misbehaving: {}", reason),
-            Self::PeerProtocolVersion(_) => write!(f, "peer protocol version mismatch"),
-            Self::PeerServices(_) => write!(f, "peer doesn't have the required services"),
-            Self::PeerHeight(_) => write!(f, "peer is too far behind"),
-            Self::PeerMagic(magic) => write!(f, "received message with invalid magic: {}", magic),
-            Self::PeerTimeout(s) => write!(f, "peer timed out: {:?}", s),
-            Self::PeerDropped => write!(f, "peer dropped"),
-            Self::SelfConnection => write!(f, "detected self-connection"),
-            Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
-            Self::ConnectionError(err) => write!(f, "connection error: {}", err),
-            Self::DecodeError(err) => write!(f, "message decode error: {}", err),
-            Self::Command => write!(f, "received external command"),
-            Self::Other(reason) => write!(f, "{}", reason),
-        }
-    }
-}
-
-mod message {
-    use nakamoto_common::bitcoin::consensus::Encodable;
-
-    use super::*;
-    use std::io;
-
-    #[derive(Debug, Clone)]
-    pub struct Builder {
-        magic: u32,
-    }
-
-    impl Builder {
-        pub fn new(network: Network) -> Self {
-            Builder {
-                magic: network.magic(),
-            }
-        }
-
-        pub fn write<W: io::Write>(
-            &self,
-            payload: NetworkMessage,
-            writer: W,
-        ) -> Result<usize, io::Error> {
-            RawNetworkMessage {
-                payload,
-                magic: self.magic,
-            }
-            .consensus_encode(writer)
-        }
-    }
-}
-
 /// Holds functions that are used to hook into or alter protocol behavior.
 #[derive(Clone)]
 pub struct Hooks {
     /// Called when we receive a message from a peer.
     /// If an error is returned, the message is not further processed.
     pub on_message:
-        Arc<dyn Fn(PeerId, &NetworkMessage, &Upstream) -> Result<(), &'static str> + Send + Sync>,
+        Arc<dyn Fn(PeerId, &NetworkMessage, &Outbox) -> Result<(), &'static str> + Send + Sync>,
     /// Called when a `version` message is received.
     /// If an error is returned, the peer is dropped, and the error is logged.
     pub on_version: Arc<dyn Fn(PeerId, VersionMessage) -> Result<(), &'static str> + Send + Sync>,
     /// Called when a `getcfilters` message is received.
-    pub on_getcfilters: Arc<dyn Fn(PeerId, GetCFilters, &Upstream) + Send + Sync>,
+    pub on_getcfilters: Arc<dyn Fn(PeerId, GetCFilters, &Outbox) + Send + Sync>,
     /// Called when a `getdata` message is received.
-    pub on_getdata: Arc<dyn Fn(PeerId, Vec<Inventory>, &Upstream) + Send + Sync>,
+    pub on_getdata: Arc<dyn Fn(PeerId, Vec<Inventory>, &Outbox) + Send + Sync>,
 }
 
 impl Default for Hooks {
@@ -423,17 +302,17 @@ pub struct Protocol<T, F, P> {
     /// Peer message inboxes.
     inbox: HashMap<PeerId, stream::Decoder>,
     /// Peer address manager.
-    addrmgr: AddressManager<P, Upstream>,
+    addrmgr: AddressManager<P, Outbox>,
     /// Blockchain synchronization manager.
-    syncmgr: SyncManager<Upstream>,
+    syncmgr: SyncManager<Outbox>,
     /// Ping manager.
-    pingmgr: PingManager<Upstream>,
+    pingmgr: PingManager<Outbox>,
     /// CBF (Compact Block Filter) manager.
-    cbfmgr: FilterManager<F, Upstream>,
+    cbfmgr: FilterManager<F, Outbox>,
     /// Peer manager.
-    peermgr: PeerManager<Upstream>,
+    peermgr: PeerManager<Outbox>,
     /// Inventory manager.
-    invmgr: InventoryManager<Upstream>,
+    invmgr: InventoryManager<Outbox>,
     /// Network-adjusted clock.
     clock: AdjustedTime<PeerId>,
     /// Informational name of this protocol instance. Used for logging purposes only.
@@ -442,8 +321,8 @@ pub struct Protocol<T, F, P> {
     last_tick: LocalTime,
     /// Random number generator.
     rng: fastrand::Rng,
-    /// Outbound channel. Used to communicate protocol events with a reactor.
-    upstream: Upstream,
+    /// Outbound I/O. Used to communicate protocol events with a reactor.
+    outbox: Outbox,
     /// Protocol event hooks.
     hooks: Hooks,
 }
@@ -581,7 +460,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             hooks,
         } = config;
 
-        let upstream = Upstream::new(network, protocol_version, target);
+        let outbox = Outbox::new(network, protocol_version, target);
         let inbox = HashMap::new();
         let syncmgr = SyncManager::new(
             syncmgr::Config {
@@ -590,9 +469,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 params: params.clone(),
             },
             rng.clone(),
-            upstream.clone(),
+            outbox.clone(),
         );
-        let pingmgr = PingManager::new(ping_timeout, rng.clone(), upstream.clone());
+        let pingmgr = PingManager::new(ping_timeout, rng.clone(), outbox.clone());
         let cbfmgr = FilterManager::new(
             cbfmgr::Config {
                 filter_cache_size,
@@ -600,7 +479,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             },
             rng.clone(),
             filters,
-            upstream.clone(),
+            outbox.clone(),
         );
         let peermgr = PeerManager::new(
             peermgr::Config {
@@ -619,7 +498,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             },
             rng.clone(),
             hooks.clone(),
-            upstream.clone(),
+            outbox.clone(),
         );
         let addrmgr = AddressManager::new(
             addrmgr::Config {
@@ -628,9 +507,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             },
             rng.clone(),
             peers,
-            upstream.clone(),
+            outbox.clone(),
         );
-        let invmgr = InventoryManager::new(rng.clone(), upstream.clone());
+        let invmgr = InventoryManager::new(rng.clone(), outbox.clone());
 
         Self {
             tree,
@@ -648,7 +527,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             invmgr,
             last_tick: LocalTime::default(),
             rng,
-            upstream,
+            outbox,
             hooks,
         }
     }
@@ -672,7 +551,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             addr, cmd
         );
 
-        if let Err(err) = (self.hooks.on_message)(addr, &msg.payload, &self.upstream) {
+        if let Err(err) = (self.hooks.on_message)(addr, &msg.payload, &self.outbox) {
             debug!(
                 target: self.target,
                 "{}: Message {:?} dropped by user hook: {}", addr, cmd, err
@@ -800,7 +679,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
             }
             NetworkMessage::GetCFilters(msg) => {
-                (*self.hooks.on_getcfilters)(addr, msg, &self.upstream);
+                (*self.hooks.on_getcfilters)(addr, msg, &self.outbox);
             }
             NetworkMessage::Addr(addrs) => {
                 self.addrmgr.received_addr(addr, addrs);
@@ -811,7 +690,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             }
             NetworkMessage::GetData(invs) => {
                 self.invmgr.received_getdata(addr, &invs);
-                (*self.hooks.on_getdata)(addr, invs, &self.upstream);
+                (*self.hooks.on_getdata)(addr, invs, &self.outbox);
             }
             NetworkMessage::WtxidRelay => {
                 self.peermgr.received_wtxidrelay(&addr);
@@ -837,7 +716,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         for peer in self.peermgr.peers().map(Peer::from) {
             if predicate(&peer) {
                 peers.push(peer.addr);
-                self.upstream.message(peer.addr, msg.clone());
+                self.outbox.message(peer.addr, msg.clone());
             }
         }
         peers
@@ -860,7 +739,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 let r = self.rng.usize(..n);
                 let p = peers.get(r).unwrap();
 
-                self.upstream.message(p.addr, msg);
+                self.outbox.message(p.addr, msg);
 
                 Some(p.addr)
             }
@@ -878,7 +757,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
 }
 
 impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
-    type Upstream = channel::Drain;
+    type Drain = output::Drain;
 
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set_local_time(time);
@@ -918,7 +797,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
             .peer_disconnected(addr, &mut self.addrmgr, local_time, reason);
         self.invmgr.peer_disconnected(addr);
 
-        self.upstream.unregister(addr);
+        self.outbox.unregister(addr);
     }
 
     fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]) {
@@ -933,7 +812,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
                     Ok(None) => break,
 
                     Err(err) => {
-                        self.upstream
+                        self.outbox
                             .disconnect(*addr, DisconnectReason::DecodeError(Arc::new(err)));
                         return;
                     }
@@ -1132,11 +1011,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
         }
     }
 
-    fn drain(&mut self) -> channel::Drain {
-        self.upstream.drain()
+    fn drain(&mut self) -> output::Drain {
+        self.outbox.drain()
     }
 
     fn write<W: io::Write>(&mut self, addr: &net::SocketAddr, writer: W) -> io::Result<()> {
-        self.upstream.write(addr, writer)
+        self.outbox.write(addr, writer)
     }
 }

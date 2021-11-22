@@ -13,7 +13,7 @@ use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::p2p::peer::{AddressSource, KnownAddress, Source, Store};
 use nakamoto_common::p2p::Domain;
 
-use super::channel::Wakeup;
+use super::output::Wakeup;
 use super::{DisconnectReason, Link, PeerId};
 
 /// Time to wait until a request times out.
@@ -977,7 +977,7 @@ mod tests {
         }
 
         let mut addrmgr = {
-            let upstream = crate::protocol::channel::Channel::new(Network::Mainnet, 0, "test");
+            let upstream = crate::protocol::output::Outbox::new(Network::Mainnet, 0, "test");
 
             AddressManager::new(
                 Config::default(),

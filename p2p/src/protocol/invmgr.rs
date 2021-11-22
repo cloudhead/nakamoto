@@ -31,8 +31,8 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::collections::{AddressBook, HashMap};
 
-use super::channel::Wakeup;
 use super::fees::{FeeEstimate, FeeEstimator};
+use super::output::Wakeup;
 use super::{Height, PeerId, Socket};
 
 /// Time between re-broadcasts of inventories.
@@ -563,8 +563,9 @@ mod tests {
     use std::net;
 
     use crate::protocol;
-    use crate::protocol::channel::{self, Channel};
-    use crate::protocol::{Io, Network, PROTOCOL_VERSION};
+    use crate::protocol::network::Network;
+    use crate::protocol::output::{self, Outbox};
+    use crate::protocol::{Io, PROTOCOL_VERSION};
 
     use nakamoto_common::bitcoin::network::message::NetworkMessage;
     use nakamoto_common::block::tree::BlockTree as _;
@@ -587,7 +588,7 @@ mod tests {
 
         let network = Network::Regtest;
 
-        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
         let mut rng = fastrand::Rng::new();
         let mut time = LocalTime::now();
 
@@ -648,7 +649,7 @@ mod tests {
                 })
                 .next()
             {
-                if channel::test::messages(&mut upstream, &addr)
+                if output::test::messages(&mut upstream, &addr)
                     .any(|m| matches!(m, NetworkMessage::GetData(i) if i == inv))
                 {
                     assert!(
@@ -687,7 +688,7 @@ mod tests {
     #[test]
     fn test_rebroadcast_timeout() {
         let network = Network::Mainnet;
-        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let mut rng = fastrand::Rng::with_seed(1);
@@ -704,7 +705,7 @@ mod tests {
         upstream.drain().for_each(drop);
 
         assert_eq!(
-            channel::test::messages(&mut upstream, &remote)
+            output::test::messages(&mut upstream, &remote)
                 .filter(|m| matches!(m, NetworkMessage::Inv(_)))
                 .count(),
             1
@@ -716,7 +717,7 @@ mod tests {
         invmgr.received_tick(time + REBROADCAST_TIMEOUT, &tree);
         assert!(upstream.drain().count() > 0, "Timeout has lapsed");
         assert_eq!(
-            channel::test::messages(&mut upstream, &remote)
+            output::test::messages(&mut upstream, &remote)
                 .filter(|m| matches!(m, NetworkMessage::Inv(_)))
                 .count(),
             1
@@ -726,7 +727,7 @@ mod tests {
     #[test]
     fn test_max_attemps() {
         let network = Network::Mainnet;
-        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
@@ -743,7 +744,7 @@ mod tests {
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
             invmgr.received_tick(time, &tree);
-            channel::test::messages(&mut upstream, &remote)
+            output::test::messages(&mut upstream, &remote)
                 .find(|m| matches!(m, NetworkMessage::Inv(_),))
                 .expect("Inventory is announced");
 
@@ -779,7 +780,7 @@ mod tests {
         let fork_block1 = gen::block_with(&tip, vec![tx.clone()], &mut rng);
         let fork_block2 = gen::block(&fork_block1.header, &mut rng);
 
-        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
         let time = LocalTime::now();
 
         let mut tree = model::Cache::from(headers);
@@ -836,7 +837,7 @@ mod tests {
     #[test]
     fn test_wtx_inv() {
         let network = Network::Mainnet;
-        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
@@ -852,7 +853,7 @@ mod tests {
         invmgr.announce(tx);
 
         invmgr.received_tick(time, &tree);
-        let invs = channel::test::messages(&mut upstream, &remote)
+        let invs = output::test::messages(&mut upstream, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Inv(invs) = m {
                     Some(invs)
@@ -866,7 +867,7 @@ mod tests {
 
         invmgr.peer_negotiated(remote2.into(), ServiceFlags::NETWORK, true, false);
         invmgr.received_tick(time, &tree);
-        let invs = channel::test::messages(&mut upstream, &remote2)
+        let invs = output::test::messages(&mut upstream, &remote2)
             .filter_map(|m| match m {
                 NetworkMessage::Inv(invs) => Some(invs),
                 _ => None,
@@ -879,7 +880,7 @@ mod tests {
     #[test]
     fn test_wtx_getdata() {
         let network = Network::Mainnet;
-        let mut upstream = Channel::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
 
         let mut rng = fastrand::Rng::with_seed(1);
 
@@ -892,7 +893,7 @@ mod tests {
         invmgr.announce(tx.clone());
 
         invmgr.received_getdata(remote, &[Inventory::Transaction(tx.txid())]);
-        let tr = channel::test::messages(&mut upstream, &remote)
+        let tr = output::test::messages(&mut upstream, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)
@@ -905,7 +906,7 @@ mod tests {
         assert_eq!(tr.txid(), tx.txid());
 
         invmgr.received_getdata(remote, &[Inventory::WTx(tx.wtxid())]);
-        let tr = channel::test::messages(&mut upstream, &remote)
+        let tr = output::test::messages(&mut upstream, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)

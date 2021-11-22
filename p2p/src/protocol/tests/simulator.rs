@@ -274,7 +274,7 @@ impl Simulation {
 
         // Schedule any messages in the pipes.
         for peer in nodes.values_mut() {
-            for o in peer.upstream.drain() {
+            for o in peer.outbox.drain() {
                 self.schedule(&peer.addr.ip(), o, peer);
             }
         }
@@ -333,7 +333,7 @@ impl Simulation {
                         p.protocol.received_bytes(&addr, &msg);
                     }
                 }
-                for o in p.upstream.drain() {
+                for o in p.outbox.drain() {
                     self.schedule(&node, o, p);
                 }
             } else {

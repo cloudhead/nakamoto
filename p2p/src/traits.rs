@@ -1,10 +1,10 @@
 //! P2P related traits.
 use std::{io, net};
 
+use crossbeam_channel as chan;
 use nakamoto_common::block::time::LocalTime;
 
 use crate::error::Error;
-use crate::protocol::channel::chan;
 use crate::protocol::event::Publisher;
 use crate::protocol::{Command, DisconnectReason, Io, Link};
 
@@ -13,7 +13,7 @@ use crate::protocol::{Command, DisconnectReason, Io, Link};
 /// This trait is implemented by the core P2P protocol in [`crate::protocol::Protocol`].
 pub trait Protocol {
     /// Return type of [`Protocol::drain`].
-    type Upstream: Iterator<Item = Io>;
+    type Drain: Iterator<Item = Io>;
 
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
@@ -46,7 +46,7 @@ pub trait Protocol {
     /// after a timer rings.
     fn tock(&mut self, local_time: LocalTime);
     /// Drain all protocol outputs since the last call.
-    fn drain(&mut self) -> Self::Upstream;
+    fn drain(&mut self) -> Self::Drain;
     /// Write the peer's output buffer to the given writer.
     ///
     /// May return [`io::ErrorKind::WriteZero`] if it isn't able to write the entire buffer.
