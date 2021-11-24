@@ -1567,7 +1567,7 @@ mod tests {
             assert!(cfilter_req_start >= birth);
             assert!(cfheader_req_start <= cfilter_req_start);
 
-            let mut rng = fastrand::Rng::with_seed(60689);
+            let mut rng = fastrand::Rng::with_seed(772092983);
             let network = Network::Regtest;
             let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
@@ -1575,12 +1575,7 @@ mod tests {
             let time = LocalTime::now();
 
             // Generate a watchlist and keep track of the matching block heights.
-            let watch = loop {
-                let (watch, _, _) = gen::watchlist(birth, chain.iter(), &mut rng);
-                if !watch.is_empty() {
-                    break watch;
-                }
-            };
+            let (watch, _, _) = gen::watchlist(birth, chain.iter(), &mut rng);
 
             cbfmgr.initialize(time, &tree);
             cbfmgr.peer_negotiated(
