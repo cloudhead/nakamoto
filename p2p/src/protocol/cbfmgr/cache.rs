@@ -337,7 +337,7 @@ mod tests {
             let n = u8::arbitrary(g);
 
             match n % 4 {
-                0 | 1 | 2 => {
+                0..=2 => {
                     let content: Vec<_> = Arbitrary::arbitrary(g);
                     let filter = BlockFilter::new(&content);
 

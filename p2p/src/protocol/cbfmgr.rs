@@ -1680,18 +1680,19 @@ mod tests {
     }
 
     #[quickcheck]
-    fn prop_rescan(birth: Height, best: Height) -> quickcheck::TestResult {
+    fn prop_rescan(birth: Height, best: Height, cache: usize) -> quickcheck::TestResult {
         // We don't gain anything by testing longer chains.
         if !(1..16).contains(&best) || birth > best {
             return TestResult::discard();
         }
         log::debug!("-- Test case with birth = {}, best = {} --", birth, best);
 
+        let cache = cache % DEFAULT_FILTER_CACHE_SIZE;
         let mut rng = fastrand::Rng::new();
         let network = Network::Regtest;
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
-        let (mut cbfmgr, tree, chain) = util::setup(network, best, 0);
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, cache);
         let time = LocalTime::now();
         let tip = chain.last().block_hash();
 
