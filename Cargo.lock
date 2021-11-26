@@ -352,6 +352,7 @@ dependencies = [
  "lazy_static",
  "log",
  "nakamoto-common",
+ "quickcheck",
 ]
 
 [[package]]

@@ -2,6 +2,8 @@
 pub mod peer;
 pub mod simulator;
 
+mod simulations;
+
 use std::io;
 use std::iter;
 use std::net;
@@ -41,6 +43,7 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_common::p2p::peer::Source;
 
+use nakamoto_test::arbitrary;
 use nakamoto_test::assert_matches;
 use nakamoto_test::block::cache::model;
 use nakamoto_test::block::gen;
@@ -711,63 +714,63 @@ fn prop_connect_timeout(seed: u64) {
     }));
 }
 
-/// Test that we can find and connect to peers amidst network errors.
+#[quickcheck]
+fn prop_connect_to_peers(
+    options: Options,
+    seed: u64,
+    arbitrary::InRange(target): arbitrary::InRange<1, 6>,
+) -> bool {
+    simulations::connect_to_peers(options, seed, target as usize)
+}
+
 #[test]
-fn sim_connect_to_peers() {
-    logger::init(log::Level::Debug);
-
-    let rng = fastrand::Rng::with_seed(1);
-    let network = Network::Mainnet;
-    let headers = BITCOIN_HEADERS.tail.to_vec();
-    let time = LocalTime::from_block_time(headers.last().unwrap().time);
-
-    // Alice will try to connect to enough outbound peers.
-    let mut peers = peer::network(network, peermgr::TARGET_OUTBOUND_PEERS * 2, rng.clone());
-    let addrs = peers
-        .iter()
-        .map(|p| (p.addr, Source::Dns, p.cfg.services))
-        .collect::<Vec<_>>();
-    let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, addrs, rng.clone());
-    let target = alice.protocol.peermgr.config.target_outbound_peers;
-
-    let mut simulator = Simulation::new(
-        time,
-        rng,
+fn test_connect_to_peers_1() {
+    assert!(simulations::connect_to_peers(
         Options {
-            latency: 1..4,     // 1 - 4 seconds
-            failure_rate: 0.2, // 20%
+            latency: 0..3,
+            failure_rate: 0.1294790448987514,
         },
-    );
-    alice.initialize();
-    simulator.initialize(&mut peers);
+        5190880195044658821,
+        8
+    ));
+}
 
-    let (mut prev_negotiated, mut prev_connecting, mut prev_connected) = (0, 0, 0);
-    while simulator.step(iter::once(&mut alice).chain(&mut peers)) {
-        let negotiated = alice.protocol.peermgr.negotiated(Link::Outbound).count();
-        let connecting = alice.protocol.peermgr.connecting().count();
-        let connected = alice.protocol.peermgr.connected().count();
+#[test]
+fn test_connect_to_peers_2() {
+    assert!(simulations::connect_to_peers(
+        Options {
+            latency: 0..3,
+            failure_rate: 0.1391942598336996,
+        },
+        4237581564267684273,
+        8
+    ));
+}
 
-        if (prev_negotiated, prev_connecting, prev_connected) != (negotiated, connecting, connected)
-        {
-            prev_negotiated = negotiated;
-            prev_connected = connected;
-            prev_connecting = connecting;
+#[test]
+fn test_connect_to_peers_3() {
+    assert!(simulations::connect_to_peers(
+        Options {
+            latency: 0..3,
+            failure_rate: 0.1070592131461427
+        },
+        18131621610609499524,
+        4
+    ));
+}
 
-            info!(
-                target: "test",
-                "--- negotiated: {}, connecting: {}, connected: {} ---",
-                negotiated, connecting, connected
-            );
-        }
-
-        if negotiated >= target {
-            break;
-        }
-
-        if simulator.elapsed() > LocalDuration::from_mins(2) {
-            panic!("Desired state took too long to reach")
-        }
-    }
+#[test]
+#[ignore]
+// TODO: This test fails.
+fn test_connect_to_peers_4() {
+    assert!(simulations::connect_to_peers(
+        Options {
+            latency: 1..3,
+            failure_rate: 0.18729837247381553
+        },
+        714649005678913971,
+        8,
+    ));
 }
 
 #[test]

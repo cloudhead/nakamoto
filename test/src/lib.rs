@@ -83,3 +83,27 @@ pub mod logger {
         log::set_max_level(level.to_level_filter());
     }
 }
+
+pub mod arbitrary {
+    /// Generator for numbers in a statically defined inclusive range.
+    #[derive(Debug, Clone)]
+    pub struct InRange<const N: u64, const M: u64>(pub u64);
+
+    impl<const N: u64, const M: u64> quickcheck::Arbitrary for InRange<N, M> {
+        fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+            let rng = fastrand::Rng::with_seed(u64::arbitrary(g));
+
+            Self(rng.u64(N..=M))
+        }
+
+        fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+            let InRange(n) = self;
+
+            if *n > N {
+                Box::new((N..*n).map(InRange))
+            } else {
+                Box::new(std::iter::empty())
+            }
+        }
+    }
+}

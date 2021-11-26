@@ -1,9 +1,11 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
+#![allow(clippy::collapsible_if)]
 use super::*;
 
 use nakamoto_common::collections::{HashMap, HashSet};
 
 use std::collections::BTreeMap;
+use std::collections::VecDeque;
 use std::fmt;
 use std::io;
 
@@ -121,12 +123,41 @@ impl Inbox {
 }
 
 /// Simulation options.
+#[derive(Debug, Clone)]
 pub struct Options {
     /// Minimum and maximum latency between nodes, in seconds.
     pub latency: Range<u64>,
     /// Probability that network I/O fails.
     /// A rate of `1.0` means 100% of I/O fails.
     pub failure_rate: f64,
+}
+
+impl quickcheck::Arbitrary for Options {
+    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
+        let rng = fastrand::Rng::with_seed(u64::arbitrary(g));
+        let from = rng.u64(0..=1);
+        let to = rng.u64(2..4);
+        let failure_rate = rng.f64() / 4.;
+
+        Self {
+            latency: from..to,
+            failure_rate,
+        }
+    }
+
+    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+        let failure_rate = self.failure_rate - 0.01;
+        let latency = self.latency.start.saturating_sub(1)..self.latency.end.saturating_sub(1);
+
+        if failure_rate < 0. && latency.is_empty() {
+            return Box::new(std::iter::empty());
+        }
+
+        Box::new(std::iter::once(Self {
+            latency,
+            failure_rate,
+        }))
+    }
 }
 
 impl Default for Options {
@@ -142,6 +173,8 @@ impl Default for Options {
 pub struct Simulation {
     /// Inbox of inputs to be delivered by the simulation.
     inbox: Inbox,
+    /// Priority events that should happen immediately.
+    priority: VecDeque<Scheduled>,
     /// Simulated latencies between nodes.
     latencies: HashMap<(NodeId, NodeId), LocalDuration>,
     /// Network partitions between two nodes.
@@ -167,6 +200,7 @@ impl Simulation {
             inbox: Inbox {
                 messages: BTreeMap::new(),
             },
+            priority: VecDeque::new(),
             partitions: HashSet::with_hasher(rng.clone().into()),
             latencies: HashMap::with_hasher(rng.clone().into()),
             connections: HashSet::with_hasher(rng.clone().into()),
@@ -278,8 +312,10 @@ impl Simulation {
                 self.schedule(&peer.addr.ip(), o, peer);
             }
         }
+        // Next high-priority message.
+        let priority = self.priority.pop_front().map(|s| (self.time, s));
 
-        if let Some((time, next)) = self.inbox.next() {
+        if let Some((time, next)) = priority.or_else(|| self.inbox.next()) {
             let elapsed = (time - self.start_time).as_millis();
             if matches!(next.input, Input::Tock) {
                 trace!(target: "sim", "{:05} {}", elapsed, next);
@@ -312,9 +348,9 @@ impl Simulation {
                     } => {
                         let conn = (node, addr.ip());
 
-                        if self.connections.insert(conn) {
-                            let attempted = link.is_outbound() && self.attempts.contains(&conn);
-                            if attempted || link.is_inbound() {
+                        let attempted = link.is_outbound() && self.attempts.remove(&conn);
+                        if attempted || link.is_inbound() {
+                            if self.connections.insert(conn) {
                                 p.protocol.connected(addr, &local_addr, link);
                             }
                         }
@@ -323,6 +359,9 @@ impl Simulation {
                         let conn = (node, addr.ip());
                         let attempt = self.attempts.remove(&conn);
                         let connection = self.connections.remove(&conn);
+
+                        // Can't be both attempting and connected.
+                        assert!(!(attempt && connection));
 
                         if attempt || connection {
                             p.protocol.disconnected(&addr, reason);
@@ -352,6 +391,14 @@ impl Simulation {
 
         match out {
             Io::Write(receiver) => {
+                let mut msg = Vec::new();
+
+                // Always drain the protocol output buffer.
+                protocol.write(&receiver, &mut msg).unwrap();
+
+                if msg.is_empty() {
+                    return;
+                }
                 // If the other end has disconnected the sender with some latency, there may not be
                 // a connection remaining to use.
                 if !self.connections.contains(&(node, receiver.ip())) {
@@ -379,9 +426,6 @@ impl Simulation {
                     .unwrap_or_else(|| self.time);
                 let time = time + latency;
                 let elapsed = (time - self.start_time).as_millis();
-
-                let mut msg = Vec::new();
-                protocol.write(&receiver, &mut msg).unwrap();
 
                 info!(
                     target: "sim",
@@ -472,14 +516,11 @@ impl Simulation {
                 let latency = self.latency(node, remote.ip());
 
                 // The local node is immediately disconnected.
-                self.inbox.insert(
-                    self.time,
-                    Scheduled {
-                        remote,
-                        node,
-                        input: Input::Disconnected(remote, reason),
-                    },
-                );
+                self.priority.push_back(Scheduled {
+                    remote,
+                    node,
+                    input: Input::Disconnected(remote, reason),
+                });
                 // The remote node receives the disconnection with some delay.
                 self.inbox.insert(
                     self.time + latency,
