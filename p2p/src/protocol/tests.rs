@@ -1512,7 +1512,12 @@ fn test_block_events() {
     let mut events = filter(alice.events());
 
     // Disconnected events.
-    for height_ in fork_height + 1..=best {
+    assert_matches!(
+        events.next().unwrap(),
+        syncmgr::Event::BlockDisconnected { height, header }
+        if height == best + 1 && header.block_hash() == extra.block_hash()
+    );
+    for height_ in (fork_height + 1..=best).rev() {
         let hash_ = headers[height_ as usize].block_hash();
 
         assert_matches!(
@@ -1521,11 +1526,6 @@ fn test_block_events() {
             if height == height_ as Height && header.block_hash() == hash_
         );
     }
-    assert_matches!(
-        events.next().unwrap(),
-        syncmgr::Event::BlockDisconnected { height, header }
-        if height == best + 1 && header.block_hash() == extra.block_hash()
-    );
 
     // Connected events.
     for height_ in fork_height + 1..=fork_best {

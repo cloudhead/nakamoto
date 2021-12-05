@@ -555,7 +555,11 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
                 best_header,
                 best_hash,
                 best_height,
-                reverted.into_iter().map(|((i, _), h)| (i, h)).collect(),
+                reverted
+                    .into_iter()
+                    .rev()
+                    .map(|((i, _), h)| (i, h))
+                    .collect(),
                 NonEmpty::from_vec(connected.into_iter().collect()).expect(
                     "BlockCache::import_blocks: there is always at least one connected block",
                 ),
