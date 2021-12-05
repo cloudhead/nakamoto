@@ -69,8 +69,8 @@ pub trait Filters {
             self.get_header(height - 1).map(|(_, h)| h)
         }
     }
-    /// Rollback chain by the given number of headers.
-    fn rollback(&mut self, n: usize) -> Result<(), Error>;
+    /// Rollback filter chain to the given height.
+    fn rollback(&mut self, height: Height) -> Result<(), Error>;
     /// Truncate the filter header chain to zero.
     fn clear(&mut self) -> Result<(), Error>;
 }

@@ -415,15 +415,21 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         }
     }
 
-    /// Rollback filter header chain by a given number of headers.
-    pub fn rollback(&mut self, n: usize) -> Result<(), filter::Error> {
-        self.filters.rollback(n)?;
-        self.schedule_tick();
-
-        let height = self.filters.height();
+    /// Rollback filters to the given height.
+    pub fn rollback(&mut self, height: Height) -> Result<(), filter::Error> {
+        // It's possible that a rollback doesn't affect the filter chain, if the filter headers
+        // haven't caught up to the block headers when the re-org happens.
+        if height >= self.filters.height() {
+            return Ok(());
+        }
 
         // Purge stale block filters.
         self.cache.rollback(height);
+        // Rollback filter header chain.
+        self.filters.rollback(height)?;
+
+        // TODO: Cancel requests for filter headers and fitlers? Or just ignore them when they
+        // come in?
 
         if self.rescan.active {
             // Reset "current" scanning height.
@@ -1038,11 +1044,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
 
         Ok(matches)
     }
-
-    fn schedule_tick(&mut self) {
-        self.last_idle = None; // Disable rate-limiting for the next tick.
-        self.upstream.wakeup(LocalDuration::from_secs(1));
-    }
 }
 
 /// Iterator over height ranges.
@@ -1616,8 +1617,12 @@ mod tests {
 
             // ... Import fork ...
 
-            let (tip, reverted, connected) = assert_matches!(tree.import_blocks(fork.iter().map(|b| b.header), &time)
-                .unwrap(), ImportResult::TipChanged(_,tip,_,reverted,connected) => (tip,reverted, connected));
+            let (tip, reverted, connected) = assert_matches!(
+                tree.import_blocks(fork.iter().map(|b| b.header), &time).unwrap(),
+                ImportResult::TipChanged(_, tip, _, reverted, connected) => (tip, reverted, connected)
+            );
+
+            assert_matches!(reverted.last(), Some((height, _)) if *height == fork_height + 1);
 
             log::debug!(target: "test",
                 "Rollback to {}, stop = {}, length = {}",
@@ -1628,8 +1633,8 @@ mod tests {
 
             // ... Perform rollback ...
 
-            cbfmgr.rollback(reverted.len()).unwrap();
-            cbfmgr.received_tick(time, &tree);
+            cbfmgr.rollback(fork_height).unwrap();
+            cbfmgr.sync(&tree, time);
 
             log::debug!(target: "test",
                 "Imported {:?}",

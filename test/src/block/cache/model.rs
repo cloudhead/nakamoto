@@ -290,10 +290,7 @@ impl Filters for FilterCache {
         self.headers.tail.len() as Height
     }
 
-    fn rollback(&mut self, n: usize) -> Result<(), filter::Error> {
-        // Height to rollback to.
-        let height = self.height() - n as Height;
-
+    fn rollback(&mut self, height: Height) -> Result<(), filter::Error> {
         self.headers.tail.truncate(height as usize);
 
         let heights = self

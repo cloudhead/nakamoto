@@ -136,10 +136,7 @@ impl<S: Store<Header = StoredHeader>> Filters for FilterCache<S> {
         self.headers.tail.len() as Height
     }
 
-    fn rollback(&mut self, n: usize) -> Result<(), Error> {
-        // Height to rollback to.
-        let height = self.height() - n as Height;
-
+    fn rollback(&mut self, height: Height) -> Result<(), Error> {
         self.header_store.rollback(height)?;
         self.headers.tail.truncate(height as usize);
 
