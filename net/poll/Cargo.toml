@@ -3,14 +3,14 @@ name = "nakamoto-net-poll"
 description = "Poll-based networking for nakamoto"
 homepage = "https://cloudhead.io/nakamoto/"
 repository = "https://github.com/cloudhead/nakamoto"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Alexis Sellier <alexis@cloudhead.io>"]
-edition = "2018"
+edition = "2021"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.2.0", path = "../../common" }
-nakamoto-p2p = { version = "0.2.0", path = "../../p2p" }
+nakamoto-common = { version = "0.3.0", path = "../../common" }
+nakamoto-p2p = { version = "0.3.0", path = "../../p2p" }
 crossbeam-channel = { version = "0.4" }
 popol = "0.5"
 socket2 = "0.4"

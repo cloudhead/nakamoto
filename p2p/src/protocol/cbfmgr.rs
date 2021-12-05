@@ -252,8 +252,11 @@ impl Default for Config {
 /// A CBF peer.
 #[derive(Debug)]
 struct Peer {
+    #[allow(dead_code)]
     height: Height,
+    #[allow(dead_code)]
     last_active: LocalTime,
+    #[allow(dead_code)]
     socket: Socket,
 }
 
@@ -358,7 +361,6 @@ pub struct FilterManager<F, U> {
     last_idle: Option<LocalTime>,
     /// Inflight requests.
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
-    rng: fastrand::Rng,
 }
 
 impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F, U> {
@@ -375,9 +377,8 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
             cache,
             upstream,
             filters,
-            inflight: HashMap::with_hasher(rng.clone().into()),
+            inflight: HashMap::with_hasher(rng.into()),
             last_idle: None,
-            rng,
         }
     }
 

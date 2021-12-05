@@ -139,6 +139,7 @@ impl Default for Client {
 pub struct TestHandle {
     pub tip: (Height, BlockHeader),
 
+    #[allow(dead_code)]
     network: Network,
     events: chan::Receiver<protocol::Event>,
     blocks: chan::Receiver<(Block, Height)>,

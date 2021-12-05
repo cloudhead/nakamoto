@@ -34,7 +34,7 @@ pub trait Clock {
 }
 
 /// Local time.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Ord, PartialOrd)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Ord, PartialOrd, Default)]
 pub struct LocalTime {
     /// Milliseconds since Epoch.
     millis: u128,
@@ -43,12 +43,6 @@ pub struct LocalTime {
 impl std::fmt::Display for LocalTime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.block_time())
-    }
-}
-
-impl Default for LocalTime {
-    fn default() -> Self {
-        Self { millis: 0 }
     }
 }
 
@@ -83,8 +77,6 @@ impl LocalTime {
     /// Return the local time as seconds since Epoch.
     /// This is the same representation as used in block header timestamps.
     pub fn block_time(&self) -> BlockTime {
-        use std::convert::TryInto;
-
         (self.millis / 1000).try_into().unwrap()
     }
 

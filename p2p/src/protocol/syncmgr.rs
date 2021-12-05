@@ -60,13 +60,14 @@ enum OnTimeout {
 /// State of a sync peer.
 #[derive(Debug)]
 struct Peer {
-    socket: Socket,
     height: Height,
     preferred: bool,
     tip: BlockHash,
     link: Link,
     last_active: Option<LocalTime>,
     last_asked: Option<Locators>,
+
+    _socket: Socket,
 }
 
 /// Sync manager configuration.
@@ -94,8 +95,6 @@ pub struct SyncManager<U> {
     last_peer_sample: Option<LocalTime>,
     /// Last time we idled.
     last_idle: Option<LocalTime>,
-    /// Random number generator.
-    rng: fastrand::Rng,
     /// In-flight requests to peers.
     inflight: HashMap<PeerId, GetHeaders>,
     /// Upstream protocol channel.
@@ -194,7 +193,7 @@ impl<U: Wakeup + Disconnect + SyncHeaders> SyncManager<U> {
         let last_tip_update = None;
         let last_peer_sample = None;
         let last_idle = None;
-        let inflight = HashMap::with_hasher(rng.clone().into());
+        let inflight = HashMap::with_hasher(rng.into());
 
         Self {
             peers,
@@ -202,7 +201,6 @@ impl<U: Wakeup + Disconnect + SyncHeaders> SyncManager<U> {
             last_tip_update,
             last_peer_sample,
             last_idle,
-            rng,
             inflight,
             upstream,
         }
@@ -638,10 +636,10 @@ impl<U: Wakeup + Disconnect + SyncHeaders> SyncManager<U> {
                 height,
                 tip,
                 link,
-                socket,
                 preferred,
                 last_active,
                 last_asked,
+                _socket: socket,
             },
         );
     }

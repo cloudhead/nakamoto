@@ -154,8 +154,6 @@ pub struct Peer {
     /// Does this peer use BIP-339?
     pub wtxidrelay: bool,
 
-    /// Peer socket.
-    socket: Socket,
     /// Inventories we are attempting to send to this peer.
     outbox: HashMap<Wtxid, Txid>,
     /// Number of times we attempted to send inventories to this peer.
@@ -166,6 +164,9 @@ pub struct Peer {
     /// Number of times a certain block was requested.
     #[allow(dead_code)]
     requests: HashMap<BlockHash, usize>,
+
+    /// Peer socket.
+    _socket: Socket,
 }
 
 impl Peer {
@@ -255,7 +256,6 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
         self.peers.insert(
             socket.addr,
             Peer {
-                socket,
                 services,
                 attempts: 0,
                 relay,
@@ -263,6 +263,7 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
                 outbox,
                 last_attempt: None,
                 requests: HashMap::with_hasher(self.rng.clone().into()),
+                _socket: socket,
             },
         );
     }

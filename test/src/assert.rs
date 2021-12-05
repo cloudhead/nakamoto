@@ -40,56 +40,56 @@
 ///
 #[macro_export]
 macro_rules! assert_matches {
-    ( $e:expr , $($pat:pat)|+ ) => {
+    ( $e:expr , $($pat:pat_param)|+ ) => {
         match $e {
             $($pat)|+ => (),
             ref e => panic!("assertion failed: `{:?}` does not match `{}`",
                 e, stringify!($($pat)|+))
         }
     };
-    ( $e:expr , $($pat:pat)|+ if $cond:expr ) => {
+    ( $e:expr , $($pat:pat_param)|+ if $cond:expr ) => {
         match $e {
             $($pat)|+ if $cond => (),
             ref e => panic!("assertion failed: `{:?}` does not match `{}`",
                 e, stringify!($($pat)|+ if $cond))
         }
     };
-    ( $e:expr , $($pat:pat)|+ => $arm:expr ) => {
+    ( $e:expr , $($pat:pat_param)|+ => $arm:expr ) => {
         match $e {
             $($pat)|+ => $arm,
             ref e => panic!("assertion failed: `{:?}` does not match `{}`",
                 e, stringify!($($pat)|+))
         }
     };
-    ( $e:expr , $($pat:pat)|+ if $cond:expr => $arm:expr ) => {
+    ( $e:expr , $($pat:pat_param)|+ if $cond:expr => $arm:expr ) => {
         match $e {
             $($pat)|+ if $cond => $arm,
             ref e => panic!("assertion failed: `{:?}` does not match `{}`",
                 e, stringify!($($pat)|+ if $cond))
         }
     };
-    ( $e:expr , $($pat:pat)|+ , $($arg:tt)* ) => {
+    ( $e:expr , $($pat:pat_param)|+ , $($arg:tt)* ) => {
         match $e {
             $($pat)|+ => (),
             ref e => panic!("assertion failed: `{:?}` does not match `{}`: {}",
                 e, stringify!($($pat)|+), format_args!($($arg)*))
         }
     };
-    ( $e:expr , $($pat:pat)|+ if $cond:expr , $($arg:tt)* ) => {
+    ( $e:expr , $($pat:pat_param)|+ if $cond:expr , $($arg:tt)* ) => {
         match $e {
             $($pat)|+ if $cond => (),
             ref e => panic!("assertion failed: `{:?}` does not match `{}`: {}",
                 e, stringify!($($pat)|+ if $cond), format_args!($($arg)*))
         }
     };
-    ( $e:expr , $($pat:pat)|+ => $arm:expr , $($arg:tt)* ) => {
+    ( $e:expr , $($pat:pat_param)|+ => $arm:expr , $($arg:tt)* ) => {
         match $e {
             $($pat)|+ => $arm,
             ref e => panic!("assertion failed: `{:?}` does not match `{}`: {}",
                 e, stringify!($($pat)|+), format_args!($($arg)*))
         }
     };
-    ( $e:expr , $($pat:pat)|+ if $cond:expr => $arm:expr , $($arg:tt)* ) => {
+    ( $e:expr , $($pat:pat_param)|+ if $cond:expr => $arm:expr , $($arg:tt)* ) => {
         match $e {
             $($pat)|+ if $cond => $arm,
             ref e => panic!("assertion failed: `{:?}` does not match `{}`: {}",

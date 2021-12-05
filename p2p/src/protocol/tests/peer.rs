@@ -184,7 +184,7 @@ impl Peer<Protocol> {
             &PeerDummy {
                 addr: *addr,
                 height: 144,
-                protocol_version: self.protocol.protocol_version,
+                protocol_version: self.protocol.peermgr.config.protocol_version,
                 services: cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
                 relay: true,
                 time: self.local_time(),

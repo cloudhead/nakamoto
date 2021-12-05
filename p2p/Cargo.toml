@@ -4,13 +4,13 @@ description = "Peer-to-peer protocol state machine for the nakamoto crate"
 homepage = "https://cloudhead.io/nakamoto/"
 documentation = "https://docs.rs/nakamoto-p2p"
 repository = "https://github.com/cloudhead/nakamoto"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
-edition = "2018"
+edition = "2021"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.2.0", path = "../common" }
+nakamoto-common = { version = "0.3.0", path = "../common" }
 log = "0.4"
 thiserror = "1.0"
 crossbeam-channel = { version = "0.4" }
@@ -18,8 +18,8 @@ fastrand = "1.3.5"
 microserde = "0.1"
 
 [dev-dependencies]
-nakamoto-test = { version = "0.2.0", path = "../test" }
-nakamoto-chain = { version = "0.2.0", path = "../chain" }
+nakamoto-test = { version = "0.3.0", path = "../test" }
+nakamoto-chain = { version = "0.3.0", path = "../chain" }
 tempfile = "3"
 quickcheck = { version = "1", default_features = false }
 quickcheck_macros = "1"

@@ -392,7 +392,7 @@ pub mod gen {
     pub fn cfilters<'a>(
         blocks: impl Iterator<Item = &'a Block> + 'a,
     ) -> impl Iterator<Item = BlockFilter> + 'a {
-        blocks.map(|b| cfilter(b))
+        blocks.map(cfilter)
     }
 
     /// Generates a random filter header chain starting from a parent filter header.

@@ -79,9 +79,9 @@ checksum = "bef38d45163c2f1dde094a7dfd33ccf595c92905c8f8f4fdc18d06fb1037718a"
 
 [[package]]
 name = "cc"
-version = "1.0.71"
+version = "1.0.72"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "79c2681d6594606957bbb8631c4b90a7fcaaa72cdb714743a437b156d6a7eedd"
+checksum = "22a9137b95ea06864e018375b72adfb7db6e6f68cfc8df5a04d00288050485ee"
 
 [[package]]
 name = "cfg-if"
@@ -195,9 +195,9 @@ checksum = "e2abad23fbc42b3700f2f279844dc832adb2b2eb069b2df918f455c4e18cc646"
 
 [[package]]
 name = "libc"
-version = "0.2.105"
+version = "0.2.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "869d572136620d55835903746bcb5cdc54cb2851fd0aeec53220b4bb65ef3013"
+checksum = "f98a04dce437184842841303488f70d0188c5f51437d2a834dc097eafa909a01"
 
 [[package]]
 name = "log"
@@ -236,7 +236,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "nakamoto-chain",
  "nakamoto-client",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-chain"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "fastrand",
  "log",
@@ -264,7 +264,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-client"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -283,7 +283,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-common"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "bitcoin",
  "bitcoin_hashes",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-net-poll"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -313,7 +313,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-node"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "argh",
  "atty",
@@ -327,7 +327,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-p2p"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -344,7 +344,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-test"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "chrono",
  "colored",
@@ -357,7 +357,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-wallet"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "argh",
  "chrono",
@@ -536,9 +536,9 @@ dependencies = [
 
 [[package]]
 name = "syn"
-version = "1.0.81"
+version = "1.0.82"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2afee18b8beb5a596ecb4a2dce128c719b4ba399d34126b9e4396e3f9860966"
+checksum = "8daf5dd0bb60cbd4137b1b587d2fc0ae729bc07cf01cd70b36a1ed5ade3b9d59"
 dependencies = [
  "proc-macro2",
  "quote",

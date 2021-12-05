@@ -284,7 +284,7 @@ fn test_getheaders_retry() {
             &PeerDummy {
                 addr: *peer,
                 height: 0, // Make sure not to trigger a sync.
-                protocol_version: alice.protocol.protocol_version,
+                protocol_version: PROTOCOL_VERSION,
                 services: syncmgr::REQUIRED_SERVICES,
                 relay: true,
                 time: alice.local_time(),
@@ -785,7 +785,7 @@ fn test_submit_transactions() {
     let remote1 = PeerDummy {
         addr: ([88, 88, 88, 88], 8333).into(),
         height: 144,
-        protocol_version: alice.protocol.protocol_version,
+        protocol_version: PROTOCOL_VERSION,
         services: ServiceFlags::NETWORK,
         relay: true,
         time,
@@ -1145,7 +1145,7 @@ fn test_submitted_transaction_filtering() {
         &PeerDummy {
             addr: remote,
             height,
-            protocol_version: alice.protocol.protocol_version,
+            protocol_version: PROTOCOL_VERSION,
             services: cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
             relay: true,
             time: alice.local_time(),
@@ -1258,7 +1258,7 @@ fn test_transaction_reverted_reconfirm() {
         &PeerDummy {
             addr: remote,
             height,
-            protocol_version: alice.protocol.protocol_version,
+            protocol_version: PROTOCOL_VERSION,
             services: cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
             relay: true,
             time: alice.local_time(),

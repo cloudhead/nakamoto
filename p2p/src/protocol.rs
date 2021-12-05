@@ -64,7 +64,7 @@ pub const PROTOCOL_VERSION: u32 = 70016;
 /// This version includes support for the `sendheaders` feature.
 pub const MIN_PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
-pub const USER_AGENT: &str = "/nakamoto:0.2.0/";
+pub const USER_AGENT: &str = "/nakamoto:0.3.0/";
 
 /// Starting size of peer inbox buffer.
 const INBOX_BUFFER_SIZE: usize = 1024 * 64;
@@ -295,10 +295,6 @@ pub struct Protocol<T, F, P> {
     tree: T,
     /// Bitcoin network we're connecting to.
     network: network::Network,
-    /// Our protocol version.
-    protocol_version: u32,
-    /// Consensus parameters.
-    params: Params,
     /// Peer message inboxes.
     inbox: HashMap<PeerId, stream::Decoder>,
     /// Peer address manager.
@@ -318,6 +314,7 @@ pub struct Protocol<T, F, P> {
     /// Informational name of this protocol instance. Used for logging purposes only.
     target: &'static str,
     /// Last time a "tick" was triggered.
+    #[allow(dead_code)]
     last_tick: LocalTime,
     /// Random number generator.
     rng: fastrand::Rng,
@@ -409,21 +406,12 @@ impl Config {
 }
 
 /// Peer whitelist.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Whitelist {
     /// Trusted addresses.
     addr: HashSet<net::IpAddr>,
     /// Trusted user-agents.
     user_agent: HashSet<String>,
-}
-
-impl Default for Whitelist {
-    fn default() -> Self {
-        Whitelist {
-            addr: HashSet::new(),
-            user_agent: HashSet::new(),
-        }
-    }
 }
 
 impl Whitelist {
@@ -466,7 +454,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
                 request_timeout: syncmgr::REQUEST_TIMEOUT,
-                params: params.clone(),
+                params,
             },
             rng.clone(),
             outbox.clone(),
@@ -514,9 +502,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
         Self {
             tree,
             network,
-            protocol_version,
             target,
-            params,
             clock,
             inbox,
             addrmgr,
