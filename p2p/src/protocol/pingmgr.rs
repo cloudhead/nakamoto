@@ -141,8 +141,13 @@ impl<U: Ping + Wakeup + Disconnect> PingManager<U> {
     }
 
     /// Called when a `ping` is received.
-    pub fn received_ping(&mut self, addr: PeerId, nonce: u64) {
-        self.upstream.pong(addr, nonce);
+    pub fn received_ping(&mut self, addr: PeerId, nonce: u64) -> bool {
+        if self.peers.contains_key(&addr) {
+            self.upstream.pong(addr, nonce);
+
+            return true;
+        }
+        false
     }
 
     /// Called when a `pong` is received.

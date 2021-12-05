@@ -598,7 +598,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
             }
             NetworkMessage::Ping(nonce) => {
-                self.pingmgr.received_ping(addr, nonce);
+                if self.pingmgr.received_ping(addr, nonce) {
+                    self.addrmgr.peer_active(addr, now);
+                }
             }
             NetworkMessage::Pong(nonce) => {
                 if self.pingmgr.received_pong(addr, nonce, now) {
