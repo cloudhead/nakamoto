@@ -343,6 +343,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
         self.peers.is_empty() || self.address_ranges.is_empty()
     }
 
+    #[cfg(test)]
     /// Clear the address manager of all peers.
     pub fn clear(&mut self) {
         self.peers.clear();
@@ -366,42 +367,6 @@ impl<P: Store, U: Events> AddressManager<P, U> {
 
     /// Add addresses to the address manager. The input matches that of the `addr` message
     /// sent by peers on the network.
-    ///
-    /// ```
-    /// use std::collections::HashMap;
-    ///
-    /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
-    /// use nakamoto_common::p2p::peer::Source;
-    /// use nakamoto_common::bitcoin::network::address::Address;
-    /// use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-    /// use nakamoto_common::block::time::LocalTime;
-    ///
-    /// let cfg = Config::default();
-    /// let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
-    /// let time = LocalTime::now();
-    ///
-    /// addrmgr.initialize(time);
-    /// addrmgr.insert(vec![
-    ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([211, 48, 99, 4], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([241, 44, 12, 5], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (time.block_time(), a)), Source::Dns);
-    ///
-    /// assert_eq!(addrmgr.len(), 3);
-    ///
-    /// addrmgr.insert(std::iter::once(
-    ///     (time.block_time(), Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE))
-    /// ), Source::Dns);
-    ///
-    /// assert_eq!(addrmgr.len(), 3, "already known addresses are ignored");
-    ///
-    /// addrmgr.clear();
-    /// addrmgr.insert(vec![
-    ///     Address::new(&([255, 255, 255, 255], 8333).into(), ServiceFlags::NONE),
-    /// ].into_iter().map(|a| (time.block_time(), a)), Source::Dns);
-    ///
-    /// assert!(addrmgr.is_empty(), "non-routable/non-local addresses are ignored");
-    /// ```
     pub fn insert(
         &mut self,
         addrs: impl IntoIterator<Item = (BlockTime, Address)>,
@@ -483,68 +448,6 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     /// not have an advantage over other peers.
     ///
     /// This works under the assumption that adversaries are *localized*.
-    ///
-    /// ```
-    /// use std::collections::HashMap;
-    ///
-    /// use nakamoto_common::bitcoin::network::address::Address;
-    /// use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-    ///
-    /// use nakamoto_p2p::protocol::addrmgr::{AddressManager, Config};
-    /// use nakamoto_common::p2p::peer::Source;
-    /// use nakamoto_common::block::time::{LocalDuration, LocalTime};
-    ///
-    /// let cfg = Config::default();
-    /// let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
-    /// let mut time = LocalTime::now();
-    ///
-    /// addrmgr.initialize(time);
-    ///
-    /// // Addresses controlled by an adversary.
-    /// let adversary_addrs = vec![
-    ///     Address::new(&([111, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([111, 8, 43, 11], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([111, 8, 89, 6], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([111, 8, 124, 41], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([111, 8, 65, 4], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([111, 8, 161, 73], 8333).into(), ServiceFlags::NONE),
-    /// ];
-    /// addrmgr.insert(
-    ///     adversary_addrs.iter().cloned().map(|a| (time.block_time(), a)), Source::Dns);
-    ///
-    /// // Safe addresses, controlled by non-adversarial peers.
-    /// let safe_addrs = vec![
-    ///     Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([211, 48, 99, 4], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([241, 44, 12, 5], 8333).into(), ServiceFlags::NONE),
-    ///     Address::new(&([99, 129, 2, 15], 8333).into(), ServiceFlags::NONE),
-    /// ];
-    /// addrmgr.insert(
-    ///     safe_addrs.iter().cloned().map(|a| (time.block_time(), a)), Source::Dns);
-    ///
-    /// // Keep track of how many times we pick a safe vs. an adversary-controlled address.
-    /// let mut adversary = 0;
-    /// let mut safe = 0;
-    ///
-    /// for _ in 0..99 {
-    ///     let (addr, _) = addrmgr.sample(ServiceFlags::NONE).unwrap();
-    ///
-    ///     // Make sure we can re-sample the same addresses for the purpose of this example.
-    ///     time = time + LocalDuration::from_mins(60);
-    ///     addrmgr.received_tick(time);
-    ///
-    ///     if adversary_addrs.contains(&addr) {
-    ///         adversary += 1;
-    ///     } else if safe_addrs.contains(&addr) {
-    ///         safe += 1;
-    ///     }
-    /// }
-    ///
-    /// // Despite there being more adversary-controlled addresses, our safe addresses
-    /// // are picked much more often.
-    /// assert!(safe > adversary * 2, "safe addresses are picked twice more often");
-    ///
-    /// ```
     pub fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
         self.sample_with(|ka: &KnownAddress| {
             if !ka.addr.services.has(services) {
@@ -1074,6 +977,130 @@ mod tests {
         assert_eq!(
             addr_key(&net::IpAddr::V4(net::Ipv4Addr::new(1, 255, 3, 4))),
             1
+        );
+    }
+
+    #[test]
+    fn test_insert() {
+        use std::collections::HashMap;
+
+        use nakamoto_common::bitcoin::network::address::Address;
+        use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+        use nakamoto_common::block::time::LocalTime;
+        use nakamoto_common::p2p::peer::Source;
+
+        let cfg = Config::default();
+        let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
+        let time = LocalTime::now();
+
+        addrmgr.initialize(time);
+        addrmgr.insert(
+            vec![
+                Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
+                Address::new(&([211, 48, 99, 4], 8333).into(), ServiceFlags::NONE),
+                Address::new(&([241, 44, 12, 5], 8333).into(), ServiceFlags::NONE),
+            ]
+            .into_iter()
+            .map(|a| (time.block_time(), a)),
+            Source::Dns,
+        );
+
+        assert_eq!(addrmgr.len(), 3);
+
+        addrmgr.insert(
+            std::iter::once((
+                time.block_time(),
+                Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
+            )),
+            Source::Dns,
+        );
+
+        assert_eq!(addrmgr.len(), 3, "already known addresses are ignored");
+
+        addrmgr.clear();
+        addrmgr.insert(
+            vec![Address::new(
+                &([255, 255, 255, 255], 8333).into(),
+                ServiceFlags::NONE,
+            )]
+            .into_iter()
+            .map(|a| (time.block_time(), a)),
+            Source::Dns,
+        );
+
+        assert!(
+            addrmgr.is_empty(),
+            "non-routable/non-local addresses are ignored"
+        );
+    }
+
+    #[test]
+    fn test_sample() {
+        use std::collections::HashMap;
+
+        use nakamoto_common::bitcoin::network::address::Address;
+        use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+        use nakamoto_common::block::time::{LocalDuration, LocalTime};
+        use nakamoto_common::p2p::peer::Source;
+
+        let cfg = Config::default();
+        let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
+        let mut time = LocalTime::now();
+
+        addrmgr.initialize(time);
+
+        // Addresses controlled by an adversary.
+        let adversary_addrs = vec![
+            Address::new(&([111, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
+            Address::new(&([111, 8, 43, 11], 8333).into(), ServiceFlags::NONE),
+            Address::new(&([111, 8, 89, 6], 8333).into(), ServiceFlags::NONE),
+            Address::new(&([111, 8, 124, 41], 8333).into(), ServiceFlags::NONE),
+            Address::new(&([111, 8, 65, 4], 8333).into(), ServiceFlags::NONE),
+            Address::new(&([111, 8, 161, 73], 8333).into(), ServiceFlags::NONE),
+        ];
+        addrmgr.insert(
+            adversary_addrs
+                .iter()
+                .cloned()
+                .map(|a| (time.block_time(), a)),
+            Source::Dns,
+        );
+
+        // Safe addresses, controlled by non-adversarial peers.
+        let safe_addrs = vec![
+            Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
+            Address::new(&([211, 48, 99, 4], 8333).into(), ServiceFlags::NONE),
+            Address::new(&([241, 44, 12, 5], 8333).into(), ServiceFlags::NONE),
+            Address::new(&([99, 129, 2, 15], 8333).into(), ServiceFlags::NONE),
+        ];
+        addrmgr.insert(
+            safe_addrs.iter().cloned().map(|a| (time.block_time(), a)),
+            Source::Dns,
+        );
+
+        // Keep track of how many times we pick a safe vs. an adversary-controlled address.
+        let mut adversary = 0;
+        let mut safe = 0;
+
+        for _ in 0..99 {
+            let (addr, _) = addrmgr.sample(ServiceFlags::NONE).unwrap();
+
+            // Make sure we can re-sample the same addresses for the purpose of this example.
+            time = time + LocalDuration::from_mins(60);
+            addrmgr.received_tick(time);
+
+            if adversary_addrs.contains(&addr) {
+                adversary += 1;
+            } else if safe_addrs.contains(&addr) {
+                safe += 1;
+            }
+        }
+
+        // Despite there being more adversary-controlled addresses, our safe addresses
+        // are picked much more often.
+        assert!(
+            safe > adversary * 2,
+            "safe addresses are picked twice more often"
         );
     }
 }

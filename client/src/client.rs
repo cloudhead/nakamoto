@@ -32,7 +32,6 @@ pub use nakamoto_common::p2p::Domain;
 use nakamoto_p2p as p2p;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Protocol;
-use nakamoto_p2p::protocol::{cbfmgr, invmgr, peermgr, syncmgr};
 
 pub use nakamoto_p2p::event;
 pub use nakamoto_p2p::protocol::{self, Command, CommandError, Peer};
@@ -141,7 +140,7 @@ impl<R: Reactor<Publisher>> Client<R> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(|e, p| p.emit(e));
         let (blocks_pub, blocks) = event::broadcast(|e, p| {
-            if let protocol::Event::InventoryManager(invmgr::Event::BlockProcessed {
+            if let protocol::Event::Inventory(protocol::InventoryEvent::BlockProcessed {
                 block,
                 height,
                 ..
@@ -151,7 +150,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             }
         });
         let (filters_pub, filters) = event::broadcast(|e, p| {
-            if let protocol::Event::FilterManager(cbfmgr::Event::FilterReceived {
+            if let protocol::Event::Filter(protocol::FilterEvent::FilterReceived {
                 filter,
                 block_hash,
                 height,
@@ -505,7 +504,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::PeerManager(peermgr::Event::Connected(a, link))
+                protocol::Event::Peer(protocol::PeerEvent::Connected(a, link))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(link)
@@ -524,7 +523,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::PeerManager(peermgr::Event::Disconnected(a, _))
+                protocol::Event::Peer(protocol::PeerEvent::Disconnected(a, _))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(())
@@ -597,7 +596,7 @@ where
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::PeerManager(peermgr::Event::Negotiated {
+                protocol::Event::Peer(protocol::PeerEvent::Negotiated {
                     addr,
                     height,
                     services,
@@ -628,7 +627,7 @@ where
             None => event::wait(
                 &events,
                 |e| match e {
-                    protocol::Event::SyncManager(syncmgr::Event::Synced(hash, height))
+                    protocol::Event::Chain(protocol::ChainEvent::Synced(hash, height))
                         if height == h =>
                     {
                         Some(hash)

@@ -526,7 +526,7 @@ fn test_getaddr() {
     // Alice is unable to connect to a new peer because our address book is exhausted.
     alice
         .events()
-        .find(|e| matches!(e, Event::AddrManager(addrmgr::Event::AddressBookExhausted)))
+        .find(|e| matches!(e, Event::Address(addrmgr::Event::AddressBookExhausted)))
         .expect("Alice should emit `AddressBookExhausted`");
 
     // When we receive a timeout, we fetch new addresses, since our addresses have been exhausted.
@@ -583,7 +583,7 @@ fn test_stale_tip() {
     alice.elapse(syncmgr::TIP_STALE_DURATION);
     alice
         .events()
-        .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTip(_))))
+        .find(|e| matches!(e, Event::Chain(syncmgr::Event::StaleTip(_))))
         .expect("Alice emits a `StaleTip` event");
 
     // Timeout the `getheaders` request.
@@ -602,7 +602,7 @@ fn test_stale_tip() {
     // Chain update should be stale this time.
     alice
         .events()
-        .find(|e| matches!(e, Event::SyncManager(syncmgr::Event::StaleTip(_))))
+        .find(|e| matches!(e, Event::Chain(syncmgr::Event::StaleTip(_))))
         .expect("Alice emits a `StaleTip` event");
 }
 
@@ -1042,19 +1042,14 @@ fn test_confirmed_transaction() {
     alice.received(remote, NetworkMessage::Block(blk2.clone()));
     alice
         .events()
-        .find(|e| {
-            matches!(
-                e,
-                Event::InventoryManager(invmgr::Event::BlockReceived { .. })
-            )
-        })
+        .find(|e| matches!(e, Event::Inventory(invmgr::Event::BlockReceived { .. })))
         .expect("Alice receives the 2nd block");
 
     alice.elapse(LocalDuration::from_mins(1));
     alice.received(remote, NetworkMessage::Block(blk1.clone()));
 
     let mut events = alice.events().filter_map(|e| {
-        if let Event::InventoryManager(event) = e {
+        if let Event::Inventory(event) = e {
             Some(event)
         } else {
             None
@@ -1317,7 +1312,7 @@ fn test_transaction_reverted_reconfirm() {
             .find(|e| {
                 matches!(
                     e,
-                    Event::InventoryManager(invmgr::Event::Confirmed { transaction, .. })
+                    Event::Inventory(invmgr::Event::Confirmed { transaction, .. })
                     if transaction.txid() == tx.txid()
                 )
             })
@@ -1349,7 +1344,7 @@ fn test_transaction_reverted_reconfirm() {
             .find(|e| {
                 matches!(
                     e,
-                    Event::InventoryManager(invmgr::Event::Reverted { transaction })
+                    Event::Inventory(invmgr::Event::Reverted { transaction })
                     if transaction.txid() == tx.txid()
                 )
             })
@@ -1404,7 +1399,7 @@ fn test_transaction_reverted_reconfirm() {
             .find(|e| {
                 matches!(
                     e,
-                    Event::FilterManager(cbfmgr::Event::FilterProcessed { block, matched: true, .. })
+                    Event::Filter(cbfmgr::Event::FilterProcessed { block, matched: true, .. })
                     if block == &fork_matching.block_hash()
                 )
             })
@@ -1416,7 +1411,7 @@ fn test_transaction_reverted_reconfirm() {
             .find(|e| {
                 matches!(
                     e,
-                    Event::InventoryManager(invmgr::Event::Confirmed { transaction, block, .. })
+                    Event::Inventory(invmgr::Event::Confirmed { transaction, block, .. })
                     if transaction.txid() == tx.txid() && block == &fork_matching.block_hash()
                 )
             })
@@ -1449,9 +1444,9 @@ fn test_block_events() {
 
     fn filter(events: impl Iterator<Item = Event>) -> impl Iterator<Item = syncmgr::Event> {
         events.filter_map(|e| match e {
-            Event::SyncManager(event @ syncmgr::Event::BlockConnected { .. }) => Some(event),
-            Event::SyncManager(event @ syncmgr::Event::BlockDisconnected { .. }) => Some(event),
-            Event::SyncManager(event @ syncmgr::Event::Synced { .. }) => Some(event),
+            Event::Chain(event @ syncmgr::Event::BlockConnected { .. }) => Some(event),
+            Event::Chain(event @ syncmgr::Event::BlockDisconnected { .. }) => Some(event),
+            Event::Chain(event @ syncmgr::Event::Synced { .. }) => Some(event),
             _ => None,
         })
     }

@@ -51,10 +51,10 @@ use nakamoto_test::assert_matches;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;
 
-use p2p::protocol::{syncmgr, Command, DisconnectReason};
+use p2p::protocol::{Command, DisconnectReason};
 use p2p::traits::Protocol as _;
 
-use super::p2p::protocol::{cbfmgr, invmgr, Link};
+use super::p2p::protocol::Link;
 use super::utxos::Utxos;
 use super::Event;
 use super::*;
@@ -144,7 +144,7 @@ fn test_peer_negotiated() {
 
     let version = NetworkMessage::Version(VersionMessage {
         version: protocol::MIN_PROTOCOL_VERSION,
-        services: protocol::syncmgr::REQUIRED_SERVICES,
+        services: ServiceFlags::NETWORK,
         timestamp: local_time.block_time() as i64,
         receiver: Address::new(&remote, ServiceFlags::NONE),
         sender: Address::new(&local_addr, ServiceFlags::NONE),
@@ -192,7 +192,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     let subscriber = client.subscribe();
 
     mock.subscriber
-        .broadcast(protocol::Event::SyncManager(syncmgr::Event::Synced(
+        .broadcast(protocol::Event::Chain(protocol::ChainEvent::Synced(
             chain.last().block_hash(),
             height,
         )));
@@ -201,8 +201,8 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         let matched = heights.contains(&h);
         let block = chain[h as usize].clone();
 
-        mock.subscriber.broadcast(protocol::Event::FilterManager(
-            cbfmgr::Event::FilterProcessed {
+        mock.subscriber.broadcast(protocol::Event::Filter(
+            protocol::FilterEvent::FilterProcessed {
                 block: block.block_hash(),
                 height: h,
                 matched,
@@ -210,8 +210,8 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         ));
 
         if matched {
-            mock.subscriber.broadcast(protocol::Event::InventoryManager(
-                invmgr::Event::BlockProcessed {
+            mock.subscriber.broadcast(protocol::Event::Inventory(
+                protocol::InventoryEvent::BlockProcessed {
                     block,
                     height: h,
                     fees: None,

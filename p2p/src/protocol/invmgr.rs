@@ -229,11 +229,13 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
         }
     }
 
+    #[cfg(test)]
     /// Check whether the inventory is empty.
     pub fn is_empty(&self) -> bool {
         self.mempool.is_empty()
     }
 
+    #[cfg(test)]
     /// Check if the inventory contains the given transaction.
     pub fn contains(&self, wtxid: &Wtxid) -> bool {
         self.mempool.contains_key(wtxid)
@@ -578,7 +580,7 @@ mod tests {
 
     fn events(outputs: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
         outputs.filter_map(|o| match o {
-            Io::Event(protocol::Event::InventoryManager(e)) => Some(e),
+            Io::Event(protocol::Event::Inventory(e)) => Some(e),
             _ => None,
         })
     }

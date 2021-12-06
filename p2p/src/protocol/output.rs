@@ -322,14 +322,14 @@ impl addrmgr::Events for Outbox {
                 debug!(target: self.target, "[addr] {}", &event);
             }
         }
-        self.event(Event::AddrManager(event));
+        self.event(Event::Address(event));
     }
 }
 
 impl peermgr::Events for Outbox {
     fn event(&self, event: peermgr::Event) {
         info!(target: self.target, "[peer] {}", &event);
-        self.event(Event::PeerManager(event));
+        self.event(Event::Peer(event));
     }
 }
 
@@ -375,7 +375,7 @@ impl syncmgr::SyncHeaders for Outbox {
             }
             _ => {}
         }
-        self.event(Event::SyncManager(event));
+        self.event(Event::Chain(event));
     }
 }
 
@@ -471,7 +471,7 @@ impl invmgr::Inventories for Outbox {
 
     fn event(&self, event: invmgr::Event) {
         debug!(target: self.target, "[invmgr] {}", &event);
-        self.event(Event::InventoryManager(event));
+        self.event(Event::Inventory(event));
     }
 }
 
@@ -486,7 +486,7 @@ impl cbfmgr::Events for Outbox {
             _ => {}
         }
 
-        self.event(Event::FilterManager(event));
+        self.event(Event::Filter(event));
     }
 }
 

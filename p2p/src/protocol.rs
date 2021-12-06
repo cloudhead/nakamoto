@@ -3,15 +3,18 @@
 use crossbeam_channel as chan;
 use log::*;
 
-pub mod addrmgr;
-pub mod cbfmgr;
 pub mod event;
 pub mod fees;
-pub mod invmgr;
+pub mod filter_cache;
 pub mod output;
-pub mod peermgr;
-pub mod pingmgr;
-pub mod syncmgr;
+
+// Sub-protocols.
+mod addrmgr;
+mod cbfmgr;
+mod invmgr;
+mod peermgr;
+mod pingmgr;
+mod syncmgr;
 
 #[cfg(test)]
 mod tests;
@@ -23,6 +26,12 @@ use output::{Disconnect as _, Outbox};
 use peermgr::PeerManager;
 use pingmgr::PingManager;
 use syncmgr::SyncManager;
+
+pub use addrmgr::Event as AddressEvent;
+pub use cbfmgr::Event as FilterEvent;
+pub use invmgr::Event as InventoryEvent;
+pub use peermgr::Event as PeerEvent;
+pub use syncmgr::Event as ChainEvent;
 
 use crate::stream;
 use crate::traits;

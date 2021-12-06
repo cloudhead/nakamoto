@@ -1,19 +1,7 @@
 //! Nakamoto's peer-to-peer library.
 //!
 //! The `p2p` crate implements the core protocol state-machine. It can be found under the
-//! [protocol](crate::protocol) module, which has the following sub-protocol:
-//!
-//! * [`AddressManager`][addrmgr]: handles peer address exchange
-//! * [`SyncManager`][syncmgr]: handles block header sync
-//! * [`PingManager`][pingmgr]: handles pings and pongs
-//! * [`FilterManager`][cbfmgr]: handles compact block filter sync
-//! * [`PeerManager`][peermgr]: handles peer handshake
-//!
-//! [addrmgr]: crate::protocol::addrmgr::AddressManager
-//! [syncmgr]: crate::protocol::syncmgr::SyncManager
-//! [pingmgr]: crate::protocol::pingmgr::PingManager
-//! [cbfmgr]: crate::protocol::cbfmgr::FilterManager
-//! [peermgr]: crate::protocol::peermgr::PeerManager
+//! [protocol](crate::protocol) module.
 //!
 //! Nakamoto's implementation of the peer-to-peer protocol(s) is *I/O-free*. The
 //! core logic is implemented as a state machine with *inputs* and *outputs* and a

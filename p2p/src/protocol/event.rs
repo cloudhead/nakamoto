@@ -4,8 +4,7 @@ use std::net;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
 use crate::event::Broadcast;
-use crate::protocol::PeerId;
-use crate::protocol::{addrmgr, cbfmgr, invmgr, peermgr, syncmgr};
+use crate::protocol::{self, PeerId};
 
 /// A peer-to-peer event.
 #[derive(Debug, Clone)]
@@ -15,15 +14,15 @@ pub enum Event {
     /// Received a message from a peer.
     Received(PeerId, NetworkMessage),
     /// An address manager event.
-    AddrManager(addrmgr::Event),
+    Address(protocol::AddressEvent),
     /// A sync manager event.
-    SyncManager(syncmgr::Event),
+    Chain(protocol::ChainEvent),
     /// A peer manager event.
-    PeerManager(peermgr::Event),
+    Peer(protocol::PeerEvent),
     /// A CBF manager event.
-    FilterManager(cbfmgr::Event),
+    Filter(protocol::FilterEvent),
     /// An inventory manager event.
-    InventoryManager(invmgr::Event),
+    Inventory(protocol::InventoryEvent),
 }
 
 /// Any type that is able to publish events.

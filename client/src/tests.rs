@@ -14,7 +14,6 @@ use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
 use nakamoto_p2p::protocol;
-use nakamoto_p2p::protocol::syncmgr;
 use nakamoto_p2p::protocol::Protocol;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
@@ -96,7 +95,7 @@ fn test_full_sync() {
         Config {
             name,
             protocol: protocol::Config {
-                services: syncmgr::REQUIRED_SERVICES,
+                services: ServiceFlags::NETWORK,
                 ..protocol::Config::default()
             },
             ..Config::default()

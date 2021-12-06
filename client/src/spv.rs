@@ -116,16 +116,14 @@ impl Mapper {
 
     /// Process protocol event and map it to client event(s).
     pub fn process(&mut self, event: protocol::Event, emitter: &Emitter<Event>) {
-        use p2p::protocol::{cbfmgr, invmgr, peermgr, syncmgr};
-
         match event {
-            protocol::Event::PeerManager(peermgr::Event::Connected(addr, link)) => {
+            protocol::Event::Peer(protocol::PeerEvent::Connected(addr, link)) => {
                 emitter.emit(Event::PeerConnected { addr, link });
             }
-            protocol::Event::PeerManager(peermgr::Event::ConnectionFailed(addr, error)) => {
+            protocol::Event::Peer(protocol::PeerEvent::ConnectionFailed(addr, error)) => {
                 emitter.emit(Event::PeerConnectionFailed { addr, error });
             }
-            protocol::Event::PeerManager(peermgr::Event::Negotiated {
+            protocol::Event::Peer(protocol::PeerEvent::Negotiated {
                 addr,
                 link,
                 services,
@@ -142,27 +140,27 @@ impl Mapper {
                     version,
                 });
             }
-            protocol::Event::PeerManager(peermgr::Event::Disconnected(addr, reason)) => {
+            protocol::Event::Peer(protocol::PeerEvent::Disconnected(addr, reason)) => {
                 emitter.emit(Event::PeerDisconnected { addr, reason });
             }
-            protocol::Event::SyncManager(syncmgr::Event::Synced(_, height)) => {
+            protocol::Event::Chain(protocol::ChainEvent::Synced(_, height)) => {
                 self.tip = height;
             }
-            protocol::Event::SyncManager(syncmgr::Event::BlockConnected { header, height }) => {
+            protocol::Event::Chain(protocol::ChainEvent::BlockConnected { header, height }) => {
                 emitter.emit(Event::BlockConnected {
                     header,
                     hash: header.block_hash(),
                     height,
                 });
             }
-            protocol::Event::SyncManager(syncmgr::Event::BlockDisconnected { header, height }) => {
+            protocol::Event::Chain(protocol::ChainEvent::BlockDisconnected { header, height }) => {
                 emitter.emit(Event::BlockDisconnected {
                     header,
                     hash: header.block_hash(),
                     height,
                 });
             }
-            protocol::Event::InventoryManager(invmgr::Event::BlockProcessed {
+            protocol::Event::Inventory(protocol::InventoryEvent::BlockProcessed {
                 block,
                 height,
                 fees,
@@ -177,7 +175,7 @@ impl Mapper {
                     });
                 }
             }
-            protocol::Event::InventoryManager(invmgr::Event::Confirmed {
+            protocol::Event::Inventory(protocol::InventoryEvent::Confirmed {
                 transaction,
                 height,
                 block,
@@ -187,13 +185,13 @@ impl Mapper {
                     status: TxStatus::Confirmed { height, block },
                 });
             }
-            protocol::Event::InventoryManager(invmgr::Event::Acknowledged { txid, peer }) => {
+            protocol::Event::Inventory(protocol::InventoryEvent::Acknowledged { txid, peer }) => {
                 emitter.emit(Event::TxStatusChanged {
                     txid,
                     status: TxStatus::Acknowledged { peer },
                 });
             }
-            protocol::Event::FilterManager(cbfmgr::Event::FilterProcessed {
+            protocol::Event::Filter(protocol::FilterEvent::FilterProcessed {
                 block,
                 height,
                 matched,

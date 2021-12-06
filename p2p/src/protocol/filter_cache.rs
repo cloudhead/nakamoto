@@ -34,7 +34,7 @@ impl FilterCache {
     /// Return the cache capacity in bytes.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(32);
@@ -60,7 +60,7 @@ impl FilterCache {
     /// subsequent to the last filter height.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(8);
@@ -113,7 +113,7 @@ impl FilterCache {
     /// Get the start height of the cache.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(32);
@@ -142,7 +142,7 @@ impl FilterCache {
     /// Get a filter in the cache by height.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(32);
@@ -171,7 +171,7 @@ impl FilterCache {
     /// Returns [`None`] if there is no overlap.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(32);
@@ -205,7 +205,7 @@ impl FilterCache {
     /// Iterate over a range of block filters.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(32);
@@ -260,7 +260,7 @@ impl FilterCache {
     /// than the given height.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::cbfmgr::cache::FilterCache;
+    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(0);

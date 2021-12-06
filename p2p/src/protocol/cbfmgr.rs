@@ -19,11 +19,9 @@ use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
 
+use super::filter_cache::FilterCache;
 use super::output::{Disconnect, Wakeup};
 use super::{DisconnectReason, Link, PeerId, Socket};
-
-pub mod cache;
-use cache::FilterCache;
 
 /// Idle timeout.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
@@ -1188,7 +1186,7 @@ mod tests {
 
         pub fn events(outputs: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
             outputs.filter_map(|o| match o {
-                Io::Event(protocol::Event::FilterManager(e)) => Some(e),
+                Io::Event(protocol::Event::Filter(e)) => Some(e),
                 _ => None,
             })
         }
