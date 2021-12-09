@@ -1456,9 +1456,64 @@ mod tests {
     /// Test that if we start with our cfheader chain behind our header
     /// chain, we immediately try to catch up.
     #[test]
-    #[ignore]
     fn test_cfheaders_behind() {
-        todo!()
+        let cfheader_height = 10;
+        let header_height = 15;
+
+        let network = Network::Regtest;
+        let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+        let mut rng = fastrand::Rng::with_seed(772092983);
+        let time = LocalTime::now();
+
+        let mut cbfmgr = {
+            let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
+            let rng = fastrand::Rng::new();
+            let upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+            FilterManager::new(Config::default(), rng, cache, upstream)
+        };
+
+        let chain = gen::blockchain(network.genesis_block(), header_height, &mut rng);
+        let cfheaders = gen::cfheaders_from_blocks(
+            FilterHeader::genesis(network),
+            chain.tail.iter().take(cfheader_height),
+        );
+        cbfmgr.filters.import_headers(cfheaders).unwrap();
+
+        let tree = {
+            let params = network.params();
+            let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
+            BlockCache::from(store::Memory::new(headers), params, &[]).unwrap()
+        };
+        cbfmgr.initialize(time, &tree);
+
+        cbfmgr.peer_negotiated(
+            Socket::new(remote),
+            header_height,
+            REQUIRED_SERVICES,
+            Link::Outbound,
+            &time,
+            &tree,
+        );
+
+        let tip = chain.last();
+        let mut events = util::events(cbfmgr.upstream.drain());
+        events
+            .find(|e| {
+                matches!(e, Event::Syncing { start_height, stop_hash, .. }
+                               if (*start_height as usize) == (cfheader_height + 1)
+                               && stop_hash == &tip.block_hash())
+            })
+            .expect("syncing event emitted");
+
+        let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
+        msgs.find(|m| {
+            matches!(
+                m,
+                NetworkMessage::GetCFHeaders(
+                    GetCFHeaders { start_height, stop_hash, .. }
+                ) if (*start_height as usize) == (cfheader_height + 1) && stop_hash == &tip.block_hash()
+            )
+        }).expect("GetCFHeaders request");
     }
 
     // TODO: Test cache with partial cache hit
