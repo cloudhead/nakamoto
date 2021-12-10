@@ -1496,12 +1496,11 @@ mod tests {
         );
 
         let mut events = util::events(cbfmgr.upstream.drain());
-        let ev = events
-            .find(|e| {
-                matches!(e, Event::Syncing{start_height, stop_hash, ..}
+        let ev = events.find(|e| {
+            matches!(e, Event::Syncing{start_height, stop_hash, ..}
                                if (*start_height as usize) == (cfheader_height + 1)
                                && stop_hash == &chain.last().block_hash())
-            });
+        });
         assert_matches!(ev, Some(..), "expect syncing event emitted");
 
         let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
