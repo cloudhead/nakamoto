@@ -1495,26 +1495,25 @@ mod tests {
             &tree,
         );
 
+        let tip = chain.last();
         let mut events = util::events(cbfmgr.upstream.drain());
-        let ev = events.find(|e| {
-            matches!(e, Event::Syncing{start_height, stop_hash, ..}
+        events
+            .find(|e| {
+                matches!(e, Event::Syncing { start_height, stop_hash, .. }
                                if (*start_height as usize) == (cfheader_height + 1)
-                               && stop_hash == &chain.last().block_hash())
-        });
-        assert_matches!(ev, Some(..), "expect syncing event emitted");
+                               && stop_hash == &tip.block_hash())
+            })
+            .expect("syncing event emitted");
 
         let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
-        let msg = msgs.find(|m| {
+        msgs.find(|m| {
             matches!(
                 m,
-                NetworkMessage::GetCFHeaders(GetCFHeaders {
-                    start_height,
-                    stop_hash,
-                    ..
-                }) if (*start_height as usize) == (cfheader_height + 1) && stop_hash == &chain.last().block_hash()
+                NetworkMessage::GetCFHeaders(
+                    GetCFHeaders { start_height, stop_hash, .. }
+                ) if (*start_height as usize) == (cfheader_height + 1) && stop_hash == &tip.block_hash()
             )
-        });
-        assert_matches!(msg, Some(..), "expect GetCFHeaders request");
+        }).expect("GetCFHeaders request");
     }
 
     // TODO: Test cache with partial cache hit
