@@ -1381,13 +1381,6 @@ mod tests {
         todo!()
     }
 
-    /// Test that an empty watchlist can never match a block.
-    #[test]
-    #[ignore]
-    fn test_empty_watchlist() {
-        todo!()
-    }
-
     /// Test that rescanning triggers filter syncing immediately.
     #[test]
     fn test_rescan_getcfilters() {
