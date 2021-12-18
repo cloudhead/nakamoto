@@ -8,8 +8,12 @@
 use log::*;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
+use std::future::Future;
+use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::task::Context;
+use std::task::Poll;
 use std::{fmt, io, net};
 
 pub use crossbeam_channel as chan;
@@ -23,13 +27,14 @@ use nakamoto_common::bitcoin::network::message_filter::{
     CFHeaders, CFilter, GetCFHeaders, GetCFilters,
 };
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
-use nakamoto_common::bitcoin::Transaction;
+use nakamoto_common::bitcoin::{Block, Transaction};
 
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
 use crate::protocol::{Event, PeerId};
 
+use super::invmgr::Inventories;
 use super::network::Network;
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr, Locators};
 
@@ -119,6 +124,48 @@ impl fmt::Display for DisconnectReason {
     }
 }
 
+struct Waker;
+
+impl std::task::Wake for Waker {
+    fn wake(self: Arc<Self>) {}
+    fn wake_by_ref(self: &Arc<Self>) {}
+}
+
+type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + 'a>>;
+
+struct Task {
+    future: Option<BoxFuture<'static, ()>>,
+}
+
+impl fmt::Debug for Task {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Task").finish()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Request<T> {
+    result: Rc<RefCell<Option<Result<T, ()>>>>,
+}
+
+impl<T: Clone + std::marker::Unpin + std::fmt::Debug> Future for Request<T> {
+    type Output = Result<T, ()>;
+
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        _ctx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        // TODO: Use `take()` instead of cloning, once you figure it out.
+        // For now we have to clone, as multiple futures may share the same
+        // refcell.
+        if let Some(result) = self.get_mut().result.borrow().clone() {
+            Poll::Ready(result)
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
 pub(crate) mod message {
     use nakamoto_common::bitcoin::consensus::Encodable;
     use nakamoto_common::bitcoin::network::message::RawNetworkMessage;
@@ -161,10 +208,15 @@ pub struct Outbox {
     outbound: Rc<RefCell<VecDeque<Io>>>,
     /// Message outbox.
     outbox: Rc<RefCell<HashMap<PeerId, Vec<u8>>>>,
+    /// Block requests to the network.
+    block_requests: Rc<RefCell<HashMap<BlockHash, Request<Block>>>>,
     /// Network message builder.
     builder: message::Builder,
     /// Log target.
     target: &'static str,
+
+    tasks: Rc<RefCell<Vec<Task>>>,
+    queue: Rc<RefCell<Vec<Task>>>,
 }
 
 impl Outbox {
@@ -174,8 +226,11 @@ impl Outbox {
             version,
             outbound: Rc::new(RefCell::new(VecDeque::new())),
             outbox: Rc::new(RefCell::new(HashMap::new())),
+            block_requests: Rc::new(RefCell::new(HashMap::new())),
             builder: message::Builder::new(network),
             target,
+            tasks: Rc::new(RefCell::new(Vec::new())),
+            queue: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -236,6 +291,50 @@ impl Outbox {
     }
 }
 
+impl Outbox {
+    /// A block was received from the network.
+    pub fn block_received(&mut self, blk: Block) {
+        let block_hash = blk.block_hash();
+
+        if let Some(req) = self.block_requests.borrow_mut().remove(&block_hash) {
+            *req.result.borrow_mut() = Some(Ok(blk.clone()));
+        }
+    }
+
+    /// Spawn a future to be executed.
+    pub fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
+        self.queue.borrow_mut().push(Task {
+            future: Some(Box::pin(future)),
+        });
+    }
+
+    /// Poll all tasks for completion.
+    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+        let mut tasks = self.tasks.borrow_mut();
+
+        for task in tasks.iter_mut() {
+            if let Some(mut fut) = task.future.take() {
+                if fut.as_mut().poll(cx).is_pending() {
+                    task.future = Some(fut);
+                }
+            }
+        }
+        // Clear out all completed futures.
+        tasks.retain(|t| t.future.is_some());
+
+        // Spawn and poll queued tasks.
+        for t in self.queue.borrow_mut().drain(..) {
+            tasks.push(t);
+        }
+        // TODO: WHO WILL POLL THESE NEW TASKS
+
+        if tasks.is_empty() {
+            return Poll::Ready(());
+        }
+        Poll::Pending
+    }
+}
+
 /// Draining iterator over outbound channel queue.
 pub struct Drain {
     items: Rc<RefCell<VecDeque<Io>>>,
@@ -264,6 +363,32 @@ impl Disconnect for Outbox {
 
 impl Disconnect for () {
     fn disconnect(&self, _addr: net::SocketAddr, _reason: DisconnectReason) {}
+}
+
+pub trait Blocks {
+    fn get_block(&mut self, hash: BlockHash, peer: &PeerId) -> Request<Block>;
+}
+
+impl Blocks for Outbox {
+    /// Fetch a block from a peer.
+    fn get_block(&mut self, hash: BlockHash, addr: &PeerId) -> Request<Block> {
+        use std::collections::hash_map::Entry;
+
+        let request = Request {
+            result: Rc::new(RefCell::new(None)),
+        };
+        match self.block_requests.borrow_mut().entry(hash) {
+            Entry::Vacant(e) => {
+                e.insert(request.clone());
+            }
+            Entry::Occupied(e) => {
+                return e.get().clone();
+            }
+        }
+        self.getdata(*addr, vec![Inventory::Block(hash)]);
+
+        request
+    }
 }
 
 /// The ability to be woken up in the future.
@@ -494,6 +619,7 @@ impl cbfmgr::Events for Outbox {
 pub mod test {
     use super::*;
     use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use nakamoto_test::assert_matches;
 
     pub fn messages(
         channel: &mut Outbox,
@@ -510,5 +636,45 @@ pub mod test {
             msgs.push(msg.payload);
         }
         msgs.into_iter()
+    }
+
+    #[test]
+    fn test_get_block() {
+        let network = Network::Mainnet;
+        let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
+        let mut outbox = Outbox::new(network, crate::protocol::PROTOCOL_VERSION, "test");
+        let waker = Arc::new(Waker).into();
+        let mut cx = Context::from_waker(&waker);
+
+        outbox.spawn({
+            let mut outbox = outbox.clone();
+
+            async move {
+                outbox
+                    .get_block(network.genesis_hash(), &remote)
+                    .await
+                    .unwrap();
+            }
+        });
+        outbox.spawn({
+            let mut outbox = outbox.clone();
+
+            async move {
+                outbox
+                    .get_block(network.genesis_hash(), &remote)
+                    .await
+                    .unwrap();
+            }
+        });
+        assert!(outbox.poll(&mut cx).is_pending());
+        assert!(outbox.poll(&mut cx).is_pending());
+
+        assert_matches!(
+            messages(&mut outbox, &remote).next(),
+            Some(NetworkMessage::GetData(_))
+        );
+
+        outbox.block_received(network.genesis_block());
+        assert!(outbox.poll(&mut cx).is_ready());
     }
 }

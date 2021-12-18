@@ -20,7 +20,7 @@ use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
 
 use super::filter_cache::FilterCache;
-use super::output::{Disconnect, Wakeup};
+use super::output::{Blocks, Disconnect, Wakeup};
 use super::{DisconnectReason, Link, PeerId, Socket};
 
 /// Idle timeout.
@@ -361,7 +361,7 @@ pub struct FilterManager<F, U> {
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
 }
 
-impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F, U> {
+impl<F: Filters, U: SyncFilters + Events + Wakeup + Blocks + Disconnect> FilterManager<F, U> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
