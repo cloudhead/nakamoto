@@ -216,7 +216,6 @@ pub struct Outbox {
     target: &'static str,
 
     tasks: Rc<RefCell<Vec<Task>>>,
-    queue: Rc<RefCell<Vec<Task>>>,
 }
 
 impl Outbox {
@@ -230,7 +229,6 @@ impl Outbox {
             builder: message::Builder::new(network),
             target,
             tasks: Rc::new(RefCell::new(Vec::new())),
-            queue: Rc::new(RefCell::new(Vec::new())),
         }
     }
 
@@ -303,30 +301,26 @@ impl Outbox {
 
     /// Spawn a future to be executed.
     pub fn spawn(&mut self, future: impl Future<Output = ()> + 'static) {
-        self.queue.borrow_mut().push(Task {
+        self.tasks.borrow_mut().push(Task {
             future: Some(Box::pin(future)),
         });
     }
 
     /// Poll all tasks for completion.
-    pub fn poll(&mut self, cx: &mut Context<'_>) -> Poll<()> {
+    pub fn poll(&mut self) -> Poll<()> {
         let mut tasks = self.tasks.borrow_mut();
+        let waker = Arc::new(Waker).into();
+        let mut cx = Context::from_waker(&waker);
 
         for task in tasks.iter_mut() {
             if let Some(mut fut) = task.future.take() {
-                if fut.as_mut().poll(cx).is_pending() {
+                if fut.as_mut().poll(&mut cx).is_pending() {
                     task.future = Some(fut);
                 }
             }
         }
         // Clear out all completed futures.
         tasks.retain(|t| t.future.is_some());
-
-        // Spawn and poll queued tasks.
-        for t in self.queue.borrow_mut().drain(..) {
-            tasks.push(t);
-        }
-        // TODO: WHO WILL POLL THESE NEW TASKS
 
         if tasks.is_empty() {
             return Poll::Ready(());
@@ -643,8 +637,6 @@ pub mod test {
         let network = Network::Mainnet;
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let mut outbox = Outbox::new(network, crate::protocol::PROTOCOL_VERSION, "test");
-        let waker = Arc::new(Waker).into();
-        let mut cx = Context::from_waker(&waker);
 
         outbox.spawn({
             let mut outbox = outbox.clone();
@@ -666,8 +658,7 @@ pub mod test {
                     .unwrap();
             }
         });
-        assert!(outbox.poll(&mut cx).is_pending());
-        assert!(outbox.poll(&mut cx).is_pending());
+        assert!(outbox.poll().is_pending());
 
         assert_matches!(
             messages(&mut outbox, &remote).next(),
@@ -675,6 +666,6 @@ pub mod test {
         );
 
         outbox.block_received(network.genesis_block());
-        assert!(outbox.poll(&mut cx).is_ready());
+        assert!(outbox.poll().is_ready());
     }
 }
