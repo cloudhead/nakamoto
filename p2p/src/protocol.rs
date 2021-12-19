@@ -19,6 +19,9 @@ mod syncmgr;
 #[cfg(test)]
 mod tests;
 
+// Futures executor.
+mod executor;
+
 use addrmgr::AddressManager;
 use cbfmgr::FilterManager;
 use invmgr::InventoryManager;
