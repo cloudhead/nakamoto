@@ -25,12 +25,7 @@ impl Log for Logger {
             }
 
             fn write(record: &log::Record, module: &str, mut stream: impl io::Write) {
-                let message = format!(
-                    "{} {} {}",
-                    record.level().to_string(),
-                    module.bold(),
-                    record.args().to_string()
-                );
+                let message = format!("{} {} {}", record.level(), module.bold(), record.args());
                 let message = match record.level() {
                     Level::Error => message.red(),
                     Level::Warn => message.yellow(),
