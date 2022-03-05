@@ -111,6 +111,13 @@ pub enum Event {
         /// Reason for cancellation.
         reason: &'static str,
     },
+    /// A rescan has started.
+    RescanStarted {
+        /// Start height.
+        start: Height,
+        /// End height.
+        end: Option<Height>,
+    },
     /// An active rescan has completed.
     RescanCompleted {
         /// Last height processed by rescan.
@@ -170,6 +177,15 @@ impl std::fmt::Display for Event {
                 "Syncing filter headers with {}, start = {}, stop = {}",
                 peer, start_height, stop_hash
             ),
+            Event::RescanStarted {
+                start,
+                end: Some(end),
+            } => {
+                write!(fmt, "Rescan started from height {} to {}", start, end)
+            }
+            Event::RescanStarted { start, end: None } => {
+                write!(fmt, "Rescan started from height {}", start)
+            }
             Event::RescanCompleted { height } => {
                 write!(fmt, "Rescan completed at height {}", height)
             }
@@ -504,6 +520,10 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         };
         self.rescan.current = self.rescan.start;
         self.rescan.watch = watch.into_iter().collect();
+        self.upstream.event(Event::RescanStarted {
+            start: self.rescan.start,
+            end: self.rescan.end,
+        });
 
         if self.rescan.watch.is_empty() {
             return vec![];
