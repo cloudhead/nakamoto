@@ -195,6 +195,7 @@ impl Mapper {
                 block,
                 height,
                 matched,
+                ..
             }) => {
                 self.process_filter(block, height, matched, emitter);
             }

@@ -182,7 +182,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     client.tip = (height, chain[height as usize].header);
 
     let mut spent = 0;
-    let (watch, heights, balance) = gen::watchlist(birth, chain.iter(), &mut rng);
+    let (watch, heights, balance) = gen::watchlist_rng(birth, chain.iter(), &mut rng);
 
     log::debug!(
         "-- Test case with birth = {} and height = {}",

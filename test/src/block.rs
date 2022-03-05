@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
 use nakamoto_common::bitcoin::blockdata::transaction::{OutPoint, TxOut};
-
 use nakamoto_common::block::BlockHeader;
+
 pub use nakamoto_common::block::*;
 
 /// Solve a block's proof of work puzzle.
@@ -413,8 +413,8 @@ pub mod gen {
         })
     }
 
-    /// Generate a set of scripts to watch, given a blockchain and birth height.
-    pub fn watchlist<'a>(
+    /// Generate a random set of scripts to watch, given a blockchain and birth height.
+    pub fn watchlist_rng<'a>(
         birth: Height,
         chain: impl Iterator<Item = &'a Block>,
         rng: &mut fastrand::Rng,
@@ -436,5 +436,23 @@ pub mod gen {
             }
         }
         (watchlist, blocks, balance)
+    }
+
+    /// Generate a set of scripts to watch, given a blockchain and birth height.
+    pub fn watchlist<'a>(
+        birth: Height,
+        chain: impl Iterator<Item = &'a Block>,
+    ) -> (Vec<Script>, u64) {
+        let mut watchlist = Vec::new();
+        let mut balance = 0;
+
+        for blk in chain.skip(birth as usize) {
+            let tx = &blk.txdata[0];
+            let out = &tx.output[0];
+
+            watchlist.push(out.script_pubkey.clone());
+            balance += out.value;
+        }
+        (watchlist, balance)
     }
 }

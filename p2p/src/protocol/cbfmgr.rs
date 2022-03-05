@@ -555,9 +555,9 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
             .unwrap_or_else(|e| panic!("{}: Only valid filters should be cached: {}", source!(), e))
     }
 
-    /// Send a `getcfilters` message to a random peer.
+    /// Send one or more `getcfilters` messages to random peers.
     ///
-    /// If the range is greater than [`MAX_MESSAGE_CFILTERS`], requests filters from multiple
+    /// If the range is greater than [`MAX_MESSAGE_CFILTERS`], request filters from multiple
     /// peers.
     pub fn get_cfilters<T: BlockReader>(
         &mut self,
@@ -571,7 +571,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
             return Err(GetFiltersError::InvalidRange);
         }
         assert!(*range.end() <= self.filters.height());
-        assert!(*range.end() <= self.cache.end().unwrap_or(u64::MAX));
 
         // Compute a new request range after checking for cache hits.
         let range = if let Some(intersection) = self.cache.intersection(range.clone()) {
@@ -585,14 +584,14 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
                 }
             }
             // 100% cache hit. There's nothing to request.
-            if range.start() == intersection.start() {
+            if range.start() >= intersection.start() && range.end() <= intersection.end() {
                 return Ok(());
             }
             assert!(range.start() > &0);
 
             // Adjust the request range to only include the filters that are not in the cache.
-            // This will deliberately result in an empty range
-            *range.start()..=*intersection.start() - 1
+            // TODO: Handle other overlaps
+            intersection.end() + 1..=*range.end()
         } else {
             // Leave range un-altered.
             range
@@ -1107,7 +1106,7 @@ mod tests {
     use nakamoto_chain::filter::cache::{FilterCache, StoredHeader};
     use nakamoto_common::block::filter::{FilterHash, FilterHeader};
     use nakamoto_common::block::tree::BlockReader as _;
-    use nakamoto_common::block::tree::BlockTree as _;
+    use nakamoto_common::block::tree::BlockTree;
     use nakamoto_common::block::tree::ImportResult;
     use nakamoto_common::network::Network;
     use nakamoto_common::nonempty::NonEmpty;
@@ -1193,6 +1192,29 @@ mod tests {
                 stop_hash: tip,
                 previous_filter_header,
                 filter_hashes,
+            }
+        }
+
+        pub fn extend<T, C>(
+            tree: &mut T,
+            n: usize,
+            time: &C,
+            rng: &mut fastrand::Rng,
+        ) -> (Vec<bitcoin::Block>, BlockHash)
+        where
+            T: BlockTree,
+            C: Clock,
+        {
+            let (_, tip) = tree.tip();
+            let suffix = gen::fork(&tip, n, rng);
+            let result = tree
+                .import_blocks(suffix.iter().map(|b| b.header), time)
+                .unwrap();
+
+            if let ImportResult::TipChanged(_, hash, _, _, _) = result {
+                (suffix, hash)
+            } else {
+                panic!("unexpected import result: {:?}", result)
             }
         }
 
@@ -1529,7 +1551,99 @@ mod tests {
         }).expect("GetCFHeaders request");
     }
 
-    // TODO: Test cache with partial cache hit
+    #[test]
+    fn test_partial_cache_hit_overlap_max() {
+        // Cache    5  6  7  8  *
+        // Rescan   *  *  7  8  9
+        // Request  *  *  *  *  9
+
+        let mut rng = fastrand::Rng::new();
+        let network = Network::Regtest;
+        let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+        let birth = 5;
+        let best = 8;
+
+        let (mut cbfmgr, mut tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
+        let time = LocalTime::now();
+        let (watch, _) = gen::watchlist(birth, chain.iter());
+
+        cbfmgr.initialize(time, &tree);
+        cbfmgr.peer_negotiated(
+            Socket::new(remote),
+            best,
+            REQUIRED_SERVICES,
+            Link::Outbound,
+            &time,
+            &tree,
+        );
+
+        // 1. Populate the cache from heights 5 to 8.
+        cbfmgr.rescan(
+            Bound::Included(birth),
+            Bound::Included(8),
+            watch.clone(),
+            &tree,
+        );
+
+        for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+        }
+        assert_eq!(cbfmgr.cache.start(), Some(birth));
+        assert_eq!(cbfmgr.cache.end(), Some(best));
+
+        // 2. Advance the block header chain to 9.
+        let (suffix, tip) = util::extend(&mut tree, 1, &time, &mut rng);
+        assert_eq!(tree.height(), 9);
+
+        // 3. Advance the filter header chain to 9.
+        cbfmgr.sync(&tree, time);
+
+        let (_, parent) = cbfmgr.filters.tip();
+        let cfheaders = util::cfheaders(*parent, &suffix);
+
+        cbfmgr
+            .received_cfheaders(&remote, cfheaders, &tree, time)
+            .unwrap();
+        assert_eq!(cbfmgr.filters.height(), 9);
+
+        // 4. Make sure there's nothing in the outbox.
+        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.upstream.unregister(&remote);
+
+        // 5. Trigger a rescan for the new range 7 to 9
+        let matched = cbfmgr.rescan(Bound::Included(7), Bound::Included(9), watch, &tree);
+
+        // 6. Expect that 7 and 8 are cache hits, and 9 is requested.
+        assert_matches!(matched.as_slice(), [(7, _), (8, _)]);
+        assert_matches!(
+            output::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
+            NetworkMessage::GetCFilters(GetCFilters {
+                start_height,
+                stop_hash,
+                ..
+            }) if start_height as Height == 9 && stop_hash == tip,
+            "expected {} and {}", 9, tip
+        );
+    }
+
+    #[test]
+    fn test_partial_cache_hit_overlap_min() {
+        // Cache    * [7  8  9]
+        // Rescan  [6, 7, 8] *
+    }
+
+    #[test]
+    fn test_partial_cache_hit_overlap_min_max() {
+        // Cache   * [6, 7] *
+        // Rescan [5, 6, 7, 8]
+    }
+
+    #[test]
+    fn test_partial_cache_hit_included() {
+        // Cache   [5, 6, 7, 8]
+        // Rescan   * [6, 7] *
+    }
+
     // TODO: Test that we panic if we get filters beyond the allowed range
     // TODO: Test that cached filters are eventually matched once we receive the requested ones
     // TODO: Test that the cache is built backwards, so if there's an item in the cache it's the head
@@ -1547,7 +1661,7 @@ mod tests {
         let time = LocalTime::now();
 
         // Generate a watchlist and keep track of the matching block heights.
-        let (watch, matches, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+        let (watch, matches, _) = gen::watchlist_rng(birth, chain.iter(), &mut rng);
 
         cbfmgr.initialize(time, &tree);
         cbfmgr.peer_negotiated(
@@ -1643,7 +1757,7 @@ mod tests {
             let time = LocalTime::now();
 
             // Generate a watchlist and keep track of the matching block heights.
-            let (watch, _, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+            let (watch, _, _) = gen::watchlist_rng(birth, chain.iter(), &mut rng);
 
             cbfmgr.initialize(time, &tree);
             cbfmgr.peer_negotiated(
@@ -1764,7 +1878,7 @@ mod tests {
         let tip = chain.last().block_hash();
 
         // Generate a watchlist and keep track of the matching block heights.
-        let (watch, heights, _) = gen::watchlist(birth, chain.iter(), &mut rng);
+        let (watch, heights, _) = gen::watchlist_rng(birth, chain.iter(), &mut rng);
         if watch.is_empty() {
             return TestResult::discard();
         }
