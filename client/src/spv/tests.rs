@@ -206,6 +206,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
                 block: block.block_hash(),
                 height: h,
                 matched,
+                cached: false,
             },
         ));
 

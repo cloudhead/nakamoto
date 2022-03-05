@@ -87,6 +87,8 @@ pub enum Event {
         height: Height,
         /// Whether or not this filter matched something in the watchlist.
         matched: bool,
+        /// Filter was cached.
+        cached: bool,
     },
     /// Filter headers were imported successfully.
     FilterHeadersImported {
@@ -293,7 +295,7 @@ pub struct Rescan {
     /// Filters requested and remaining to download.
     pub requested: BTreeSet<Height>,
     /// Received filters waiting to be matched.
-    pub received: HashMap<Height, (BlockFilter, BlockHash)>,
+    pub received: HashMap<Height, (BlockFilter, BlockHash, bool)>,
 }
 
 impl Rescan {
@@ -580,7 +582,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
                     // Insert the cached filters into the processing queue.
                     self.rescan
                         .received
-                        .insert(*height, (filter.clone(), block_hash));
+                        .insert(*height, (filter.clone(), block_hash, true));
                 }
             }
             // 100% cache hit. There's nothing to request.
@@ -844,7 +846,9 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         });
 
         if self.rescan.requested.remove(&height) {
-            self.rescan.received.insert(height, (filter, block_hash));
+            self.rescan
+                .received
+                .insert(height, (filter, block_hash, false));
 
             match self.process() {
                 Ok(matches) => {
@@ -1036,7 +1040,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         let mut matches = Vec::new();
         let mut current = self.rescan.current;
 
-        while let Some((filter, block_hash)) = self.rescan.received.remove(&current) {
+        while let Some((filter, block_hash, cached)) = self.rescan.received.remove(&current) {
             let matched = self.rescan.match_filter(&filter, &block_hash)?;
             if matched {
                 matches.push((current, block_hash));
@@ -1047,6 +1051,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
                 block: block_hash,
                 height: current,
                 matched,
+                cached,
             });
             current += 1;
         }
