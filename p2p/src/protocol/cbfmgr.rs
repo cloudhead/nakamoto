@@ -586,14 +586,19 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
                 }
             }
             // 100% cache hit. There's nothing to request.
-            if range.start() >= intersection.start() && range.end() <= intersection.end() {
+            if range.start() == intersection.start() && range.end() == intersection.end() {
                 return Ok(());
             }
             assert!(range.start() > &0);
 
             // Adjust the request range to only include the filters that are not in the cache.
-            // TODO: Handle other overlaps
-            intersection.end() + 1..=*range.end()
+            if range.end() > intersection.end() {
+                intersection.end() + 1..=*range.end()
+            } else if range.end() == intersection.end() {
+                *range.start()..=*intersection.start() - 1
+            } else {
+                todo!();
+            }
         } else {
             // Leave range un-altered.
             range
@@ -1094,6 +1099,9 @@ impl Iterator for HeightIterator {
 
 #[cfg(test)]
 mod tests {
+    use std::iter;
+    use std::ops::RangeBounds;
+
     use nakamoto_common::bitcoin;
     use nakamoto_common::bitcoin_hashes;
 
@@ -1561,12 +1569,18 @@ mod tests {
         // Cache    5  6  7  8  *
         // Rescan   *  *  7  8  9
         // Request  *  *  *  *  9
+        let cache_range = 5..=8;
+        let rescan_range = 7..=9;
+        let cache_hits = [7, 8];
+        let expected_request = 9;
+
+        nakamoto_test::logger::init(log::Level::Debug);
 
         let mut rng = fastrand::Rng::new();
         let network = Network::Regtest;
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
-        let birth = 5;
-        let best = 8;
+        let birth: u64 = *cache_range.start();
+        let best: u64 = *cache_range.end();
 
         let (mut cbfmgr, mut tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
         let time = LocalTime::now();
@@ -1585,7 +1599,7 @@ mod tests {
         // 1. Populate the cache from heights 5 to 8.
         cbfmgr.rescan(
             Bound::Included(birth),
-            Bound::Included(8),
+            Bound::Included(best),
             watch.clone(),
             &tree,
         );
@@ -1597,8 +1611,9 @@ mod tests {
         assert_eq!(cbfmgr.cache.end(), Some(best));
 
         // 2. Advance the block header chain to 9.
-        let (suffix, tip) = util::extend(&mut tree, 1, &time, &mut rng);
-        assert_eq!(tree.height(), 9);
+        let extent = rescan_range.end() - cache_range.end();
+        let (suffix, tip) = util::extend(&mut tree, extent as usize, &time, &mut rng);
+        assert_eq!(tree.height(), *rescan_range.end());
 
         // 3. Advance the filter header chain to 9.
         cbfmgr.sync(&tree, time);
@@ -1609,32 +1624,149 @@ mod tests {
         cbfmgr
             .received_cfheaders(&remote, cfheaders, &tree, time)
             .unwrap();
-        assert_eq!(cbfmgr.filters.height(), 9);
+        assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
         // 4. Make sure there's nothing in the outbox.
         cbfmgr.upstream.drain().for_each(drop);
         cbfmgr.upstream.unregister(&remote);
 
         // 5. Trigger a rescan for the new range 7 to 9
-        let matched = cbfmgr.rescan(Bound::Included(7), Bound::Included(9), watch, &tree);
+        let matched = cbfmgr.rescan(
+            rescan_range.start_bound().cloned(),
+            rescan_range.end_bound().cloned(),
+            watch,
+            &tree,
+        );
 
         // 6. Expect that 7 and 8 are cache hits, and 9 is requested.
-        assert_matches!(matched.as_slice(), [(7, _), (8, _)]);
+        assert_eq!(
+            matched
+                .iter()
+                .map(|(height, _)| *height)
+                .collect::<Vec<_>>(),
+            cache_hits
+        );
+        // TODO: Test that there are no other requests.
         assert_matches!(
             output::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
             NetworkMessage::GetCFilters(GetCFilters {
                 start_height,
                 stop_hash,
                 ..
-            }) if start_height as Height == 9 && stop_hash == tip,
-            "expected {} and {}", 9, tip
+            }) if start_height as Height == expected_request && stop_hash == tip,
+            "expected {} and {}", expected_request, tip
         );
     }
 
     #[test]
     fn test_partial_cache_hit_overlap_min() {
-        // Cache    * [7  8  9]
-        // Rescan  [6, 7, 8] *
+        // Cache    *  7  8  9
+        // Rescan   6  7  8  *
+        // Request  6  *  *  *
+        let cache_range = 7..=9;
+        let rescan_range = 6..=8;
+        let expected_request: Height = 6;
+
+        nakamoto_test::logger::init(log::Level::Debug);
+
+        let network = Network::Regtest;
+        let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+        let birth: u64 = *cache_range.start();
+        let best: u64 = *cache_range.end();
+
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
+        let time = LocalTime::now();
+        let (watch, _) = gen::watchlist(birth, chain.iter());
+
+        cbfmgr.initialize(time, &tree);
+        cbfmgr.peer_negotiated(
+            Socket::new(remote),
+            best,
+            REQUIRED_SERVICES,
+            Link::Outbound,
+            &time,
+            &tree,
+        );
+
+        // 1. Populate the cache from heights 7 to 9.
+        cbfmgr.rescan(
+            Bound::Included(birth),
+            Bound::Included(best),
+            watch.clone(),
+            &tree,
+        );
+
+        for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+        }
+        assert_eq!(cbfmgr.cache.start(), Some(birth));
+        assert_eq!(cbfmgr.cache.end(), Some(best));
+
+        let (tip, _) = tree.tip();
+
+        // 4. Make sure there's nothing in the outbox.
+        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.upstream.unregister(&remote);
+
+        // 5. Trigger a rescan for the new range 6 to 8.
+        // Nothing should be matched yet, since we don't have filter #6.
+        let matched = cbfmgr.rescan(
+            rescan_range.start_bound().cloned(),
+            rescan_range.end_bound().cloned(),
+            watch,
+            &tree,
+        );
+        assert_eq!(matched, vec![]);
+
+        // 6. Expect that #6 is requested.
+        let missing = &chain[expected_request as usize];
+
+        assert_matches!(
+            output::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
+            NetworkMessage::GetCFilters(GetCFilters {
+                start_height,
+                stop_hash,
+                ..
+            }) if start_height as Height == expected_request && stop_hash == missing.block_hash(),
+            "expected {} and {}", expected_request, tip
+        );
+        cbfmgr.upstream.drain().for_each(drop);
+
+        // 7. Receive #6.
+        let msg = util::cfilters(iter::once(missing)).next().unwrap();
+        cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+
+        // 8. Expect that 6 to 8 are processed and 7 and 8 come from the cache.
+        let mut events = util::events(cbfmgr.upstream.drain())
+            .filter(|e| matches!(e, Event::FilterProcessed { .. }));
+
+        assert_matches!(
+            events.next(),
+            Some(Event::FilterProcessed {
+                height: 6,
+                matched: false,
+                cached: false,
+                ..
+            })
+        );
+        assert_matches!(
+            events.next(),
+            Some(Event::FilterProcessed {
+                height: 7,
+                matched: true,
+                cached: true,
+                ..
+            })
+        );
+        assert_matches!(
+            events.next(),
+            Some(Event::FilterProcessed {
+                height: 8,
+                matched: true,
+                cached: true,
+                ..
+            })
+        );
     }
 
     #[test]
