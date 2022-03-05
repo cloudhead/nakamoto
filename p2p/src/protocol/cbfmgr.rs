@@ -2,26 +2,29 @@
 //!
 //! Manages BIP 157/8 compact block filter sync.
 //!
-use std::collections::BTreeSet;
+mod rescan;
+
 use std::ops::{Bound, RangeInclusive};
 
 use thiserror::Error;
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
-use nakamoto_common::bitcoin::util::bip158;
+
 use nakamoto_common::bitcoin::{Script, Transaction, Txid};
 
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::block::{BlockHash, Height};
-use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
+use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::source;
 
 use super::filter_cache::FilterCache;
 use super::output::{Disconnect, Wakeup};
 use super::{DisconnectReason, Link, PeerId, Socket};
+
+use rescan::Rescan;
 
 /// Idle timeout.
 pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
@@ -276,90 +279,6 @@ struct Peer {
     socket: Socket,
 }
 
-/// Filter (re)scan state.
-#[derive(Debug, Default)]
-pub struct Rescan {
-    /// Whether a rescan is currently in progress.
-    pub active: bool,
-    /// Current height from which we're synced filters.
-    /// Must be between `start` and `end`.
-    pub current: Height,
-    /// Start height of the filter rescan.
-    pub start: Height,
-    /// End height of the filter rescan. If `None`, keeps scanning new blocks until stopped.
-    pub end: Option<Height>,
-    /// Addresses and outpoints to watch for.
-    pub watch: HashSet<Script>,
-    /// Transactions to watch for.
-    pub transactions: HashMap<Txid, HashSet<Script>>,
-    /// Filters requested and remaining to download.
-    pub requested: BTreeSet<Height>,
-    /// Received filters waiting to be matched.
-    pub received: HashMap<Height, (BlockFilter, BlockHash, bool)>,
-}
-
-impl Rescan {
-    /// Check whether a filter matches one of our scripts.
-    fn match_filter(
-        &self,
-        filter: &BlockFilter,
-        block_hash: &BlockHash,
-    ) -> Result<bool, bip158::Error> {
-        let mut matched = false;
-
-        // Match scripts first, then match transactions. All outputs of a transaction must
-        // match to consider the transaction matched.
-        if !self.watch.is_empty() {
-            matched = filter.match_any(block_hash, &mut self.watch.iter().map(|k| k.as_bytes()))?;
-        }
-        if !matched && !self.transactions.is_empty() {
-            matched = self.transactions.values().any(|outs| {
-                let mut outs = outs.iter().map(|k| k.as_bytes());
-                filter.match_all(block_hash, &mut outs).unwrap_or(false)
-            })
-        }
-        Ok(matched)
-    }
-
-    /// Given a range of filter heights, return the ranges that are missing.
-    /// This is useful to figure out which ranges to fetch while ensuring we don't request
-    /// the same heights more than once.
-    fn requests(&self, range: RangeInclusive<Height>) -> Vec<RangeInclusive<Height>> {
-        if range.is_empty() {
-            return vec![];
-        }
-
-        // Limit the requested ranges to `MAX_MESSAGE_CFILTERS`.
-        let ranges = HeightIterator {
-            start: *range.start(),
-            stop: *range.end(),
-            step: MAX_MESSAGE_CFILTERS as Height,
-        };
-        let mut requests: Vec<RangeInclusive<Height>> = Vec::new();
-
-        // Iterate over requested ranges, taking care that heights are only requested once.
-        // If there are gaps in the requested range after the difference is taken, split
-        // the requests in groups of consecutive heights.
-        for range in ranges {
-            let heights = range.collect::<BTreeSet<_>>();
-
-            // TODO: Do we have to also make sure not to request already *received* filters?
-            for height in heights.difference(&self.requested) {
-                if let Some(r) = requests.last_mut() {
-                    if *height == r.end() + 1 {
-                        *r = *r.start()..=r.end() + 1;
-                        continue;
-                    }
-                }
-                // Either this is the first range request, or there is a gap between the previous
-                // range and this height. Start a new range.
-                requests.push(*height..=*height);
-            }
-        }
-        requests
-    }
-}
-
 /// A compact block filter manager.
 #[derive(Debug)]
 pub struct FilterManager<F, U> {
@@ -367,8 +286,6 @@ pub struct FilterManager<F, U> {
     pub rescan: Rescan,
     /// Filter header chain.
     pub filters: F,
-    /// Filter cache.
-    pub cache: FilterCache,
 
     config: Config,
     peers: AddressBook<PeerId, Peer>,
@@ -383,14 +300,12 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
         let peers = AddressBook::new(rng.clone());
-        let rescan = Rescan::default();
-        let cache = FilterCache::new(config.filter_cache_size);
+        let rescan = Rescan::new(config.filter_cache_size);
 
         Self {
             config,
             peers,
             rescan,
-            cache,
             upstream,
             filters,
             inflight: HashMap::with_hasher(rng.into()),
@@ -440,7 +355,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         }
 
         // Purge stale block filters.
-        self.cache.rollback(height);
+        self.rescan.rollback(height);
         // Rollback filter header chain.
         self.filters.rollback(height)?;
 
@@ -553,7 +468,8 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         }
         // When we reset the rescan range, there is the possibility of getting immediate cache
         // hits from `get_cfilters`. Hence, process the filter queue.
-        self.process()
+        self.rescan
+            .process(&self.upstream)
             .unwrap_or_else(|e| panic!("{}: Only valid filters should be cached: {}", source!(), e))
     }
 
@@ -574,41 +490,11 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         }
         assert!(*range.end() <= self.filters.height());
 
-        // Compute a new request range after checking for cache hits.
-        let range = if let Some(intersection) = self.cache.intersection(range.clone()) {
-            for (height, filter) in self.cache.range(intersection.clone()) {
-                if let Some(header) = tree.get_block_by_height(*height) {
-                    let block_hash = header.block_hash();
-                    // Insert the cached filters into the processing queue.
-                    self.rescan
-                        .received
-                        .insert(*height, (filter.clone(), block_hash, true));
-                }
-            }
-            // 100% cache hit. There's nothing to request.
-            if range.start() == intersection.start() && range.end() == intersection.end() {
-                return Ok(());
-            }
-            assert!(range.start() > &0);
-
-            // Adjust the request range to only include the filters that are not in the cache.
-            if range.end() > intersection.end() {
-                intersection.end() + 1..=*range.end()
-            } else if range.end() == intersection.end() {
-                *range.start()..=*intersection.start() - 1
-            } else {
-                todo!();
-            }
-        } else {
-            // Leave range un-altered.
-            range
-        };
-
         // TODO: Only ask peers synced to a certain height.
         // Choose a different peer for each requested range.
         for (range, peer) in self
             .rescan
-            .requests(range)
+            .requests(range, tree)
             .into_iter()
             .zip(self.peers.cycle())
         {
@@ -620,7 +506,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
 
             self.upstream
                 .get_cfilters(*peer, *range.start(), stop_hash, timeout);
-            self.rescan.requested.extend(range);
         }
 
         Ok(())
@@ -850,12 +735,8 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
             filter: filter.clone(),
         });
 
-        if self.rescan.requested.remove(&height) {
-            self.rescan
-                .received
-                .insert(height, (filter, block_hash, false));
-
-            match self.process() {
+        if self.rescan.received(height, filter, block_hash) {
+            match self.rescan.process(&self.upstream) {
                 Ok(matches) => {
                     return Ok(matches);
                 }
@@ -1035,41 +916,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         self.get_cfilters(range, tree)?;
 
         Ok(())
-    }
-
-    /// Process the next filters in the queue that can be processed.
-    ///
-    /// Checks whether any of the queued filters is next in line (by height) and if so,
-    /// processes it and returns the result of trying to match it with the watch list.
-    fn process(&mut self) -> Result<Vec<(Height, BlockHash)>, bip158::Error> {
-        let mut matches = Vec::new();
-        let mut current = self.rescan.current;
-
-        while let Some((filter, block_hash, cached)) = self.rescan.received.remove(&current) {
-            let matched = self.rescan.match_filter(&filter, &block_hash)?;
-            if matched {
-                matches.push((current, block_hash));
-            }
-
-            self.cache.push(current, filter);
-            self.upstream.event(Event::FilterProcessed {
-                block: block_hash,
-                height: current,
-                matched,
-                cached,
-            });
-            current += 1;
-        }
-        self.rescan.current = current;
-
-        if let Some(stop) = self.rescan.end {
-            if self.rescan.current == stop {
-                self.rescan.active = false;
-                self.upstream.event(Event::RescanCompleted { height: stop });
-            }
-        }
-
-        Ok(matches)
     }
 }
 
@@ -1384,30 +1230,6 @@ mod tests {
             .unwrap();
     }
 
-    #[test]
-    fn test_rescan_requests() {
-        let mut rescan = Rescan::default();
-
-        // Add a range that has already been requested.
-        rescan.requested.extend(4..=5);
-        // Now try to request an overlapping range.
-        assert_eq!(rescan.requests(2..=10), vec![2..=3, 6..=10]);
-
-        rescan.requested.extend(7..=9);
-        rescan.requested.extend(13..=20);
-        assert_eq!(rescan.requests(8..=19), vec![10..=12]);
-
-        rescan.requested.clear();
-        rescan.requested.extend(4..=6);
-        rescan.requested.extend(9..=9);
-        rescan.requested.extend(12..=14);
-
-        assert_eq!(
-            rescan.requests(0..=16),
-            vec![0..=3, 7..=8, 10..=11, 15..=16]
-        );
-    }
-
     /// Test that we don't make redundant `getcfilters` requests.
     #[test]
     #[ignore]
@@ -1566,6 +1388,7 @@ mod tests {
 
     #[test]
     fn test_partial_cache_hit_overlap_max() {
+        // Head              8
         // Cache    5  6  7  8  *
         // Rescan   *  *  7  8  9
         // Request  *  *  *  *  9
@@ -1607,8 +1430,8 @@ mod tests {
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
             cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
-        assert_eq!(cbfmgr.cache.start(), Some(birth));
-        assert_eq!(cbfmgr.cache.end(), Some(best));
+        assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
+        assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
 
         // 2. Advance the block header chain to 9.
         let extent = rescan_range.end() - cache_range.end();
@@ -1660,6 +1483,7 @@ mod tests {
 
     #[test]
     fn test_partial_cache_hit_overlap_min() {
+        // Head              9
         // Cache    *  7  8  9
         // Rescan   6  7  8  *
         // Request  6  *  *  *
@@ -1699,8 +1523,8 @@ mod tests {
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
             cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
-        assert_eq!(cbfmgr.cache.start(), Some(birth));
-        assert_eq!(cbfmgr.cache.end(), Some(best));
+        assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
+        assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
 
         let (tip, _) = tree.tip();
 
@@ -1771,8 +1595,95 @@ mod tests {
 
     #[test]
     fn test_partial_cache_hit_overlap_min_max() {
-        // Cache   * [6, 7] *
-        // Rescan [5, 6, 7, 8]
+        // Tip           7
+        // Cache   *  6  7  *
+        // Rescan  5  6  7  8
+        // Request 5  *  *  8
+        let cache_range = 6..=7;
+        let rescan_range = 5..=8;
+        let _cache_hits = [6, 7];
+        let expected_requests = [5, 8];
+
+        nakamoto_test::logger::init(log::Level::Debug);
+
+        let mut rng = fastrand::Rng::new();
+        let network = Network::Regtest;
+        let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+        let birth: u64 = *cache_range.start();
+        let best: u64 = *cache_range.end();
+
+        let (mut cbfmgr, mut tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
+        let time = LocalTime::now();
+        let (watch, _) = gen::watchlist(birth, chain.iter());
+
+        cbfmgr.initialize(time, &tree);
+        cbfmgr.peer_negotiated(
+            Socket::new(remote),
+            best,
+            REQUIRED_SERVICES,
+            Link::Outbound,
+            &time,
+            &tree,
+        );
+
+        // 1. Populate the cache from heights 5 to 8.
+        cbfmgr.rescan(
+            Bound::Included(birth),
+            Bound::Included(best),
+            watch.clone(),
+            &tree,
+        );
+
+        for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+        }
+        assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
+        assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
+
+        // 2. Advance the block header chain to 9.
+        let extent = rescan_range.end() - cache_range.end();
+        let (suffix, _tip) = util::extend(&mut tree, extent as usize, &time, &mut rng);
+        assert_eq!(tree.height(), *rescan_range.end());
+
+        // 3. Advance the filter header chain to 9.
+        cbfmgr.sync(&tree, time);
+
+        let (_, parent) = cbfmgr.filters.tip();
+        let cfheaders = util::cfheaders(*parent, &suffix);
+
+        cbfmgr
+            .received_cfheaders(&remote, cfheaders, &tree, time)
+            .unwrap();
+        assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
+
+        // 4. Make sure there's nothing in the outbox.
+        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.upstream.unregister(&remote);
+
+        // 5. Trigger a rescan for the new range 7 to 9
+        let matched = cbfmgr.rescan(
+            rescan_range.start_bound().cloned(),
+            rescan_range.end_bound().cloned(),
+            watch,
+            &tree,
+        );
+        assert_eq!(matched, vec![]);
+
+        let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
+
+        // TODO: Test that there are no other requests.
+        for expected in expected_requests {
+            let hash = tree.get_block_by_height(expected).unwrap().block_hash();
+
+            assert_matches!(
+                msgs.next(),
+                Some(NetworkMessage::GetCFilters(GetCFilters {
+                    start_height,
+                    stop_hash,
+                    ..
+                })) if stop_hash == hash && start_height as Height == expected
+            );
+        }
     }
 
     #[test]
@@ -1820,9 +1731,9 @@ mod tests {
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
             cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
-        assert_eq!(cbfmgr.cache.len(), (best - birth) as usize + 1);
-        assert_eq!(cbfmgr.cache.start(), Some(birth));
-        assert_eq!(cbfmgr.cache.end(), Some(best));
+        assert_eq!(cbfmgr.rescan.cache.len(), (best - birth) as usize + 1);
+        assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
+        assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
         assert_eq!(cbfmgr.rescan.current, best + 1);
 
         // After a new rescan with a non-empty watchlist, the scripts are checked against the
