@@ -1687,14 +1687,91 @@ mod tests {
     }
 
     #[test]
-    fn test_partial_cache_hit_included() {
+    fn test_full_cache_hit() {
         // Cache   [5, 6, 7, 8]
         // Rescan   * [6, 7] *
     }
 
+    #[test]
+    fn test_partial_cache_hit_with_gaps() {
+        // Cache   *  6  *  8  *
+        // Rescan  5  6  7  8  9
+        // Request 5  *  7  *  9
+
+        let network = Network::Regtest;
+        let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+        let birth: u64 = 5;
+        let best: u64 = 9;
+
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
+        let time = LocalTime::now();
+        let (watch, _) = gen::watchlist(birth, chain.iter());
+
+        cbfmgr.initialize(time, &tree);
+        cbfmgr.peer_negotiated(
+            Socket::new(remote),
+            best,
+            REQUIRED_SERVICES,
+            Link::Outbound,
+            &time,
+            &tree,
+        );
+
+        // 1. Populate the cache with height 6 and 8.
+        for height in [6, 8] {
+            cbfmgr.rescan(
+                Bound::Included(height),
+                Bound::Included(height),
+                watch.clone(),
+                &tree,
+            );
+            let msg = util::cfilters(iter::once(&chain[height as usize]))
+                .next()
+                .unwrap();
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+        }
+        // Drain the message queue so we can check what is coming from the next rescan.
+        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.upstream.unregister(&remote);
+
+        // 2. Request range 5 to 9.
+        let matched = cbfmgr.rescan(Bound::Included(5), Bound::Included(9), watch, &tree);
+        assert!(matched.is_empty());
+
+        let mut events = util::events(cbfmgr.upstream.drain())
+            .filter(|e| matches!(e, Event::FilterProcessed { .. }));
+
+        // 3. Check for requests only on the heights not in the cache.
+        let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
+        for height in [5, 7, 9] {
+            assert_matches!(
+                msgs.next(),
+                Some(NetworkMessage::GetCFilters(GetCFilters {
+                    start_height,
+                    ..
+                })) if start_height == height
+            );
+        }
+
+        // 4. Receive some of the missing filters.
+        for msg in util::cfilters([&chain[5], &chain[7], &chain[9]].into_iter()) {
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+        }
+
+        // 5. Check for processed filters, some from the network and some from the cache.
+        for (h, c) in [(5, false), (6, true), (7, false), (8, true), (9, false)] {
+            assert_matches!(
+                events.next(),
+                Some(Event::FilterProcessed {
+                    height,
+                    cached,
+                    ..
+                }) if height == h && cached == c
+            );
+        }
+    }
+
     // TODO: Test that we panic if we get filters beyond the allowed range
-    // TODO: Test that cached filters are eventually matched once we receive the requested ones
-    // TODO: Test that the cache is built backwards, so if there's an item in the cache it's the head
     // TODO: Test rescan when the filter header chain is not caught up to the start of the range.
 
     #[test]

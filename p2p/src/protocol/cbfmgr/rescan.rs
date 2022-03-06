@@ -76,8 +76,9 @@ impl Rescan {
             if matched {
                 matches.push((current, block_hash));
             }
-
-            self.cache.push(current, filter);
+            if !cached {
+                self.cache.push(current, filter);
+            }
             events.event(Event::FilterProcessed {
                 block: block_hash,
                 height: current,
