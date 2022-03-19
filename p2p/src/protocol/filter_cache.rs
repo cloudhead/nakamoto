@@ -1,21 +1,51 @@
 //! Compact filter cache.
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::Height;
 
+/// Cachable block filter.
+#[allow(clippy::len_without_is_empty)]
+pub trait Filter: Eq + PartialEq {
+    /// Length in bytes of the block filter.
+    fn len(&self) -> usize;
+}
+
+impl Filter for Rc<BlockFilter> {
+    fn len(&self) -> usize {
+        self.content.len()
+    }
+}
+
+impl Filter for BlockFilter {
+    fn len(&self) -> usize {
+        self.content.len()
+    }
+}
+
 /// An in-memory compact filter cache with a fixed capacity.
-#[derive(Debug, Default)]
-pub struct FilterCache {
+#[derive(Debug)]
+pub struct FilterCache<T: Filter> {
     /// Cache.
-    cache: BTreeMap<Height, BlockFilter>,
+    cache: BTreeMap<Height, T>,
     /// Cache size in bytes.
     size: usize,
     /// Cache capacity in bytes.
     capacity: usize,
 }
 
-impl FilterCache {
+impl<T: Filter> Default for FilterCache<T> {
+    fn default() -> Self {
+        Self {
+            cache: BTreeMap::new(),
+            size: 0,
+            capacity: 0,
+        }
+    }
+}
+
+impl<T: Filter> FilterCache<T> {
     /// Create a new filter cache.
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -36,7 +66,7 @@ impl FilterCache {
     /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
-    /// let mut cache = FilterCache::new(32);
+    /// let mut cache = FilterCache::<BlockFilter>::new(32);
     /// assert_eq!(cache.capacity(), 32);
     /// ```
     pub fn capacity(&self) -> usize {
@@ -86,10 +116,10 @@ impl FilterCache {
     /// assert_eq!(cache.end(), Some(8));
     ///
     /// ```
-    pub fn push(&mut self, height: Height, filter: BlockFilter) -> bool {
+    pub fn push(&mut self, height: Height, filter: T) -> bool {
         assert!(self.size <= self.capacity);
 
-        let size = filter.content.len();
+        let size = filter.len();
         if size > self.capacity {
             return false;
         }
@@ -100,7 +130,7 @@ impl FilterCache {
         while self.size > self.capacity {
             if let Some(height) = self.cache.keys().cloned().next() {
                 if let Some(filter) = self.cache.remove(&height) {
-                    self.size -= filter.content.len();
+                    self.size -= filter.len();
                 }
             }
         }
@@ -132,7 +162,7 @@ impl FilterCache {
     }
 
     /// Iterate over cached filters.
-    pub fn iter(&self) -> impl Iterator<Item = (&Height, &BlockFilter)> {
+    pub fn iter(&self) -> impl Iterator<Item = (&Height, &T)> {
         self.cache.iter().map(|(h, b)| (h, b))
     }
 
@@ -158,7 +188,7 @@ impl FilterCache {
     /// assert_eq!(cache.get(&1), None);
     ///
     /// ```
-    pub fn get(&self, height: &Height) -> Option<&BlockFilter> {
+    pub fn get(&self, height: &Height) -> Option<&T> {
         self.cache.get(height)
     }
 
@@ -189,7 +219,7 @@ impl FilterCache {
             if h > height {
                 if let Some(k) = self.cache.keys().cloned().next_back() {
                     if let Some(filter) = self.cache.remove(&k) {
-                        self.size -= filter.content.len();
+                        self.size -= filter.len();
                     }
                 }
             } else {
@@ -212,7 +242,7 @@ mod tests {
     }
 
     impl Op {
-        fn apply(self, cache: &mut FilterCache, rng: &mut fastrand::Rng) {
+        fn apply(self, cache: &mut FilterCache<BlockFilter>, rng: &mut fastrand::Rng) {
             match self {
                 Self::Push(filter) => {
                     if let Some(end) = cache.end() {

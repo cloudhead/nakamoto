@@ -1,6 +1,7 @@
 //! Blockchain (re-)scanning for matching scripts.
 use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
+use std::rc::Rc;
 
 use nakamoto_common::bitcoin::util::bip158;
 use nakamoto_common::bitcoin::{Script, Txid};
@@ -24,7 +25,7 @@ pub struct Rescan {
     /// End height of the filter rescan. If `None`, keeps scanning new blocks until stopped.
     pub end: Option<Height>,
     /// Filter cache.
-    pub cache: FilterCache,
+    pub cache: FilterCache<Rc<BlockFilter>>,
     /// Addresses and outpoints to watch for.
     pub watch: HashSet<Script>,
     /// Transactions to watch for.
@@ -32,7 +33,7 @@ pub struct Rescan {
     /// Filters requested and remaining to download.
     pub requested: BTreeSet<Height>,
     /// Received filters waiting to be matched.
-    pub received: HashMap<Height, (BlockFilter, BlockHash, bool)>,
+    pub received: HashMap<Height, (Rc<BlockFilter>, BlockHash, bool)>,
 }
 
 impl Rescan {
@@ -55,6 +56,11 @@ impl Rescan {
     pub fn received(&mut self, height: Height, filter: BlockFilter, block_hash: BlockHash) -> bool {
         let requested = self.requested.remove(&height);
         if requested {
+            // We use a reference counted pointer here because it's possible for a filter to be
+            // both in the processing queue and in the cache, or only in one or the other.
+            let filter = Rc::new(filter);
+
+            self.cache.push(height, filter.clone());
             self.received.insert(height, (filter, block_hash, false));
         }
         requested
@@ -75,9 +81,6 @@ impl Rescan {
             let matched = self.match_filter(&filter, &block_hash)?;
             if matched {
                 matches.push((current, block_hash));
-            }
-            if !cached {
-                self.cache.push(current, filter);
             }
             events.event(Event::FilterProcessed {
                 block: block_hash,
