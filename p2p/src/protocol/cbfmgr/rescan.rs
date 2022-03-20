@@ -30,10 +30,11 @@ pub struct Rescan {
     pub watch: HashSet<Script>,
     /// Transactions to watch for.
     pub transactions: HashMap<Txid, HashSet<Script>>,
+
     /// Filters requested and remaining to download.
-    pub requested: BTreeSet<Height>,
+    requested: BTreeSet<Height>,
     /// Received filters waiting to be matched.
-    pub received: HashMap<Height, (Rc<BlockFilter>, BlockHash, bool)>,
+    received: HashMap<Height, (Rc<BlockFilter>, BlockHash, bool)>,
 }
 
 impl Rescan {
@@ -45,6 +46,19 @@ impl Rescan {
             cache,
             ..Self::default()
         }
+    }
+
+    /// Return info string on rescan state.
+    #[cfg(not(test))]
+    pub fn info(&self) -> String {
+        format!(
+            "rescan current = {}, watch = {}, txs = {}, filter queue = {}, requested = {}",
+            self.current,
+            self.watch.len(),
+            self.transactions.len(),
+            self.received.len(),
+            self.requested.len()
+        )
     }
 
     /// Rollback state to height.
@@ -149,14 +163,11 @@ impl Rescan {
 
         // Heights to skip.
         // Note that cached heights will have been added to the `received` list.
-        let skip = {
-            let mut skip: BTreeSet<Height> = BTreeSet::new();
-            // Heights we've received but not processed.
-            skip.extend(self.received.keys().cloned());
-            // Heights we've already requested.
-            skip.extend(&self.requested);
-            skip
-        };
+        let mut skip: BTreeSet<Height> = BTreeSet::new();
+        // Heights we've received but not processed.
+        skip.extend(self.received.keys().cloned());
+        // Heights we've already requested.
+        skip.extend(&self.requested);
 
         // Iterate over requested ranges, taking care that heights are only requested once.
         // If there are gaps in the requested range after the difference is taken, split

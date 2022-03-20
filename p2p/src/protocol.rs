@@ -993,14 +993,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
 
             if self.cbfmgr.rescan.active {
                 let rescan = &self.cbfmgr.rescan;
-                log::info!(
-                    "rescan current = {}, watch = {}, txs = {}, filter queue = {}, requested = {}",
-                    rescan.current,
-                    rescan.watch.len(),
-                    rescan.transactions.len(),
-                    rescan.received.len(),
-                    rescan.requested.len()
-                );
+                log::info!("{}", rescan.info());
             }
             log::info!(
                 "inventory block queue = {}, requested = {}, mempool = {}",

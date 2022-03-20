@@ -547,6 +547,8 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
 
     /// Attempt to get a block from the network. Retries if necessary.
     pub fn get_block(&mut self, hash: BlockHash) {
+        log::debug!("Queueing block {hash} to be requested");
+
         self.remaining.entry(hash).or_insert(None);
         self.schedule_tick();
     }
