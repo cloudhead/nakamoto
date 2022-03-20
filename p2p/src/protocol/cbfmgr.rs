@@ -359,8 +359,10 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         // Rollback filter header chain.
         self.filters.rollback(height)?;
 
-        // TODO: Cancel requests for filter headers and fitlers? Or just ignore them when they
-        // come in?
+        // Nb. Inflight filter header requests for heights that were rolled back will be ignored
+        // when received.
+        //
+        // TODO: Inflight filter requests need to be re-issued.
 
         if self.rescan.active {
             // Reset "current" scanning height.
@@ -424,19 +426,20 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         watch: Vec<Script>,
         tree: &T,
     ) -> Vec<(Height, BlockHash)> {
-        self.rescan.active = true;
-        self.rescan.start = match start {
-            Bound::Unbounded => tree.height() + 1,
-            Bound::Included(h) => h,
-            Bound::Excluded(h) => h + 1,
-        };
-        self.rescan.end = match end {
-            Bound::Unbounded => None,
-            Bound::Included(h) => Some(h),
-            Bound::Excluded(h) => Some(h - 1),
-        };
-        self.rescan.current = self.rescan.start;
-        self.rescan.watch = watch.into_iter().collect();
+        self.rescan.restart(
+            match start {
+                Bound::Unbounded => tree.height() + 1,
+                Bound::Included(h) => h,
+                Bound::Excluded(h) => h + 1,
+            },
+            match end {
+                Bound::Unbounded => None,
+                Bound::Included(h) => Some(h),
+                Bound::Excluded(h) => Some(h - 1),
+            },
+            watch,
+        );
+
         self.upstream.event(Event::RescanStarted {
             start: self.rescan.start,
             end: self.rescan.end,
@@ -468,9 +471,14 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         }
         // When we reset the rescan range, there is the possibility of getting immediate cache
         // hits from `get_cfilters`. Hence, process the filter queue.
-        self.rescan
-            .process(&self.upstream)
-            .unwrap_or_else(|e| panic!("{}: Only valid filters should be cached: {}", source!(), e))
+        let (matches, events) = self.rescan.process().unwrap_or_else(|e| {
+            panic!("{}: Only valid filters should be cached: {}", source!(), e)
+        });
+
+        for event in events {
+            self.upstream.event(event);
+        }
+        matches
     }
 
     /// Send one or more `getcfilters` messages to random peers.
@@ -736,8 +744,11 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         });
 
         if self.rescan.received(height, filter, block_hash) {
-            match self.rescan.process(&self.upstream) {
-                Ok(matches) => {
+            match self.rescan.process() {
+                Ok((matches, events)) => {
+                    for event in events {
+                        self.upstream.event(event);
+                    }
                     return Ok(matches);
                 }
                 Err(_err) => {

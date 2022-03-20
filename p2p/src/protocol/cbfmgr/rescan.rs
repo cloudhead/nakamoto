@@ -10,7 +10,7 @@ use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::{HashMap, HashSet};
 
-use super::{Event, Events, FilterCache, HeightIterator, MAX_MESSAGE_CFILTERS};
+use super::{Event, FilterCache, HeightIterator, MAX_MESSAGE_CFILTERS};
 
 /// Filter (re)scan state.
 #[derive(Debug, Default)]
@@ -48,6 +48,21 @@ impl Rescan {
         }
     }
 
+    /// Start or restart a rescan. Resets the request state.
+    pub fn restart(
+        &mut self,
+        start: Height,
+        end: Option<Height>,
+        watch: impl IntoIterator<Item = Script>,
+    ) {
+        self.active = true;
+        self.start = start;
+        self.current = start;
+        self.end = end;
+        self.watch = watch.into_iter().collect();
+        self.requested.clear();
+    }
+
     /// Return info string on rescan state.
     #[cfg(not(test))]
     pub fn info(&self) -> String {
@@ -59,6 +74,12 @@ impl Rescan {
             self.received.len(),
             self.requested.len()
         )
+    }
+
+    /// Reset requested heights. This allows for requests to be re-issued.
+    #[allow(dead_code)]
+    pub fn reset(&mut self) {
+        self.requested.clear();
     }
 
     /// Rollback state to height.
@@ -84,19 +105,21 @@ impl Rescan {
     ///
     /// Checks whether any of the queued filters is next in line (by height) and if so,
     /// processes it and returns the result of trying to match it with the watch list.
-    pub fn process(
-        &mut self,
-        events: &impl Events,
-    ) -> Result<Vec<(Height, BlockHash)>, bip158::Error> {
+    pub fn process(&mut self) -> Result<(Vec<(Height, BlockHash)>, Vec<Event>), bip158::Error> {
+        let mut events = Vec::new();
         let mut matches = Vec::new();
         let mut current = self.current;
 
         while let Some((filter, block_hash, cached)) = self.received.remove(&current) {
+            // TODO: Don't bail on error. We should still return matches and update the
+            // current state. The caller will also want to know which filter is invalid
+            // to ban the peer.
             let matched = self.match_filter(&filter, &block_hash)?;
+
             if matched {
                 matches.push((current, block_hash));
             }
-            events.event(Event::FilterProcessed {
+            events.push(Event::FilterProcessed {
                 block: block_hash,
                 height: current,
                 matched,
@@ -109,11 +132,11 @@ impl Rescan {
         if let Some(stop) = self.end {
             if self.current == stop {
                 self.active = false;
-                events.event(Event::RescanCompleted { height: stop });
+                events.push(Event::RescanCompleted { height: stop });
             }
         }
 
-        Ok(matches)
+        Ok((matches, events))
     }
 
     /// Check whether a filter matches one of our scripts.
