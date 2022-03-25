@@ -841,6 +841,7 @@ mod tests {
             })
             .unwrap();
     }
+
     #[test]
     fn test_wtx_inv() {
         let network = Network::Mainnet;
