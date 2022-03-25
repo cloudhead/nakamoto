@@ -39,7 +39,7 @@ use super::{Height, PeerId, Socket};
 pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
 
 /// Time between request retries.
-pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
+pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(15);
 
 /// Maximum number of attempts to send inventories to a peer.
 pub const MAX_ATTEMPTS: usize = 3;
@@ -356,18 +356,12 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
         }
 
         // Handle block request queue.
-        let mut requests = Vec::new();
         let queue = self
             .remaining
             .iter_mut()
             .filter(|(_, t)| now - t.unwrap_or_default() >= REQUEST_TIMEOUT);
 
         for (block_hash, last_request) in queue {
-            *last_request = Some(now);
-            requests.push(*block_hash);
-        }
-
-        for block_hash in requests {
             if let Some((addr, _)) = self
                 .peers
                 .sample_with(|_, p| p.services.has(ServiceFlags::NETWORK))
@@ -375,7 +369,10 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
                 log::debug!("Requesting block {} from {}", block_hash, addr);
 
                 self.upstream
-                    .getdata(*addr, vec![Inventory::Block(block_hash)]);
+                    .getdata(*addr, vec![Inventory::Block(*block_hash)]);
+                self.upstream.wakeup(REQUEST_TIMEOUT);
+
+                *last_request = Some(now);
             } else {
                 log::debug!(
                     "No peers with required services to request block {} from",
