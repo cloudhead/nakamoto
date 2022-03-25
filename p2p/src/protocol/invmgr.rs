@@ -297,6 +297,7 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
         // Rate-limit how much we run this function.
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
+            self.upstream.wakeup(IDLE_TIMEOUT);
         } else {
             return;
         }
@@ -309,23 +310,11 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
         }
 
         // Handle retries annd disconnects.
-        let mut requests = Vec::new();
         let mut disconnect = Vec::new();
 
         for (addr, peer) in &mut *self.peers {
             // TODO: Disconnect peers from which we requested blocks many times, and who haven't
             // responded, or at least don't retry the same peer too many times.
-
-            // Schedule inventory requests.
-            let queue = self
-                .remaining
-                .iter_mut()
-                .filter(|(_, t)| now - t.unwrap_or_default() >= REQUEST_TIMEOUT);
-
-            for (block_hash, last_request) in queue {
-                *last_request = Some(now);
-                requests.push(*block_hash);
-            }
 
             // Peer inventory announce timeout.
             if !peer.outbox.is_empty() {
@@ -365,6 +354,19 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
             self.peers.remove(&addr);
             self.upstream.event(Event::TimedOut { peer: addr });
         }
+
+        // Handle block request queue.
+        let mut requests = Vec::new();
+        let queue = self
+            .remaining
+            .iter_mut()
+            .filter(|(_, t)| now - t.unwrap_or_default() >= REQUEST_TIMEOUT);
+
+        for (block_hash, last_request) in queue {
+            *last_request = Some(now);
+            requests.push(*block_hash);
+        }
+
         for block_hash in requests {
             if let Some((addr, _)) = self
                 .peers
@@ -375,7 +377,10 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
                 self.upstream
                     .getdata(*addr, vec![Inventory::Block(block_hash)]);
             } else {
-                // TODO: Log that we couldn't find a peer?
+                log::debug!(
+                    "No peers with required services to request block {} from",
+                    block_hash
+                );
             }
         }
     }
