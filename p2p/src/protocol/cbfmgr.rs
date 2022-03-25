@@ -90,6 +90,8 @@ pub enum Event {
         height: Height,
         /// Whether or not this filter matched something in the watchlist.
         matched: bool,
+        /// Whether or not this filter was valid.
+        valid: bool,
         /// Filter was cached.
         cached: bool,
     },
@@ -155,12 +157,15 @@ impl std::fmt::Display for Event {
                 )
             }
             Event::FilterProcessed {
-                height, matched, ..
+                height,
+                matched,
+                valid,
+                ..
             } => {
                 write!(
                     fmt,
-                    "Filter processed at height {} (match = {})",
-                    height, matched
+                    "Filter processed at height {} (match = {}, valid = {})",
+                    height, matched, valid
                 )
             }
             Event::FilterHeadersImported { count, height, .. } => {
@@ -471,10 +476,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         }
         // When we reset the rescan range, there is the possibility of getting immediate cache
         // hits from `get_cfilters`. Hence, process the filter queue.
-        let (matches, events) = self.rescan.process().unwrap_or_else(|e| {
-            panic!("{}: Only valid filters should be cached: {}", source!(), e)
-        });
-
+        let (matches, events) = self.rescan.process();
         for event in events {
             self.upstream.event(event);
         }
@@ -744,19 +746,11 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         });
 
         if self.rescan.received(height, filter, block_hash) {
-            match self.rescan.process() {
-                Ok((matches, events)) => {
-                    for event in events {
-                        self.upstream.event(event);
-                    }
-                    return Ok(matches);
-                }
-                Err(_err) => {
-                    // TODO: We couldn't process all filters due to an invalid filter.
-                    // We should probably do something about this!
-                    // At least, log an event.
-                }
+            let (matches, events) = self.rescan.process();
+            for event in events {
+                self.upstream.event(event);
             }
+            return Ok(matches);
         } else {
             // Unsolicited filter.
         }

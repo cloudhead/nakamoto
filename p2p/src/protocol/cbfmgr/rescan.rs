@@ -105,16 +105,17 @@ impl Rescan {
     ///
     /// Checks whether any of the queued filters is next in line (by height) and if so,
     /// processes it and returns the result of trying to match it with the watch list.
-    pub fn process(&mut self) -> Result<(Vec<(Height, BlockHash)>, Vec<Event>), bip158::Error> {
+    pub fn process(&mut self) -> (Vec<(Height, BlockHash)>, Vec<Event>) {
         let mut events = Vec::new();
         let mut matches = Vec::new();
         let mut current = self.current;
 
         while let Some((filter, block_hash, cached)) = self.received.remove(&current) {
-            // TODO: Don't bail on error. We should still return matches and update the
-            // current state. The caller will also want to know which filter is invalid
-            // to ban the peer.
-            let matched = self.match_filter(&filter, &block_hash)?;
+            let (matched, valid) = if let Ok(matched) = self.match_filter(&filter, &block_hash) {
+                (matched, true)
+            } else {
+                (false, false)
+            };
 
             if matched {
                 matches.push((current, block_hash));
@@ -122,6 +123,7 @@ impl Rescan {
             events.push(Event::FilterProcessed {
                 block: block_hash,
                 height: current,
+                valid,
                 matched,
                 cached,
             });
@@ -136,7 +138,7 @@ impl Rescan {
             }
         }
 
-        Ok((matches, events))
+        (matches, events)
     }
 
     /// Check whether a filter matches one of our scripts.

@@ -207,6 +207,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
                 height: h,
                 matched,
                 cached: false,
+                valid: true,
             },
         ));
 

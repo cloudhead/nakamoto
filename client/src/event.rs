@@ -108,6 +108,8 @@ pub enum Event {
         height: Height,
         /// Whether or not this filter matched any of the watched scripts.
         matched: bool,
+        /// Whether or not this filter is valid.
+        valid: bool,
     },
     /// The status of a transaction has changed.
     TxStatusChanged {

@@ -195,9 +195,10 @@ impl Mapper {
                 block,
                 height,
                 matched,
+                valid,
                 ..
             }) => {
-                self.process_filter(block, height, matched, emitter);
+                self.process_filter(block, height, matched, valid, emitter);
             }
             _ => {}
         }
@@ -265,6 +266,7 @@ impl Mapper {
         block: BlockHash,
         height: Height,
         matched: bool,
+        valid: bool,
         emitter: &Emitter<Event>,
     ) {
         debug_assert!(height >= self.filter_height);
@@ -278,6 +280,7 @@ impl Mapper {
         emitter.emit(Event::FilterProcessed {
             height,
             matched,
+            valid,
             block,
         });
     }
