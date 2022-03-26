@@ -191,6 +191,13 @@ impl Mapper {
                     status: TxStatus::Acknowledged { peer },
                 });
             }
+            protocol::Event::Filter(protocol::FilterEvent::RescanStarted { start, .. }) => {
+                self.pending.clear();
+
+                self.filter_height = start;
+                self.sync_height = start;
+                self.block_height = start;
+            }
             protocol::Event::Filter(protocol::FilterEvent::FilterProcessed {
                 block,
                 height,
