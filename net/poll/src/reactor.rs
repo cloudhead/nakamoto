@@ -337,12 +337,18 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
             // Hence, there is no use in putting this socket read in a loop, as the second
             // invocation would likely block.
             match socket.read(&mut buffer) {
-                Ok(count) if count > 0 => {
-                    trace!("{}: Read {} bytes", addr, count);
+                Ok(count) => {
+                    if count > 0 {
+                        trace!("{}: Read {} bytes", addr, count);
 
-                    protocol.received_bytes(addr, &buffer[..count]);
+                        protocol.received_bytes(addr, &buffer[..count]);
+                    } else {
+                        // If we get zero bytes read as a return value, it means the peer has
+                        // performed an orderly shutdown.
+                        socket.disconnect().ok();
+                        self.unregister_peer(*addr, DisconnectReason::PeerDisconnected, protocol);
+                    }
                 }
-                Ok(_) => {}
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                     // This shouldn't normally happen, since this function is only called
                     // when there's data on the socket. We leave it here in case external

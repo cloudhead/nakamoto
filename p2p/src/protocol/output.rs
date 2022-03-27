@@ -69,6 +69,8 @@ pub enum DisconnectReason {
     PeerMagic(u32),
     /// Peer timed out.
     PeerTimeout(&'static str),
+    /// Peer disconnected us.
+    PeerDisconnected,
     /// Peer was dropped by all sub-protocols.
     PeerDropped,
     /// Connection to self was detected.
@@ -109,6 +111,7 @@ impl fmt::Display for DisconnectReason {
             Self::PeerMagic(magic) => write!(f, "received message with invalid magic: {}", magic),
             Self::PeerTimeout(s) => write!(f, "peer timed out: {:?}", s),
             Self::PeerDropped => write!(f, "peer dropped"),
+            Self::PeerDisconnected => write!(f, "peer disconnected"),
             Self::SelfConnection => write!(f, "detected self-connection"),
             Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
             Self::ConnectionError(err) => write!(f, "connection error: {}", err),
