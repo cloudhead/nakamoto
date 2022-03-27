@@ -141,22 +141,26 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
         let mut timeouts = Vec::with_capacity(32);
 
         loop {
-            trace!(
-                "Polling {} sources and {} timeouts..",
-                self.sources.len(),
-                self.timeouts.len()
-            );
-
             let timeout = self
                 .timeouts
                 .next(SystemTime::now())
                 .unwrap_or(WAIT_TIMEOUT)
                 .into();
+
+            trace!(
+                "Polling {} source(s) and {} timeout(s), waking up in {:?}..",
+                self.sources.len(),
+                self.timeouts.len(),
+                timeout
+            );
+
             let result = self.sources.wait_timeout(&mut events, timeout); // Blocking.
             let local_time = SystemTime::now().into();
 
             match result {
                 Ok(()) => {
+                    trace!("Woke up with {} source(s) ready", events.len());
+
                     protocol.tick(local_time);
 
                     for (source, ev) in events.iter() {
@@ -343,6 +347,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
 
                         protocol.received_bytes(addr, &buffer[..count]);
                     } else {
+                        trace!("{}: Read 0 bytes", addr);
                         // If we get zero bytes read as a return value, it means the peer has
                         // performed an orderly shutdown.
                         socket.disconnect().ok();
