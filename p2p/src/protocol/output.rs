@@ -23,13 +23,16 @@ use nakamoto_common::bitcoin::network::message_filter::{
     CFHeaders, CFilter, GetCFHeaders, GetCFilters,
 };
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
-use nakamoto_common::bitcoin::Transaction;
+use nakamoto_common::bitcoin::{Block, Transaction};
 
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
 use crate::protocol::{Event, PeerId};
 
+use super::executor::Executor;
+use super::executor::Request;
+use super::invmgr::Inventories;
 use super::network::Network;
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr, Locators};
 
@@ -160,10 +163,14 @@ pub(crate) mod message {
 pub struct Outbox {
     /// Protocol version.
     version: u32,
+    /// Futures executor.
+    executor: Executor,
     /// Output queue.
     outbound: Rc<RefCell<VecDeque<Io>>>,
     /// Message outbox.
     outbox: Rc<RefCell<HashMap<PeerId, Vec<u8>>>>,
+    /// Block requests to the network.
+    block_requests: Rc<RefCell<HashMap<BlockHash, Request<Block>>>>,
     /// Network message builder.
     builder: message::Builder,
     /// Log target.
@@ -175,8 +182,10 @@ impl Outbox {
     pub fn new(network: Network, version: u32, target: &'static str) -> Self {
         Self {
             version,
+            executor: Executor::new(),
             outbound: Rc::new(RefCell::new(VecDeque::new())),
             outbox: Rc::new(RefCell::new(HashMap::new())),
+            block_requests: Rc::new(RefCell::new(HashMap::new())),
             builder: message::Builder::new(network),
             target,
         }
@@ -239,6 +248,17 @@ impl Outbox {
     }
 }
 
+impl Outbox {
+    /// A block was received from the network.
+    pub fn block_received(&mut self, blk: Block) {
+        let block_hash = blk.block_hash();
+
+        if let Some(mut req) = self.block_requests.borrow_mut().remove(&block_hash) {
+            req.complete(Ok(blk.clone()));
+        }
+    }
+}
+
 /// Draining iterator over outbound channel queue.
 pub struct Drain {
     items: Rc<RefCell<VecDeque<Io>>>,
@@ -267,6 +287,31 @@ impl Disconnect for Outbox {
 
 impl Disconnect for () {
     fn disconnect(&self, _addr: net::SocketAddr, _reason: DisconnectReason) {}
+}
+
+pub trait Blocks {
+    fn get_block(&mut self, hash: BlockHash, peer: &PeerId) -> Request<Block>;
+}
+
+impl Blocks for Outbox {
+    /// Fetch a block from a peer.
+    fn get_block(&mut self, hash: BlockHash, addr: &PeerId) -> Request<Block> {
+        use std::collections::hash_map::Entry;
+
+        let request = Request::new();
+
+        match self.block_requests.borrow_mut().entry(hash) {
+            Entry::Vacant(e) => {
+                e.insert(request.clone());
+            }
+            Entry::Occupied(e) => {
+                return e.get().clone();
+            }
+        }
+        self.getdata(*addr, vec![Inventory::Block(hash)]);
+
+        request
+    }
 }
 
 /// The ability to be woken up in the future.
@@ -497,6 +542,7 @@ impl cbfmgr::Events for Outbox {
 pub mod test {
     use super::*;
     use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use nakamoto_test::assert_matches;
 
     pub fn messages(
         channel: &mut Outbox,
@@ -513,5 +559,42 @@ pub mod test {
             msgs.push(msg.payload);
         }
         msgs.into_iter()
+    }
+
+    #[test]
+    fn test_get_block() {
+        let network = Network::Mainnet;
+        let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
+        let mut outbox = Outbox::new(network, crate::protocol::PROTOCOL_VERSION, "test");
+
+        outbox.executor.spawn({
+            let mut outbox = outbox.clone();
+
+            async move {
+                outbox
+                    .get_block(network.genesis_hash(), &remote)
+                    .await
+                    .unwrap();
+            }
+        });
+        outbox.executor.spawn({
+            let mut outbox = outbox.clone();
+
+            async move {
+                outbox
+                    .get_block(network.genesis_hash(), &remote)
+                    .await
+                    .unwrap();
+            }
+        });
+        assert!(outbox.executor.poll().is_pending());
+
+        assert_matches!(
+            messages(&mut outbox, &remote).next(),
+            Some(NetworkMessage::GetData(_))
+        );
+
+        outbox.block_received(network.genesis_block());
+        assert!(outbox.executor.poll().is_ready());
     }
 }
