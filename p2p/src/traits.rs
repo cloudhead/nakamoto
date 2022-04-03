@@ -42,9 +42,8 @@ pub trait Protocol {
     /// "a regular short, sharp sound, especially that made by a clock or watch, typically
     /// every second."
     fn tick(&mut self, local_time: LocalTime);
-    /// Used to advance the state machine after some wall time has passed, typically
-    /// after a timer rings.
-    fn tock(&mut self, local_time: LocalTime);
+    /// Used to advance the state machine after some timer rings.
+    fn wake(&mut self);
     /// Drain all protocol outputs since the last call.
     fn drain(&mut self) -> Self::Drain;
     /// Write the peer's output buffer to the given writer.

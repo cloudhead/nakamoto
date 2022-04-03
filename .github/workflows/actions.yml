@@ -19,6 +19,7 @@ jobs:
         run: cargo build --verbose
         env:
           RUSTFLAGS: -D warnings
+          RUST_BACKTRACE: 1
       - name: Run tests
         run: cargo test --all --verbose
 

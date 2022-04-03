@@ -10,6 +10,7 @@ use nakamoto_chain::block::cache::BlockCache;
 use nakamoto_chain::block::store;
 use nakamoto_common::block::filter::{FilterHash, FilterHeader};
 use nakamoto_common::block::store::Genesis;
+use nakamoto_common::block::time::{Clock, RefClock};
 use nakamoto_common::block::BlockHeader;
 use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::nonempty::NonEmpty;
@@ -68,7 +69,7 @@ pub struct Peer<P> {
     pub addr: PeerId,
     pub cfg: Config,
 
-    time: LocalTime,
+    clock: RefClock<AdjustedTime<PeerId>>,
     initialized: bool,
 }
 
@@ -129,7 +130,7 @@ impl Peer<Protocol> {
         let network = cfg.network;
         let genesis = network.genesis();
         let time = LocalTime::from_secs(genesis.time as u64);
-        let clock = AdjustedTime::new(time);
+        let clock = RefClock::from(AdjustedTime::new(time));
         let headers = NonEmpty::from((network.genesis(), headers));
         let cfheaders = NonEmpty::from((
             (FilterHash::genesis(network), FilterHeader::genesis(network)),
@@ -150,11 +151,11 @@ impl Peer<Protocol> {
         let filters = model::FilterCache::from(cfheaders);
 
         let addr = (ip.into(), network.port()).into();
-        let protocol = Protocol::new(tree, filters, peers, clock, rng, cfg.clone());
+        let protocol = Protocol::new(tree, filters, peers, clock.clone(), rng, cfg.clone());
 
         Self {
             protocol,
-            time,
+            clock,
             addr,
             initialized: false,
             cfg,
@@ -166,12 +167,11 @@ impl Peer<Protocol> {
             info!(target: self.cfg.target, "Initializing: address = {}", self.addr);
 
             self.initialized = true;
-            self.protocol.initialize(self.time);
+            self.protocol.initialize(self.clock.local_time());
         }
     }
 
     pub fn tick(&mut self, local_time: LocalTime) {
-        self.time = local_time;
         self.protocol.tick(local_time);
     }
 
@@ -194,12 +194,13 @@ impl Peer<Protocol> {
     }
 
     pub fn elapse(&mut self, duration: LocalDuration) {
-        self.time.elapse(duration);
-        self.protocol.tock(self.time);
+        let time = self.clock.local_time();
+        self.clock.borrow_mut().set_local_time(time + duration);
+        self.protocol.wake();
     }
 
     pub fn tock(&mut self) {
-        self.protocol.tock(self.time);
+        self.protocol.wake();
     }
 
     pub fn outputs(&mut self) -> impl Iterator<Item = Io> + '_ {
@@ -238,10 +239,9 @@ impl Peer<Protocol> {
 
         let local = self.addr;
         let rng = self.protocol.rng.clone();
-        let time = self.local_time();
 
         if link.is_outbound() {
-            self.protocol.peermgr.connect(&remote.addr, time);
+            self.protocol.peermgr.connect(&remote.addr);
         }
 
         // Initiate connection.

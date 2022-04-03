@@ -16,7 +16,7 @@
 //! the [`InventoryManager::received_block`] event.
 //!
 //! To keep only the smallest set of confirmed transactions in memory, we prune the set every time
-//! the [`InventoryManager::received_tick`] function is called. Confirmed transactions are removed
+//! the [`InventoryManager::received_wake`] function is called. Confirmed transactions are removed
 //! after they are burried at a certain depth.
 //!
 use std::collections::BTreeMap;
@@ -27,7 +27,7 @@ use nakamoto_common::bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
 // TODO: Timeout should be configurable
 // TODO: Add exponential back-off
 
-use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::collections::{AddressBook, HashMap};
 
@@ -188,7 +188,7 @@ impl Peer {
 
 /// Inventory manager state.
 #[derive(Debug)]
-pub struct InventoryManager<U> {
+pub struct InventoryManager<U, C> {
     /// Peer map.
     peers: AddressBook<PeerId, Peer>,
     /// Timeout used for retrying broadcasts.
@@ -210,11 +210,12 @@ pub struct InventoryManager<U> {
     last_tick: Option<LocalTime>,
     rng: fastrand::Rng,
     upstream: U,
+    clock: C,
 }
 
-impl<U: Inventories + Wakeup> InventoryManager<U> {
+impl<U: Inventories + Wakeup, C: Clock> InventoryManager<U, C> {
     /// Create a new inventory manager.
-    pub fn new(rng: fastrand::Rng, upstream: U) -> Self {
+    pub fn new(rng: fastrand::Rng, upstream: U, clock: C) -> Self {
         Self {
             peers: AddressBook::new(rng.clone()),
             mempool: BTreeMap::new(),
@@ -226,6 +227,7 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
             last_tick: None,
             rng,
             upstream,
+            clock,
         }
     }
 
@@ -293,7 +295,8 @@ impl<U: Inventories + Wakeup> InventoryManager<U> {
     }
 
     /// Called when we receive a tick.
-    pub fn received_tick<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
+    pub fn received_wake<T: BlockReader>(&mut self, tree: &T) {
+        let now = self.clock.local_time();
         // Rate-limit how much we run this function.
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
@@ -575,6 +578,7 @@ mod tests {
     use crate::protocol::{Io, PROTOCOL_VERSION};
 
     use nakamoto_common::bitcoin::network::message::NetworkMessage;
+    use nakamoto_common::block::time::RefClock;
     use nakamoto_common::block::tree::BlockTree as _;
     use nakamoto_common::collections::HashSet;
     use nakamoto_common::nonempty::NonEmpty;
@@ -597,7 +601,7 @@ mod tests {
 
         let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
         let mut rng = fastrand::Rng::new();
-        let mut time = LocalTime::now();
+        let clock = RefClock::from(LocalTime::now());
 
         let genesis = network.genesis_block();
         let chain = gen::blockchain(genesis, 16, &mut rng);
@@ -608,7 +612,7 @@ mod tests {
         let inv = vec![Inventory::Block(hash)];
         let block = chain.iter().find(|b| b.block_hash() == hash).unwrap();
 
-        let mut invmgr = InventoryManager::new(rng.clone(), upstream.clone());
+        let mut invmgr = InventoryManager::new(rng.clone(), upstream.clone(), clock.clone());
 
         invmgr.peer_negotiated(
             Socket::new(([66, 66, 66, 66], 8333)),
@@ -641,8 +645,8 @@ mod tests {
         let mut last_request = LocalTime::default();
 
         loop {
-            time.elapse(LocalDuration::from_secs(rng.u64(10..30)));
-            invmgr.received_tick(time, &tree);
+            clock.elapse(LocalDuration::from_secs(rng.u64(10..30)));
+            invmgr.received_wake(&tree);
             assert!(!invmgr.remaining.is_empty());
 
             if let Some(addr) = upstream
@@ -660,10 +664,10 @@ mod tests {
                     .any(|m| matches!(m, NetworkMessage::GetData(i) if i == inv))
                 {
                     assert!(
-                        time - last_request >= REQUEST_TIMEOUT,
+                        clock.local_time() - last_request >= REQUEST_TIMEOUT,
                         "Requests are never made within the request timeout"
                     );
-                    last_request = time;
+                    last_request = clock.local_time();
 
                     requested.insert(addr);
                     if requested.len() < invmgr.peers.len() {
@@ -681,7 +685,8 @@ mod tests {
                 }
             }
         }
-        invmgr.received_tick(time + REQUEST_TIMEOUT, &tree);
+        clock.elapse(REQUEST_TIMEOUT);
+        invmgr.received_wake(&tree);
         assert_eq!(
             upstream
                 .drain()
@@ -700,14 +705,14 @@ mod tests {
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let mut rng = fastrand::Rng::with_seed(1);
 
-        let time = LocalTime::now();
+        let clock = RefClock::from(LocalTime::now());
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream.clone());
+        let mut invmgr = InventoryManager::new(rng, upstream.clone(), clock.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx);
-        invmgr.received_tick(time, &tree);
+        invmgr.received_wake(&tree);
 
         upstream.drain().for_each(drop);
 
@@ -718,10 +723,12 @@ mod tests {
             1
         );
 
-        invmgr.received_tick(time, &tree);
+        invmgr.received_wake(&tree);
         assert_eq!(upstream.drain().count(), 0, "Timeout hasn't lapsed");
 
-        invmgr.received_tick(time + REBROADCAST_TIMEOUT, &tree);
+        clock.elapse(REBROADCAST_TIMEOUT);
+
+        invmgr.received_wake(&tree);
         assert!(upstream.drain().count() > 0, "Timeout has lapsed");
         assert_eq!(
             output::test::messages(&mut upstream, &remote)
@@ -738,28 +745,28 @@ mod tests {
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
-        let mut time = LocalTime::now();
+        let clock = RefClock::from(LocalTime::now());
 
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream.clone());
+        let mut invmgr = InventoryManager::new(rng, upstream.clone(), clock.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
 
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
-            invmgr.received_tick(time, &tree);
+            invmgr.received_wake(&tree);
             output::test::messages(&mut upstream, &remote)
                 .find(|m| matches!(m, NetworkMessage::Inv(_),))
                 .expect("Inventory is announced");
 
-            time.elapse(REBROADCAST_TIMEOUT);
+            clock.elapse(REBROADCAST_TIMEOUT);
         }
 
         // The next time we time out, we disconnect the peer.
-        invmgr.received_tick(time, &tree);
+        invmgr.received_wake(&tree);
         events(upstream.drain())
             .find(|e| matches!(e, Event::TimedOut { peer } if peer == &remote))
             .expect("Peer times out");
@@ -791,7 +798,7 @@ mod tests {
         let time = LocalTime::now();
 
         let mut tree = model::Cache::from(headers);
-        let mut invmgr = InventoryManager::new(rng, upstream.clone());
+        let mut invmgr = InventoryManager::new(rng, upstream.clone(), time);
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
@@ -855,12 +862,12 @@ mod tests {
         let remote2: net::SocketAddr = ([88, 88, 88, 89], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream.clone());
+        let mut invmgr = InventoryManager::new(rng, upstream.clone(), time);
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx);
 
-        invmgr.received_tick(time, &tree);
+        invmgr.received_wake(&tree);
         let invs = output::test::messages(&mut upstream, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Inv(invs) = m {
@@ -874,7 +881,7 @@ mod tests {
         assert_matches!(invs.first(), Some(Inventory::WTx(_)));
 
         invmgr.peer_negotiated(remote2.into(), ServiceFlags::NETWORK, true, false);
-        invmgr.received_tick(time, &tree);
+        invmgr.received_wake(&tree);
         let invs = output::test::messages(&mut upstream, &remote2)
             .filter_map(|m| match m {
                 NetworkMessage::Inv(invs) => Some(invs),
@@ -895,7 +902,7 @@ mod tests {
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream.clone());
+        let mut invmgr = InventoryManager::new(rng, upstream.clone(), LocalTime::now());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx.clone());

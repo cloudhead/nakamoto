@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::net;
 
-use nakamoto_common::block::time::{LocalDuration, LocalTime};
+use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::collections::HashMap;
 
 use crate::protocol::PeerId;
@@ -64,17 +64,18 @@ impl Peer {
 
 /// Detects dead peer connections.
 #[derive(Debug)]
-pub struct PingManager<U> {
+pub struct PingManager<U, C> {
     peers: HashMap<PeerId, Peer>,
     ping_timeout: LocalDuration,
     /// Random number generator.
     rng: fastrand::Rng,
     upstream: U,
+    clock: C,
 }
 
-impl<U: Ping + Wakeup + Disconnect> PingManager<U> {
+impl<U: Ping + Wakeup + Disconnect, C: Clock> PingManager<U, C> {
     /// Create a new ping manager.
-    pub fn new(ping_timeout: LocalDuration, rng: fastrand::Rng, upstream: U) -> Self {
+    pub fn new(ping_timeout: LocalDuration, rng: fastrand::Rng, upstream: U, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
 
         Self {
@@ -82,12 +83,14 @@ impl<U: Ping + Wakeup + Disconnect> PingManager<U> {
             ping_timeout,
             rng,
             upstream,
+            clock,
         }
     }
 
     /// Called when a peer is negotiated.
-    pub fn peer_negotiated(&mut self, address: PeerId, now: LocalTime) {
+    pub fn peer_negotiated(&mut self, address: PeerId) {
         let nonce = self.rng.u64(..);
+        let now = self.clock.local_time();
 
         self.upstream.ping(address, nonce);
         self.peers.insert(
@@ -106,7 +109,9 @@ impl<U: Ping + Wakeup + Disconnect> PingManager<U> {
     }
 
     /// Called when a tick is received.
-    pub fn received_tick(&mut self, now: LocalTime) {
+    pub fn received_wake(&mut self) {
+        let now = self.clock.local_time();
+
         for peer in self.peers.values_mut() {
             match peer.state {
                 State::AwaitingPong { since, .. } => {

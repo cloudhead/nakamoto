@@ -157,11 +157,11 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
             let result = self.sources.wait_timeout(&mut events, timeout); // Blocking.
             let local_time = SystemTime::now().into();
 
+            protocol.tick(local_time);
+
             match result {
                 Ok(()) => {
                     trace!("Woke up with {} source(s) ready", events.len());
-
-                    protocol.tick(local_time);
 
                     for (source, ev) in events.iter() {
                         match source {
@@ -236,7 +236,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
 
                     if !timeouts.is_empty() {
                         timeouts.clear();
-                        protocol.tock(local_time);
+                        protocol.wake();
                     }
                 }
                 Err(err) => return Err(err.into()),

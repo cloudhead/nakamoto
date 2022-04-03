@@ -1,6 +1,8 @@
 //! Block time and other time-related types.
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::rc::Rc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{BlockTime, Height};
@@ -26,11 +28,78 @@ pub const MAX_TIME_SAMPLES: usize = 200;
 pub type TimeOffset = i64;
 
 /// Clock that tells the time.
-pub trait Clock {
+pub trait Clock: Clone {
     /// Tell the time in block time.
     fn block_time(&self) -> BlockTime;
     /// Tell the time in local time.
     fn local_time(&self) -> LocalTime;
+}
+
+/// A network-adjusted clock.
+pub trait AdjustedClock<K>: Clock {
+    /// Record a peer offset.
+    fn record_offset(&mut self, source: K, sample: TimeOffset);
+    /// Set the local time.
+    fn set(&mut self, local_time: LocalTime);
+}
+
+impl<K: Eq + Clone + Hash> AdjustedClock<K> for AdjustedTime<K> {
+    fn record_offset(&mut self, source: K, sample: TimeOffset) {
+        AdjustedTime::record_offset(self, source, sample)
+    }
+
+    fn set(&mut self, local_time: LocalTime) {
+        AdjustedTime::set_local_time(self, local_time)
+    }
+}
+
+/// Clock with interior mutability.
+#[derive(Debug, Clone)]
+pub struct RefClock<T: Clock> {
+    inner: Rc<RefCell<T>>,
+}
+
+impl<T: Clock> std::ops::Deref for RefClock<T> {
+    type Target = Rc<RefCell<T>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl RefClock<LocalTime> {
+    /// Elapse time.
+    pub fn elapse(&self, duration: LocalDuration) {
+        self.inner.borrow_mut().elapse(duration)
+    }
+}
+
+impl<K: Eq + Clone + Hash> AdjustedClock<K> for RefClock<AdjustedTime<K>> {
+    fn record_offset(&mut self, source: K, sample: TimeOffset) {
+        self.inner.borrow_mut().record_offset(source, sample);
+    }
+
+    fn set(&mut self, local_time: LocalTime) {
+        self.inner.borrow_mut().set_local_time(local_time);
+    }
+}
+
+impl<T: Clock> From<T> for RefClock<T> {
+    fn from(other: T) -> Self {
+        Self {
+            inner: Rc::new(RefCell::new(other)),
+        }
+    }
+}
+
+impl<T: Clock> Clock for RefClock<T> {
+    fn block_time(&self) -> BlockTime {
+        self.inner.borrow().block_time()
+    }
+
+    fn local_time(&self) -> LocalTime {
+        self.inner.borrow().local_time()
+    }
 }
 
 /// Local time.
@@ -287,7 +356,7 @@ pub struct AdjustedTime<K> {
     local_time: LocalTime,
 }
 
-impl<K: Eq + Hash> Clock for AdjustedTime<K> {
+impl<K: Eq + Clone + Hash> Clock for AdjustedTime<K> {
     fn block_time(&self) -> BlockTime {
         self.get()
     }

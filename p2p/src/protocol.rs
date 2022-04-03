@@ -54,9 +54,10 @@ use nakamoto_common::bitcoin::network::message_filter::GetCFilters;
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin::Script;
+use nakamoto_common::block::time::AdjustedClock;
 
 use nakamoto_common::block::filter::Filters;
-use nakamoto_common::block::time::{AdjustedTime, LocalDuration, LocalTime};
+use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockReader, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::block::{BlockTime, Transaction};
@@ -299,7 +300,7 @@ impl fmt::Debug for Hooks {
 /// An instance of the Bitcoin P2P network protocol. Parametrized over the
 /// block-tree and compact filter store.
 #[derive(Debug)]
-pub struct Protocol<T, F, P> {
+pub struct Protocol<T, F, P, C> {
     /// Block tree.
     tree: T,
     /// Bitcoin network we're connecting to.
@@ -307,19 +308,19 @@ pub struct Protocol<T, F, P> {
     /// Peer message inboxes.
     inbox: HashMap<PeerId, stream::Decoder>,
     /// Peer address manager.
-    addrmgr: AddressManager<P, Outbox>,
+    addrmgr: AddressManager<P, Outbox, C>,
     /// Blockchain synchronization manager.
-    syncmgr: SyncManager<Outbox>,
+    syncmgr: SyncManager<Outbox, C>,
     /// Ping manager.
-    pingmgr: PingManager<Outbox>,
+    pingmgr: PingManager<Outbox, C>,
     /// CBF (Compact Block Filter) manager.
-    cbfmgr: FilterManager<F, Outbox>,
+    cbfmgr: FilterManager<F, Outbox, C>,
     /// Peer manager.
-    peermgr: PeerManager<Outbox>,
+    peermgr: PeerManager<Outbox, C>,
     /// Inventory manager.
-    invmgr: InventoryManager<Outbox>,
+    invmgr: InventoryManager<Outbox, C>,
     /// Network-adjusted clock.
-    clock: AdjustedTime<PeerId>,
+    clock: C,
     /// Informational name of this protocol instance. Used for logging purposes only.
     target: &'static str,
     /// Last time a "tick" was triggered.
@@ -429,13 +430,13 @@ impl Whitelist {
     }
 }
 
-impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
+impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protocol<T, F, P, C> {
     /// Construct a new protocol instance.
     pub fn new(
         tree: T,
         filters: F,
         peers: P,
-        clock: AdjustedTime<PeerId>,
+        clock: C,
         rng: fastrand::Rng,
         config: Config,
     ) -> Self {
@@ -467,8 +468,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             },
             rng.clone(),
             outbox.clone(),
+            clock.clone(),
         );
-        let pingmgr = PingManager::new(ping_timeout, rng.clone(), outbox.clone());
+        let pingmgr = PingManager::new(ping_timeout, rng.clone(), outbox.clone(), clock.clone());
         let cbfmgr = FilterManager::new(
             cbfmgr::Config {
                 filter_cache_size,
@@ -477,6 +479,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             rng.clone(),
             filters,
             outbox.clone(),
+            clock.clone(),
         );
         let peermgr = PeerManager::new(
             peermgr::Config {
@@ -496,6 +499,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             rng.clone(),
             hooks.clone(),
             outbox.clone(),
+            clock.clone(),
         );
         let addrmgr = AddressManager::new(
             addrmgr::Config {
@@ -505,8 +509,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             rng.clone(),
             peers,
             outbox.clone(),
+            clock.clone(),
         );
-        let invmgr = InventoryManager::new(rng.clone(), outbox.clone());
+        let invmgr = InventoryManager::new(rng.clone(), outbox.clone(), clock.clone());
 
         Self {
             tree,
@@ -559,20 +564,19 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 let height = self.tree.height();
 
                 self.peermgr
-                    .received_version(&addr, msg, height, now, &mut self.addrmgr);
+                    .received_version(&addr, msg, height, &mut self.addrmgr);
             }
             NetworkMessage::Verack => {
                 if let Some((peer, conn)) = self.peermgr.received_verack(&addr, now) {
                     self.clock.record_offset(conn.socket.addr, peer.time_offset);
                     self.addrmgr
-                        .peer_negotiated(&addr, peer.services, conn.link, now);
-                    self.pingmgr.peer_negotiated(conn.socket.addr, now);
+                        .peer_negotiated(&addr, peer.services, conn.link);
+                    self.pingmgr.peer_negotiated(conn.socket.addr);
                     self.cbfmgr.peer_negotiated(
                         conn.socket.clone(),
                         peer.height,
                         peer.services,
                         conn.link,
-                        &self.clock,
                         &self.tree,
                     );
                     self.syncmgr.peer_negotiated(
@@ -581,7 +585,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         peer.services,
                         !peer.services.has(cbfmgr::REQUIRED_SERVICES),
                         conn.link,
-                        &self.clock,
                         &self.tree,
                     );
                     self.invmgr.peer_negotiated(
@@ -594,12 +597,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
             }
             NetworkMessage::Ping(nonce) => {
                 if self.pingmgr.received_ping(addr, nonce) {
-                    self.addrmgr.peer_active(addr, now);
+                    self.addrmgr.peer_active(addr);
                 }
             }
             NetworkMessage::Pong(nonce) => {
                 if self.pingmgr.received_pong(addr, nonce, now) {
-                    self.addrmgr.peer_active(addr, now);
+                    self.addrmgr.peer_active(addr);
                 }
             }
             NetworkMessage::Headers(headers) => {
@@ -628,7 +631,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                         //
                         // In the case of a re-org, this will trigger a re-download of the
                         // missing headers after the rollback.
-                        self.cbfmgr.sync(&self.tree, now);
+                        self.cbfmgr.sync(&self.tree);
                     }
                     _ => {}
                 }
@@ -647,12 +650,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
                 }
             }
             NetworkMessage::Inv(inventory) => {
-                self.syncmgr
-                    .received_inv(addr, inventory, &self.clock, &self.tree);
+                self.syncmgr.received_inv(addr, inventory, &self.tree);
                 // TODO: invmgr: Update block availability for this peer.
             }
             NetworkMessage::CFHeaders(msg) => {
-                match self.cbfmgr.received_cfheaders(&addr, msg, &self.tree, now) {
+                match self.cbfmgr.received_cfheaders(&addr, msg, &self.tree) {
                     Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
                         self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
                     }
@@ -758,37 +760,35 @@ impl<T: BlockTree, F: Filters, P: peer::Store> Protocol<T, F, P> {
     }
 }
 
-impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, F, P> {
+impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits::Protocol
+    for Protocol<T, F, P, C>
+{
     type Drain = output::Drain;
 
     fn initialize(&mut self, time: LocalTime) {
-        self.clock.set_local_time(time);
-        self.addrmgr.initialize(time);
-        self.syncmgr.initialize(time, &self.tree);
-        self.peermgr.initialize(time, &mut self.addrmgr);
-        self.cbfmgr.initialize(time, &self.tree);
+        self.clock.set(time);
+        self.addrmgr.initialize();
+        self.syncmgr.initialize(&self.tree);
+        self.peermgr.initialize(&mut self.addrmgr);
+        self.cbfmgr.initialize(&self.tree);
     }
 
     fn attempted(&mut self, addr: &net::SocketAddr) {
-        self.addrmgr.peer_attempted(addr, self.clock.local_time());
+        self.addrmgr.peer_attempted(addr);
         self.peermgr.peer_attempted(addr);
     }
 
     fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link) {
         let height = self.tree.height();
-        let local_time = self.clock.local_time();
 
         self.addrmgr.record_local_address(*local_addr);
-        self.addrmgr.peer_connected(&addr, local_time);
-        self.peermgr
-            .peer_connected(addr, *local_addr, link, height, local_time);
+        self.addrmgr.peer_connected(&addr);
+        self.peermgr.peer_connected(addr, *local_addr, link, height);
         self.inbox
             .insert(addr, stream::Decoder::new(INBOX_BUFFER_SIZE));
     }
 
     fn disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
-        let local_time = self.clock.local_time();
-
         info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
 
         self.cbfmgr.peer_disconnected(addr);
@@ -796,7 +796,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
         self.addrmgr.peer_disconnected(addr, reason.clone());
         self.pingmgr.peer_disconnected(addr);
         self.peermgr
-            .peer_disconnected(addr, &mut self.addrmgr, local_time, reason);
+            .peer_disconnected(addr, &mut self.addrmgr, reason);
         self.invmgr.peer_disconnected(addr);
 
         self.outbox.unregister(addr);
@@ -851,7 +851,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
             }
             Command::Connect(addr) => {
                 self.peermgr.whitelist(addr);
-                self.peermgr.connect(&addr, self.clock.local_time());
+                self.peermgr.connect(&addr);
             }
             Command::Disconnect(addr) => {
                 self.disconnect(addr, DisconnectReason::Command);
@@ -864,9 +864,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
                 reply.send(peers).ok();
             }
             Command::ImportHeaders(headers, reply) => {
-                let result =
-                    self.syncmgr
-                        .import_blocks(headers.into_iter(), &self.clock, &mut self.tree);
+                let result = self
+                    .syncmgr
+                    .import_blocks(headers.into_iter(), &mut self.tree);
 
                 match result {
                     Ok(import_result) => {
@@ -927,21 +927,21 @@ impl<T: BlockTree, F: Filters, P: peer::Store> traits::Protocol for Protocol<T, 
     fn tick(&mut self, local_time: LocalTime) {
         trace!(target: self.target, "Received tick");
 
-        self.clock.set_local_time(local_time);
+        self.clock.set(local_time);
     }
 
-    fn tock(&mut self, local_time: LocalTime) {
-        self.clock.set_local_time(local_time);
+    fn wake(&mut self) {
+        trace!(target: self.target, "Received wake");
 
-        trace!(target: self.target, "Received tock");
+        self.invmgr.received_wake(&self.tree);
+        self.syncmgr.received_wake(&self.tree);
+        self.pingmgr.received_wake();
+        self.addrmgr.received_wake();
+        self.peermgr.received_wake(&mut self.addrmgr);
+        self.cbfmgr.received_wake(&self.tree);
 
-        self.invmgr.received_tick(local_time, &self.tree);
-        self.syncmgr.received_tick(local_time, &self.tree);
-        self.pingmgr.received_tick(local_time);
-        self.addrmgr.received_tick(local_time);
-        self.peermgr.received_tick(local_time, &mut self.addrmgr);
-        self.cbfmgr.received_tick(local_time, &self.tree);
-
+        #[cfg(not(test))]
+        let local_time = self.clock.local_time();
         #[cfg(not(test))]
         if local_time - self.last_tick >= LocalDuration::from_secs(10) {
             let (tip, _) = self.tree.tip();

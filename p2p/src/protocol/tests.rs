@@ -15,7 +15,7 @@ use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
-    chan, network::Network, output::message, AdjustedTime, BlockHash, BlockHeader, Command, Config,
+    chan, network::Network, output::message, BlockHash, BlockHeader, Command, Config,
     DisconnectReason, Event, HashSet, Height, Io, Link, LocalDuration, LocalTime, NetworkMessage,
     PeerId, RawNetworkMessage, ServiceFlags, VersionMessage,
 };
@@ -37,6 +37,7 @@ use nakamoto_chain::block::store;
 use nakamoto_chain::store::Genesis;
 
 use nakamoto_common::block::filter::FilterHeader;
+use nakamoto_common::block::time::{AdjustedTime, RefClock};
 use nakamoto_common::block::tree::BlockReader as _;
 use nakamoto_common::collections::HashMap;
 use nakamoto_common::nonempty::NonEmpty;
@@ -58,6 +59,7 @@ pub type Protocol = super::Protocol<
     BlockCache<store::Memory<BlockHeader>>,
     model::FilterCache,
     HashMap<net::IpAddr, KnownAddress>,
+    RefClock<AdjustedTime<PeerId>>,
 >;
 
 mod setup {
@@ -205,7 +207,9 @@ fn test_bad_magic() {
     );
 
     peer.outputs()
-        .find(|o| matches!(o, Io::Disconnect(addr, DisconnectReason::PeerMagic(_)) if addr == &remote))
+        .find(
+            |o| matches!(o, Io::Disconnect(addr, DisconnectReason::PeerMagic(_)) if addr == &remote),
+        )
         .expect("peer should be disconnected");
 }
 
@@ -355,7 +359,7 @@ fn test_handshake_version_timeout() {
 
     for link in &[Link::Outbound, Link::Inbound] {
         if link.is_outbound() {
-            peer.protocol.peermgr.connect(&remote, LocalTime::now());
+            peer.protocol.peermgr.connect(&remote);
         }
         peer.protocol.connected(remote, &peer.addr, *link);
         peer.outputs()
@@ -363,9 +367,11 @@ fn test_handshake_version_timeout() {
             .expect("a timer should be returned");
 
         peer.elapse(peermgr::HANDSHAKE_TIMEOUT);
-        peer.outputs().find(
-            |o| matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote)
-        ).expect("peer should disconnect when no `version` is received");
+        peer.outputs()
+            .find(
+                |o| matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout(_)) if a == &remote),
+            )
+            .expect("peer should disconnect when no `version` is received");
 
         peer.disconnected(&remote, DisconnectReason::PeerTimeout("test"));
     }
@@ -382,9 +388,7 @@ fn test_handshake_verack_timeout() {
 
     for link in &[Link::Outbound, Link::Inbound] {
         if link.is_outbound() {
-            peer.protocol
-                .peermgr
-                .connect(&remote.addr, LocalTime::now());
+            peer.protocol.peermgr.connect(&remote.addr);
         }
         peer.protocol.connected(remote.addr, &peer.addr, *link);
         peer.received(
@@ -397,7 +401,7 @@ fn test_handshake_verack_timeout() {
 
         peer.elapse(LocalDuration::from_secs(60));
         peer.outputs().find(
-            |o| matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout(_)) if *a == remote.addr)
+            |o| matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout(_)) if a == &remote.addr)
         ).expect("peer should disconnect if no `verack` is received");
 
         peer.disconnected(&remote.addr, DisconnectReason::PeerTimeout("verack"));
@@ -431,7 +435,7 @@ fn test_handshake_version_hook() {
         }),
     );
     peer.outputs()
-        .find(|o| matches!(o, Io::Disconnect(a, DisconnectReason::Other("craig is not satoshi")) if *a == craig.addr))
+        .find(|o| matches!(o, Io::Disconnect(a, DisconnectReason::Other("craig is not satoshi")) if a == &craig.addr))
         .expect("peer should disconnect when the 'on_version' hook returns an error");
 
     peer.protocol
@@ -468,9 +472,7 @@ fn test_handshake_initial_messages() {
     );
 
     // Handshake
-    peer.protocol
-        .peermgr
-        .connect(&remote.addr, LocalTime::now());
+    peer.protocol.peermgr.connect(&remote.addr);
     peer.connected(remote.addr, &local, Link::Outbound);
     peer.received(
         remote.addr,
@@ -496,7 +498,7 @@ fn test_connection_error() {
 
     peer.command(Command::Connect(remote.addr));
     peer.outputs()
-        .find(|o| matches!(o, Io::Connect(addr) if *addr == remote.addr))
+        .find(|o| matches!(o, Io::Connect(addr) if addr == &remote.addr))
         .expect("Alice should try to connect to remote");
     peer.attempted(&remote.addr);
     // Make sure we can handle a disconnection before an established connection.

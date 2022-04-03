@@ -367,7 +367,7 @@ impl Simulation {
                             p.protocol.disconnected(&addr, reason);
                         }
                     }
-                    Input::Tock => p.protocol.tock(self.time),
+                    Input::Tock => p.protocol.wake(),
                     Input::Received(addr, msg) => {
                         p.protocol.received_bytes(&addr, &msg);
                     }

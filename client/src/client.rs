@@ -20,7 +20,7 @@ use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::block::store::{Genesis as _, Store as _};
-use nakamoto_common::block::time::AdjustedTime;
+use nakamoto_common::block::time::{AdjustedTime, RefClock};
 use nakamoto_common::block::tree::{self, BlockReader, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
@@ -311,7 +311,14 @@ impl<R: Reactor<Publisher>> Client<R> {
 
         self.reactor.run(
             &listen,
-            Protocol::new(cache, filters, peers, clock, rng, config.protocol),
+            Protocol::new(
+                cache,
+                filters,
+                peers,
+                RefClock::from(clock),
+                rng,
+                config.protocol,
+            ),
         )?;
 
         Ok(())

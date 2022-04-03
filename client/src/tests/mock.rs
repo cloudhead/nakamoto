@@ -39,7 +39,12 @@ pub struct Client {
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
     pub subscriber: event::Broadcast<protocol::Event, Event>,
     pub commands: chan::Receiver<Command>,
-    pub protocol: Protocol<model::Cache, model::FilterCache, HashMap<net::IpAddr, KnownAddress>>,
+    pub protocol: Protocol<
+        model::Cache,
+        model::FilterCache,
+        HashMap<net::IpAddr, KnownAddress>,
+        AdjustedTime<net::SocketAddr>,
+    >,
 
     // Used in handle.
     events_: chan::Receiver<protocol::Event>,

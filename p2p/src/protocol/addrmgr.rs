@@ -7,6 +7,7 @@ use std::net;
 use nakamoto_common::bitcoin::network::address::Address;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 
+use nakamoto_common::block::time::Clock;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::BlockTime;
 use nakamoto_common::collections::{HashMap, HashSet};
@@ -111,7 +112,7 @@ where
     }
 }
 
-impl<P: Store, U> AddressManager<P, U> {
+impl<P: Store, U, C> AddressManager<P, U, C> {
     /// Check whether we have unused addresses.
     pub fn is_exhausted(&self) -> bool {
         let time = self
@@ -154,7 +155,7 @@ impl Default for Config {
 
 /// Manages peer network addresses.
 #[derive(Debug)]
-pub struct AddressManager<P, U> {
+pub struct AddressManager<P, U, C> {
     /// Peer address store.
     peers: P,
     bans: HashSet<net::IpAddr>,
@@ -169,12 +170,13 @@ pub struct AddressManager<P, U> {
     cfg: Config,
     upstream: U,
     rng: fastrand::Rng,
+    clock: C,
 }
 
-impl<P: Store, U: SyncAddresses + Wakeup + Events> AddressManager<P, U> {
+impl<P: Store, U: SyncAddresses + Wakeup + Events, C: Clock> AddressManager<P, U, C> {
     /// Initialize the address manager.
-    pub fn initialize(&mut self, local_time: LocalTime) {
-        self.idle(local_time);
+    pub fn initialize(&mut self) {
+        self.idle();
     }
 
     /// Return an iterator over randomly sampled addresses.
@@ -210,7 +212,9 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events> AddressManager<P, U> {
     }
 
     /// Called when a tick is received.
-    pub fn received_tick(&mut self, local_time: LocalTime) {
+    pub fn received_wake(&mut self) {
+        let local_time = self.clock.local_time();
+
         // If we're already using all the addresses we have available, we should fetch more.
         if local_time - self.last_request.unwrap_or_default() >= REQUEST_TIMEOUT
             && self.is_exhausted()
@@ -223,19 +227,21 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events> AddressManager<P, U> {
         }
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.idle(local_time);
+            self.idle();
         }
     }
 
     /// Called when a peer signaled activity.
-    pub fn peer_active(&mut self, addr: net::SocketAddr, time: LocalTime) {
+    pub fn peer_active(&mut self, addr: net::SocketAddr) {
+        let time = self.clock.local_time();
         if let Some(ka) = self.peers.get_mut(&addr.ip()) {
             ka.last_active = Some(time);
         }
     }
 
     /// Called when a peer connection is attempted.
-    pub fn peer_attempted(&mut self, addr: &net::SocketAddr, time: LocalTime) {
+    pub fn peer_attempted(&mut self, addr: &net::SocketAddr) {
+        let time = self.clock.local_time();
         // We're only interested in connection attempts for addresses we keep track of.
         if let Some(ka) = self.peers.get_mut(&addr.ip()) {
             ka.last_attempt = Some(time);
@@ -243,7 +249,7 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events> AddressManager<P, U> {
     }
 
     /// Called when a peer has connected.
-    pub fn peer_connected(&mut self, addr: &net::SocketAddr, _local_time: LocalTime) {
+    pub fn peer_connected(&mut self, addr: &net::SocketAddr) {
         if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
             return;
         }
@@ -251,13 +257,9 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events> AddressManager<P, U> {
     }
 
     /// Called when a peer has handshaked.
-    pub fn peer_negotiated(
-        &mut self,
-        addr: &net::SocketAddr,
-        services: ServiceFlags,
-        link: Link,
-        time: LocalTime,
-    ) {
+    pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags, link: Link) {
+        let time = self.clock.local_time();
+
         if !self.connected.contains(&addr.ip()) {
             return;
         }
@@ -298,20 +300,20 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events> AddressManager<P, U> {
 
     ////////////////////////////////////////////////////////////////////////////
 
-    fn idle(&mut self, local_time: LocalTime) {
+    fn idle(&mut self) {
         // If it's been a while, save addresses to store.
         if let Err(err) = self.peers.flush() {
             self.upstream
                 .event(Event::Error(format!("flush to disk failed: {}", err)));
         }
-        self.last_idle = Some(local_time);
+        self.last_idle = Some(self.clock.local_time());
         self.upstream.wakeup(IDLE_TIMEOUT);
     }
 }
 
-impl<P: Store, U: Events> AddressManager<P, U> {
+impl<P: Store, U: Events, C: Clock> AddressManager<P, U, C> {
     /// Create a new, empty address manager.
-    pub fn new(cfg: Config, rng: fastrand::Rng, peers: P, upstream: U) -> Self {
+    pub fn new(cfg: Config, rng: fastrand::Rng, peers: P, upstream: U, clock: C) -> Self {
         let ips = peers.iter().map(|(ip, _)| *ip).collect::<Vec<_>>();
         let mut addrmgr = Self {
             cfg,
@@ -325,6 +327,7 @@ impl<P: Store, U: Events> AddressManager<P, U> {
             last_idle: None,
             upstream,
             rng,
+            clock,
         };
 
         for ip in ips.iter() {
@@ -590,7 +593,9 @@ impl<P: Store, U: Events> AddressManager<P, U> {
     }
 }
 
-impl<P: Store, U: Events + SyncAddresses + Wakeup> AddressSource for AddressManager<P, U> {
+impl<P: Store, U: Events + SyncAddresses + Wakeup, C: Clock> AddressSource
+    for AddressManager<P, U, C>
+{
     fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
         AddressManager::sample(self, services)
     }
@@ -681,27 +686,38 @@ mod tests {
     use std::collections::HashMap;
     use std::iter;
 
+    use nakamoto_common::block::time::RefClock;
     use nakamoto_common::network::Network;
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
 
     #[test]
     fn test_sample_empty() {
-        let mut addrmgr =
-            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
+        let mut addrmgr = AddressManager::new(
+            Config::default(),
+            fastrand::Rng::new(),
+            HashMap::new(),
+            (),
+            LocalTime::now(),
+        );
 
         assert!(addrmgr.sample(ServiceFlags::NONE).is_none());
     }
 
     #[test]
     fn test_known_addresses() {
-        let mut addrmgr =
-            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
         let time = LocalTime::now();
+        let mut addrmgr = AddressManager::new(
+            Config::default(),
+            fastrand::Rng::new(),
+            HashMap::new(),
+            (),
+            time,
+        );
         let source = Source::Dns;
         let services = ServiceFlags::NETWORK;
 
-        addrmgr.initialize(time);
+        addrmgr.initialize();
         addrmgr.insert(
             [
                 (
@@ -728,7 +744,7 @@ mod tests {
             Some(LocalTime::from_block_time(time.block_time()))
         );
 
-        addrmgr.peer_attempted(addr, LocalTime::now());
+        addrmgr.peer_attempted(addr);
 
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_none());
@@ -737,7 +753,7 @@ mod tests {
         assert!(ka.last_sampled.is_none());
 
         // When a peer is connected, it is not yet considered a "success".
-        addrmgr.peer_connected(addr, LocalTime::now());
+        addrmgr.peer_connected(addr);
 
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_none());
@@ -746,7 +762,7 @@ mod tests {
         assert!(ka.last_sampled.is_none());
 
         // Only when it is negotiated is it a "success".
-        addrmgr.peer_negotiated(addr, services, Link::Outbound, LocalTime::now());
+        addrmgr.peer_negotiated(addr, services, Link::Outbound);
 
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_some());
@@ -769,13 +785,18 @@ mod tests {
 
     #[test]
     fn test_is_exhausted() {
-        let mut addrmgr =
-            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
         let time = LocalTime::now();
+        let mut addrmgr = AddressManager::new(
+            Config::default(),
+            fastrand::Rng::new(),
+            HashMap::new(),
+            (),
+            time,
+        );
         let source = Source::Dns;
         let services = ServiceFlags::NETWORK;
 
-        addrmgr.initialize(LocalTime::now());
+        addrmgr.initialize();
         addrmgr.insert(
             [(
                 time.block_time(),
@@ -786,7 +807,7 @@ mod tests {
         assert!(!addrmgr.is_exhausted());
 
         // Once a peer connects, it's no longer available as an address.
-        addrmgr.peer_connected(&([33, 33, 33, 33], 8333).into(), LocalTime::now());
+        addrmgr.peer_connected(&([33, 33, 33, 33], 8333).into());
         assert!(addrmgr.is_exhausted());
 
         addrmgr.insert(
@@ -800,18 +821,13 @@ mod tests {
 
         // If a peer has been attempted with no success, it should not count towards the available
         // addresses.
-        addrmgr.peer_attempted(&([44, 44, 44, 44], 8333).into(), LocalTime::now());
+        addrmgr.peer_attempted(&([44, 44, 44, 44], 8333).into());
         assert!(addrmgr.is_exhausted());
 
         // If a peer has been connected to successfully, and then disconnected for a transient
         // reason, its address should be once again available.
-        addrmgr.peer_connected(&([44, 44, 44, 44], 8333).into(), LocalTime::now());
-        addrmgr.peer_negotiated(
-            &([44, 44, 44, 44], 8333).into(),
-            services,
-            Link::Outbound,
-            LocalTime::now(),
-        );
+        addrmgr.peer_connected(&([44, 44, 44, 44], 8333).into());
+        addrmgr.peer_negotiated(&([44, 44, 44, 44], 8333).into(), services, Link::Outbound);
         addrmgr.peer_disconnected(
             &([44, 44, 44, 44], 8333).into(),
             DisconnectReason::PeerTimeout("timeout"),
@@ -831,8 +847,8 @@ mod tests {
             source,
         );
         addrmgr.sample(services);
-        addrmgr.peer_attempted(&([55, 55, 55, 55], 8333).into(), LocalTime::now());
-        addrmgr.peer_connected(&([55, 55, 55, 55], 8333).into(), LocalTime::now());
+        addrmgr.peer_attempted(&([55, 55, 55, 55], 8333).into());
+        addrmgr.peer_connected(&([55, 55, 55, 55], 8333).into());
         addrmgr.peer_disconnected(
             &([55, 55, 55, 55], 8333).into(),
             DisconnectReason::PeerTimeout("timeout"),
@@ -844,23 +860,28 @@ mod tests {
     fn test_disconnect_rediscover() {
         // Check that if we re-discover an address after permanent disconnection, we still know
         // not to connect to it.
-        let mut addrmgr =
-            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
         let time = LocalTime::now();
+        let mut addrmgr = AddressManager::new(
+            Config::default(),
+            fastrand::Rng::new(),
+            HashMap::new(),
+            (),
+            time,
+        );
         let source = Source::Dns;
         let services = ServiceFlags::NETWORK;
         let addr: &net::SocketAddr = &([33, 33, 33, 33], 8333).into();
 
-        addrmgr.initialize(LocalTime::now());
+        addrmgr.initialize();
         addrmgr.insert([(time.block_time(), Address::new(addr, services))], source);
 
         let (sampled, _) = addrmgr.sample(services).unwrap();
         assert_eq!(sampled.socket_addr().ok(), Some(*addr));
         assert!(addrmgr.sample(services).is_none());
 
-        addrmgr.peer_attempted(addr, LocalTime::now());
-        addrmgr.peer_connected(addr, LocalTime::now());
-        addrmgr.peer_negotiated(addr, services, Link::Outbound, LocalTime::now());
+        addrmgr.peer_attempted(addr);
+        addrmgr.peer_connected(addr);
+        addrmgr.peer_negotiated(addr, services, Link::Outbound);
         addrmgr.peer_disconnected(addr, DisconnectReason::PeerMisbehaving("misbehaving"));
 
         // Peer is now disconnected for non-transient reasons.
@@ -875,6 +896,8 @@ mod tests {
 
     #[quickcheck]
     fn prop_sample_no_duplicates(size: usize, seed: u64) -> TestResult {
+        let clock = LocalTime::now();
+
         if size > 24 {
             return TestResult::discard();
         }
@@ -887,6 +910,7 @@ mod tests {
                 fastrand::Rng::with_seed(seed),
                 HashMap::new(),
                 upstream,
+                clock,
             )
         };
         let time = LocalTime::now();
@@ -897,7 +921,7 @@ mod tests {
             addrs.push([96 + i as u8, 96 + i as u8, 96, 96]);
         }
 
-        addrmgr.initialize(time);
+        addrmgr.initialize();
         addrmgr.insert(
             addrs.iter().map(|a| {
                 (
@@ -928,9 +952,14 @@ mod tests {
         let services = ServiceFlags::NONE;
         let time = LocalTime::now();
 
-        let mut addrmgr =
-            AddressManager::new(Config::default(), fastrand::Rng::new(), HashMap::new(), ());
-        addrmgr.initialize(time);
+        let mut addrmgr = AddressManager::new(
+            Config::default(),
+            fastrand::Rng::new(),
+            HashMap::new(),
+            (),
+            time,
+        );
+        addrmgr.initialize();
 
         for i in 0..MAX_RANGE_SIZE + 1 {
             addrmgr.insert(
@@ -990,10 +1019,10 @@ mod tests {
         use nakamoto_common::p2p::peer::Source;
 
         let cfg = Config::default();
-        let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
         let time = LocalTime::now();
+        let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), (), time);
 
-        addrmgr.initialize(time);
+        addrmgr.initialize();
         addrmgr.insert(
             vec![
                 Address::new(&([183, 8, 55, 2], 8333).into(), ServiceFlags::NONE),
@@ -1044,10 +1073,11 @@ mod tests {
         use nakamoto_common::p2p::peer::Source;
 
         let cfg = Config::default();
-        let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), ());
-        let mut time = LocalTime::now();
+        let clock = RefClock::from(LocalTime::now());
+        let mut addrmgr =
+            AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), (), clock.clone());
 
-        addrmgr.initialize(time);
+        addrmgr.initialize();
 
         // Addresses controlled by an adversary.
         let adversary_addrs = vec![
@@ -1062,7 +1092,7 @@ mod tests {
             adversary_addrs
                 .iter()
                 .cloned()
-                .map(|a| (time.block_time(), a)),
+                .map(|a| (clock.block_time(), a)),
             Source::Dns,
         );
 
@@ -1074,7 +1104,7 @@ mod tests {
             Address::new(&([99, 129, 2, 15], 8333).into(), ServiceFlags::NONE),
         ];
         addrmgr.insert(
-            safe_addrs.iter().cloned().map(|a| (time.block_time(), a)),
+            safe_addrs.iter().cloned().map(|a| (clock.block_time(), a)),
             Source::Dns,
         );
 
@@ -1086,8 +1116,8 @@ mod tests {
             let (addr, _) = addrmgr.sample(ServiceFlags::NONE).unwrap();
 
             // Make sure we can re-sample the same addresses for the purpose of this example.
-            time = time + LocalDuration::from_mins(60);
-            addrmgr.received_tick(time);
+            clock.elapse(LocalDuration::from_mins(60));
+            addrmgr.received_wake();
 
             if adversary_addrs.contains(&addr) {
                 adversary += 1;

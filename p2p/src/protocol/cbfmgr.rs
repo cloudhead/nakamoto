@@ -286,7 +286,7 @@ struct Peer {
 
 /// A compact block filter manager.
 #[derive(Debug)]
-pub struct FilterManager<F, U> {
+pub struct FilterManager<F, U, C> {
     /// Rescan state.
     pub rescan: Rescan,
     /// Filter header chain.
@@ -295,15 +295,16 @@ pub struct FilterManager<F, U> {
     config: Config,
     peers: AddressBook<PeerId, Peer>,
     upstream: U,
+    clock: C,
     /// Last time we idled.
     last_idle: Option<LocalTime>,
     /// Inflight requests.
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
 }
 
-impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F, U> {
+impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> FilterManager<F, U, C> {
     /// Create a new filter manager.
-    pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U) -> Self {
+    pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U, clock: C) -> Self {
         let peers = AddressBook::new(rng.clone());
         let rescan = Rescan::new(config.filter_cache_size);
 
@@ -312,6 +313,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
             peers,
             rescan,
             upstream,
+            clock,
             filters,
             inflight: HashMap::with_hasher(rng.into()),
             last_idle: None,
@@ -319,15 +321,16 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
     }
 
     /// Initialize the manager. Should only be called once.
-    pub fn initialize<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
-        self.idle(now, tree);
+    pub fn initialize<T: BlockReader>(&mut self, tree: &T) {
+        self.idle(tree);
     }
 
     /// A tick was received.
-    pub fn received_tick<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
-        self.idle(now, tree);
+    pub fn received_wake<T: BlockReader>(&mut self, tree: &T) {
+        self.idle(tree);
 
         let timeout = self.config.request_timeout;
+        let now = self.clock.local_time();
 
         // Check if any header request expired. If so, retry with a different peer and disconnect
         // the unresponsive peer.
@@ -529,7 +532,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         from: &PeerId,
         msg: CFHeaders,
         tree: &T,
-        time: LocalTime,
     ) -> Result<Height, Error> {
         let from = *from;
         let stop_hash = msg.stop_hash;
@@ -623,7 +625,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
                 if height == tree.height() {
                     self.upstream.event(Event::Synced(height));
                 } else {
-                    self.sync(tree, time);
+                    self.sync(tree);
                 }
                 height
             })
@@ -769,7 +771,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         height: Height,
         services: ServiceFlags,
         link: Link,
-        clock: &impl Clock,
         tree: &T,
     ) {
         if !link.is_outbound() {
@@ -778,7 +779,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         if !services.has(REQUIRED_SERVICES) {
             return;
         }
-        let time = clock.local_time();
+        let time = self.clock.local_time();
 
         self.peers.insert(
             socket.addr,
@@ -788,11 +789,11 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
                 socket,
             },
         );
-        self.sync(tree, time);
+        self.sync(tree);
     }
 
     /// Attempt to sync the filter header chain.
-    pub fn sync<T: BlockReader>(&mut self, tree: &T, time: LocalTime) {
+    pub fn sync<T: BlockReader>(&mut self, tree: &T) {
         let filter_height = self.filters.height();
         let block_height = tree.height();
 
@@ -813,7 +814,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
             let stop_height = tree.height();
 
             if let Some((peer, start_height, stop_hash)) =
-                self.send_getcfheaders(start_height..=stop_height, tree, time)
+                self.send_getcfheaders(start_height..=stop_height, tree)
             {
                 self.upstream.event(Event::Syncing {
                     peer,
@@ -832,9 +833,11 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
     // PRIVATE METHODS /////////////////////////////////////////////////////////
 
     /// Called periodically. Triggers syncing if necessary.
-    fn idle<T: BlockReader>(&mut self, now: LocalTime, tree: &T) {
+    fn idle<T: BlockReader>(&mut self, tree: &T) {
+        let now = self.clock.local_time();
+
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
-            self.sync(tree, now);
+            self.sync(tree);
             self.last_idle = Some(now);
             self.upstream.wakeup(IDLE_TIMEOUT);
         }
@@ -850,7 +853,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
         &mut self,
         range: RangeInclusive<Height>,
         tree: &T,
-        time: LocalTime,
     ) -> Option<(PeerId, Height, BlockHash)> {
         let (start, end) = (*range.start(), *range.end());
 
@@ -879,6 +881,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect> FilterManager<F,
 
         // TODO: We should select peers that are caught up to the requested height.
         if let Some((peer, _)) = self.peers.sample() {
+            let time = self.clock.local_time();
             let timeout = self.config.request_timeout;
 
             self.upstream
@@ -969,6 +972,7 @@ mod tests {
     use nakamoto_chain::block::{cache::BlockCache, store};
     use nakamoto_chain::filter::cache::{FilterCache, StoredHeader};
     use nakamoto_common::block::filter::{FilterHash, FilterHeader};
+    use nakamoto_common::block::time::RefClock;
     use nakamoto_common::block::tree::BlockReader as _;
     use nakamoto_common::block::tree::BlockTree;
     use nakamoto_common::block::tree::ImportResult;
@@ -987,12 +991,13 @@ mod tests {
     mod util {
         use super::*;
 
-        pub fn setup(
+        pub fn setup<C: Clock>(
             network: Network,
             height: Height,
             filter_cache_size: usize,
+            clock: C,
         ) -> (
-            FilterManager<FilterCache<store::Memory<StoredHeader>>, Outbox>,
+            FilterManager<FilterCache<store::Memory<StoredHeader>>, Outbox, C>,
             BlockCache<store::Memory<BlockHeader>>,
             NonEmpty<bitcoin::Block>,
         ) {
@@ -1020,7 +1025,7 @@ mod tests {
             };
 
             (
-                FilterManager::new(config, rng, cache, upstream),
+                FilterManager::new(config, rng, cache, upstream, clock),
                 tree,
                 chain,
             )
@@ -1135,6 +1140,7 @@ mod tests {
         let network = Network::Mainnet;
         let peer = &([0, 0, 0, 0], 0).into();
         let time = LocalTime::now();
+        let clock = RefClock::from(time);
         let tree = {
             let genesis = network.genesis();
             let params = network.params();
@@ -1148,7 +1154,7 @@ mod tests {
             let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
             let upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
 
-            FilterManager::new(Config::default(), rng, cache, upstream)
+            FilterManager::new(Config::default(), rng, cache, upstream, clock)
         };
 
         // Import the headers.
@@ -1169,7 +1175,7 @@ mod tests {
                     .collect(),
             };
             cbfmgr.inflight.insert(msg.stop_hash, (1, *peer, time));
-            cbfmgr.received_cfheaders(peer, msg, &tree, time).unwrap();
+            cbfmgr.received_cfheaders(peer, msg, &tree).unwrap();
         }
 
         assert_eq!(cbfmgr.filters.height(), 15);
@@ -1212,7 +1218,7 @@ mod tests {
         let time = LocalTime::now();
         let network = Network::Regtest;
         let remote: PeerId = ([8, 8, 8, 8], 8333).into();
-        let (mut cbfmgr, tree, _) = util::setup(network, best, 0);
+        let (mut cbfmgr, tree, _) = util::setup(network, best, 0, RefClock::from(time));
 
         // Start rescan with no peers.
         cbfmgr.rescan(
@@ -1227,7 +1233,6 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
         output::test::messages(&mut cbfmgr.upstream, &remote)
@@ -1271,7 +1276,7 @@ mod tests {
         let mut rng = fastrand::Rng::new();
         let time = LocalTime::now();
         let network = Network::Regtest;
-        let (mut cbfmgr, tree, chain) = util::setup(network, best, 0);
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, 0, RefClock::from(time));
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
         let tip = tree.get_block_by_height(best).unwrap().block_hash();
         let filter_type = 0x0;
@@ -1283,13 +1288,12 @@ mod tests {
             .collect::<Vec<_>>();
 
         cbfmgr.filters.clear().unwrap();
-        cbfmgr.initialize(time, &tree);
+        cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
         output::test::messages(&mut cbfmgr.upstream, &remote)
@@ -1306,7 +1310,6 @@ mod tests {
                     filter_hashes,
                 },
                 &tree,
-                time,
             )
             .unwrap();
 
@@ -1344,7 +1347,7 @@ mod tests {
             let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
             let rng = fastrand::Rng::new();
             let upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
-            FilterManager::new(Config::default(), rng, cache, upstream)
+            FilterManager::new(Config::default(), rng, cache, upstream, time)
         };
 
         let chain = gen::blockchain(network.genesis_block(), header_height, &mut rng);
@@ -1359,14 +1362,13 @@ mod tests {
             let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
             BlockCache::from(store::Memory::new(headers), params, &[]).unwrap()
         };
-        cbfmgr.initialize(time, &tree);
+        cbfmgr.initialize(&tree);
 
         cbfmgr.peer_negotiated(
             Socket::new(remote),
             header_height,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
 
@@ -1410,17 +1412,17 @@ mod tests {
         let birth: u64 = *cache_range.start();
         let best: u64 = *cache_range.end();
 
-        let (mut cbfmgr, mut tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
         let time = LocalTime::now();
+        let (mut cbfmgr, mut tree, chain) =
+            util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE, time);
         let (watch, _) = gen::watchlist(birth, chain.iter());
 
-        cbfmgr.initialize(time, &tree);
+        cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
 
@@ -1444,13 +1446,13 @@ mod tests {
         assert_eq!(tree.height(), *rescan_range.end());
 
         // 3. Advance the filter header chain to 9.
-        cbfmgr.sync(&tree, time);
+        cbfmgr.sync(&tree);
 
         let (_, parent) = cbfmgr.filters.tip();
         let cfheaders = util::cfheaders(*parent, &suffix);
 
         cbfmgr
-            .received_cfheaders(&remote, cfheaders, &tree, time)
+            .received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
         assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
@@ -1503,17 +1505,16 @@ mod tests {
         let birth: u64 = *cache_range.start();
         let best: u64 = *cache_range.end();
 
-        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
         let time = LocalTime::now();
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE, time);
         let (watch, _) = gen::watchlist(birth, chain.iter());
 
-        cbfmgr.initialize(time, &tree);
+        cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
 
@@ -1617,17 +1618,17 @@ mod tests {
         let birth: u64 = *cache_range.start();
         let best: u64 = *cache_range.end();
 
-        let (mut cbfmgr, mut tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
         let time = LocalTime::now();
+        let (mut cbfmgr, mut tree, chain) =
+            util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE, time);
         let (watch, _) = gen::watchlist(birth, chain.iter());
 
-        cbfmgr.initialize(time, &tree);
+        cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
 
@@ -1651,13 +1652,13 @@ mod tests {
         assert_eq!(tree.height(), *rescan_range.end());
 
         // 3. Advance the filter header chain to 9.
-        cbfmgr.sync(&tree, time);
+        cbfmgr.sync(&tree);
 
         let (_, parent) = cbfmgr.filters.tip();
         let cfheaders = util::cfheaders(*parent, &suffix);
 
         cbfmgr
-            .received_cfheaders(&remote, cfheaders, &tree, time)
+            .received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
         assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
@@ -1708,17 +1709,16 @@ mod tests {
         let birth: u64 = 5;
         let best: u64 = 9;
 
-        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
         let time = LocalTime::now();
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE, time);
         let (watch, _) = gen::watchlist(birth, chain.iter());
 
-        cbfmgr.initialize(time, &tree);
+        cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
 
@@ -1787,19 +1787,18 @@ mod tests {
         let birth = 11;
         let best = 17;
 
-        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE);
         let time = LocalTime::now();
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, DEFAULT_FILTER_CACHE_SIZE, time);
 
         // Generate a watchlist and keep track of the matching block heights.
         let (watch, matches, _) = gen::watchlist_rng(birth, chain.iter(), &mut rng);
 
-        cbfmgr.initialize(time, &tree);
+        cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
         let matched = cbfmgr.rescan(
@@ -1883,19 +1882,18 @@ mod tests {
             let network = Network::Regtest;
             let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
-            let (mut cbfmgr, mut tree, chain) = util::setup(network, best, 0);
             let time = LocalTime::now();
+            let (mut cbfmgr, mut tree, chain) = util::setup(network, best, 0, time);
 
             // Generate a watchlist and keep track of the matching block heights.
             let (watch, _, _) = gen::watchlist_rng(birth, chain.iter(), &mut rng);
 
-            cbfmgr.initialize(time, &tree);
+            cbfmgr.initialize(&tree);
             cbfmgr.peer_negotiated(
                 Socket::new(remote),
                 best,
                 REQUIRED_SERVICES,
                 Link::Outbound,
-                &time,
                 &tree,
             );
             cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
@@ -1944,7 +1942,7 @@ mod tests {
             // ... Perform rollback ...
 
             cbfmgr.rollback(fork_height).unwrap();
-            cbfmgr.sync(&tree, time);
+            cbfmgr.sync(&tree);
 
             log::debug!(target: "test",
                 "Imported {:?}",
@@ -1973,7 +1971,7 @@ mod tests {
             let (_, parent) = cbfmgr.filters.tip();
             let cfheaders = util::cfheaders(*parent, &fork);
             cbfmgr
-                .received_cfheaders(&remote, cfheaders, &tree, time)
+                .received_cfheaders(&remote, cfheaders, &tree)
                 .unwrap();
 
             // Check that corresponding filters are requested within the scope of the
@@ -2003,8 +2001,8 @@ mod tests {
         let network = Network::Regtest;
         let remote: PeerId = ([88, 88, 88, 88], 8333).into();
 
-        let (mut cbfmgr, tree, chain) = util::setup(network, best, cache);
         let time = LocalTime::now();
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, cache, time);
         let tip = chain.last().block_hash();
 
         // Generate a watchlist and keep track of the matching block heights.
@@ -2014,13 +2012,12 @@ mod tests {
         }
 
         cbfmgr.filters.clear().unwrap();
-        cbfmgr.initialize(time, &tree);
+        cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
-            &time,
             &tree,
         );
         cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
@@ -2058,7 +2055,7 @@ mod tests {
 
         let cfheaders = util::cfheaders(FilterHeader::genesis(network), &chain.tail);
         let height = cbfmgr
-            .received_cfheaders(&remote, cfheaders, &tree, time)
+            .received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
 
         assert_eq!(height, best, "The new height is the best height");
