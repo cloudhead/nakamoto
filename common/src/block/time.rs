@@ -193,7 +193,7 @@ impl std::ops::Sub<LocalTime> for LocalTime {
     type Output = LocalDuration;
 
     fn sub(self, other: LocalTime) -> LocalDuration {
-        LocalDuration(self.millis - other.millis)
+        LocalDuration(self.millis.saturating_sub(other.millis))
     }
 }
 
