@@ -94,21 +94,11 @@ pub trait Handle: Sized + Send + Sync + Clone {
         range: impl RangeBounds<Height>,
         watch: impl Iterator<Item = Script>,
     ) -> Result<(), Error> {
-        use std::ops::Bound;
-
         // TODO: Handle invalid/empty ranges.
 
-        // Nb. Can be replaced with `Bound::cloned()` when available in stable rust.
-        let from = match range.start_bound() {
-            Bound::Included(n) => Bound::Included(*n),
-            Bound::Excluded(n) => Bound::Excluded(*n),
-            Bound::Unbounded => Bound::Unbounded,
-        };
-        let to = match range.end_bound() {
-            Bound::Included(n) => Bound::Included(*n),
-            Bound::Excluded(n) => Bound::Excluded(*n),
-            Bound::Unbounded => Bound::Unbounded,
-        };
+        let from = range.start_bound().cloned();
+        let to = range.end_bound().cloned();
+
         self.command(Command::Rescan {
             from,
             to,
