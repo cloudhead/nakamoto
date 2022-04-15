@@ -248,8 +248,8 @@ pub trait Events {
 #[derive(Error, Debug)]
 pub enum GetFiltersError {
     /// The specified range is invalid, eg. it is out of bounds.
-    #[error("the specified range is invalid")]
-    InvalidRange,
+    #[error("the specified range is invalid, current tip is {tip}")]
+    InvalidRange { tip: Height },
     /// Not connected to any compact filter peer.
     #[error("not connected to any peer with compact filters support")]
     NotConnected,
@@ -494,13 +494,18 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         range: RangeInclusive<Height>,
         tree: &T,
     ) -> Result<(), GetFiltersError> {
+        let tip = self.filters.height();
+
         if self.peers.is_empty() {
             return Err(GetFiltersError::NotConnected);
         }
         if range.is_empty() {
-            return Err(GetFiltersError::InvalidRange);
+            return Err(GetFiltersError::InvalidRange { tip });
         }
-        assert!(*range.end() <= self.filters.height());
+
+        if *range.end() > tip {
+            return Err(GetFiltersError::InvalidRange { tip });
+        }
 
         // TODO: Only ask peers synced to a certain height.
         // Choose a different peer for each requested range.
@@ -512,7 +517,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         {
             let stop_hash = tree
                 .get_block_by_height(*range.end())
-                .ok_or(GetFiltersError::InvalidRange)?
+                .ok_or(GetFiltersError::InvalidRange { tip })?
                 .block_hash();
             let timeout = self.config.request_timeout;
 
