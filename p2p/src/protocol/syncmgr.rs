@@ -656,7 +656,7 @@ impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
     }
 
     /// Check whether or not we are in sync with the network.
-    fn is_synced<T: BlockReader>(&mut self, tree: &T) -> bool {
+    fn is_synced<T: BlockReader>(&self, tree: &T) -> bool {
         if let Some(last_update) = self.stale_tip(tree) {
             self.upstream.event(Event::StaleTip(last_update));
 
