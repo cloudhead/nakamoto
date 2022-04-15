@@ -205,6 +205,11 @@ pub enum Command {
         /// Scripts to match on.
         watch: Vec<Script>,
     },
+    /// Update the watchlist with the provided scripts.
+    Watch {
+        /// Scripts to watch.
+        watch: Vec<Script>,
+    },
     /// Broadcast to peers matching the predicate.
     Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
     /// Send a message to a random peer.
@@ -239,6 +244,9 @@ impl fmt::Debug for Command {
             Self::GetFilters(range, _) => write!(f, "GetFilters({:?})", range),
             Self::Rescan { from, to, watch } => {
                 write!(f, "Rescan({:?}, {:?}, {:?})", from, to, watch)
+            }
+            Self::Watch { watch } => {
+                write!(f, "Watch({:?})", watch)
             }
             Self::Broadcast(msg, _, _) => write!(f, "Broadcast({})", msg.cmd()),
             Self::Query(msg, _) => write!(f, "Query({})", msg.cmd()),
@@ -920,6 +928,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
                 for (_, hash) in self.cbfmgr.rescan(from, to, watch, &self.tree) {
                     self.invmgr.get_block(hash);
                 }
+            }
+            Command::Watch { watch } => {
+                self.cbfmgr.watch(watch);
             }
         }
     }

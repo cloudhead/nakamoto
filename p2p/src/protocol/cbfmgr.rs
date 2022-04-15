@@ -407,10 +407,9 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         Ok(())
     }
 
-    /// Add a script to the list of scripts to watch.
-    #[allow(dead_code)]
-    pub fn watch(&mut self, script: Script) -> bool {
-        self.rescan.watch.insert(script)
+    /// Add scripts to the list of scripts to watch.
+    pub fn watch(&mut self, scripts: Vec<Script>) {
+        self.rescan.watch.extend(scripts);
     }
 
     /// Add transaction outputs to list of transactions to watch.

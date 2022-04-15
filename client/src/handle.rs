@@ -89,6 +89,9 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Rescan the blockchain for matching scripts.
+    ///
+    /// If a "reorg" takes place, filters up to the start of the provided range
+    /// will be re-fetched and scanned.
     fn rescan(
         &self,
         range: impl RangeBounds<Height>,
@@ -102,6 +105,18 @@ pub trait Handle: Sized + Send + Sync + Clone {
         self.command(Command::Rescan {
             from,
             to,
+            watch: watch.collect(),
+        })?;
+
+        Ok(())
+    }
+    /// Update the watchlist with the provided scripts.
+    ///
+    /// Note that this won't trigger a rescan of any existing blocks. To avoid
+    /// missing matching blocks, always watch scripts before sharing their
+    /// corresponding address.
+    fn watch(&self, watch: impl Iterator<Item = Script>) -> Result<(), Error> {
+        self.command(Command::Watch {
             watch: watch.collect(),
         })?;
 
