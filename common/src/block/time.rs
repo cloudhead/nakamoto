@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::hash::Hash;
 use std::rc::Rc;
+use std::sync::atomic;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::{BlockTime, Height};
@@ -103,6 +104,8 @@ impl<T: Clock> Clock for RefClock<T> {
 }
 
 /// Local time.
+///
+/// This clock is monotonic.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Ord, PartialOrd, Default)]
 pub struct LocalTime {
     /// Milliseconds since Epoch.
@@ -128,7 +131,18 @@ impl Clock for LocalTime {
 impl LocalTime {
     /// Construct a local time from the current system time.
     pub fn now() -> Self {
-        Self::from(SystemTime::now())
+        static LAST: atomic::AtomicU32 = atomic::AtomicU32::new(0);
+
+        let now = Self::from(SystemTime::now()).block_time();
+        let last = LAST.load(atomic::Ordering::SeqCst);
+
+        // If the current time is in the past, return the last recorded time instead.
+        if now < last {
+            Self::from_block_time(last)
+        } else {
+            LAST.store(now, atomic::Ordering::SeqCst);
+            LocalTime::from_block_time(now)
+        }
     }
 
     /// Construct a local time from whole seconds since Epoch.
