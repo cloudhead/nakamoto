@@ -920,8 +920,9 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         let stop = Height::min(stop, self.rescan.end.unwrap_or(stop));
         let range = start..=stop; // If the range is empty, it means we are not caught up yet.
 
-        self.get_cfilters(range, tree)?;
-
+        if !range.is_empty() {
+            self.get_cfilters(range, tree)?;
+        }
         Ok(())
     }
 }
