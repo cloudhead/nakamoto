@@ -249,7 +249,10 @@ pub trait Events {
 pub enum GetFiltersError {
     /// The specified range is invalid, eg. it is out of bounds.
     #[error("the specified range is invalid, current tip is {tip}")]
-    InvalidRange { tip: Height },
+    InvalidRange {
+        /// Filter header tip.
+        tip: Height,
+    },
     /// Not connected to any compact filter peer.
     #[error("not connected to any peer with compact filters support")]
     NotConnected,

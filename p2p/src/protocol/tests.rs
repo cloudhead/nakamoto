@@ -10,6 +10,7 @@ use std::net;
 use std::ops::{Bound, Range};
 use std::sync::Arc;
 
+use cbfmgr::GetFiltersError;
 use log::*;
 use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 
@@ -188,6 +189,55 @@ fn test_inv_getheaders() {
     peer.outputs()
         .find(|o| matches!(o, Io::Wakeup(_)))
         .expect("a timer should be returned");
+}
+
+#[test]
+fn test_get_filter_with_no_header() {
+    let mut rng = fastrand::Rng::new();
+    let height = 16;
+    let network = Network::Regtest;
+    let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+
+    logger::init(log::Level::Debug);
+
+    let genesis = network.genesis_block();
+    let chain = gen::blockchain(genesis, height, &mut rng);
+    let headers = NonEmpty::from_vec(chain.iter().map(|b| b.header).collect()).unwrap();
+    let cfheader_genesis = FilterHeader::genesis(network);
+    let cfheaders = gen::cfheaders_from_blocks(cfheader_genesis, chain.iter())
+        .into_iter()
+        .skip(1) // Skip genesis
+        .collect::<Vec<_>>();
+
+    let mut peer = Peer::new(
+        "alice",
+        [48, 48, 48, 48],
+        network,
+        headers.tail,
+        cfheaders,
+        vec![],
+        rng,
+    );
+
+    // Connect to a peer with cfilter support.
+    peer.connect(
+        &PeerDummy {
+            addr: remote,
+            height,
+            protocol_version: PROTOCOL_VERSION,
+            services: cbfmgr::REQUIRED_SERVICES | syncmgr::REQUIRED_SERVICES,
+            relay: false,
+            time: peer.local_time(),
+        },
+        Link::Outbound,
+    );
+
+    let (transmit, receiver) = chan::unbounded();
+    peer.command(Command::GetFilters(17..=100, transmit));
+
+    let err = receiver.recv().unwrap().err().unwrap();
+
+    assert!(matches!(err, GetFiltersError::InvalidRange { tip: 16 }));
 }
 
 #[test]
