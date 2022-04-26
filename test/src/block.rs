@@ -66,7 +66,7 @@ pub mod gen {
     use bitcoin::util::bip158;
     use bitcoin::util::uint::Uint256;
 
-    use nakamoto_common::bitcoin;
+    use nakamoto_common::bitcoin::{self, Witness};
     use nakamoto_common::bitcoin_hashes::{hash160, Hash as _};
     use nakamoto_common::block::filter::{BlockFilter, FilterHash, FilterHeader};
     use nakamoto_common::block::*;
@@ -93,7 +93,7 @@ pub mod gen {
                 },
                 script_sig: Script::new(),
                 sequence: 0xFFFFFFFF,
-                witness: vec![],
+                witness: Witness::new(),
             };
             input.push(inp);
         }
@@ -125,7 +125,7 @@ pub mod gen {
             previous_output,
             script_sig: Script::new(),
             sequence: 0xFFFFFFFF,
-            witness: vec![],
+            witness: Witness::new(),
         };
         let fee = rng.u64(0..value);
         let mut allowance = value - fee;
@@ -183,7 +183,7 @@ pub mod gen {
             previous_output: OutPoint::null(),
             script_sig: Script::new(),
             sequence: 0xFFFFFFFF,
-            witness: vec![],
+            witness: Witness::new(),
         };
         Transaction {
             version: 1,
@@ -211,7 +211,7 @@ pub mod gen {
     ) -> Block {
         let merkle_root =
             bitcoin::util::hash::bitcoin_merkle_root(txdata.iter().map(|tx| tx.txid().as_hash()));
-        let merkle_root = TxMerkleNode::from_hash(merkle_root);
+        let merkle_root = TxMerkleNode::from_hash(merkle_root.unwrap_or_default());
         let header = header(prev_header, merkle_root, rng);
 
         Block { header, txdata }
@@ -247,7 +247,7 @@ pub mod gen {
         let txdata = vec![coinbase(rng)];
         let merkle_root =
             bitcoin::util::hash::bitcoin_merkle_root(txdata.iter().map(|tx| tx.txid().as_hash()));
-        let merkle_root = TxMerkleNode::from_hash(merkle_root);
+        let merkle_root = TxMerkleNode::from_hash(merkle_root.unwrap_or_default());
 
         let target = Uint256([
             0xffffffffffffffffu64,

@@ -10,7 +10,7 @@ authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2021"
 
 [dependencies]
-bitcoin = "0.27.0"
+bitcoin = "0.28.0"
 bitcoin_hashes = "0.10.0"
 thiserror = "1.0"
 fastrand = "1.3.5"
