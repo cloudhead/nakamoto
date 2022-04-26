@@ -177,7 +177,7 @@ impl FeeEstimator {
         assert!(received >= sent, "you can't spend what you don't have",);
 
         let fee = received - sent;
-        let weight = tx.get_weight();
+        let weight = tx.weight();
         let rate = fee as f64 / (weight as f64 / WITNESS_SCALE_FACTOR as f64);
 
         Some(rate.round() as FeeRate)
