@@ -716,13 +716,15 @@ fn prop_connect_timeout(seed: u64) {
     }));
 }
 
-#[quickcheck]
-fn prop_connect_to_peers(
-    options: Options,
-    seed: u64,
-    arbitrary::InRange(target): arbitrary::InRange<1, 6>,
-) -> bool {
-    simulations::connect_to_peers(options, seed, target as usize)
+#[test]
+fn test_connect_to_peers() {
+    quickcheck::QuickCheck::new()
+        .tests(100)
+        .max_tests(1000)
+        .min_tests_passed(95) // 95% success rate.
+        .quickcheck(
+            simulations::connect_to_peers as fn(Options, u64, arbitrary::InRange<1, 6>) -> bool,
+        );
 }
 
 #[test]
@@ -733,7 +735,7 @@ fn test_connect_to_peers_1() {
             failure_rate: 0.1294790448987514,
         },
         5190880195044658821,
-        8
+        arbitrary::InRange(8)
     ));
 }
 
@@ -745,7 +747,7 @@ fn test_connect_to_peers_2() {
             failure_rate: 0.1391942598336996,
         },
         4237581564267684273,
-        8
+        arbitrary::InRange(8)
     ));
 }
 
@@ -757,7 +759,7 @@ fn test_connect_to_peers_3() {
             failure_rate: 0.1070592131461427
         },
         18131621610609499524,
-        4
+        arbitrary::InRange(4)
     ));
 }
 
@@ -771,7 +773,7 @@ fn test_connect_to_peers_4() {
             failure_rate: 0.18729837247381553
         },
         714649005678913971,
-        8,
+        arbitrary::InRange(8)
     ));
 }
 

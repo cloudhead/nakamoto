@@ -4,11 +4,16 @@
 use super::*;
 
 /// Test that we can find and connect to peers amidst network errors.
-pub fn connect_to_peers(options: Options, seed: u64, target: usize) -> bool {
+pub fn connect_to_peers(
+    options: Options,
+    seed: u64,
+    arbitrary::InRange(target): arbitrary::InRange<1, 6>,
+) -> bool {
     logger::init(log::Level::Debug);
 
     assert!(target > 0);
 
+    let target = target as usize;
     let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
     let headers = BITCOIN_HEADERS.tail.to_vec();
