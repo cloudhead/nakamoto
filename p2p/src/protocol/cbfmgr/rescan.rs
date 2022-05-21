@@ -77,7 +77,6 @@ impl Rescan {
     }
 
     /// Reset requested heights. This allows for requests to be re-issued.
-    #[allow(dead_code)]
     pub fn reset(&mut self) {
         self.requested.clear();
     }
@@ -105,10 +104,11 @@ impl Rescan {
     ///
     /// Checks whether any of the queued filters is next in line (by height) and if so,
     /// processes it and returns the result of trying to match it with the watch list.
-    pub fn process(&mut self) -> (Vec<(Height, BlockHash)>, Vec<Event>) {
+    pub fn process(&mut self) -> (Vec<(Height, BlockHash)>, Vec<Event>, Height) {
         let mut events = Vec::new();
         let mut matches = Vec::new();
         let mut current = self.current;
+        let old = current;
 
         while let Some((filter, block_hash, cached)) = self.received.remove(&current) {
             let (matched, valid) = if let Ok(matched) = self.match_filter(&filter, &block_hash) {
@@ -138,7 +138,7 @@ impl Rescan {
             }
         }
 
-        (matches, events)
+        (matches, events, current - old)
     }
 
     /// Check whether a filter matches one of our scripts.

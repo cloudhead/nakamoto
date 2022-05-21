@@ -298,6 +298,9 @@ pub struct FilterManager<F, U, C> {
     clock: C,
     /// Last time we idled.
     last_idle: Option<LocalTime>,
+    /// Last time a filter was processed.
+    /// We use this to figure out when to re-issue filter requests.
+    last_processed: Option<LocalTime>,
     /// Inflight requests.
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
 }
@@ -317,6 +320,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
             filters,
             inflight: HashMap::with_hasher(rng.into()),
             last_idle: None,
+            last_processed: None,
         }
     }
 
@@ -350,6 +354,16 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
                     *addr = peer;
                     *expiry = now + timeout;
                 }
+            }
+        }
+
+        // If we've waited too long since the last processed filter, re-issue requests
+        // for missing filters.
+        if now - self.last_processed.unwrap_or_default() >= DEFAULT_REQUEST_TIMEOUT {
+            if self.rescan.active {
+                self.rescan.reset(); // Clear pending request queue.
+                self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
+                    .ok();
             }
         }
     }
@@ -478,7 +492,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         }
         // When we reset the rescan range, there is the possibility of getting immediate cache
         // hits from `get_cfilters`. Hence, process the filter queue.
-        let (matches, events) = self.rescan.process();
+        let (matches, events, _) = self.rescan.process();
         for event in events {
             self.upstream.event(event);
         }
@@ -747,9 +761,14 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         });
 
         if self.rescan.received(height, filter, block_hash) {
-            let (matches, events) = self.rescan.process();
+            let (matches, events, processed) = self.rescan.process();
             for event in events {
                 self.upstream.event(event);
+            }
+            // If we processed some filters, update the time to further delay requesting new
+            // filters.
+            if processed > 0 {
+                self.last_processed = Some(self.clock.local_time());
             }
             return Ok(matches);
         } else {
@@ -1032,9 +1051,9 @@ mod tests {
         }
 
         pub fn cfilters<'a>(
-            blocks: impl Iterator<Item = &'a bitcoin::Block> + 'a,
+            blocks: impl IntoIterator<Item = &'a bitcoin::Block> + 'a,
         ) -> impl Iterator<Item = CFilter> + 'a {
-            blocks.map(move |block| {
+            blocks.into_iter().map(move |block| {
                 let block_hash = block.block_hash();
                 let filter = gen::cfilter(block);
 
@@ -1329,6 +1348,89 @@ mod tests {
         output::test::messages(&mut cbfmgr.upstream, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(msg) if msg == &expected))
             .expect("Rescanning should trigger filters to be fetched");
+    }
+
+    /// Test that `getcfilters` request is retried.
+    #[test]
+    fn test_rescan_getcfilters_retry() {
+        let birth = 11;
+        let best = 42;
+        let mut rng = fastrand::Rng::new();
+        let time = LocalTime::now();
+        let network = Network::Regtest;
+        let filter_type = 0x0;
+        let (mut cbfmgr, tree, chain) = util::setup(network, best, 0, RefClock::from(time));
+        let remote: PeerId = ([88, 88, 88, 88], 8333).into();
+        let previous_filter_header = FilterHeader::genesis(network);
+        let cfheaders = util::cfheaders(previous_filter_header, &chain.tail);
+        let cfilters = util::cfilters(chain.iter()).collect::<Vec<_>>();
+
+        cbfmgr.filters.clear().unwrap();
+        cbfmgr.initialize(&tree);
+        cbfmgr.peer_negotiated(
+            Socket::new(remote),
+            best,
+            REQUIRED_SERVICES,
+            Link::Outbound,
+            &tree,
+        );
+        cbfmgr
+            .received_cfheaders(&remote, cfheaders, &tree)
+            .unwrap();
+        assert_eq!(cbfmgr.filters.height(), best);
+
+        // Start rescan.
+        cbfmgr.rescan(
+            Bound::Included(birth),
+            Bound::Unbounded,
+            vec![gen::script(&mut rng)],
+            &tree,
+        );
+        assert!(cbfmgr.last_processed.is_none());
+        assert_eq!(cbfmgr.rescan.current, birth);
+
+        output::test::messages(&mut cbfmgr.upstream, &remote)
+            .find(|m| matches!(m, NetworkMessage::GetCFilters(_)))
+            .expect("`getcfilters` sent");
+
+        // Receive a filter, but not one that we can process immediately.
+        cbfmgr
+            .received_cfilter(&remote, cfilters[birth as usize + 1].clone(), &tree)
+            .unwrap();
+
+        assert!(cbfmgr.last_processed.is_none());
+        assert_eq!(cbfmgr.rescan.current, birth);
+
+        // Receive a filter, that we can process immediately.
+        cbfmgr
+            .received_cfilter(&remote, cfilters[birth as usize].clone(), &tree)
+            .unwrap();
+
+        // We should be futher along now.
+        let current = birth + 2;
+
+        assert!(cbfmgr.last_processed.is_some());
+        assert_eq!(cbfmgr.rescan.current, current);
+
+        // We still have filters we are waiting for, but let's let some time pass.
+        cbfmgr.clock.elapse(DEFAULT_REQUEST_TIMEOUT);
+        cbfmgr.received_wake(&tree);
+
+        // We expect a new request to be sent from the new starting height.
+        let (stop_hash, _) = tree.tip();
+        let expected = GetCFilters {
+            filter_type,
+            start_height: current as u32,
+            stop_hash,
+        };
+        output::test::messages(&mut cbfmgr.upstream, &remote)
+            .find(|m| matches!(m, NetworkMessage::GetCFilters(msg) if msg == &expected))
+            .expect("`getcfilters` sent");
+
+        cbfmgr
+            .received_cfilter(&remote, cfilters[current as usize].clone(), &tree)
+            .unwrap();
+        assert_eq!(cbfmgr.rescan.current, current + 1);
     }
 
     /// Test that if we start with our cfheader chain behind our header

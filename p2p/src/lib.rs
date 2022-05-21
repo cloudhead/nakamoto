@@ -18,6 +18,7 @@
 //!
 #![allow(clippy::type_complexity)]
 #![allow(clippy::new_without_default)]
+#![allow(clippy::collapsible_if)]
 #![allow(clippy::single_match)]
 #![allow(clippy::comparison_chain)]
 #![allow(clippy::inconsistent_struct_constructor)]
