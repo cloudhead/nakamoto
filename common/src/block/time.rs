@@ -470,7 +470,7 @@ impl<K: Hash + Eq> AdjustedTime<K> {
         if adjustment > 0 {
             time + adjustment as BlockTime
         } else {
-            time - adjustment.abs() as BlockTime
+            time - adjustment.unsigned_abs() as BlockTime
         }
     }
 
