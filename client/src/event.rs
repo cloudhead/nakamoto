@@ -14,10 +14,13 @@ use crate::spv::TxStatus;
 /// Event emitted by the client.
 #[derive(Debug, Clone)]
 pub enum Event {
-    /// The transaction manager is starting to listen on events.
+    /// Ready to process peer events and start receiving commands.
+    /// Note that this isn't necessarily the first event emitted.
     Ready {
         /// The tip of the block header chain.
         tip: Height,
+        /// The tip of the filter header chain.
+        filter_tip: Height,
     },
     /// Peer connected. This is fired when the physical TCP/IP connection
     /// is established. Use [`Event::PeerNegotiated`] to know when the P2P handshake

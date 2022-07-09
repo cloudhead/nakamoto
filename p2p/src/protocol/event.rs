@@ -4,11 +4,22 @@ use std::net;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
 use crate::event::Broadcast;
-use crate::protocol::{self, PeerId};
+use crate::protocol::{self, Height, LocalTime, PeerId};
 
 /// A peer-to-peer event.
 #[derive(Debug, Clone)]
 pub enum Event {
+    /// The node is initializing its state machine and about to start network activity.
+    Initializing,
+    /// The node is initialized and ready to receive commands.
+    Ready {
+        /// Block header height.
+        height: Height,
+        /// Filter header height.
+        filter_height: Height,
+        /// Local time.
+        time: LocalTime,
+    },
     /// The node is now listening for incoming connections.
     Listening(net::SocketAddr),
     /// Received a message from a peer.

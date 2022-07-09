@@ -117,6 +117,16 @@ impl Mapper {
     /// Process protocol event and map it to client event(s).
     pub fn process(&mut self, event: protocol::Event, emitter: &Emitter<Event>) {
         match event {
+            protocol::Event::Ready {
+                height,
+                filter_height,
+                ..
+            } => {
+                emitter.emit(Event::Ready {
+                    tip: height,
+                    filter_tip: filter_height,
+                });
+            }
             protocol::Event::Peer(protocol::PeerEvent::Connected(addr, link)) => {
                 emitter.emit(Event::PeerConnected { addr, link });
             }

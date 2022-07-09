@@ -775,10 +775,16 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
 
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set(time);
+        self.outbox.event(Event::Initializing);
         self.addrmgr.initialize();
         self.syncmgr.initialize(&self.tree);
         self.peermgr.initialize(&mut self.addrmgr);
         self.cbfmgr.initialize(&self.tree);
+        self.outbox.event(Event::Ready {
+            height: self.tree.height(),
+            filter_height: self.cbfmgr.filters.height(),
+            time,
+        });
     }
 
     fn attempted(&mut self, addr: &net::SocketAddr) {

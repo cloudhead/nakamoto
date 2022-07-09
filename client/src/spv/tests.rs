@@ -63,6 +63,20 @@ use crate::handle::Handle as _;
 use crate::tests::mock;
 
 #[test]
+fn test_ready_event() {
+    let network = Network::Regtest;
+    let mut client = mock::Client::new(network);
+    let handle = client.handle();
+    let events = handle.subscribe();
+    let time = LocalTime::now();
+
+    client.protocol.initialize(time);
+    client.step();
+
+    assert_matches!(events.try_recv(), Ok(Event::Ready { .. }));
+}
+
+#[test]
 fn test_peer_connected_disconnected() {
     let network = Network::Regtest;
     let mut client = mock::Client::new(network);
