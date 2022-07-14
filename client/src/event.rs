@@ -60,6 +60,14 @@ pub enum Event {
         /// Negotiated protocol version.
         version: u32,
     },
+    /// The best known height amongst connected peers has been updated.
+    /// Note that there is no guarantee that this height really exists;
+    /// peers don't have to follow the protocol and could send a bogus
+    /// height.
+    PeerHeightUpdated {
+        /// Best block height known.
+        height: Height,
+    },
     /// A block was added to the main chain.
     BlockConnected {
         /// Block header.
@@ -182,6 +190,9 @@ impl fmt::Display for Event {
                     "peer connection attempt to {} failed with {}",
                     &addr, error
                 )
+            }
+            Self::PeerHeightUpdated { height } => {
+                write!(fmt, "peer height updated to {}", height)
             }
             Self::PeerDisconnected { addr, reason } => {
                 write!(fmt, "disconnected from {} ({})", &addr, reason)

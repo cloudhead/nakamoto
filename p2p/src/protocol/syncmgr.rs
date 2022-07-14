@@ -135,6 +135,11 @@ pub enum Event {
     StaleTip(LocalTime),
     /// Peer misbehaved.
     PeerMisbehaved(PeerId),
+    /// Peer height updated.
+    PeerHeightUpdated {
+        /// Best height known.
+        height: Height,
+    },
 }
 
 impl std::fmt::Display for Event {
@@ -142,6 +147,9 @@ impl std::fmt::Display for Event {
         match self {
             Event::PeerMisbehaved(addr) => {
                 write!(fmt, "{}: Peer misbehaved", addr)
+            }
+            Event::PeerHeightUpdated { height } => {
+                write!(fmt, "Peer height updated to {}", height)
             }
             Event::Synced(hash, height) => {
                 write!(fmt, "Headers synced up to hash={} height={}", hash, height)
@@ -246,6 +254,11 @@ impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
         if link.is_outbound() && !services.has(REQUIRED_SERVICES) {
             return;
         }
+
+        if height > self.best_height().unwrap_or_else(|| tree.height()) {
+            self.upstream.event(Event::PeerHeightUpdated { height });
+        }
+
         self.upstream.negotiate(socket.addr);
         self.register(socket, height, preferred, link);
         self.sync(tree);

@@ -137,6 +137,62 @@ fn test_peer_connection_failed() {
 }
 
 #[test]
+fn test_peer_height_updated() {
+    use nakamoto_common::bitcoin::network::address::Address;
+    use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+    use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use nakamoto_common::bitcoin::network::message_network::VersionMessage;
+
+    let network = Network::default();
+    let mut client = mock::Client::new(network);
+    let handle = client.handle();
+    let remote = ([44, 44, 44, 44], 8333).into();
+    let local_time = LocalTime::now();
+    let local_addr = ([0, 0, 0, 0], 16333).into();
+    let events = handle.subscribe();
+
+    let version = |height: Height| -> NetworkMessage {
+        NetworkMessage::Version(VersionMessage {
+            version: protocol::MIN_PROTOCOL_VERSION,
+            services: ServiceFlags::NETWORK,
+            timestamp: local_time.block_time() as i64,
+            receiver: Address::new(&remote, ServiceFlags::NONE),
+            sender: Address::new(&local_addr, ServiceFlags::NONE),
+            nonce: 42,
+            user_agent: "?".to_owned(),
+            start_height: height as i32,
+            relay: false,
+        })
+    };
+
+    client
+        .protocol
+        .connected(remote, &local_addr, Link::Inbound);
+    client.received(&remote, version(42));
+    client.received(&remote, NetworkMessage::Verack);
+    client.step();
+
+    events
+        .try_iter()
+        .find(|e| matches!(e, Event::PeerHeightUpdated { height } if *height == 42))
+        .expect("We receive an event for the updated peer height");
+
+    let remote = ([45, 45, 45, 45], 8333).into();
+
+    client
+        .protocol
+        .connected(remote, &local_addr, Link::Inbound);
+    client.received(&remote, version(43));
+    client.received(&remote, NetworkMessage::Verack);
+    client.step();
+
+    events
+        .try_iter()
+        .find(|e| matches!(e, Event::PeerHeightUpdated { height } if *height == 43))
+        .expect("We receive an event for the updated peer height");
+}
+
+#[test]
 fn test_peer_negotiated() {
     use nakamoto_common::bitcoin::network::address::Address;
     use nakamoto_common::bitcoin::network::constants::ServiceFlags;

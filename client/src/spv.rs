@@ -153,6 +153,9 @@ impl Mapper {
             protocol::Event::Peer(protocol::PeerEvent::Disconnected(addr, reason)) => {
                 emitter.emit(Event::PeerDisconnected { addr, reason });
             }
+            protocol::Event::Chain(protocol::ChainEvent::PeerHeightUpdated { height }) => {
+                emitter.emit(Event::PeerHeightUpdated { height });
+            }
             protocol::Event::Chain(protocol::ChainEvent::Synced(_, height)) => {
                 self.tip = height;
             }
