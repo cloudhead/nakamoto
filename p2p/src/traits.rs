@@ -52,10 +52,24 @@ pub trait Protocol {
     fn write<W: io::Write>(&mut self, addr: &net::SocketAddr, writer: W) -> io::Result<()>;
 }
 
+/// A type that can establish connections with peers.
+/// Custom dialers can for example implement proxied connections.
+pub trait Dialer: Default {
+    /// Connect to a remote peer and return a TCP stream.
+    /// *This function must not block.*
+    fn dial(&mut self, addr: &net::SocketAddr) -> Result<net::TcpStream, io::Error>;
+}
+
+/// Used to wake certain types of reactors to wake the event loop.
+pub trait Waker: Send + Sync + Clone {
+    /// Wake the waker.
+    fn wake(&self) -> io::Result<()>;
+}
+
 /// Any network reactor that can drive the light-client protocol.
 pub trait Reactor<E: Publisher> {
     /// The type of waker this reactor uses.
-    type Waker: Send + Clone;
+    type Waker: Waker;
 
     /// Create a new reactor, initializing it with a publisher for protocol events,
     /// a channel to receive commands, and a channel to shut it down.
@@ -65,18 +79,15 @@ pub trait Reactor<E: Publisher> {
         shutdown: chan::Receiver<()>,
     ) -> Result<Self, io::Error>
     where
-        E: Publisher,
         Self: Sized;
 
     /// Run the given protocol state machine with the reactor.
-    fn run<P: Protocol>(
+    fn run<P: Protocol, D: Dialer>(
         &mut self,
         listen_addrs: &[net::SocketAddr],
         protocol: P,
+        dialer: D,
     ) -> Result<(), Error>;
-
-    /// Used to wake certain types of reactors.
-    fn wake(waker: &Self::Waker) -> io::Result<()>;
 
     /// Return a new waker.
     fn waker(&self) -> Self::Waker;

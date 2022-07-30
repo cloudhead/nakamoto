@@ -19,13 +19,15 @@
 //!
 //! /// The network reactor we're going to use.
 //! type Reactor = nakamoto::net::poll::Reactor<net::TcpStream, Publisher>;
+//! /// The peer dialer.
+//! type Dialer = nakamoto::net::poll::dialer::TcpDialer;
 //!
 //! /// Run the light-client.
 //! fn main() -> Result<(), Error> {
 //!     let cfg = Config::new(Network::Testnet);
 //!
 //!     // Create a client using the above network reactor.
-//!     let client = Client::<Reactor>::new()?;
+//!     let client = Client::<Reactor, Dialer>::new()?;
 //!     let handle = client.handle();
 //!
 //!     // Run the client on a different thread, to not block the main thread.

@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io;
+use std::marker::PhantomData;
 use std::net;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
@@ -29,13 +30,14 @@ use nakamoto_common::p2p::peer::{Source, Store as _};
 pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
 
-use nakamoto_p2p as p2p;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Protocol;
 
+pub use nakamoto_p2p as p2p;
 pub use nakamoto_p2p::event;
 pub use nakamoto_p2p::protocol::{self, Command, CommandError, Peer};
-pub use nakamoto_p2p::traits::Reactor;
+pub use nakamoto_p2p::traits;
+pub use nakamoto_p2p::traits::{Dialer, Reactor, Waker};
 
 pub use crate::error::Error;
 pub use crate::event::Event;
@@ -122,7 +124,7 @@ impl protocol::event::Publisher for Publisher {
 }
 
 /// A light-client process.
-pub struct Client<R: Reactor<Publisher>> {
+pub struct Client<R, D> {
     handle: chan::Sender<Command>,
     events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
@@ -132,9 +134,14 @@ pub struct Client<R: Reactor<Publisher>> {
     seeds: Vec<net::SocketAddr>,
 
     reactor: R,
+    dialer: PhantomData<D>,
 }
 
-impl<R: Reactor<Publisher>> Client<R> {
+impl<D, R> Client<R, D>
+where
+    R: Reactor<Publisher>,
+    D: Dialer,
+{
     /// Create a new client.
     pub fn new() -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
@@ -184,6 +191,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             subscriber,
             seeds,
             shutdown,
+            dialer: PhantomData,
         })
     }
 
@@ -319,6 +327,7 @@ impl<R: Reactor<Publisher>> Client<R> {
                 rng,
                 config.protocol,
             ),
+            D::default(),
         )?;
 
         Ok(())
@@ -326,17 +335,23 @@ impl<R: Reactor<Publisher>> Client<R> {
 
     /// Start the client process, supplying the block cache. This function is meant to be run in
     /// its own thread.
-    pub fn run_with<P>(mut self, listen: Vec<net::SocketAddr>, protocol: P) -> Result<(), Error>
+    pub fn run_with<P>(
+        mut self,
+        listen: Vec<net::SocketAddr>,
+        protocol: P,
+        dialer: D,
+    ) -> Result<(), Error>
     where
         P: p2p::traits::Protocol,
+        D: p2p::traits::Dialer,
     {
-        self.reactor.run::<P>(&listen, protocol)?;
+        self.reactor.run::<P, D>(&listen, protocol, dialer)?;
 
         Ok(())
     }
 
     /// Create a new handle to communicate with the client.
-    pub fn handle(&self) -> Handle<R> {
+    pub fn handle(&self) -> Handle<R::Waker> {
         Handle {
             events: self.events.clone(),
             waker: self.reactor.waker(),
@@ -351,21 +366,18 @@ impl<R: Reactor<Publisher>> Client<R> {
 }
 
 /// An instance of [`handle::Handle`] for [`Client`].
-pub struct Handle<R: Reactor<Publisher>> {
+pub struct Handle<W> {
     commands: chan::Sender<Command>,
     events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
-    waker: R::Waker,
+    waker: W,
     timeout: time::Duration,
     shutdown: chan::Sender<()>,
 }
 
-impl<R: Reactor<Publisher>> Clone for Handle<R>
-where
-    R::Waker: Sync,
-{
+impl<W: Waker> Clone for Handle<W> {
     fn clone(&self) -> Self {
         Self {
             blocks: self.blocks.clone(),
@@ -380,9 +392,9 @@ where
     }
 }
 
-impl<R: Reactor<Publisher>> Handle<R>
+impl<W> Handle<W>
 where
-    R::Waker: Sync,
+    W: Waker,
 {
     /// Set the timeout for operations that wait on the network.
     pub fn set_timeout(&mut self, timeout: time::Duration) {
@@ -411,15 +423,15 @@ where
     /// Send a command to the command channel, and wake up the event loop.
     fn _command(&self, cmd: Command) -> Result<(), handle::Error> {
         self.commands.send(cmd)?;
-        R::wake(&self.waker)?;
+        self.waker.wake()?;
 
         Ok(())
     }
 }
 
-impl<R: Reactor<Publisher>> handle::Handle for Handle<R>
+impl<W> handle::Handle for Handle<W>
 where
-    R::Waker: Sync,
+    W: Waker,
 {
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
         let (transmit, receive) = chan::bounded::<(Height, BlockHeader)>(1);
@@ -653,7 +665,7 @@ where
 
     fn shutdown(self) -> Result<(), handle::Error> {
         self.shutdown.send(())?;
-        R::wake(&self.waker)?;
+        self.waker.wake()?;
 
         Ok(())
     }

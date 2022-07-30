@@ -6,9 +6,10 @@ use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_p2p::error::Error;
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Io, Link};
+use nakamoto_p2p::traits;
+use nakamoto_p2p::traits::{Dialer, Protocol};
 
 use log::*;
-use nakamoto_p2p::traits::Protocol;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
@@ -17,17 +18,11 @@ use std::io::prelude::*;
 use std::net;
 use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
-use std::time;
 use std::time::SystemTime;
 
-use crate::fallible;
 use crate::socket::Socket;
 use crate::time::TimeoutManager;
 
-/// Maximum time to wait when reading from a socket.
-const READ_TIMEOUT: time::Duration = time::Duration::from_secs(6);
-/// Maximum time to wait when writing to a socket.
-const WRITE_TIMEOUT: time::Duration = time::Duration::from_secs(3);
 /// Maximum amount of time to wait for i/o.
 const WAIT_TIMEOUT: LocalDuration = LocalDuration::from_mins(60);
 /// Socket read buffer size.
@@ -47,7 +42,7 @@ pub struct Reactor<R: Write + Read, E> {
     commands: chan::Receiver<Command>,
     publisher: E,
     sources: popol::Sources<Source>,
-    waker: Arc<popol::Waker>,
+    waker: Waker,
     timeouts: TimeoutManager<()>,
     shutdown: chan::Receiver<()>,
 }
@@ -78,10 +73,25 @@ impl<R: Write + Read + AsRawFd, E> Reactor<R, E> {
     }
 }
 
-impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
-    for Reactor<net::TcpStream, E>
-{
-    type Waker = Arc<popol::Waker>;
+#[derive(Clone)]
+pub struct Waker(Arc<popol::Waker>);
+
+impl Waker {
+    fn new(sources: &mut popol::Sources<Source>) -> io::Result<Self> {
+        let waker = Arc::new(popol::Waker::new(sources, Source::Waker)?);
+
+        Ok(Self(waker))
+    }
+}
+
+impl traits::Waker for Waker {
+    fn wake(&self) -> io::Result<()> {
+        self.0.wake()
+    }
+}
+
+impl<E: protocol::event::Publisher> traits::Reactor<E> for Reactor<net::TcpStream, E> {
+    type Waker = Waker;
 
     /// Construct a new reactor, given a channel to send events on.
     fn new(
@@ -92,7 +102,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
         let peers = HashMap::new();
 
         let mut sources = popol::Sources::new();
-        let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
+        let waker = Waker::new(&mut sources)?;
         let timeouts = TimeoutManager::new(LocalDuration::from_secs(1));
         let connecting = HashSet::new();
 
@@ -109,9 +119,15 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
     }
 
     /// Run the given protocol with the reactor.
-    fn run<P>(&mut self, listen_addrs: &[net::SocketAddr], mut protocol: P) -> Result<(), Error>
+    fn run<P, D>(
+        &mut self,
+        listen_addrs: &[net::SocketAddr],
+        mut protocol: P,
+        mut dialer: D,
+    ) -> Result<(), Error>
     where
         P: Protocol,
+        D: Dialer,
     {
         let listener = if listen_addrs.is_empty() {
             None
@@ -133,7 +149,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
         let local_time = SystemTime::now().into();
         protocol.initialize(local_time);
 
-        self.process(&mut protocol, local_time);
+        self.process(&mut protocol, &mut dialer, local_time);
 
         // I/O readiness events populated by `popol::Sources::wait_timeout`.
         let mut events = popol::Events::new();
@@ -241,28 +257,24 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
                 }
                 Err(err) => return Err(err.into()),
             }
-            self.process(&mut protocol, local_time);
+            self.process(&mut protocol, &mut dialer, local_time);
         }
-    }
-
-    /// Wake the waker.
-    fn wake(waker: &Arc<popol::Waker>) -> io::Result<()> {
-        waker.wake()
     }
 
     /// Return a new waker.
     ///
     /// Used to wake up the main event loop.
-    fn waker(&self) -> Arc<popol::Waker> {
+    fn waker(&self) -> Waker {
         self.waker.clone()
     }
 }
 
 impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
     /// Process protocol state machine outputs.
-    fn process<P>(&mut self, protocol: &mut P, local_time: LocalTime)
+    fn process<P, D>(&mut self, protocol: &mut P, dialer: &mut D, local_time: LocalTime)
     where
         P: Protocol,
+        D: Dialer,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
@@ -276,7 +288,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                 Io::Connect(addr) => {
                     trace!("Connecting to {}...", &addr);
 
-                    match self::dial(&addr) {
+                    match dialer.dial(&addr) {
                         Ok(stream) => {
                             trace!("{:#?}", stream);
 
@@ -423,34 +435,6 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
         }
         Ok(())
     }
-}
-
-/// Connect to a peer given a remote address.
-fn dial(addr: &net::SocketAddr) -> Result<net::TcpStream, io::Error> {
-    use socket2::{Domain, Socket, Type};
-    fallible! { io::Error::from(io::ErrorKind::Other) };
-
-    let domain = if addr.is_ipv4() {
-        Domain::IPV4
-    } else {
-        Domain::IPV6
-    };
-    let sock = Socket::new(domain, Type::STREAM, None)?;
-
-    sock.set_read_timeout(Some(READ_TIMEOUT))?;
-    sock.set_write_timeout(Some(WRITE_TIMEOUT))?;
-    sock.set_nonblocking(true)?;
-
-    match sock.connect(&(*addr).into()) {
-        Ok(()) => {}
-        Err(e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
-        Err(e) if e.raw_os_error() == Some(libc::EALREADY) => {
-            return Err(io::Error::from(io::ErrorKind::AlreadyExists))
-        }
-        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-        Err(e) => return Err(e),
-    }
-    Ok(sock.into())
 }
 
 // Listen for connections on the given address.

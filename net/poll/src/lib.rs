@@ -28,6 +28,8 @@
 #![allow(clippy::inconsistent_struct_constructor)]
 
 #[cfg(unix)]
+pub mod dialer;
+#[cfg(unix)]
 pub mod reactor;
 pub mod socket;
 pub mod time;

@@ -25,3 +25,6 @@ nakamoto-net-poll = { version = "0.3.0", path = "../net/poll" }
 tempfile = "3"
 quickcheck = { version = "1", default-features = false }
 quickcheck_macros = "1"
+
+[[example]]
+name = "custom-dialer"

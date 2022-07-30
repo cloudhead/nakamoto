@@ -96,6 +96,8 @@ impl<H: Handle> Wallet<H> {
 
 /// The network reactor we're going to use.
 type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
+/// Connection dialer.
+type Dialer = nakamoto_net_poll::dialer::TcpDialer;
 
 /// Entry point for running the wallet.
 pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {
@@ -109,7 +111,7 @@ pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {
     };
 
     // Create a new client using `Reactor` for networking.
-    let client = Client::<Reactor>::new()?;
+    let client = Client::<Reactor, Dialer>::new()?;
     let handle = client.handle();
 
     // Create a new wallet and rescan the chain from the provided `birth` height for

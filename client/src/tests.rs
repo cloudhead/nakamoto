@@ -13,8 +13,10 @@ use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
+use nakamoto_net_poll::dialer::TcpDialer;
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Protocol;
+use nakamoto_p2p::traits;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
 use crate::client::{self, event, Client, Config};
@@ -27,7 +29,7 @@ fn network(
     cfgs: &[Config],
 ) -> Result<
     Vec<(
-        client::Handle<Reactor>,
+        client::Handle<<Reactor as traits::Reactor<client::Publisher>>::Waker>,
         net::SocketAddr,
         thread::JoinHandle<()>,
     )>,
@@ -40,7 +42,7 @@ fn network(
         let genesis = cfg.protocol.network.genesis();
         let params = cfg.protocol.network.params();
 
-        let node = Client::new()?;
+        let node = Client::<Reactor, TcpDialer>::new()?;
         let handle = node.handle();
         let events = handle.events();
 
@@ -60,6 +62,7 @@ fn network(
                 node.run_with(
                     vec![([0, 0, 0, 0], 0).into()],
                     Protocol::new(cache, filters, peers, clock, rng, cfg.protocol),
+                    TcpDialer::default(),
                 )
                 .unwrap();
             }
@@ -154,7 +157,7 @@ fn test_wait_for_peers() {
 
 #[test]
 fn test_send_handle() {
-    let client: Client<Reactor> = Client::new().unwrap();
+    let client: Client<Reactor, TcpDialer> = Client::new().unwrap();
     let handle = client.handle();
 
     thread::spawn(move || {
@@ -169,7 +172,7 @@ fn test_multiple_handle_events() {
     let cfg = protocol::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
-    let client: Client<Reactor> = Client::new().unwrap();
+    let client: Client<Reactor, TcpDialer> = Client::new().unwrap();
     let store = store::Memory::new((genesis, vec![]).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
     let filters = FilterCache::from(store::Memory::default()).unwrap();
@@ -189,6 +192,7 @@ fn test_multiple_handle_events() {
             .run_with(
                 vec![([0, 0, 0, 0], 0).into()],
                 Protocol::new(cache, filters, peers, clock, rng, cfg),
+                TcpDialer::default(),
             )
             .unwrap();
     });
@@ -219,7 +223,7 @@ fn test_handle_shutdown() {
     let cfg = protocol::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
-    let client: Client<Reactor> = Client::new().unwrap();
+    let client: Client<Reactor, TcpDialer> = Client::new().unwrap();
     let handle = client.handle();
     let store = store::Memory::new((genesis, vec![]).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
@@ -234,6 +238,7 @@ fn test_handle_shutdown() {
         client.run_with(
             vec![],
             Protocol::new(cache, filters, peers, clock, rng, cfg),
+            TcpDialer::default(),
         )
     });
 
@@ -243,7 +248,7 @@ fn test_handle_shutdown() {
 
 #[test]
 fn test_client_dropped() {
-    let client: Client<Reactor> = Client::new().unwrap();
+    let client: Client<Reactor, TcpDialer> = Client::new().unwrap();
     let handle = client.handle();
 
     drop(client);
@@ -259,7 +264,7 @@ fn test_query_headers() {
     let cfg = protocol::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
-    let client: Client<Reactor> = Client::new().unwrap();
+    let client: Client<Reactor, TcpDialer> = Client::new().unwrap();
     let handle = client.handle();
     let store = store::Memory::new((genesis, BITCOIN_HEADERS.tail.clone()).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
@@ -273,6 +278,7 @@ fn test_query_headers() {
         client.run_with(
             vec![],
             Protocol::new(cache, filters, HashMap::new(), clock, rng, cfg),
+            TcpDialer::default(),
         )
     });
 
