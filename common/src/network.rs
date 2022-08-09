@@ -43,6 +43,8 @@ pub enum Network {
     Testnet,
     /// Bitcoin regression test net.
     Regtest,
+    /// Bitcoin signet.
+    Signet,
 }
 
 impl Default for Network {
@@ -57,6 +59,18 @@ impl From<Network> for bitcoin::Network {
             Network::Mainnet => Self::Bitcoin,
             Network::Testnet => Self::Testnet,
             Network::Regtest => Self::Regtest,
+            Network::Signet => Self::Signet,
+        }
+    }
+}
+
+impl From<bitcoin::Network> for Network {
+    fn from(value: bitcoin::Network) -> Self {
+        match value {
+            bitcoin::Network::Bitcoin => Self::Mainnet,
+            bitcoin::Network::Testnet => Self::Testnet,
+            bitcoin::Network::Signet => Self::Signet,
+            bitcoin::Network::Regtest => Self::Regtest,
         }
     }
 }
@@ -68,6 +82,7 @@ impl Network {
             Network::Mainnet => 8333,
             Network::Testnet => 18333,
             Network::Regtest => 18334,
+            Network::Signet => 38333,
         }
     }
 
@@ -79,6 +94,7 @@ impl Network {
             Network::Mainnet => &checkpoints::MAINNET,
             Network::Testnet => &checkpoints::TESTNET,
             Network::Regtest => &checkpoints::REGTEST,
+            Network::Signet => &checkpoints::SIGNET,
         }
         .iter()
         .cloned()
@@ -96,6 +112,7 @@ impl Network {
             Network::Mainnet => "mainnet",
             Network::Testnet => "testnet",
             Network::Regtest => "regtest",
+            Network::Signet => "signet",
         }
     }
 
@@ -121,6 +138,7 @@ impl Network {
                 "testnet-seed.bluematt.me",
             ],
             Network::Regtest => &[], // No seeds
+            Network::Signet => &["seed.signet.bitcoin.sprovoost.nl"],
         }
     }
 }
@@ -156,6 +174,7 @@ impl Network {
             Self::Mainnet => genesis::MAINNET,
             Self::Testnet => genesis::TESTNET,
             Self::Regtest => genesis::REGTEST,
+            Self::Signet => genesis::SIGNET,
         };
         BlockHash::from(
             sha256d::Hash::from_slice(hash)

@@ -26,3 +26,6 @@ pub const TESTNET: &[(u64, &str)] = &[
 
 /// Regtest checkpoints.
 pub const REGTEST: &[(u64, &str)] = &[];
+
+/// Signet checkpoints.
+pub const SIGNET: &[(u64, &str)] = &[];
