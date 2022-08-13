@@ -16,9 +16,9 @@ pub enum Error {
     /// An error occuring from a client handle.
     #[error(transparent)]
     Handle(#[from] crate::handle::Error),
-    /// An error coming from the peer-to-peer sub-system.
+    /// An error coming from the networking sub-system.
     #[error(transparent)]
-    P2p(#[from] p2p::error::Error),
+    Net(#[from] nakamoto_net::error::Error),
     /// A chain-related error.
     #[error(transparent)]
     Chain(#[from] common::block::tree::Error),

@@ -1,7 +1,5 @@
 //! Peer-to-peer protocol errors.
 
-use nakamoto_common::bitcoin::consensus::encode;
-
 use std::fmt::Debug;
 use std::io;
 
@@ -15,10 +13,6 @@ pub enum Error {
     /// An I/O error.
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
-
-    /// An encoding/decoding error.
-    #[error("encode/decode error: {0}")]
-    Encode(#[from] encode::Error),
 
     /// A channel send or receive error.
     #[error("channel error: {0}")]

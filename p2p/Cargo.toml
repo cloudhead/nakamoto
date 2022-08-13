@@ -11,6 +11,7 @@ license = "MIT"
 
 [dependencies]
 nakamoto-common = { version = "0.3.0", path = "../common" }
+nakamoto-net = { version = "0.3.0", path = "../net" }
 log = "0.4"
 thiserror = "1.0"
 crossbeam-channel = { version = "0.5.6" }

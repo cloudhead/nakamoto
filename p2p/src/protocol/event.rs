@@ -1,9 +1,6 @@
 //! Protocol events.
-use std::net;
-
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
-use crate::event::Broadcast;
 use crate::protocol::{self, Height, LocalTime, PeerId};
 
 /// A peer-to-peer event.
@@ -20,8 +17,6 @@ pub enum Event {
         /// Local time.
         time: LocalTime,
     },
-    /// The node is now listening for incoming connections.
-    Listening(net::SocketAddr),
     /// Received a message from a peer.
     Received(PeerId, NetworkMessage),
     /// An address manager event.
@@ -34,17 +29,4 @@ pub enum Event {
     Filter(protocol::FilterEvent),
     /// An inventory manager event.
     Inventory(protocol::InventoryEvent),
-}
-
-/// Any type that is able to publish events.
-pub trait Publisher: Send + Sync {
-    /// Publish an event.
-    fn publish(&mut self, event: Event);
-}
-
-impl<T: Clone + Send + Sync> Publisher for Broadcast<Event, T> {
-    /// Publish a message to all subscribers.
-    fn publish(&mut self, event: Event) {
-        self.broadcast(event)
-    }
 }

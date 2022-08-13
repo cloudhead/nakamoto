@@ -9,11 +9,9 @@ mod tests;
 use std::collections::HashSet;
 use std::{fmt, net};
 
-use p2p::event::Emitter;
-
 use nakamoto_common::bitcoin::{Block, Txid};
-
 use nakamoto_common::block::{BlockHash, Height};
+use nakamoto_net::event::Emitter;
 use nakamoto_p2p as p2p;
 use p2p::protocol;
 

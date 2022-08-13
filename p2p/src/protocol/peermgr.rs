@@ -28,13 +28,12 @@ use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::Height;
 use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::source;
+use nakamoto_net as network;
 
 use crate::protocol::addrmgr;
+use crate::protocol::DisconnectReason;
 
-use super::{
-    output::{Disconnect, Wakeup},
-    DisconnectReason,
-};
+use super::output::{Disconnect, Wakeup};
 use super::{Hooks, Link, PeerId, Socket, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
@@ -89,7 +88,7 @@ pub enum Event {
     /// has successfully completed.
     Connected(PeerId, Link),
     /// A peer has been disconnected.
-    Disconnected(PeerId, DisconnectReason),
+    Disconnected(PeerId, network::DisconnectReason<DisconnectReason>),
 }
 
 impl std::fmt::Display for Event {
@@ -410,7 +409,7 @@ impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManage
         &mut self,
         addr: &net::SocketAddr,
         addrs: &mut A,
-        reason: DisconnectReason,
+        reason: network::DisconnectReason<DisconnectReason>,
     ) {
         let local_time = self.clock.local_time();
 
@@ -422,7 +421,7 @@ impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManage
         } else if self.is_connecting(addr) {
             // If we haven't yet established a connection, the disconnect reason
             // should always be a `ConnectionError`.
-            if let DisconnectReason::ConnectionError(err) = reason {
+            if let network::DisconnectReason::ConnectionError(err) = reason {
                 Events::event(&self.upstream, Event::ConnectionFailed(*addr, err));
             }
         }
@@ -994,7 +993,11 @@ mod tests {
         );
 
         // Confirm first attempt
-        peermgr.peer_disconnected(&remote, &mut addrs, DisconnectReason::PeerTimeout(""));
+        peermgr.peer_disconnected(
+            &remote,
+            &mut addrs,
+            DisconnectReason::PeerTimeout("").into(),
+        );
         assert!(peermgr.is_disconnected(&remote));
         assert_eq!(peermgr.connected().next(), None);
 
@@ -1003,7 +1006,11 @@ mod tests {
         assert_eq!(peermgr.connecting().next(), Some(&remote));
 
         // Confirm exponential backoff after failed first attempt
-        peermgr.peer_disconnected(&remote, &mut addrs, DisconnectReason::PeerTimeout(""));
+        peermgr.peer_disconnected(
+            &remote,
+            &mut addrs,
+            DisconnectReason::PeerTimeout("").into(),
+        );
         assert!(peermgr.is_disconnected(&remote));
         assert_eq!(peermgr.connecting().next(), None);
 
@@ -1160,7 +1167,8 @@ mod tests {
         let remote2 = ([124, 43, 110, 2], 8333).into();
         let remote3 = ([124, 43, 110, 3], 8333).into();
         let remote4 = ([124, 43, 110, 4], 8333).into();
-        let reason = DisconnectReason::PeerTimeout("timeout");
+        let reason: network::DisconnectReason<DisconnectReason> =
+            DisconnectReason::PeerTimeout("timeout").into();
 
         let mut addrs = VecDeque::new();
         let mut peermgr = PeerManager::new(util::config(), rng, Hooks::default(), (), time);

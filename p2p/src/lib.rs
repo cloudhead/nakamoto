@@ -24,10 +24,8 @@
 #![allow(clippy::inconsistent_struct_constructor)]
 #![allow(clippy::too_many_arguments)]
 #![deny(missing_docs, unsafe_code)]
-pub mod error;
-pub mod event;
 pub mod protocol;
 pub mod stream;
-pub mod traits;
 
+pub use nakamoto_net as net;
 pub use protocol::{Link, PeerId};

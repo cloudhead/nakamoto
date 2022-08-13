@@ -13,15 +13,16 @@ use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
+use nakamoto_net::event;
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Protocol;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
-use crate::client::{self, event, Client, Config};
+use crate::client::{self, Client, Config};
 use crate::error;
 use crate::handle::Handle as _;
 
-type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
 
 fn network(
     cfgs: &[Config],
@@ -41,8 +42,8 @@ fn network(
         let params = cfg.protocol.network.params();
 
         let node = Client::new()?;
-        let handle = node.handle();
-        let events = handle.events();
+        let mut handle = node.handle();
+        handle.set_timeout(time::Duration::from_secs(5));
 
         let t = thread::spawn({
             let params = params.clone();
@@ -64,16 +65,7 @@ fn network(
                 .unwrap();
             }
         });
-
-        let addr = event::wait(
-            &events,
-            |e| match e {
-                protocol::Event::Listening(addr) => Some(addr),
-                _ => None,
-            },
-            time::Duration::from_secs(5),
-        )
-        .unwrap();
+        let addr = handle.listening().unwrap();
 
         handles.push((handle, addr, t));
     }
@@ -196,7 +188,7 @@ fn test_multiple_handle_events() {
     event::wait(
         &alice_events,
         |e| match e {
-            protocol::Event::Listening(_) => Some(()),
+            protocol::Event::Ready { .. } => Some(()),
             _ => None,
         },
         time::Duration::from_secs(2),
@@ -206,7 +198,7 @@ fn test_multiple_handle_events() {
     event::wait(
         &bob_events,
         |e| match e {
-            protocol::Event::Listening(_) => Some(()),
+            protocol::Event::Ready { .. } => Some(()),
             _ => None,
         },
         time::Duration::from_secs(2),

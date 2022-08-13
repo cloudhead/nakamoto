@@ -6,8 +6,10 @@ use std::sync::Arc;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
+use nakamoto_net::DisconnectReason;
+use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::fees::FeeEstimate;
-use nakamoto_p2p::protocol::{DisconnectReason, Link, PeerId};
+use nakamoto_p2p::protocol::{Link, PeerId};
 
 use crate::spv::TxStatus;
 
@@ -36,7 +38,7 @@ pub enum Event {
         /// Peer address.
         addr: PeerId,
         /// Reason for disconnection.
-        reason: DisconnectReason,
+        reason: DisconnectReason<protocol::DisconnectReason>,
     },
     /// Connection was never established and timed out or failed.
     PeerConnectionFailed {

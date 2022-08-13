@@ -103,3 +103,16 @@ where
         }
     }
 }
+
+/// Any type that is able to publish events.
+pub trait Publisher<E>: Send + Sync {
+    /// Publish an event.
+    fn publish(&mut self, event: E);
+}
+
+impl<E, T: Clone + Send + Sync> Publisher<E> for Broadcast<E, T> {
+    /// Publish a message to all subscribers.
+    fn publish(&mut self, event: E) {
+        self.broadcast(event)
+    }
+}

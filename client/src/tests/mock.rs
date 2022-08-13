@@ -19,13 +19,13 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_test::block::cache::model;
 
-use nakamoto_p2p::event;
+use nakamoto_net::event;
+use nakamoto_net::Protocol as _;
 use nakamoto_p2p::protocol;
 use nakamoto_p2p::protocol::Command;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Peer;
 use nakamoto_p2p::protocol::Protocol;
-use nakamoto_p2p::traits::Protocol as _;
 
 use crate::client::{chan, Event};
 use crate::handle::{self, Handle};

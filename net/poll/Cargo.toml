@@ -9,8 +9,7 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-nakamoto-common = { version = "0.3.0", path = "../../common" }
-nakamoto-p2p = { version = "0.3.0", path = "../../p2p" }
+nakamoto-net = { version = "0.3.0", path = ".." }
 crossbeam-channel = { version = "0.5.6" }
 popol = "0.5"
 socket2 = "0.4"

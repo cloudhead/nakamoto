@@ -29,7 +29,8 @@ them, and the use of traits. From a high-level, we have:
 * `nakamoto-client`: the core light-client library
 * `nakamoto-p2p`: the protocol state-machine implementation
 * `nakamoto-chain`: the block store and fork selection logic
-* `nakamoto-net-poll`: the default *poll*-based networking library
+* `nakamoto-net`: networking primitives used by the reactor implementations
+* `nakamoto-net-poll`: the default *poll*-based networking backend
 * `nakamoto-common`: common functionality used by all crates
 * `nakamoto-node`: a standalone light-client daemon
 * `nakamoto-wallet`: a very basic watch-only wallet built on the above crates

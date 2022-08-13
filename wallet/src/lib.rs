@@ -11,7 +11,7 @@ use nakamoto_common::bitcoin::Address;
 use nakamoto_client::handle::{self, Handle};
 use nakamoto_client::spv::utxos::Utxos;
 use nakamoto_client::Network;
-use nakamoto_client::{client, protocol, Client, Config, Event};
+use nakamoto_client::{protocol, Client, Config, Event};
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
 
@@ -95,7 +95,7 @@ impl<H: Handle> Wallet<H> {
 }
 
 /// The network reactor we're going to use.
-type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, client::Publisher>;
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
 
 /// Entry point for running the wallet.
 pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {

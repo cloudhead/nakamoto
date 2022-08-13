@@ -10,6 +10,7 @@ authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2021"
 
 [dependencies]
+nakamoto-net = { version = "0.3.0", path = "../net" }
 bitcoin = "0.28.0"
 bitcoin_hashes = "0.10.0"
 thiserror = "1.0"

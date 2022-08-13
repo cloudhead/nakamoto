@@ -19,7 +19,7 @@ members = [
   "test",
   "client",
   "wallet",
-  "net/poll",
+  "net",
 ]
 
 [features]
@@ -28,6 +28,7 @@ default = [
   "nakamoto-chain",
   "nakamoto-p2p",
   "nakamoto-common",
+  "nakamoto-net",
   "nakamoto-net-poll"
 ]
 
@@ -39,4 +40,5 @@ nakamoto-chain = { version = "0.3.0", path = "./chain", optional = true }
 nakamoto-p2p = { version = "0.3.0", path = "./p2p", optional = true }
 nakamoto-test = { version = "0.3.0", path = "./test", optional = true }
 nakamoto-wallet = { version = "0.3.0", path = "./wallet", optional = true }
+nakamoto-net = { version = "0.3.0", path = "./net", optional = true }
 nakamoto-net-poll = { version = "0.3.0", path = "./net/poll", optional = true }

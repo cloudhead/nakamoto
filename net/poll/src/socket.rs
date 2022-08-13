@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::net;
 
-use nakamoto_p2p::protocol::Link;
+use nakamoto_net::Link;
 
 use crate::fallible;
 

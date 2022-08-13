@@ -228,6 +228,7 @@ dependencies = [
  "nakamoto-chain",
  "nakamoto-client",
  "nakamoto-common",
+ "nakamoto-net",
  "nakamoto-net-poll",
  "nakamoto-node",
  "nakamoto-p2p",
@@ -259,6 +260,7 @@ dependencies = [
  "microserde",
  "nakamoto-chain",
  "nakamoto-common",
+ "nakamoto-net",
  "nakamoto-net-poll",
  "nakamoto-p2p",
  "nakamoto-test",
@@ -277,7 +279,17 @@ dependencies = [
  "fastrand",
  "log",
  "microserde",
+ "nakamoto-net",
  "nonempty",
+ "thiserror",
+]
+
+[[package]]
+name = "nakamoto-net"
+version = "0.3.0"
+dependencies = [
+ "crossbeam-channel",
+ "log",
  "thiserror",
 ]
 
@@ -290,8 +302,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "log",
- "nakamoto-common",
- "nakamoto-p2p",
+ "nakamoto-net",
  "popol",
  "quickcheck",
  "quickcheck_macros",
@@ -322,6 +333,7 @@ dependencies = [
  "microserde",
  "nakamoto-chain",
  "nakamoto-common",
+ "nakamoto-net",
  "nakamoto-test",
  "quickcheck",
  "quickcheck_macros",

@@ -44,17 +44,16 @@ use quickcheck_macros::quickcheck;
 
 use nakamoto_common::bitcoin::OutPoint;
 
-use nakamoto_common::block::time::LocalTime;
+use nakamoto_common::block::time::Clock as _;
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_net::{DisconnectReason, Link, LocalTime, Protocol as _};
 use nakamoto_test::assert_matches;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;
 
-use p2p::protocol::{Command, DisconnectReason};
-use p2p::traits::Protocol as _;
+use p2p::protocol::Command;
 
-use super::p2p::protocol::Link;
 use super::utxos::Utxos;
 use super::Event;
 use super::*;

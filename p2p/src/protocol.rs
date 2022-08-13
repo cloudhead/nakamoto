@@ -34,10 +34,10 @@ pub use peermgr::Event as PeerEvent;
 pub use syncmgr::Event as ChainEvent;
 
 use crate::stream;
-use crate::traits;
 
 pub use event::Event;
-pub use output::{DisconnectReason, Io};
+pub use nakamoto_net::Link;
+pub use output::Io;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug};
@@ -46,6 +46,7 @@ use std::sync::Arc;
 use std::{io, net};
 
 use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::consensus::encode;
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
@@ -54,9 +55,8 @@ use nakamoto_common::bitcoin::network::message_filter::GetCFilters;
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin::Script;
-use nakamoto_common::block::time::AdjustedClock;
-
 use nakamoto_common::block::filter::Filters;
+use nakamoto_common::block::time::AdjustedClock;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockReader, BlockTree, ImportResult};
 use nakamoto_common::block::{BlockHash, Height};
@@ -116,6 +116,71 @@ impl From<net::SocketAddr> for Socket {
     }
 }
 
+/// Disconnect reason.
+#[derive(Debug, Clone)]
+pub enum DisconnectReason {
+    /// Peer is misbehaving.
+    PeerMisbehaving(&'static str),
+    /// Peer protocol version is too old or too recent.
+    PeerProtocolVersion(u32),
+    /// Peer doesn't have the required services.
+    PeerServices(ServiceFlags),
+    /// Peer chain is too far behind.
+    PeerHeight(Height),
+    /// Peer magic is invalid.
+    PeerMagic(u32),
+    /// Peer timed out.
+    PeerTimeout(&'static str),
+    /// Peer was dropped by all sub-protocols.
+    PeerDropped,
+    /// Connection to self was detected.
+    SelfConnection,
+    /// Inbound connection limit reached.
+    ConnectionLimit,
+    /// Error trying to decode incoming message.
+    DecodeError(Arc<encode::Error>),
+    /// Peer was forced to disconnect by external command.
+    Command,
+    /// Peer was disconnected for another reason.
+    Other(&'static str),
+}
+
+impl DisconnectReason {
+    /// Check whether the disconnect reason is transient, ie. may no longer be applicable
+    /// after some time.
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::ConnectionLimit | Self::PeerTimeout(_) | Self::PeerHeight(_)
+        )
+    }
+}
+
+impl From<DisconnectReason> for nakamoto_net::DisconnectReason<DisconnectReason> {
+    fn from(reason: DisconnectReason) -> Self {
+        Self::Protocol(reason)
+    }
+}
+
+impl fmt::Display for DisconnectReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PeerMisbehaving(reason) => write!(f, "peer misbehaving: {}", reason),
+            Self::PeerProtocolVersion(_) => write!(f, "peer protocol version mismatch"),
+            Self::PeerServices(_) => write!(f, "peer doesn't have the required services"),
+            Self::PeerHeight(_) => write!(f, "peer is too far behind"),
+            Self::PeerMagic(magic) => write!(f, "received message with invalid magic: {}", magic),
+            Self::PeerTimeout(s) => write!(f, "peer timed out: {:?}", s),
+            Self::PeerDropped => write!(f, "peer dropped"),
+            Self::SelfConnection => write!(f, "detected self-connection"),
+            Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
+            Self::DecodeError(err) => write!(f, "message decode error: {}", err),
+            Self::Command => write!(f, "received external command"),
+            Self::Other(reason) => write!(f, "{}", reason),
+        }
+    }
+}
+
 /// A remote peer.
 #[derive(Debug, Clone)]
 pub struct Peer {
@@ -156,27 +221,6 @@ impl From<(&peermgr::PeerInfo, &peermgr::Connection)> for Peer {
             user_agent: peer.user_agent.clone(),
             relay: peer.relay,
         }
-    }
-}
-
-/// Link direction of the peer connection.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Link {
-    /// Inbound conneciton.
-    Inbound,
-    /// Outbound connection.
-    Outbound,
-}
-
-impl Link {
-    /// Check whether the link is outbound.
-    pub fn is_outbound(&self) -> bool {
-        *self == Link::Outbound
-    }
-
-    /// Check whether the link is inbound.
-    pub fn is_inbound(&self) -> bool {
-        *self == Link::Inbound
     }
 }
 
@@ -768,10 +812,13 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protoco
     }
 }
 
-impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits::Protocol
+impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> nakamoto_net::Protocol
     for Protocol<T, F, P, C>
 {
+    type Event = Event;
+    type DisconnectReason = DisconnectReason;
     type Drain = output::Drain;
+    type Command = Command;
 
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set(time);
@@ -801,10 +848,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         self.inbox
             .insert(addr, stream::Decoder::new(INBOX_BUFFER_SIZE));
     }
-
-    fn disconnected(&mut self, addr: &net::SocketAddr, reason: DisconnectReason) {
-        info!(target: self.target, "[conn] {}: Disconnected: {}", addr, reason);
-
+    fn disconnected(
+        &mut self,
+        addr: &net::SocketAddr,
+        reason: nakamoto_net::DisconnectReason<DisconnectReason>,
+    ) {
         self.cbfmgr.peer_disconnected(addr);
         self.syncmgr.peer_disconnected(addr);
         self.addrmgr.peer_disconnected(addr, reason.clone());

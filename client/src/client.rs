@@ -29,13 +29,12 @@ use nakamoto_common::p2p::peer::{Source, Store as _};
 pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
 
-use nakamoto_p2p as p2p;
 use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Protocol;
 
-pub use nakamoto_p2p::event;
+pub use nakamoto_net::event;
+pub use nakamoto_net::Reactor;
 pub use nakamoto_p2p::protocol::{self, Command, CommandError, Peer};
-pub use nakamoto_p2p::traits::Reactor;
 
 pub use crate::error::Error;
 pub use crate::event::Event;
@@ -96,25 +95,31 @@ impl Default for Config {
 }
 
 /// The client's event publisher.
-pub struct Publisher {
-    publishers: Vec<Box<dyn protocol::event::Publisher>>,
+pub struct Publisher<E> {
+    publishers: Vec<Box<dyn nakamoto_net::Publisher<E>>>,
 }
 
-impl Publisher {
-    fn new() -> Self {
-        Self {
-            publishers: Vec::new(),
-        }
-    }
-
-    fn register(mut self, publisher: impl protocol::event::Publisher + 'static) -> Self {
+impl<E> Publisher<E> {
+    /// Register a publisher.
+    pub fn register(mut self, publisher: impl nakamoto_net::Publisher<E> + 'static) -> Self {
         self.publishers.push(Box::new(publisher));
         self
     }
 }
 
-impl protocol::event::Publisher for Publisher {
-    fn publish(&mut self, e: protocol::Event) {
+impl<E> Default for Publisher<E> {
+    fn default() -> Self {
+        Self {
+            publishers: Vec::new(),
+        }
+    }
+}
+
+impl<E> nakamoto_net::Publisher<E> for Publisher<E>
+where
+    E: Clone,
+{
+    fn publish(&mut self, e: E) {
         for p in self.publishers.iter_mut() {
             p.publish(e.clone());
         }
@@ -122,19 +127,25 @@ impl protocol::event::Publisher for Publisher {
 }
 
 /// A light-client process.
-pub struct Client<R: Reactor<Publisher>> {
+pub struct Client<R: Reactor> {
     handle: chan::Sender<Command>,
+    commands: chan::Receiver<Command>,
     events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
     shutdown: chan::Sender<()>,
+    listening: chan::Receiver<net::SocketAddr>,
     seeds: Vec<net::SocketAddr>,
+    publisher: Publisher<protocol::Event>,
 
     reactor: R,
 }
 
-impl<R: Reactor<Publisher>> Client<R> {
+impl<R: Reactor> Client<R>
+where
+    Publisher<protocol::Event>: event::Publisher<protocol::Event>,
+{
     /// Create a new client.
     pub fn new() -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
@@ -165,7 +176,7 @@ impl<R: Reactor<Publisher>> Client<R> {
             move |e, p| spv.process(e, p)
         });
 
-        let publisher = Publisher::new()
+        let publisher = Publisher::default()
             .register(event_pub)
             .register(blocks_pub)
             .register(filters_pub)
@@ -173,17 +184,21 @@ impl<R: Reactor<Publisher>> Client<R> {
 
         let seeds = Vec::new();
         let (shutdown, shutdown_recv) = chan::bounded(1);
-        let reactor = R::new(publisher, commands, shutdown_recv)?;
+        let (listening_send, listening) = chan::bounded(1);
+        let reactor = R::new(shutdown_recv, listening_send)?;
 
         Ok(Self {
             events,
             handle,
+            commands,
             reactor,
             blocks,
             filters,
             subscriber,
+            publisher,
             seeds,
             shutdown,
+            listening,
         })
     }
 
@@ -319,6 +334,8 @@ impl<R: Reactor<Publisher>> Client<R> {
                 rng,
                 config.protocol,
             ),
+            self.publisher,
+            self.commands,
         )?;
 
         Ok(())
@@ -328,9 +345,14 @@ impl<R: Reactor<Publisher>> Client<R> {
     /// its own thread.
     pub fn run_with<P>(mut self, listen: Vec<net::SocketAddr>, protocol: P) -> Result<(), Error>
     where
-        P: p2p::traits::Protocol,
+        P: nakamoto_net::Protocol<Event = protocol::Event, Command = Command>,
     {
-        self.reactor.run::<P>(&listen, protocol)?;
+        self.reactor.run::<P, Publisher<protocol::Event>>(
+            &listen,
+            protocol,
+            self.publisher,
+            self.commands,
+        )?;
 
         Ok(())
     }
@@ -346,12 +368,13 @@ impl<R: Reactor<Publisher>> Client<R> {
             filters: self.filters.clone(),
             subscriber: self.subscriber.clone(),
             shutdown: self.shutdown.clone(),
+            listening: self.listening.clone(),
         }
     }
 }
 
 /// An instance of [`handle::Handle`] for [`Client`].
-pub struct Handle<R: Reactor<Publisher>> {
+pub struct Handle<R: Reactor> {
     commands: chan::Sender<Command>,
     events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
@@ -360,9 +383,10 @@ pub struct Handle<R: Reactor<Publisher>> {
     waker: R::Waker,
     timeout: time::Duration,
     shutdown: chan::Sender<()>,
+    listening: chan::Receiver<net::SocketAddr>,
 }
 
-impl<R: Reactor<Publisher>> Clone for Handle<R>
+impl<R: Reactor> Clone for Handle<R>
 where
     R::Waker: Sync,
 {
@@ -376,14 +400,20 @@ where
             timeout: self.timeout,
             waker: self.waker.clone(),
             shutdown: self.shutdown.clone(),
+            listening: self.listening.clone(),
         }
     }
 }
 
-impl<R: Reactor<Publisher>> Handle<R>
+impl<R: Reactor> Handle<R>
 where
     R::Waker: Sync,
 {
+    /// Wait for node to start listening for incoming connections.
+    pub fn listening(&mut self) -> Result<net::SocketAddr, handle::Error> {
+        Ok(self.listening.recv_timeout(self.timeout)?)
+    }
+
     /// Set the timeout for operations that wait on the network.
     pub fn set_timeout(&mut self, timeout: time::Duration) {
         self.timeout = timeout;
@@ -417,7 +447,7 @@ where
     }
 }
 
-impl<R: Reactor<Publisher>> handle::Handle for Handle<R>
+impl<R: Reactor> handle::Handle for Handle<R>
 where
     R::Waker: Sync,
 {

@@ -1,14 +1,13 @@
 //! Poll-based reactor. This is a single-threaded reactor using a `poll` loop.
 use crossbeam_channel as chan;
 
-use nakamoto_common::block::time::{LocalDuration, LocalTime};
-
-use nakamoto_p2p::error::Error;
-use nakamoto_p2p::protocol;
-use nakamoto_p2p::protocol::{Command, DisconnectReason, Event, Io, Link};
+use nakamoto_net::error::Error;
+use nakamoto_net::event::Publisher;
+use nakamoto_net::time::{LocalDuration, LocalTime};
+use nakamoto_net::{DisconnectReason, Io};
+use nakamoto_net::{Link, Protocol};
 
 use log::*;
-use nakamoto_p2p::traits::Protocol;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
@@ -41,19 +40,18 @@ enum Source {
 }
 
 /// A single-threaded non-blocking reactor.
-pub struct Reactor<R: Write + Read, E> {
+pub struct Reactor<R: Write + Read> {
     peers: HashMap<net::SocketAddr, Socket<R>>,
     connecting: HashSet<net::SocketAddr>,
-    commands: chan::Receiver<Command>,
-    publisher: E,
     sources: popol::Sources<Source>,
     waker: Arc<popol::Waker>,
     timeouts: TimeoutManager<()>,
     shutdown: chan::Receiver<()>,
+    listening: chan::Sender<net::SocketAddr>,
 }
 
 /// The `R` parameter represents the underlying stream type, eg. `net::TcpStream`.
-impl<R: Write + Read + AsRawFd, E> Reactor<R, E> {
+impl<R: Write + Read + AsRawFd> Reactor<R> {
     /// Register a peer with the reactor.
     fn register_peer(&mut self, addr: net::SocketAddr, stream: R, link: Link) {
         self.sources
@@ -65,7 +63,7 @@ impl<R: Write + Read + AsRawFd, E> Reactor<R, E> {
     fn unregister_peer<P>(
         &mut self,
         addr: net::SocketAddr,
-        reason: DisconnectReason,
+        reason: DisconnectReason<P::DisconnectReason>,
         protocol: &mut P,
     ) where
         P: Protocol,
@@ -78,16 +76,13 @@ impl<R: Write + Read + AsRawFd, E> Reactor<R, E> {
     }
 }
 
-impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
-    for Reactor<net::TcpStream, E>
-{
+impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
     type Waker = Arc<popol::Waker>;
 
     /// Construct a new reactor, given a channel to send events on.
     fn new(
-        publisher: E,
-        commands: chan::Receiver<Command>,
         shutdown: chan::Receiver<()>,
+        listening: chan::Sender<net::SocketAddr>,
     ) -> Result<Self, io::Error> {
         let peers = HashMap::new();
 
@@ -100,18 +95,24 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
             peers,
             connecting,
             sources,
-            commands,
-            publisher,
             waker,
             timeouts,
             shutdown,
+            listening,
         })
     }
 
     /// Run the given protocol with the reactor.
-    fn run<P>(&mut self, listen_addrs: &[net::SocketAddr], mut protocol: P) -> Result<(), Error>
+    fn run<P, E>(
+        &mut self,
+        listen_addrs: &[net::SocketAddr],
+        mut protocol: P,
+        mut publisher: E,
+        commands: chan::Receiver<P::Command>,
+    ) -> Result<(), Error>
     where
         P: Protocol,
+        E: Publisher<P::Event>,
     {
         let listener = if listen_addrs.is_empty() {
             None
@@ -121,7 +122,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
 
             self.sources
                 .register(Source::Listener, &listener, popol::interest::READ);
-            self.publisher.publish(Event::Listening(local_addr));
+            self.listening.send(local_addr).ok();
 
             info!("Listening on {}", local_addr);
 
@@ -133,7 +134,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
         let local_time = SystemTime::now().into();
         protocol.initialize(local_time);
 
-        self.process(&mut protocol, local_time);
+        self.process(&mut protocol, &mut publisher, local_time);
 
         // I/O readiness events populated by `popol::Sources::wait_timeout`.
         let mut events = popol::Events::new();
@@ -212,7 +213,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
                                 }
                             },
                             Source::Waker => {
-                                trace!("Woken up by waker ({} command(s))", self.commands.len());
+                                trace!("Woken up by waker ({} command(s))", commands.len());
 
                                 // Exit reactor loop if a shutdown was received.
                                 if let Ok(()) = self.shutdown.try_recv() {
@@ -220,9 +221,9 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
                                 }
                                 popol::Waker::reset(ev.source).ok();
 
-                                debug_assert!(!self.commands.is_empty());
+                                debug_assert!(!commands.is_empty());
 
-                                for cmd in self.commands.try_iter() {
+                                for cmd in commands.try_iter() {
                                     protocol.command(cmd);
                                 }
                             }
@@ -241,7 +242,7 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
                 }
                 Err(err) => return Err(err.into()),
             }
-            self.process(&mut protocol, local_time);
+            self.process(&mut protocol, &mut publisher, local_time);
         }
     }
 
@@ -258,11 +259,12 @@ impl<E: protocol::event::Publisher> nakamoto_p2p::traits::Reactor<E>
     }
 }
 
-impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
+impl Reactor<net::TcpStream> {
     /// Process protocol state machine outputs.
-    fn process<P>(&mut self, protocol: &mut P, local_time: LocalTime)
+    fn process<P, E>(&mut self, protocol: &mut P, publisher: &mut E, local_time: LocalTime)
     where
         P: Protocol,
+        E: Publisher<P::Event>,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
@@ -318,7 +320,7 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                 Io::Event(event) => {
                     trace!("Event: {:?}", event);
 
-                    self.publisher.publish(event);
+                    publisher.publish(event);
                 }
             }
         }
@@ -351,7 +353,13 @@ impl<E: protocol::event::Publisher> Reactor<net::TcpStream, E> {
                         // If we get zero bytes read as a return value, it means the peer has
                         // performed an orderly shutdown.
                         socket.disconnect().ok();
-                        self.unregister_peer(*addr, DisconnectReason::PeerDisconnected, protocol);
+                        self.unregister_peer(
+                            *addr,
+                            DisconnectReason::ConnectionError(Arc::new(io::Error::from(
+                                io::ErrorKind::ConnectionReset,
+                            ))),
+                            protocol,
+                        );
                     }
                 }
                 Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
