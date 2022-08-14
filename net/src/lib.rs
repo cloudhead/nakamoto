@@ -77,7 +77,7 @@ pub trait Protocol {
     /// User commands handled by protocol.
     type Command;
     /// Return type of [`Protocol::drain`].
-    type Drain: Iterator<Item = Io<Self::Event, Self::DisconnectReason>>;
+    type Drain: IntoIterator<Item = Io<Self::Event, Self::DisconnectReason>>;
 
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
