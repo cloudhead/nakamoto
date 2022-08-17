@@ -1,14 +1,15 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 #![allow(clippy::collapsible_if)]
 
+use crate::{DisconnectReason, Io, Link, LocalDuration, LocalTime, Protocol};
 use log::*;
-use nakamoto_common::collections::{HashMap, HashSet};
-use nakamoto_net::{DisconnectReason, Io, Link, LocalDuration, LocalTime, Protocol};
 
-use std::collections::BTreeMap;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::{Deref, DerefMut, Range};
 use std::{fmt, io, net};
+
+#[cfg(feature = "quickcheck")]
+pub mod arbitrary;
 
 /// Minimum latency between peers.
 pub const MIN_LATENCY: LocalDuration = LocalDuration::from_millis(1);
@@ -145,34 +146,6 @@ pub struct Options {
     pub failure_rate: f64,
 }
 
-impl quickcheck::Arbitrary for Options {
-    fn arbitrary(g: &mut quickcheck::Gen) -> Self {
-        let rng = fastrand::Rng::with_seed(u64::arbitrary(g));
-        let from = rng.u64(0..=1);
-        let to = rng.u64(2..4);
-        let failure_rate = rng.f64() / 4.;
-
-        Self {
-            latency: from..to,
-            failure_rate,
-        }
-    }
-
-    fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
-        let failure_rate = self.failure_rate - 0.01;
-        let latency = self.latency.start.saturating_sub(1)..self.latency.end.saturating_sub(1);
-
-        if failure_rate < 0. && latency.is_empty() {
-            return Box::new(std::iter::empty());
-        }
-
-        Box::new(std::iter::once(Self {
-            latency,
-            failure_rate,
-        }))
-    }
-}
-
 impl Default for Options {
     fn default() -> Self {
         Self {
@@ -192,13 +165,13 @@ where
     /// Priority events that should happen immediately.
     priority: VecDeque<Scheduled<T::DisconnectReason>>,
     /// Simulated latencies between nodes.
-    latencies: HashMap<(NodeId, NodeId), LocalDuration>,
+    latencies: BTreeMap<(NodeId, NodeId), LocalDuration>,
     /// Network partitions between two nodes.
-    partitions: HashSet<(NodeId, NodeId)>,
+    partitions: BTreeSet<(NodeId, NodeId)>,
     /// Set of existing connections between nodes.
-    connections: HashSet<(NodeId, NodeId)>,
+    connections: BTreeSet<(NodeId, NodeId)>,
     /// Set of connection attempts.
-    attempts: HashSet<(NodeId, NodeId)>,
+    attempts: BTreeSet<(NodeId, NodeId)>,
     /// Simulation options.
     opts: Options,
     /// Start time of simulation.
@@ -221,10 +194,10 @@ where
                 messages: BTreeMap::new(),
             },
             priority: VecDeque::new(),
-            partitions: HashSet::with_hasher(rng.clone().into()),
-            latencies: HashMap::with_hasher(rng.clone().into()),
-            connections: HashSet::with_hasher(rng.clone().into()),
-            attempts: HashSet::with_hasher(rng.clone().into()),
+            partitions: BTreeSet::new(),
+            latencies: BTreeMap::new(),
+            connections: BTreeSet::new(),
+            attempts: BTreeSet::new(),
             opts,
             start_time: time,
             time,
@@ -289,10 +262,7 @@ where
     /// This function should be called until it returns `false`, or some desired state is reached.
     /// Returns `true` if there are more messages to process.
     pub fn step<'a, P: Peer<T>>(&mut self, peers: impl IntoIterator<Item = &'a mut P>) -> bool {
-        let mut nodes = HashMap::with_hasher(self.rng.clone().into());
-        for peer in peers.into_iter() {
-            nodes.insert(peer.addr().ip(), peer);
-        }
+        let mut nodes: BTreeMap<_, _> = peers.into_iter().map(|p| (p.addr().ip(), p)).collect();
 
         if !self.opts.latency.is_empty() {
             // Configure latencies.
@@ -495,7 +465,7 @@ where
                                 remote,
                                 input: Input::Disconnected(
                                     remote,
-                                    nakamoto_net::DisconnectReason::ConnectionError(
+                                    DisconnectReason::ConnectionError(
                                         io::Error::from(io::ErrorKind::UnexpectedEof).into(),
                                     ),
                                 ),
@@ -553,7 +523,7 @@ where
                         remote: local_addr,
                         input: Input::Disconnected(
                             local_addr,
-                            nakamoto_net::DisconnectReason::ConnectionError(
+                            DisconnectReason::ConnectionError(
                                 io::Error::from(io::ErrorKind::UnexpectedEof).into(),
                             ),
                         ),

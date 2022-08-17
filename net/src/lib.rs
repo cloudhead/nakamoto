@@ -7,6 +7,7 @@ use crossbeam_channel as chan;
 
 pub mod error;
 pub mod event;
+pub mod simulator;
 pub mod time;
 
 pub use event::Publisher;
@@ -32,6 +33,9 @@ impl Link {
         *self == Link::Inbound
     }
 }
+
+// TODO: Do we need `Io::Write`, or should the reactor just call
+// `write` on every tick?
 
 /// Output of a state transition of the `Protocol` state machine.
 #[derive(Debug)]

@@ -1,6 +1,5 @@
 #![cfg(test)]
 pub mod peer;
-pub mod simulator;
 
 mod simulations;
 
@@ -22,7 +21,6 @@ use super::{
 use super::{PROTOCOL_VERSION, USER_AGENT};
 
 use peer::{Peer, PeerDummy};
-use simulator::{Options, Peer as _, Simulation};
 
 use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
 use nakamoto_common::bitcoin::network::message_filter::CFilter;
@@ -30,6 +28,7 @@ use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, GetCFHeaders,
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin_hashes::hex::FromHex;
 use nakamoto_common::block::time::Clock as _;
+use nakamoto_net::simulator::{Options, Peer as _, Simulation};
 use nakamoto_net::{Link, LocalDuration, LocalTime, Protocol as _};
 
 use quickcheck_macros::quickcheck;

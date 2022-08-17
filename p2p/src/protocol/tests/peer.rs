@@ -16,6 +16,7 @@ use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::KnownAddress;
 
+use nakamoto_net::simulator;
 use nakamoto_test::block::cache::model;
 
 pub struct PeerDummy {
