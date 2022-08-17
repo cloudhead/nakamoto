@@ -1,13 +1,14 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 #![allow(clippy::collapsible_if)]
-use super::*;
 
+use log::*;
 use nakamoto_common::collections::{HashMap, HashSet};
+use nakamoto_net::{DisconnectReason, Io, Link, LocalDuration, LocalTime, Protocol};
 
 use std::collections::BTreeMap;
 use std::collections::VecDeque;
-use std::fmt;
-use std::io;
+use std::ops::{Deref, DerefMut, Range};
+use std::{fmt, io, net};
 
 /// Minimum latency between peers.
 pub const MIN_LATENCY: LocalDuration = LocalDuration::from_millis(1);
@@ -19,9 +20,21 @@ const PORT: u16 = 8333;
 /// The simulator requires each peer to have a distinct IP address.
 type NodeId = std::net::IpAddr;
 
+/// A simulated peer. Protocol instances have to be wrapped in this type to be simulated.
+pub trait Peer<P>: Deref<Target = P> + DerefMut<Target = P> + 'static
+where
+    P: Protocol,
+{
+    /// Initialize the peer. This should at minimum initialize the protocol with the
+    /// current time.
+    fn init(&mut self);
+    /// Get the peer address.
+    fn addr(&self) -> net::SocketAddr;
+}
+
 /// Simulated protocol input.
 #[derive(Debug, Clone)]
-pub enum Input {
+pub enum Input<D> {
     /// Connection attempt underway.
     Connecting {
         /// Remote peer address.
@@ -30,33 +43,33 @@ pub enum Input {
     /// New connection with a peer.
     Connected {
         /// Remote peer id.
-        addr: PeerId,
+        addr: net::SocketAddr,
         /// Local peer id.
-        local_addr: PeerId,
+        local_addr: net::SocketAddr,
         /// Link direction.
         link: Link,
     },
     /// Disconnected from peer.
-    Disconnected(PeerId, nakamoto_net::DisconnectReason<DisconnectReason>),
+    Disconnected(net::SocketAddr, DisconnectReason<D>),
     /// Received a message from a remote peer.
-    Received(PeerId, Vec<u8>),
+    Received(net::SocketAddr, Vec<u8>),
     /// Used to advance the state machine after some wall time has passed.
-    Tock,
+    Wake,
 }
 
 /// A scheduled protocol input.
 #[derive(Debug, Clone)]
-pub struct Scheduled {
+pub struct Scheduled<D> {
     /// The node for which this input is scheduled.
     pub node: NodeId,
     /// The remote peer from which this input originates.
     /// If the input originates from the local node, this should be set to the zero address.
-    pub remote: PeerId,
+    pub remote: net::SocketAddr,
     /// The input being scheduled.
-    pub input: Input,
+    pub input: Input<D>,
 }
 
-impl fmt::Display for Scheduled {
+impl<D: fmt::Display> fmt::Display for Scheduled<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.input {
             Input::Received(from, bytes) => {
@@ -80,7 +93,7 @@ impl fmt::Display for Scheduled {
             Input::Disconnected(addr, reason) => {
                 write!(f, "{} =/= {}: Disconnected: {}", self.node, addr, reason)
             }
-            Input::Tock => {
+            Input::Wake => {
                 write!(f, "{}: Tock", self.node)
             }
         }
@@ -89,15 +102,15 @@ impl fmt::Display for Scheduled {
 
 /// Inbox of scheduled state machine inputs to be delivered to the simulated nodes.
 #[derive(Debug)]
-pub struct Inbox {
+pub struct Inbox<D> {
     /// The set of scheduled inputs. We use a `BTreeMap` to ensure inputs are always
     /// ordered by scheduled delivery time.
-    messages: BTreeMap<LocalTime, Scheduled>,
+    messages: BTreeMap<LocalTime, Scheduled<D>>,
 }
 
-impl Inbox {
+impl<D: Clone> Inbox<D> {
     /// Add a scheduled input to the inbox.
-    fn insert(&mut self, mut time: LocalTime, msg: Scheduled) {
+    fn insert(&mut self, mut time: LocalTime, msg: Scheduled<D>) {
         // Make sure we don't overwrite an existing message by using the same time slot.
         while self.messages.contains_key(&time) {
             time = time + MIN_LATENCY;
@@ -106,7 +119,7 @@ impl Inbox {
     }
 
     /// Get the next scheduled input to be delivered.
-    fn next(&mut self) -> Option<(LocalTime, Scheduled)> {
+    fn next(&mut self) -> Option<(LocalTime, Scheduled<D>)> {
         self.messages
             .iter()
             .next()
@@ -114,7 +127,7 @@ impl Inbox {
     }
 
     /// Get the last message sent between two peers. Only checks one direction.
-    fn last(&self, node: &NodeId, remote: &PeerId) -> Option<(&LocalTime, &Scheduled)> {
+    fn last(&self, node: &NodeId, remote: &net::SocketAddr) -> Option<(&LocalTime, &Scheduled<D>)> {
         self.messages
             .iter()
             .rev()
@@ -170,11 +183,14 @@ impl Default for Options {
 }
 
 /// A peer-to-peer node simulation.
-pub struct Simulation {
+pub struct Simulation<T>
+where
+    T: Protocol,
+{
     /// Inbox of inputs to be delivered by the simulation.
-    inbox: Inbox,
+    inbox: Inbox<T::DisconnectReason>,
     /// Priority events that should happen immediately.
-    priority: VecDeque<Scheduled>,
+    priority: VecDeque<Scheduled<T::DisconnectReason>>,
     /// Simulated latencies between nodes.
     latencies: HashMap<(NodeId, NodeId), LocalDuration>,
     /// Network partitions between two nodes.
@@ -193,7 +209,11 @@ pub struct Simulation {
     rng: fastrand::Rng,
 }
 
-impl Simulation {
+impl<T> Simulation<T>
+where
+    T: Protocol + 'static,
+    T::DisconnectReason: Clone,
+{
     /// Create a new simulation.
     pub fn new(time: LocalTime, rng: fastrand::Rng, opts: Options) -> Self {
         Self {
@@ -230,7 +250,7 @@ impl Simulation {
         self.inbox
             .messages
             .iter()
-            .all(|(_, s)| matches!(s.input, Input::Tock))
+            .all(|(_, s)| matches!(s.input, Input::Wake))
     }
 
     /// Get the latency between two nodes. The minimum latency between nodes is 1 millisecond.
@@ -259,22 +279,19 @@ impl Simulation {
     }
 
     /// Initialize peers.
-    pub fn initialize<'a>(&self, peers: impl IntoIterator<Item = &'a mut super::Peer<Protocol>>) {
+    pub fn initialize<'a, P: Peer<T>>(&self, peers: impl IntoIterator<Item = &'a mut P>) {
         for peer in peers.into_iter() {
-            peer.initialize();
+            peer.init();
         }
     }
 
     /// Process one scheduled input from the inbox, using the provided peers.
     /// This function should be called until it returns `false`, or some desired state is reached.
     /// Returns `true` if there are more messages to process.
-    pub fn step<'a>(
-        &mut self,
-        peers: impl IntoIterator<Item = &'a mut super::Peer<Protocol>>,
-    ) -> bool {
+    pub fn step<'a, P: Peer<T>>(&mut self, peers: impl IntoIterator<Item = &'a mut P>) -> bool {
         let mut nodes = HashMap::with_hasher(self.rng.clone().into());
         for peer in peers.into_iter() {
-            nodes.insert(peer.addr.ip(), peer);
+            nodes.insert(peer.addr().ip(), peer);
         }
 
         if !self.opts.latency.is_empty() {
@@ -294,7 +311,7 @@ impl Simulation {
         }
 
         // Create and heal partitions.
-        if self.time.block_time() % 10 == 0 {
+        if self.time.as_secs() % 10 == 0 {
             for (i, x) in nodes.keys().enumerate() {
                 for y in nodes.keys().skip(i + 1) {
                     if self.is_fallible() {
@@ -308,8 +325,10 @@ impl Simulation {
 
         // Schedule any messages in the pipes.
         for peer in nodes.values_mut() {
-            for o in peer.outbox.drain() {
-                self.schedule(&peer.addr.ip(), o, peer);
+            let ip = peer.addr().ip();
+
+            while let Some(o) = peer.next() {
+                self.schedule(&ip, o, peer.deref_mut());
             }
         }
         // Next high-priority message.
@@ -317,7 +336,7 @@ impl Simulation {
 
         if let Some((time, next)) = priority.or_else(|| self.inbox.next()) {
             let elapsed = (time - self.start_time).as_millis();
-            if matches!(next.input, Input::Tock) {
+            if matches!(next.input, Input::Wake) {
                 trace!(target: "sim", "{:05} {}", elapsed, next);
             } else {
                 // TODO: This can be confusing, since this event may not actually be passed to
@@ -333,12 +352,12 @@ impl Simulation {
             let Scheduled { input, node, .. } = next;
 
             if let Some(ref mut p) = nodes.get_mut(&node) {
-                p.protocol.tick(time);
+                p.tick(time);
 
                 match input {
                     Input::Connecting { addr } => {
                         if self.attempts.insert((node, addr.ip())) {
-                            p.protocol.attempted(&addr);
+                            p.attempted(&addr);
                         }
                     }
                     Input::Connected {
@@ -351,7 +370,7 @@ impl Simulation {
                         let attempted = link.is_outbound() && self.attempts.remove(&conn);
                         if attempted || link.is_inbound() {
                             if self.connections.insert(conn) {
-                                p.protocol.connected(addr, &local_addr, link);
+                                p.connected(addr, &local_addr, link);
                             }
                         }
                     }
@@ -364,15 +383,15 @@ impl Simulation {
                         assert!(!(attempt && connection));
 
                         if attempt || connection {
-                            p.protocol.disconnected(&addr, reason);
+                            p.disconnected(&addr, reason);
                         }
                     }
-                    Input::Tock => p.protocol.wake(),
+                    Input::Wake => p.wake(),
                     Input::Received(addr, msg) => {
-                        p.protocol.received_bytes(&addr, &msg);
+                        p.received_bytes(&addr, &msg);
                     }
                 }
-                for o in p.outbox.drain() {
+                while let Some(o) = p.next() {
                     self.schedule(&node, o, p);
                 }
             } else {
@@ -386,7 +405,12 @@ impl Simulation {
     }
 
     /// Process a protocol output event from a node.
-    pub fn schedule(&mut self, node: &NodeId, out: Io, protocol: &mut Protocol) {
+    pub fn schedule(
+        &mut self,
+        node: &NodeId,
+        out: Io<T::Event, T::DisconnectReason>,
+        protocol: &mut T,
+    ) {
         let node = *node;
 
         match out {
@@ -542,7 +566,7 @@ impl Simulation {
                 if !matches!(
                     self.inbox.messages.get(&time),
                     Some(Scheduled {
-                        input: Input::Tock,
+                        input: Input::Wake,
                         ..
                     })
                 ) {
@@ -552,7 +576,7 @@ impl Simulation {
                             node,
                             // The remote is not applicable for this type of output.
                             remote: ([0, 0, 0, 0], 0).into(),
-                            input: Input::Tock,
+                            input: Input::Wake,
                         },
                     );
                 }

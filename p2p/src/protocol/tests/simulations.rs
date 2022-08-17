@@ -30,7 +30,7 @@ pub fn connect_to_peers(
 
     let mut simulator = Simulation::new(time, rng, options);
 
-    alice.initialize();
+    alice.init();
     simulator.initialize(&mut peers);
 
     let (mut prev_negotiated, mut prev_connecting, mut prev_connected) = (0, 0, 0);

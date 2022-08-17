@@ -7,7 +7,7 @@ mod simulations;
 use std::io;
 use std::iter;
 use std::net;
-use std::ops::{Bound, Range};
+use std::ops::Bound;
 use std::sync::Arc;
 
 use log::*;
@@ -22,7 +22,7 @@ use super::{
 use super::{PROTOCOL_VERSION, USER_AGENT};
 
 use peer::{Peer, PeerDummy};
-use simulator::{Options, Simulation};
+use simulator::{Options, Peer as _, Simulation};
 
 use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
 use nakamoto_common::bitcoin::network::message_filter::CFilter;
@@ -348,7 +348,7 @@ fn test_handshake_version_timeout() {
 
     logger::init(Level::Debug);
 
-    peer.initialize();
+    peer.init();
 
     for link in &[Link::Outbound, Link::Inbound] {
         if link.is_outbound() {
@@ -379,7 +379,7 @@ fn test_handshake_verack_timeout() {
     let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
 
-    peer.initialize();
+    peer.init();
 
     for link in &[Link::Outbound, Link::Inbound] {
         if link.is_outbound() {
@@ -460,7 +460,7 @@ fn test_handshake_initial_messages() {
     let local = ([0, 0, 0, 0], 0).into();
 
     // Make sure the address manager trusts this remote address.
-    peer.initialize();
+    peer.init();
     peer.protocol.addrmgr.insert(
         std::iter::once((
             peer.local_time().block_time(),
@@ -682,7 +682,7 @@ fn prop_connect_timeout(seed: u64) {
         rng.clone(),
     );
 
-    alice.initialize();
+    alice.init();
 
     let result = alice
         .outputs()
@@ -1456,7 +1456,7 @@ fn test_block_events() {
     }
 
     alice.tick(LocalTime::from_block_time(headers.last().time));
-    alice.initialize();
+    alice.init();
     alice.command(Command::ImportHeaders(
         headers.tail.clone(),
         transmit.clone(),

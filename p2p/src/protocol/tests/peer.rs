@@ -73,6 +73,21 @@ pub struct Peer<P> {
     initialized: bool,
 }
 
+impl simulator::Peer<Protocol> for Peer<Protocol> {
+    fn init(&mut self) {
+        if !self.initialized {
+            info!(target: self.cfg.target, "Initializing: address = {}", self.addr);
+
+            self.initialized = true;
+            self.protocol.initialize(self.clock.local_time());
+        }
+    }
+
+    fn addr(&self) -> net::SocketAddr {
+        self.addr
+    }
+}
+
 impl<P> Deref for Peer<P> {
     type Target = P;
 
@@ -162,15 +177,6 @@ impl Peer<Protocol> {
         }
     }
 
-    pub fn initialize(&mut self) {
-        if !self.initialized {
-            info!(target: self.cfg.target, "Initializing: address = {}", self.addr);
-
-            self.initialized = true;
-            self.protocol.initialize(self.clock.local_time());
-        }
-    }
-
     pub fn tick(&mut self, local_time: LocalTime) {
         self.protocol.tick(local_time);
     }
@@ -235,7 +241,7 @@ impl Peer<Protocol> {
     }
 
     pub fn connect(&mut self, remote: &PeerDummy, link: Link) {
-        self.initialize();
+        <Self as simulator::Peer<Protocol>>::init(self);
 
         let local = self.addr;
         let rng = self.protocol.rng.clone();
