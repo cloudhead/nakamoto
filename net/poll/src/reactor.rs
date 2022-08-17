@@ -268,7 +268,7 @@ impl Reactor<net::TcpStream> {
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
-        for out in protocol.drain() {
+        while let Some(out) = protocol.next() {
             match out {
                 Io::Write(addr) => {
                     if let Some(source) = self.sources.get_mut(&Source::Peer(addr)) {

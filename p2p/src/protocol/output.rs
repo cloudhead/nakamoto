@@ -87,6 +87,15 @@ pub struct Outbox {
     target: &'static str,
 }
 
+impl Iterator for Outbox {
+    type Item = Io;
+
+    /// Get the next item in the outbound queue.
+    fn next(&mut self) -> Option<Io> {
+        self.outbound.borrow_mut().pop_front()
+    }
+}
+
 impl Outbox {
     /// Create a new channel.
     pub fn new(network: Network, version: u32, target: &'static str) -> Self {

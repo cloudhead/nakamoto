@@ -69,15 +69,13 @@ impl<T: fmt::Display> fmt::Display for DisconnectReason<T> {
 /// A protocol state-machine.
 ///
 /// Network protocols must implement this trait to be drivable by the reactor.
-pub trait Protocol {
+pub trait Protocol: Iterator<Item = Io<Self::Event, Self::DisconnectReason>> {
     /// Events emitted by the protocol.
     type Event: fmt::Debug;
     /// Reason a peer was disconnected.
     type DisconnectReason: fmt::Debug + fmt::Display;
     /// User commands handled by protocol.
     type Command;
-    /// Return type of [`Protocol::drain`].
-    type Drain: IntoIterator<Item = Io<Self::Event, Self::DisconnectReason>>;
 
     /// Initialize the protocol. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
@@ -112,12 +110,14 @@ pub trait Protocol {
     fn tick(&mut self, local_time: LocalTime);
     /// Used to advance the state machine after some timer rings.
     fn wake(&mut self);
-    /// Drain all protocol outputs since the last call.
-    fn drain(&mut self) -> Self::Drain;
     /// Write the peer's output buffer to the given writer.
     ///
     /// May return [`io::ErrorKind::WriteZero`] if it isn't able to write the entire buffer.
     fn write<W: io::Write>(&mut self, addr: &net::SocketAddr, writer: W) -> io::Result<()>;
+    /// Create a draining iterator over the protocol outputs.
+    fn drain(&mut self) -> Box<dyn Iterator<Item = Io<Self::Event, Self::DisconnectReason>> + '_> {
+        Box::new(std::iter::from_fn(|| self.next()))
+    }
 }
 
 /// Any network reactor that can drive the light-client protocol.

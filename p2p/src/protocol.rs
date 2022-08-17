@@ -812,12 +812,21 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protoco
     }
 }
 
+impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Iterator
+    for Protocol<T, F, P, C>
+{
+    type Item = output::Io;
+
+    fn next(&mut self) -> Option<output::Io> {
+        self.outbox.next()
+    }
+}
+
 impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> nakamoto_net::Protocol
     for Protocol<T, F, P, C>
 {
     type Event = Event;
     type DisconnectReason = DisconnectReason;
-    type Drain = output::Drain;
     type Command = Command;
 
     fn initialize(&mut self, time: LocalTime) {
@@ -1069,10 +1078,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> nakamot
 
             self.last_tick = local_time;
         }
-    }
-
-    fn drain(&mut self) -> output::Drain {
-        self.outbox.drain()
     }
 
     fn write<W: io::Write>(&mut self, addr: &net::SocketAddr, writer: W) -> io::Result<()> {
