@@ -34,14 +34,11 @@ impl Link {
     }
 }
 
-// TODO: Do we need `Io::Write`, or should the reactor just call
-// `write` on every tick?
-
 /// Output of a state transition of the `Protocol` state machine.
 #[derive(Debug)]
 pub enum Io<E, D> {
     /// There are some bytes ready to be sent to a peer.
-    Write(net::SocketAddr),
+    Write(net::SocketAddr, Vec<u8>),
     /// Connect to a peer.
     Connect(net::SocketAddr),
     /// Disconnect from a peer.
@@ -114,10 +111,6 @@ pub trait Protocol: Iterator<Item = Io<Self::Event, Self::DisconnectReason>> {
     fn tick(&mut self, local_time: LocalTime);
     /// Used to advance the state machine after some timer rings.
     fn wake(&mut self);
-    /// Write the peer's output buffer to the given writer.
-    ///
-    /// May return [`io::ErrorKind::WriteZero`] if it isn't able to write the entire buffer.
-    fn write<W: io::Write>(&mut self, addr: &net::SocketAddr, writer: W) -> io::Result<()>;
     /// Create a draining iterator over the protocol outputs.
     fn drain(&mut self) -> Box<dyn Iterator<Item = Io<Self::Event, Self::DisconnectReason>> + '_> {
         Box::new(std::iter::from_fn(|| self.next()))

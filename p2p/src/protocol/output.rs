@@ -6,10 +6,10 @@
 //! with specific capabilities, eg. peer disconnection, message sending etc. to
 //! communicate with the network.
 use log::*;
-use std::cell::RefCell;
-use std::collections::{HashMap, VecDeque};
+use std::cell::{Ref, RefCell};
+use std::collections::VecDeque;
+use std::net;
 use std::rc::Rc;
-use std::{io, net};
 
 pub use crossbeam_channel as chan;
 
@@ -79,8 +79,6 @@ pub struct Outbox {
     version: u32,
     /// Output queue.
     outbound: Rc<RefCell<VecDeque<Io>>>,
-    /// Message outbox.
-    outbox: Rc<RefCell<HashMap<PeerId, Vec<u8>>>>,
     /// Network message builder.
     builder: message::Builder,
     /// Log target.
@@ -102,7 +100,6 @@ impl Outbox {
         Self {
             version,
             outbound: Rc::new(RefCell::new(VecDeque::new())),
-            outbox: Rc::new(RefCell::new(HashMap::new())),
             builder: message::Builder::new(network),
             target,
         }
@@ -113,15 +110,6 @@ impl Outbox {
         self.outbound.borrow_mut().push_back(output);
     }
 
-    /// Unregister peer. Clears the outbox.
-    pub fn unregister(&mut self, peer: &PeerId) {
-        if let Some(outbox) = self.outbox.borrow_mut().remove(peer) {
-            if !outbox.is_empty() {
-                debug!(target: self.target, "{}: Dropping outbox with {} bytes", peer, outbox.len());
-            }
-        }
-    }
-
     /// Drain the outbound queue.
     pub fn drain(&mut self) -> Drain {
         Drain {
@@ -129,33 +117,19 @@ impl Outbox {
         }
     }
 
-    /// Write the peer's output buffer to the given writer.
-    pub fn write<W: io::Write>(&mut self, peer: &PeerId, mut writer: W) -> io::Result<()> {
-        if let Some(buf) = self.outbox.borrow_mut().get_mut(peer) {
-            while !buf.is_empty() {
-                match writer.write(buf) {
-                    Err(e) => return Err(e),
-
-                    Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
-                    Ok(n) => {
-                        buf.drain(..n);
-                    }
-                }
-            }
-        }
-        Ok(())
+    /// Get the outbound i/o queue.
+    pub fn outbound(&mut self) -> Ref<VecDeque<Io>> {
+        self.outbound.borrow()
     }
 
     /// Push a message to the channel.
     pub fn message(&mut self, addr: PeerId, message: NetworkMessage) -> &Self {
         debug!(target: self.target, "{}: Sending {:?}", addr, message.cmd());
 
-        let mut outbox = self.outbox.borrow_mut();
-        let buffer = outbox.entry(addr).or_insert_with(Vec::new);
-
+        let mut buffer = Vec::new();
         // Nb. writing to a vector cannot result in an error.
-        self.builder.write(message, buffer).ok();
-        self.push(Io::Write(addr));
+        self.builder.write(message, &mut buffer).ok();
+        self.push(Io::Write(addr, buffer));
         self
     }
 
@@ -424,20 +398,57 @@ pub mod test {
     use super::*;
     use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 
-    pub fn messages(
-        channel: &mut Outbox,
+    pub fn messages_from(
+        outbox: &mut Outbox,
         addr: &net::SocketAddr,
     ) -> impl Iterator<Item = NetworkMessage> {
-        let mut bytes = Vec::new();
         let mut stream = crate::stream::Decoder::new(2048);
         let mut msgs = Vec::new();
 
-        channel.write(addr, &mut bytes).unwrap();
-        stream.input(&bytes);
+        outbox.outbound.borrow_mut().retain(|o| match o {
+            Io::Write(a, bytes) if a == addr => {
+                stream.input(bytes);
+                false
+            }
+            _ => true,
+        });
 
         while let Some(msg) = stream.decode_next::<RawNetworkMessage>().unwrap() {
             msgs.push(msg.payload);
         }
         msgs.into_iter()
+    }
+
+    pub fn messages(
+        outbox: &mut Outbox,
+    ) -> impl Iterator<Item = (net::SocketAddr, NetworkMessage)> {
+        let mut stream = crate::stream::Decoder::new(2048);
+        let mut msgs = Vec::new();
+
+        outbox.outbound.borrow_mut().retain(|o| match o {
+            Io::Write(addr, bytes) => {
+                stream.input(bytes);
+
+                while let Some(msg) = stream.decode_next::<RawNetworkMessage>().unwrap() {
+                    msgs.push((*addr, msg.payload));
+                }
+                false
+            }
+            _ => true,
+        });
+        msgs.into_iter()
+    }
+
+    pub fn events(outbox: &mut Outbox) -> impl Iterator<Item = Event> {
+        let mut events = Vec::new();
+
+        outbox.outbound.borrow_mut().retain(|o| match o {
+            Io::Event(e) => {
+                events.push(e.clone());
+                false
+            }
+            _ => true,
+        });
+        events.into_iter()
     }
 }

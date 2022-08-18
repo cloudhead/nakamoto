@@ -1001,9 +1001,9 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::BITCOIN_HEADERS;
 
+    use crate::protocol;
     use crate::protocol::output::{self, Outbox};
     use crate::protocol::PROTOCOL_VERSION;
-    use crate::protocol::{self, Io};
 
     use super::*;
 
@@ -1114,9 +1114,9 @@ mod tests {
             data.windows(2).all(|w| w[0] <= w[1])
         }
 
-        pub fn events(outputs: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
+        pub fn events(outputs: impl Iterator<Item = protocol::Io>) -> impl Iterator<Item = Event> {
             outputs.filter_map(|o| match o {
-                Io::Event(protocol::Event::Filter(e)) => Some(e),
+                protocol::Io::Event(protocol::Event::Filter(e)) => Some(e),
                 _ => None,
             })
         }
@@ -1254,7 +1254,7 @@ mod tests {
             Link::Outbound,
             &tree,
         );
-        output::test::messages(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.upstream, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(_)))
             .unwrap();
     }
@@ -1315,7 +1315,7 @@ mod tests {
             Link::Outbound,
             &tree,
         );
-        output::test::messages(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.upstream, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFHeaders(_)))
             .unwrap();
 
@@ -1345,7 +1345,7 @@ mod tests {
             start_height: birth as u32,
             stop_hash: tip,
         };
-        output::test::messages(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.upstream, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(msg) if msg == &expected))
             .expect("Rescanning should trigger filters to be fetched");
     }
@@ -1389,7 +1389,7 @@ mod tests {
         assert!(cbfmgr.last_processed.is_none());
         assert_eq!(cbfmgr.rescan.current, birth);
 
-        output::test::messages(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.upstream, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(_)))
             .expect("`getcfilters` sent");
 
@@ -1423,7 +1423,7 @@ mod tests {
             start_height: current as u32,
             stop_hash,
         };
-        output::test::messages(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.upstream, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(msg) if msg == &expected))
             .expect("`getcfilters` sent");
 
@@ -1475,16 +1475,17 @@ mod tests {
         );
 
         let tip = chain.last();
+        let mut msgs = output::test::messages_from(&mut cbfmgr.upstream, &remote);
         let mut events = util::events(cbfmgr.upstream.drain());
+
         events
             .find(|e| {
                 matches!(e, Event::Syncing { start_height, stop_hash, .. }
-                               if (*start_height as usize) == (cfheader_height + 1)
-                               && stop_hash == &tip.block_hash())
+                    if (*start_height as usize) == (cfheader_height + 1)
+                    && stop_hash == &tip.block_hash())
             })
             .expect("syncing event emitted");
 
-        let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
         msgs.find(|m| {
             matches!(
                 m,
@@ -1560,7 +1561,6 @@ mod tests {
 
         // 4. Make sure there's nothing in the outbox.
         cbfmgr.upstream.drain().for_each(drop);
-        cbfmgr.upstream.unregister(&remote);
 
         // 5. Trigger a rescan for the new range 7 to 9
         let matched = cbfmgr.rescan(
@@ -1580,7 +1580,7 @@ mod tests {
         );
         // TODO: Test that there are no other requests.
         assert_matches!(
-            output::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
+            output::test::messages_from(&mut cbfmgr.upstream, &remote).next().unwrap(),
             NetworkMessage::GetCFilters(GetCFilters {
                 start_height,
                 stop_hash,
@@ -1638,7 +1638,6 @@ mod tests {
 
         // 4. Make sure there's nothing in the outbox.
         cbfmgr.upstream.drain().for_each(drop);
-        cbfmgr.upstream.unregister(&remote);
 
         // 5. Trigger a rescan for the new range 6 to 8.
         // Nothing should be matched yet, since we don't have filter #6.
@@ -1654,7 +1653,7 @@ mod tests {
         let missing = &chain[expected_request as usize];
 
         assert_matches!(
-            output::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
+            output::test::messages_from(&mut cbfmgr.upstream, &remote).next().unwrap(),
             NetworkMessage::GetCFilters(GetCFilters {
                 start_height,
                 stop_hash,
@@ -1766,7 +1765,6 @@ mod tests {
 
         // 4. Make sure there's nothing in the outbox.
         cbfmgr.upstream.drain().for_each(drop);
-        cbfmgr.upstream.unregister(&remote);
 
         // 5. Trigger a rescan for the new range 7 to 9
         let matched = cbfmgr.rescan(
@@ -1777,7 +1775,7 @@ mod tests {
         );
         assert_eq!(matched, vec![]);
 
-        let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
+        let mut msgs = output::test::messages_from(&mut cbfmgr.upstream, &remote);
 
         // TODO: Test that there are no other requests.
         for expected in expected_requests {
@@ -1839,17 +1837,13 @@ mod tests {
         }
         // Drain the message queue so we can check what is coming from the next rescan.
         cbfmgr.upstream.drain().for_each(drop);
-        cbfmgr.upstream.unregister(&remote);
 
         // 2. Request range 5 to 9.
         let matched = cbfmgr.rescan(Bound::Included(5), Bound::Included(9), watch, &tree);
         assert!(matched.is_empty());
 
-        let mut events = util::events(cbfmgr.upstream.drain())
-            .filter(|e| matches!(e, Event::FilterProcessed { .. }));
-
         // 3. Check for requests only on the heights not in the cache.
-        let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
+        let mut msgs = output::test::messages_from(&mut cbfmgr.upstream, &remote);
         for height in [5, 7, 9] {
             assert_matches!(
                 msgs.next(),
@@ -1864,6 +1858,9 @@ mod tests {
         for msg in util::cfilters([&chain[5], &chain[7], &chain[9]].into_iter()) {
             cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
+
+        let mut events = util::events(cbfmgr.upstream.drain())
+            .filter(|e| matches!(e, Event::FilterProcessed { .. }));
 
         // 5. Check for processed filters, some from the network and some from the cache.
         for (h, c) in [(5, false), (6, true), (7, false), (8, true), (9, false)] {
@@ -2013,7 +2010,6 @@ mod tests {
             }
             assert_eq!(cbfmgr.rescan.current, sync_height + 1);
             cbfmgr.upstream.drain().for_each(drop);
-            cbfmgr.upstream.unregister(&remote);
 
             // ... Create a fork ...
 
@@ -2060,7 +2056,7 @@ mod tests {
 
             // Check that filter headers are requested.
             assert_matches!(
-                output::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
+                output::test::messages_from(&mut cbfmgr.upstream, &remote).next().unwrap(),
                 NetworkMessage::GetCFHeaders(GetCFHeaders {
                     start_height,
                     stop_hash,
@@ -2079,7 +2075,7 @@ mod tests {
             // Check that corresponding filters are requested within the scope of the
             // current rescan.
             assert_matches!(
-                output::test::messages(&mut cbfmgr.upstream, &remote).next().unwrap(),
+                output::test::messages_from(&mut cbfmgr.upstream, &remote).next().unwrap(),
                 NetworkMessage::GetCFilters(GetCFilters {
                     start_height,
                     stop_hash,
@@ -2124,7 +2120,7 @@ mod tests {
         );
         cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
 
-        let mut msgs = output::test::messages(&mut cbfmgr.upstream, &remote);
+        let mut msgs = output::test::messages_from(&mut cbfmgr.upstream, &remote);
         let mut events = util::events(cbfmgr.upstream.drain());
 
         msgs.find(|m| {
@@ -2162,7 +2158,7 @@ mod tests {
 
         assert_eq!(height, best, "The new height is the best height");
 
-        output::test::messages(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.upstream, &remote)
             .find(|m| {
                 // If the birth height is `0`, we've already requested the filter, so start at `1`.
                 let start = if birth == 0 { 1 } else { birth };

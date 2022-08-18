@@ -13,6 +13,7 @@ pub struct Socket<R: Read + Write> {
     pub address: net::SocketAddr,
     pub link: Link,
 
+    buffer: Vec<u8>,
     raw: R,
 }
 
@@ -31,22 +32,35 @@ impl Socket<net::TcpStream> {
 impl<R: Read + Write> Socket<R> {
     /// Create a new socket from a `io::Read` and an address pair.
     pub fn from(raw: R, address: net::SocketAddr, link: Link) -> Self {
-        Self { raw, link, address }
+        Self {
+            raw,
+            link,
+            address,
+            buffer: Vec::with_capacity(1024),
+        }
     }
 
     pub fn read(&mut self, buf: &mut [u8]) -> Result<usize, io::Error> {
         self.raw.read(buf)
     }
-}
 
-impl<R: Read + Write> io::Write for &mut Socket<R> {
-    fn write(&mut self, bytes: &[u8]) -> Result<usize, io::Error> {
-        fallible! { io::Error::from(io::ErrorKind::Other) };
-
-        self.raw.write(bytes)
+    pub fn push(&mut self, bytes: &[u8]) {
+        self.buffer.extend_from_slice(bytes);
     }
 
-    fn flush(&mut self) -> io::Result<()> {
+    pub fn flush(&mut self) -> io::Result<()> {
+        fallible! { io::Error::from(io::ErrorKind::Other) };
+
+        while !self.buffer.is_empty() {
+            match self.raw.write(&self.buffer) {
+                Err(e) => return Err(e),
+
+                Ok(0) => return Err(io::Error::from(io::ErrorKind::WriteZero)),
+                Ok(n) => {
+                    self.buffer.drain(..n);
+                }
+            }
+        }
         self.raw.flush()
     }
 }

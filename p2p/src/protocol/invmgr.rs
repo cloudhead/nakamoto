@@ -649,40 +649,28 @@ mod tests {
             invmgr.received_wake(&tree);
             assert!(!invmgr.remaining.is_empty());
 
-            if let Some(addr) = upstream
-                .drain()
-                .filter_map(|o| {
-                    if let Io::Write(addr) = o {
-                        Some(addr)
-                    } else {
-                        None
-                    }
-                })
-                .next()
+            if let Some((addr, _)) = output::test::messages(&mut upstream)
+                .find(|(_, m)| matches!(m, NetworkMessage::GetData(i) if i == &inv))
             {
-                if output::test::messages(&mut upstream, &addr)
-                    .any(|m| matches!(m, NetworkMessage::GetData(i) if i == inv))
-                {
-                    assert!(
-                        clock.local_time() - last_request >= REQUEST_TIMEOUT,
-                        "Requests are never made within the request timeout"
-                    );
-                    last_request = clock.local_time();
+                assert!(
+                    clock.local_time() - last_request >= REQUEST_TIMEOUT,
+                    "Requests are never made within the request timeout"
+                );
+                last_request = clock.local_time();
 
-                    requested.insert(addr);
-                    if requested.len() < invmgr.peers.len() {
-                        // We're not done until we've requested all peers.
-                        continue;
-                    }
-                    invmgr.received_block(&addr, block.clone(), &tree);
-
-                    assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
-                    events(upstream.drain())
-                        .find(|e| matches!(e, Event::BlockReceived { .. }))
-                        .expect("An event is emitted when a block is received");
-
-                    break;
+                requested.insert(addr);
+                if requested.len() < invmgr.peers.len() {
+                    // We're not done until we've requested all peers.
+                    continue;
                 }
+                invmgr.received_block(&addr, block.clone(), &tree);
+
+                assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
+                events(upstream.drain())
+                    .find(|e| matches!(e, Event::BlockReceived { .. }))
+                    .expect("An event is emitted when a block is received");
+
+                break;
             }
         }
         clock.elapse(REQUEST_TIMEOUT);
@@ -690,7 +678,7 @@ mod tests {
         assert_eq!(
             upstream
                 .drain()
-                .filter(|o| matches!(o, Io::Write(_)))
+                .filter(|o| matches!(o, Io::Write(_, _)))
                 .count(),
             0,
             "No more requests are sent"
@@ -714,14 +702,13 @@ mod tests {
         invmgr.announce(tx);
         invmgr.received_wake(&tree);
 
-        upstream.drain().for_each(drop);
-
         assert_eq!(
-            output::test::messages(&mut upstream, &remote)
+            output::test::messages_from(&mut upstream, &remote)
                 .filter(|m| matches!(m, NetworkMessage::Inv(_)))
                 .count(),
             1
         );
+        upstream.drain().for_each(drop);
 
         invmgr.received_wake(&tree);
         assert_eq!(upstream.drain().count(), 0, "Timeout hasn't lapsed");
@@ -729,12 +716,12 @@ mod tests {
         clock.elapse(REBROADCAST_TIMEOUT);
 
         invmgr.received_wake(&tree);
-        assert!(upstream.drain().count() > 0, "Timeout has lapsed");
         assert_eq!(
-            output::test::messages(&mut upstream, &remote)
+            output::test::messages_from(&mut upstream, &remote)
                 .filter(|m| matches!(m, NetworkMessage::Inv(_)))
                 .count(),
-            1
+            1,
+            "Timeout has lapsed",
         );
     }
 
@@ -758,7 +745,7 @@ mod tests {
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
             invmgr.received_wake(&tree);
-            output::test::messages(&mut upstream, &remote)
+            output::test::messages_from(&mut upstream, &remote)
                 .find(|m| matches!(m, NetworkMessage::Inv(_),))
                 .expect("Inventory is announced");
 
@@ -868,7 +855,7 @@ mod tests {
         invmgr.announce(tx);
 
         invmgr.received_wake(&tree);
-        let invs = output::test::messages(&mut upstream, &remote)
+        let invs = output::test::messages_from(&mut upstream, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Inv(invs) = m {
                     Some(invs)
@@ -882,7 +869,7 @@ mod tests {
 
         invmgr.peer_negotiated(remote2.into(), ServiceFlags::NETWORK, true, false);
         invmgr.received_wake(&tree);
-        let invs = output::test::messages(&mut upstream, &remote2)
+        let invs = output::test::messages_from(&mut upstream, &remote2)
             .filter_map(|m| match m {
                 NetworkMessage::Inv(invs) => Some(invs),
                 _ => None,
@@ -908,7 +895,7 @@ mod tests {
         invmgr.announce(tx.clone());
 
         invmgr.received_getdata(remote, &[Inventory::Transaction(tx.txid())]);
-        let tr = output::test::messages(&mut upstream, &remote)
+        let tr = output::test::messages_from(&mut upstream, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)
@@ -921,7 +908,7 @@ mod tests {
         assert_eq!(tr.txid(), tx.txid());
 
         invmgr.received_getdata(remote, &[Inventory::WTx(tx.wtxid())]);
-        let tr = output::test::messages(&mut upstream, &remote)
+        let tr = output::test::messages_from(&mut upstream, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)

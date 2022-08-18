@@ -297,8 +297,8 @@ where
         for peer in nodes.values_mut() {
             let ip = peer.addr().ip();
 
-            while let Some(o) = peer.next() {
-                self.schedule(&ip, o, peer.deref_mut());
+            for o in peer.by_ref() {
+                self.schedule(&ip, o);
             }
         }
         // Next high-priority message.
@@ -361,8 +361,8 @@ where
                         p.received_bytes(&addr, &msg);
                     }
                 }
-                while let Some(o) = p.next() {
-                    self.schedule(&node, o, p);
+                for o in p.by_ref() {
+                    self.schedule(&node, o);
                 }
             } else {
                 panic!(
@@ -375,21 +375,11 @@ where
     }
 
     /// Process a protocol output event from a node.
-    pub fn schedule(
-        &mut self,
-        node: &NodeId,
-        out: Io<T::Event, T::DisconnectReason>,
-        protocol: &mut T,
-    ) {
+    pub fn schedule(&mut self, node: &NodeId, out: Io<T::Event, T::DisconnectReason>) {
         let node = *node;
 
         match out {
-            Io::Write(receiver) => {
-                let mut msg = Vec::new();
-
-                // Always drain the protocol output buffer.
-                protocol.write(&receiver, &mut msg).unwrap();
-
+            Io::Write(receiver, msg) => {
                 if msg.is_empty() {
                     return;
                 }

@@ -221,6 +221,8 @@ impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
                                 }
                                 popol::Waker::reset(ev.source).ok();
 
+                                // Nb. This assert has triggered once, but I wasn't available
+                                // to reproduce it.
                                 debug_assert!(!commands.is_empty());
 
                                 for cmd in commands.try_iter() {
@@ -270,9 +272,12 @@ impl Reactor<net::TcpStream> {
         // disconnected.
         while let Some(out) = protocol.next() {
             match out {
-                Io::Write(addr) => {
-                    if let Some(source) = self.sources.get_mut(&Source::Peer(addr)) {
-                        source.set(popol::interest::WRITE);
+                Io::Write(addr, bytes) => {
+                    if let Some(socket) = self.peers.get_mut(&addr) {
+                        if let Some(source) = self.sources.get_mut(&Source::Peer(addr)) {
+                            socket.push(&bytes);
+                            source.set(popol::interest::WRITE);
+                        }
                     }
                 }
                 Io::Connect(addr) => {
@@ -390,7 +395,7 @@ impl Reactor<net::TcpStream> {
         trace!("{}: Socket is writable", addr);
 
         let source = self.sources.get_mut(source).unwrap();
-        let mut socket = self.peers.get_mut(addr).unwrap();
+        let socket = self.peers.get_mut(addr).unwrap();
 
         // "A file descriptor for a socket that is connecting asynchronously shall indicate
         // that it is ready for writing, once a connection has been established."
@@ -403,7 +408,7 @@ impl Reactor<net::TcpStream> {
             protocol.connected(socket.address, &local_addr, socket.link);
         }
 
-        match protocol.write(addr, &mut socket) {
+        match socket.flush() {
             // In this case, we've written all the data, we
             // are no longer interested in writing to this
             // socket.

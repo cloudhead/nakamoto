@@ -41,9 +41,9 @@ pub use output::Io;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::{self, Debug};
+use std::net;
 use std::ops::{Bound, RangeInclusive};
 use std::sync::Arc;
-use std::{io, net};
 
 use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
 use nakamoto_common::bitcoin::consensus::encode;
@@ -869,8 +869,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> nakamot
         self.peermgr
             .peer_disconnected(addr, &mut self.addrmgr, reason);
         self.invmgr.peer_disconnected(addr);
-
-        self.outbox.unregister(addr);
     }
 
     fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]) {
@@ -1078,9 +1076,5 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> nakamot
 
             self.last_tick = local_time;
         }
-    }
-
-    fn write<W: io::Write>(&mut self, addr: &net::SocketAddr, writer: W) -> io::Result<()> {
-        self.outbox.write(addr, writer)
     }
 }

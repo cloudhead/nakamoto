@@ -218,7 +218,7 @@ impl Peer<Protocol> {
         &mut self,
         addr: &net::SocketAddr,
     ) -> impl Iterator<Item = NetworkMessage> + '_ {
-        crate::protocol::output::test::messages(&mut self.protocol.outbox, addr)
+        crate::protocol::output::test::messages_from(&mut self.protocol.outbox, addr)
     }
 
     pub fn events(&mut self) -> impl Iterator<Item = Event> + '_ {
