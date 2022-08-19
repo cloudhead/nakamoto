@@ -259,12 +259,30 @@ where
         self
     }
 
+    /// Run the simulation while the given predicate holds.
+    pub fn run_while<'a, P: Peer<T>>(
+        &mut self,
+        peers: impl IntoIterator<Item = &'a mut P>,
+        pred: impl Fn(&Self) -> bool,
+    ) {
+        let mut nodes: BTreeMap<_, _> = peers.into_iter().map(|p| (p.addr().ip(), p)).collect();
+
+        while self.step_(&mut nodes) {
+            if !pred(self) {
+                break;
+            }
+        }
+    }
+
     /// Process one scheduled input from the inbox, using the provided peers.
     /// This function should be called until it returns `false`, or some desired state is reached.
     /// Returns `true` if there are more messages to process.
     pub fn step<'a, P: Peer<T>>(&mut self, peers: impl IntoIterator<Item = &'a mut P>) -> bool {
         let mut nodes: BTreeMap<_, _> = peers.into_iter().map(|p| (p.addr().ip(), p)).collect();
+        self.step_(&mut nodes)
+    }
 
+    fn step_<P: Peer<T>>(&mut self, nodes: &mut BTreeMap<NodeId, &mut P>) -> bool {
         if !self.opts.latency.is_empty() {
             // Configure latencies.
             for (i, from) in nodes.keys().enumerate() {
@@ -515,7 +533,7 @@ where
                         input: Input::Disconnected(
                             local_addr,
                             DisconnectReason::ConnectionError(
-                                io::Error::from(io::ErrorKind::UnexpectedEof).into(),
+                                io::Error::from(io::ErrorKind::ConnectionReset).into(),
                             ),
                         ),
                     },
