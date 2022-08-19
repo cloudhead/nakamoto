@@ -21,7 +21,6 @@ use nakamoto_common::bitcoin::network::message_filter::{
 };
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 use nakamoto_common::bitcoin::Transaction;
-
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
@@ -161,7 +160,7 @@ pub trait Disconnect {
 impl Disconnect for Outbox {
     fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason) {
         debug!(target: self.target, "{}: Disconnecting: {}", addr, reason);
-        self.push(Io::Disconnect(addr, reason.into()));
+        self.push(Io::Disconnect(addr, reason));
     }
 }
 

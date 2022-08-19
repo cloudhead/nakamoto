@@ -185,7 +185,7 @@ where
 impl<T> Simulation<T>
 where
     T: Protocol + 'static,
-    T::DisconnectReason: Clone,
+    T::DisconnectReason: Clone + Into<DisconnectReason<T::DisconnectReason>>,
 {
     /// Create a new simulation.
     pub fn new(time: LocalTime, rng: fastrand::Rng, opts: Options) -> Self {
@@ -503,7 +503,7 @@ where
                 self.priority.push_back(Scheduled {
                     remote,
                     node,
-                    input: Input::Disconnected(remote, reason),
+                    input: Input::Disconnected(remote, reason.into()),
                 });
                 // The remote node receives the disconnection with some delay.
                 self.inbox.insert(

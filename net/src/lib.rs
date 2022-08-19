@@ -42,7 +42,7 @@ pub enum Io<E, D> {
     /// Connect to a peer.
     Connect(net::SocketAddr),
     /// Disconnect from a peer.
-    Disconnect(net::SocketAddr, DisconnectReason<D>),
+    Disconnect(net::SocketAddr, D),
     /// Ask for a wakeup in a specified amount of time.
     Wakeup(LocalDuration),
     /// Emit an event.
@@ -74,7 +74,9 @@ pub trait Protocol: Iterator<Item = Io<Self::Event, Self::DisconnectReason>> {
     /// Events emitted by the protocol.
     type Event: fmt::Debug;
     /// Reason a peer was disconnected.
-    type DisconnectReason: fmt::Debug + fmt::Display;
+    type DisconnectReason: fmt::Debug
+        + fmt::Display
+        + Into<DisconnectReason<Self::DisconnectReason>>;
     /// User commands handled by protocol.
     type Command;
 
@@ -132,13 +134,17 @@ pub trait Reactor {
         Self: Sized;
 
     /// Run the given protocol state machine with the reactor.
-    fn run<P: Protocol, E: Publisher<P::Event>>(
+    fn run<P, E>(
         &mut self,
         listen_addrs: &[net::SocketAddr],
         protocol: P,
         publisher: E,
         commands: chan::Receiver<P::Command>,
-    ) -> Result<(), error::Error>;
+    ) -> Result<(), error::Error>
+    where
+        P: Protocol,
+        P::DisconnectReason: Into<DisconnectReason<P::DisconnectReason>>,
+        E: Publisher<P::Event>;
 
     /// Used to wake certain types of reactors.
     fn wake(waker: &Self::Waker) -> io::Result<()>;

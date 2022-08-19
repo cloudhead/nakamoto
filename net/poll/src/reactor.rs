@@ -112,6 +112,7 @@ impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
     ) -> Result<(), Error>
     where
         P: Protocol,
+        P::DisconnectReason: Into<DisconnectReason<P::DisconnectReason>>,
         E: Publisher<P::Event>,
     {
         let listener = if listen_addrs.is_empty() {
@@ -267,6 +268,7 @@ impl Reactor<net::TcpStream> {
     where
         P: Protocol,
         E: Publisher<P::Event>,
+        P::DisconnectReason: Into<DisconnectReason<P::DisconnectReason>>,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
@@ -316,7 +318,7 @@ impl Reactor<net::TcpStream> {
                         // possible errors relate to an invalid file descriptor.
                         peer.disconnect().ok();
 
-                        self.unregister_peer(addr, reason, protocol);
+                        self.unregister_peer(addr, reason.into(), protocol);
                     }
                 }
                 Io::Wakeup(timeout) => {

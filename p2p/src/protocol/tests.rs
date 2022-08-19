@@ -157,7 +157,7 @@ fn test_idle_disconnect() {
     peer.elapse(pingmgr::PING_TIMEOUT);
     // Peer now decides to disconnect remote.
     peer.outputs()
-        .find(|o| matches!(o, Io::Disconnect(addr, nakamoto_net::DisconnectReason::Protocol(DisconnectReason::PeerTimeout("ping"))) if addr == &remote))
+        .find(|o| matches!(o, Io::Disconnect(addr, DisconnectReason::PeerTimeout("ping")) if addr == &remote))
         .expect("peer disconnects remote");
 }
 
@@ -201,7 +201,7 @@ fn test_bad_magic() {
     );
 
     peer.outputs()
-        .find(|o| matches!(o, Io::Disconnect(addr, nakamoto_net::DisconnectReason::Protocol(DisconnectReason::PeerMagic(999))) if addr == &remote))
+        .find(|o| matches!(o, Io::Disconnect(addr, DisconnectReason::PeerMagic(999)) if addr == &remote))
         .expect("peer should be disconnected");
 }
 
@@ -361,9 +361,7 @@ fn test_handshake_version_timeout() {
         peer.elapse(peermgr::HANDSHAKE_TIMEOUT);
         peer.outputs()
             .find(|o| {
-                matches!(o, Io::Disconnect(a, nakamoto_net::DisconnectReason::Protocol(
-                    DisconnectReason::PeerTimeout("handshake")
-                )) if a == &remote)
+                matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout("handshake")) if a == &remote)
             })
             .expect("peer should disconnect when no `version` is received");
 
@@ -396,9 +394,7 @@ fn test_handshake_verack_timeout() {
         peer.elapse(LocalDuration::from_secs(60));
         peer.outputs()
             .find(|o| {
-                matches!(dbg!(o), Io::Disconnect(a, nakamoto_net::DisconnectReason::Protocol(
-                    DisconnectReason::PeerTimeout("handshake")
-                )) if a == &remote.addr)
+                matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout("handshake")) if a == &remote.addr)
             })
             .expect("peer should disconnect if no `verack` is received");
 
