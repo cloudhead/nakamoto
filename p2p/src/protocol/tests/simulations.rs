@@ -27,13 +27,11 @@ pub fn connect_to_peers(
         .collect::<Vec<_>>();
     let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, addrs, rng.clone());
     alice.protocol.peermgr.config.target_outbound_peers = target;
-
-    let mut simulator = Simulation::new(time, rng, options);
-
     alice.init();
-    simulator.initialize(&mut peers);
 
+    let mut simulator = Simulation::new(time, rng, options).initialize(&mut peers);
     let (mut prev_negotiated, mut prev_connecting, mut prev_connected) = (0, 0, 0);
+
     while simulator.step(iter::once(&mut alice).chain(&mut peers)) {
         let negotiated = alice.protocol.peermgr.negotiated(Link::Outbound).count();
         let connecting = alice.protocol.peermgr.connecting().count();

@@ -252,10 +252,11 @@ where
     }
 
     /// Initialize peers.
-    pub fn initialize<'a, P: Peer<T>>(&self, peers: impl IntoIterator<Item = &'a mut P>) {
+    pub fn initialize<'a, P: Peer<T>>(self, peers: impl IntoIterator<Item = &'a mut P>) -> Self {
         for peer in peers.into_iter() {
             peer.init();
         }
+        self
     }
 
     /// Process one scheduled input from the inbox, using the provided peers.

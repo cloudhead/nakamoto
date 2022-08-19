@@ -127,8 +127,8 @@ fn test_initial_sync() {
 
     alice.command(Command::Connect(bob.addr));
 
-    let mut simulation = Simulation::new(time, rng, Options::default());
-    simulation.initialize([&mut alice, &mut bob]);
+    let mut simulation =
+        Simulation::new(time, rng, Options::default()).initialize([&mut alice, &mut bob]);
 
     while simulation.step([&mut alice, &mut bob]) {
         if alice.protocol.tree.height() == height as Height {
