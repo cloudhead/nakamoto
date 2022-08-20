@@ -52,16 +52,31 @@ pub enum Io<E, D> {
 /// Disconnect reason.
 #[derive(Debug, Clone)]
 pub enum DisconnectReason<T> {
-    /// Error with the underlying connection.
+    /// Error while dialing the remote. This error occures before a connection is
+    /// even established. Errors of this kind are usually not transient.
+    DialError(Arc<std::io::Error>),
+    /// Error with an underlying established connection. Sometimes, reconnecting
+    /// after such an error is possible.
     ConnectionError(Arc<std::io::Error>),
     /// Peer was disconnected for another reason.
     Protocol(T),
 }
 
+impl<T> DisconnectReason<T> {
+    pub fn is_dial_err(&self) -> bool {
+        matches!(self, Self::DialError(_))
+    }
+
+    pub fn is_connection_err(&self) -> bool {
+        matches!(self, Self::ConnectionError(_))
+    }
+}
+
 impl<T: fmt::Display> fmt::Display for DisconnectReason<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::ConnectionError(err) => write!(f, "connection error: {}", err),
+            Self::DialError(err) => write!(f, "{}", err),
+            Self::ConnectionError(err) => write!(f, "{}", err),
             Self::Protocol(reason) => write!(f, "{}", reason),
         }
     }

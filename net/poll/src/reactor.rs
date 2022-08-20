@@ -299,12 +299,10 @@ impl Reactor<net::TcpStream> {
                             // this socket.
                         }
                         Err(err) => {
-                            error!("{}: Connection error: {}", addr, err.to_string());
+                            error!("{}: Dial error: {}", addr, err.to_string());
 
-                            protocol.disconnected(
-                                &addr,
-                                DisconnectReason::ConnectionError(Arc::new(err)),
-                            );
+                            protocol
+                                .disconnected(&addr, DisconnectReason::DialError(Arc::new(err)));
                         }
                     }
                 }
