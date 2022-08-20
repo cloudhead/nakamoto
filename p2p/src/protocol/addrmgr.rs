@@ -301,6 +301,8 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events, C: Clock> AddressManager<P, U
                 if !r.is_transient() {
                     self.ban(&addr.ip());
                 }
+            } else if reason.is_dial_err() {
+                self.ban(&addr.ip());
             }
         }
     }
