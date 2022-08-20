@@ -356,9 +356,9 @@ impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManage
 
         #[cfg(debug_assertions)]
         if link.is_outbound() {
-            debug_assert!(self.is_connecting(&addr))
+            debug_assert!(self.is_connecting(&addr), "{} is not connecting", addr)
         }
-        debug_assert!(!self.is_connected(&addr));
+        debug_assert!(!self.is_connected(&addr), "{} is already connected", addr);
 
         // TODO: There is a chance that we simultaneously connect to a peer that is connecting
         // to us. This would create two connections to the same peer, one outbound and one

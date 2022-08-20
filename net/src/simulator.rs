@@ -14,9 +14,6 @@ pub mod arbitrary;
 /// Minimum latency between peers.
 pub const MIN_LATENCY: LocalDuration = LocalDuration::from_millis(1);
 
-/// Port used for all nodes.
-const PORT: u16 = 8333;
-
 /// Identifier for a simulated node/peer.
 /// The simulator requires each peer to have a distinct IP address.
 type NodeId = std::net::IpAddr;
@@ -169,7 +166,7 @@ where
     /// Network partitions between two nodes.
     partitions: BTreeSet<(NodeId, NodeId)>,
     /// Set of existing connections between nodes.
-    connections: BTreeSet<(NodeId, NodeId)>,
+    connections: BTreeMap<(NodeId, NodeId), u16>,
     /// Set of connection attempts.
     attempts: BTreeSet<(NodeId, NodeId)>,
     /// Simulation options.
@@ -196,7 +193,7 @@ where
             priority: VecDeque::new(),
             partitions: BTreeSet::new(),
             latencies: BTreeMap::new(),
-            connections: BTreeSet::new(),
+            connections: BTreeMap::new(),
             attempts: BTreeSet::new(),
             opts,
             start_time: time,
@@ -300,6 +297,10 @@ where
         }
 
         // Create and heal partitions.
+        // TODO: These aren't really "network" partitions, as they are only
+        // between individual nodes. We need to think about more realistic
+        // scenarios. We should also think about creating various network
+        // topologies.
         if self.time.as_secs() % 10 == 0 {
             for (i, x) in nodes.keys().enumerate() {
                 for y in nodes.keys().skip(i + 1) {
@@ -358,7 +359,7 @@ where
 
                         let attempted = link.is_outbound() && self.attempts.remove(&conn);
                         if attempted || link.is_inbound() {
-                            if self.connections.insert(conn) {
+                            if self.connections.insert(conn, local_addr.port()).is_none() {
                                 p.connected(addr, &local_addr, link);
                             }
                         }
@@ -366,7 +367,7 @@ where
                     Input::Disconnected(addr, reason) => {
                         let conn = (node, addr.ip());
                         let attempt = self.attempts.remove(&conn);
-                        let connection = self.connections.remove(&conn);
+                        let connection = self.connections.remove(&conn).is_some();
 
                         // Can't be both attempting and connected.
                         assert!(!(attempt && connection));
@@ -404,11 +405,13 @@ where
                 }
                 // If the other end has disconnected the sender with some latency, there may not be
                 // a connection remaining to use.
-                if !self.connections.contains(&(node, receiver.ip())) {
+                let port = if let Some(port) = self.connections.get(&(node, receiver.ip())) {
+                    *port
+                } else {
                     return;
-                }
+                };
 
-                let sender: net::SocketAddr = (node, PORT).into();
+                let sender: net::SocketAddr = (node, port).into();
                 if self.is_partitioned(sender.ip(), receiver.ip()) {
                     // Drop message if nodes are partitioned.
                     info!(
@@ -449,7 +452,7 @@ where
                 assert!(remote.ip() != node, "self-connections are not allowed");
 
                 // Create an ephemeral sockaddr for the connecting (local) node.
-                let local_addr: net::SocketAddr = net::SocketAddr::new(node, PORT);
+                let local_addr: net::SocketAddr = net::SocketAddr::new(node, self.rng.u16(8192..));
                 let latency = self.latency(node, remote.ip());
 
                 self.inbox.insert(
@@ -512,18 +515,28 @@ where
                 );
             }
             Io::Disconnect(remote, reason) => {
-                // Nb. It's possible for disconnects to happen simultaneously from both ends, hence
-                // it can be that a node will try to disconnect a remote that is already
-                // disconnected from the other side.
-                let local_addr: net::SocketAddr = (node, PORT).into();
-                let latency = self.latency(node, remote.ip());
-
                 // The local node is immediately disconnected.
                 self.priority.push_back(Scheduled {
                     remote,
                     node,
                     input: Input::Disconnected(remote, reason.into()),
                 });
+
+                // Nb. It's possible for disconnects to happen simultaneously from both ends, hence
+                // it can be that a node will try to disconnect a remote that is already
+                // disconnected from the other side.
+                //
+                // It's also possible that the connection was only attempted and never succeeded,
+                // in which case we would return here.
+                let port = if let Some(port) = self.connections.get(&(node, remote.ip())) {
+                    *port
+                } else {
+                    debug!(target: "sim", "Ignoring disconnect of {remote} from {node}");
+                    return;
+                };
+                let local_addr: net::SocketAddr = (node, port).into();
+                let latency = self.latency(node, remote.ip());
+
                 // The remote node receives the disconnection with some delay.
                 self.inbox.insert(
                     self.time + latency,
