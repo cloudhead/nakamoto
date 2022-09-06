@@ -134,10 +134,17 @@ pub trait Protocol: Iterator<Item = Io<Self::Event, Self::DisconnectReason>> {
     }
 }
 
+/// Used by certain types of reactors to wake the event loop.
+pub trait Waker: Send + Sync + Clone {
+    /// Wake up! Call this after sending a command to make sure the command is processed
+    /// in a timely fashion.
+    fn wake(&self) -> io::Result<()>;
+}
+
 /// Any network reactor that can drive the light-client protocol.
 pub trait Reactor {
     /// The type of waker this reactor uses.
-    type Waker: Send + Clone;
+    type Waker: Waker;
 
     /// Create a new reactor, initializing it with a publisher for protocol events,
     /// a channel to receive commands, and a channel to shut it down.
@@ -160,9 +167,6 @@ pub trait Reactor {
         P: Protocol,
         P::DisconnectReason: Into<DisconnectReason<P::DisconnectReason>>,
         E: Publisher<P::Event>;
-
-    /// Used to wake certain types of reactors.
-    fn wake(waker: &Self::Waker) -> io::Result<()>;
 
     /// Return a new waker.
     fn waker(&self) -> Self::Waker;

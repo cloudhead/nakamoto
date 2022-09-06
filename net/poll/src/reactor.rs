@@ -39,12 +39,29 @@ enum Source {
     Waker,
 }
 
+#[derive(Clone)]
+pub struct Waker(Arc<popol::Waker>);
+
+impl Waker {
+    fn new(sources: &mut popol::Sources<Source>) -> io::Result<Self> {
+        let waker = Arc::new(popol::Waker::new(sources, Source::Waker)?);
+
+        Ok(Self(waker))
+    }
+}
+
+impl nakamoto_net::Waker for Waker {
+    fn wake(&self) -> io::Result<()> {
+        self.0.wake()
+    }
+}
+
 /// A single-threaded non-blocking reactor.
 pub struct Reactor<R: Write + Read> {
     peers: HashMap<net::SocketAddr, Socket<R>>,
     connecting: HashSet<net::SocketAddr>,
     sources: popol::Sources<Source>,
-    waker: Arc<popol::Waker>,
+    waker: Waker,
     timeouts: TimeoutManager<()>,
     shutdown: chan::Receiver<()>,
     listening: chan::Sender<net::SocketAddr>,
@@ -77,7 +94,7 @@ impl<R: Write + Read + AsRawFd> Reactor<R> {
 }
 
 impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
-    type Waker = Arc<popol::Waker>;
+    type Waker = Waker;
 
     /// Construct a new reactor, given a channel to send events on.
     fn new(
@@ -87,7 +104,7 @@ impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
         let peers = HashMap::new();
 
         let mut sources = popol::Sources::new();
-        let waker = Arc::new(popol::Waker::new(&mut sources, Source::Waker)?);
+        let waker = Waker::new(&mut sources)?;
         let timeouts = TimeoutManager::new(LocalDuration::from_secs(1));
         let connecting = HashSet::new();
 
@@ -249,15 +266,10 @@ impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
         }
     }
 
-    /// Wake the waker.
-    fn wake(waker: &Arc<popol::Waker>) -> io::Result<()> {
-        waker.wake()
-    }
-
     /// Return a new waker.
     ///
     /// Used to wake up the main event loop.
-    fn waker(&self) -> Arc<popol::Waker> {
+    fn waker(&self) -> Self::Waker {
         self.waker.clone()
     }
 }

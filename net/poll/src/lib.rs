@@ -32,7 +32,7 @@ pub mod reactor;
 pub mod socket;
 pub mod time;
 
-pub use reactor::Reactor;
+pub use reactor::{Reactor, Waker};
 
 #[cfg(test)]
 mod fallible;

@@ -33,7 +33,7 @@ use nakamoto_p2p::protocol::Link;
 use nakamoto_p2p::protocol::Protocol;
 
 pub use nakamoto_net::event;
-pub use nakamoto_net::Reactor;
+pub use nakamoto_net::{Reactor, Waker};
 pub use nakamoto_p2p::protocol::{self, Command, CommandError, Peer};
 
 pub use crate::error::Error;
@@ -358,7 +358,7 @@ where
     }
 
     /// Create a new handle to communicate with the client.
-    pub fn handle(&self) -> Handle<R> {
+    pub fn handle(&self) -> Handle<R::Waker> {
         Handle {
             events: self.events.clone(),
             waker: self.reactor.waker(),
@@ -374,22 +374,19 @@ where
 }
 
 /// An instance of [`handle::Handle`] for [`Client`].
-pub struct Handle<R: Reactor> {
+pub struct Handle<W: Waker> {
     commands: chan::Sender<Command>,
     events: event::Subscriber<protocol::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
-    waker: R::Waker,
+    waker: W,
     timeout: time::Duration,
     shutdown: chan::Sender<()>,
     listening: chan::Receiver<net::SocketAddr>,
 }
 
-impl<R: Reactor> Clone for Handle<R>
-where
-    R::Waker: Sync,
-{
+impl<W: Waker> Clone for Handle<W> {
     fn clone(&self) -> Self {
         Self {
             blocks: self.blocks.clone(),
@@ -405,10 +402,7 @@ where
     }
 }
 
-impl<R: Reactor> Handle<R>
-where
-    R::Waker: Sync,
-{
+impl<W: Waker> Handle<W> {
     /// Wait for node to start listening for incoming connections.
     pub fn listening(&mut self) -> Result<net::SocketAddr, handle::Error> {
         Ok(self.listening.recv_timeout(self.timeout)?)
@@ -441,16 +435,13 @@ where
     /// Send a command to the command channel, and wake up the event loop.
     fn _command(&self, cmd: Command) -> Result<(), handle::Error> {
         self.commands.send(cmd)?;
-        R::wake(&self.waker)?;
+        self.waker.wake()?;
 
         Ok(())
     }
 }
 
-impl<R: Reactor> handle::Handle for Handle<R>
-where
-    R::Waker: Sync,
-{
+impl<W: Waker> handle::Handle for Handle<W> {
     fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
         let (transmit, receive) = chan::bounded::<(Height, BlockHeader)>(1);
         self.command(Command::GetTip(transmit))?;
@@ -683,7 +674,7 @@ where
 
     fn shutdown(self) -> Result<(), handle::Error> {
         self.shutdown.send(())?;
-        R::wake(&self.waker)?;
+        self.waker.wake()?;
 
         Ok(())
     }

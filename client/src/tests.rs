@@ -28,7 +28,7 @@ fn network(
     cfgs: &[Config],
 ) -> Result<
     Vec<(
-        client::Handle<Reactor>,
+        client::Handle<nakamoto_net_poll::Waker>,
         net::SocketAddr,
         thread::JoinHandle<()>,
     )>,
@@ -41,7 +41,7 @@ fn network(
         let genesis = cfg.protocol.network.genesis();
         let params = cfg.protocol.network.params();
 
-        let node = Client::new()?;
+        let node = Client::<Reactor>::new()?;
         let mut handle = node.handle();
         handle.set_timeout(time::Duration::from_secs(5));
 
