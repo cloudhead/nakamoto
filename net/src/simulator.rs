@@ -13,6 +13,8 @@ pub mod arbitrary;
 
 /// Minimum latency between peers.
 pub const MIN_LATENCY: LocalDuration = LocalDuration::from_millis(1);
+/// Maximum number of events buffered per peer.
+pub const MAX_EVENTS: usize = 2048;
 
 /// Identifier for a simulated node/peer.
 /// The simulator requires each peer to have a distinct IP address.
@@ -159,6 +161,8 @@ where
 {
     /// Inbox of inputs to be delivered by the simulation.
     inbox: Inbox<T::DisconnectReason>,
+    /// Events emitted during simulation.
+    events: BTreeMap<NodeId, VecDeque<T::Event>>,
     /// Priority events that should happen immediately.
     priority: VecDeque<Scheduled<T::DisconnectReason>>,
     /// Simulated latencies between nodes.
@@ -190,6 +194,7 @@ where
             inbox: Inbox {
                 messages: BTreeMap::new(),
             },
+            events: BTreeMap::new(),
             priority: VecDeque::new(),
             partitions: BTreeSet::new(),
             latencies: BTreeMap::new(),
@@ -215,12 +220,16 @@ where
 
     /// Check whether the simulation has settled, ie. the only messages left to process
     /// are (periodic) timeouts.
-    #[allow(dead_code)]
     pub fn is_settled(&self) -> bool {
         self.inbox
             .messages
             .iter()
             .all(|(_, s)| matches!(s.input, Input::Wake))
+    }
+
+    /// Get a node's emitted events.
+    pub fn events(&mut self, node: &NodeId) -> impl Iterator<Item = T::Event> + '_ {
+        self.events.entry(*node).or_default().drain(..)
     }
 
     /// Get the latency between two nodes. The minimum latency between nodes is 1 millisecond.
@@ -573,8 +582,13 @@ where
                     );
                 }
             }
-            Io::Event(_) => {
-                // Ignored.
+            Io::Event(event) => {
+                let events = self.events.entry(node).or_insert_with(VecDeque::new);
+                if events.len() >= MAX_EVENTS {
+                    warn!(target: "sim", "Dropping event: buffer is full");
+                } else {
+                    events.push_back(event);
+                }
             }
         }
     }
