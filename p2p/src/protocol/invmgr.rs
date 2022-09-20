@@ -297,12 +297,9 @@ impl<U: Inventories + Wakeup, C: Clock> InventoryManager<U, C> {
     /// Called when we receive a tick.
     pub fn received_wake<T: BlockReader>(&mut self, tree: &T) {
         let now = self.clock.local_time();
-        // Rate-limit how much we run this function.
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
             self.upstream.wakeup(IDLE_TIMEOUT);
-        } else {
-            return;
         }
 
         {
