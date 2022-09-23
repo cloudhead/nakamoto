@@ -399,9 +399,11 @@ impl<U: Inventories + Wakeup, C: Clock> InventoryManager<U, C> {
                         // inventory broadcast and we no longer need to send it.
                         if let Some(peer) = self.peers.get_mut(&addr) {
                             if peer.outbox.remove(&wtxid).is_some() {
+                                // Reset retry state.
+                                peer.reset();
+
                                 if peer.outbox.is_empty() {
-                                    // Reset retry state.
-                                    peer.reset();
+                                    log::debug!("Peer {} transaction outbox is empty", &addr);
                                 }
                                 self.upstream.event(Event::Acknowledged {
                                     peer: addr,
@@ -420,9 +422,11 @@ impl<U: Inventories + Wakeup, C: Clock> InventoryManager<U, C> {
                     // inventory broadcast and we no longer need to send it.
                     if let Some(peer) = self.peers.get_mut(&addr) {
                         if let Some(txid) = peer.outbox.remove(wtxid) {
+                            // Reset retry state.
+                            peer.reset();
+
                             if peer.outbox.is_empty() {
-                                // Reset retry state.
-                                peer.reset();
+                                log::debug!("Peer {} transaction outbox is empty", &addr);
                             }
                             self.upstream
                                 .event(Event::Acknowledged { peer: addr, txid });
