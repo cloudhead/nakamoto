@@ -91,10 +91,10 @@ impl Network {
         use crate::block::checkpoints;
 
         let iter = match self {
-            Network::Mainnet => &checkpoints::MAINNET,
-            Network::Testnet => &checkpoints::TESTNET,
-            Network::Regtest => &checkpoints::REGTEST,
-            Network::Signet => &checkpoints::SIGNET,
+            Network::Mainnet => checkpoints::MAINNET,
+            Network::Testnet => checkpoints::TESTNET,
+            Network::Regtest => checkpoints::REGTEST,
+            Network::Signet => checkpoints::SIGNET,
         }
         .iter()
         .cloned()

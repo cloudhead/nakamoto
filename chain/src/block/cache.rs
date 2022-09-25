@@ -127,10 +127,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     ///
     /// Panics if the range is negative.
     ///
-    fn range<'a>(
-        &'a self,
-        range: std::ops::Range<Height>,
-    ) -> impl Iterator<Item = &CachedBlock> + 'a {
+    fn range(&self, range: std::ops::Range<Height>) -> impl Iterator<Item = &CachedBlock> + '_ {
         assert!(
             range.start <= range.end,
             "BlockCache::range: range start must not be greater than range end"
