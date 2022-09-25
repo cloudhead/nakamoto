@@ -17,4 +17,4 @@ colored = "1.9"
 atty = { version = "0.2" }
 thiserror = "1.0"
 log = { version = "0.4", features = ["std"] }
-chrono = "0.4"
+chrono = { version = "0.4", features = ["std", "clock"], default-features = false }
