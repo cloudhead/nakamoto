@@ -100,21 +100,13 @@ impl FeeEstimator {
     /// Process a block and get a fee estimate.  Returns [`None`] if none of the transactions
     /// could be processed due to missing UTXOs, or the block height isn't greater than the
     /// current block height of the fee estimator.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the block height is not greater than the current block height of the
-    /// fee estimator.
     pub fn process(&mut self, block: Block, height: Height) -> Option<FeeEstimate> {
         let mut fees = Vec::new();
         let snapshot = self.utxos.clone();
 
-        assert!(
-            height > self.height,
-            "Received block #{} must be higher than best block #{}",
-            height,
-            self.height,
-        );
+        if height <= self.height {
+            return None;
+        }
 
         for tx in &block.txdata {
             if let Some(rate) = self.apply(tx) {
