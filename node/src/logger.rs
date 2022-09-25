@@ -1,5 +1,5 @@
 //! Logging module.
-use std::io;
+use std::{io, time::SystemTime};
 
 use chrono::prelude::*;
 use colored::*;
@@ -37,7 +37,7 @@ impl Log for Logger {
                 writeln!(
                     stream,
                     "{} {}",
-                    Local::now()
+                    DateTime::from(SystemTime::now())
                         .to_rfc3339_opts(SecondsFormat::Millis, true)
                         .white(),
                     message,
