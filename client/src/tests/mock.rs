@@ -27,7 +27,7 @@ use nakamoto_p2p::fsm::Link;
 use nakamoto_p2p::fsm::Peer;
 use nakamoto_p2p::fsm::StateMachine;
 
-use crate::client::{chan, Event};
+use crate::client::{chan, Event, Loading};
 use crate::handle::{self, Handle};
 use crate::spv;
 
@@ -39,6 +39,7 @@ pub struct Client {
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
     pub subscriber: event::Broadcast<fsm::Event, Event>,
     pub commands: chan::Receiver<Command>,
+    pub loading: event::Subscriber<Loading>,
     pub protocol: StateMachine<
         model::Cache,
         model::FilterCache,
@@ -66,6 +67,7 @@ impl Client {
         TestHandle {
             tip: (0, self.network.genesis()),
             network: self.network,
+            loading: self.loading.clone(),
             events: self.events_.clone(),
             blocks: self.blocks_.clone(),
             filters: self.filters_.clone(),
@@ -107,6 +109,7 @@ impl Default for Client {
         let (commands_, commands) = chan::unbounded();
         let mut mapper = spv::Mapper::new();
         let (subscriber, subscriber_) = event::broadcast(move |e, p| mapper.process(e, p));
+        let loading = event::Subscriber::default();
         let network = Network::default();
         let protocol = {
             let tree = model::Cache::new(network.genesis());
@@ -123,6 +126,7 @@ impl Default for Client {
         Self {
             network,
             protocol,
+            loading,
             events,
             events_,
             blocks,
@@ -146,6 +150,7 @@ pub struct TestHandle {
     events: chan::Receiver<fsm::Event>,
     blocks: chan::Receiver<(Block, Height)>,
     filters: chan::Receiver<(BlockFilter, BlockHash, Height)>,
+    loading: event::Subscriber<Loading>,
     subscriber: event::Subscriber<Event>,
     commands: chan::Sender<Command>,
 }
@@ -185,6 +190,10 @@ impl Handle for TestHandle {
 
     fn subscribe(&self) -> chan::Receiver<Event> {
         self.subscriber.subscribe()
+    }
+
+    fn loading(&self) -> chan::Receiver<Loading> {
+        self.loading.subscribe()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {

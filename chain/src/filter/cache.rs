@@ -59,12 +59,23 @@ pub struct FilterCache<S> {
 }
 
 impl<S: Store<Header = StoredHeader>> FilterCache<S> {
-    pub fn from(header_store: S) -> Result<Self, nakamoto_common::block::store::Error> {
+    pub fn load(header_store: S) -> Result<Self, nakamoto_common::block::store::Error> {
+        Self::load_with(header_store, |_| true)
+    }
+
+    pub fn load_with(
+        header_store: S,
+        progress: impl Fn(Height) -> bool,
+    ) -> Result<Self, nakamoto_common::block::store::Error> {
         let mut headers = NonEmpty::new(header_store.genesis());
 
-        for result in header_store.iter().skip(1) {
+        for (height, result) in header_store.iter().enumerate().skip(1) {
             let (_, header) = result?;
             headers.push(header);
+
+            if !progress(height as Height) {
+                return Err(nakamoto_common::block::store::Error::Interrupted);
+            }
         }
 
         Ok(Self {
@@ -77,13 +88,21 @@ impl<S: Store<Header = StoredHeader>> FilterCache<S> {
 impl<S> FilterCache<S> {
     /// Verify the filter header chain. Returns `true` if the chain is valid.
     pub fn verify(&self, network: Network) -> Result<(), store::Error> {
+        self.verify_with(network, |_| true)
+    }
+
+    pub fn verify_with(
+        &self,
+        network: Network,
+        progress: impl Fn(Height) -> bool,
+    ) -> Result<(), store::Error> {
         let mut prev_header = FilterHeader::default();
 
         if self.headers.first().header != FilterHeader::genesis(network) {
             return Err(store::Error::Integrity);
         }
 
-        for stored_header in self.headers.iter() {
+        for (height, stored_header) in self.headers.iter().enumerate() {
             let expected = stored_header.hash.filter_header(&prev_header);
             let actual = stored_header.header;
 
@@ -91,6 +110,10 @@ impl<S> FilterCache<S> {
                 return Err(store::Error::Integrity);
             }
             prev_header = actual;
+
+            if !progress(height as Height) {
+                return Err(store::Error::Interrupted);
+            }
         }
         Ok(())
     }

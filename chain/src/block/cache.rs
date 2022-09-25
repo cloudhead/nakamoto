@@ -62,9 +62,6 @@ struct Candidate {
 
 /// An implementation of [`BlockTree`] using a generic storage backend.
 /// Most of the functionality is accessible via the trait.
-///
-/// [`BlockTree`]: ../../../nakamoto_common/block/tree/trait.BlockTree.html
-///
 #[derive(Debug, Clone)]
 pub struct BlockCache<S: Store> {
     chain: NonEmpty<CachedBlock>,
@@ -77,7 +74,7 @@ pub struct BlockCache<S: Store> {
 
 impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     /// Create a new `BlockCache` from a `Store`, consensus parameters, and checkpoints.
-    pub fn from(
+    pub fn new(
         store: S,
         params: Params,
         checkpoints: &[(Height, BlockHash)],
@@ -99,26 +96,50 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         // Insert genesis in the headers map, but skip it during iteration.
         headers.insert(chain.head.hash, 0);
 
-        let mut cache = Self {
+        Ok(Self {
             chain,
             headers,
             orphans,
             params,
             checkpoints,
             store,
-        };
+        })
+    }
 
-        for result in cache.store.iter().skip(1) {
+    /// Create a new `BlockCache` from a `Store`, consensus parameters, and checkpoints,
+    /// and load all the blocks from the store.
+    pub fn from(
+        store: S,
+        params: Params,
+        checkpoints: &[(Height, BlockHash)],
+    ) -> Result<Self, Error> {
+        Self::new(store, params, checkpoints)?.load()
+    }
+
+    /// Load the block headers from the store, into the cache.
+    pub fn load(self) -> Result<Self, Error> {
+        self.load_with(|_| true)
+    }
+
+    /// Load the block headers from the store, into the cache.
+    /// Takes a function that is called for each block imported.
+    pub fn load_with(mut self, progress: impl Fn(Height) -> bool) -> Result<Self, Error> {
+        for result in self.store.iter().skip(1) {
             let (height, header) = result?;
             let hash = header.block_hash();
 
-            cache.extend_chain(height, hash, header);
+            self.extend_chain(height, hash, header);
+
+            if !progress(height) {
+                return Err(Error::Interrupted);
+            }
         }
 
-        assert_eq!(length, cache.chain.len());
-        assert_eq!(length, cache.headers.len());
+        let length = self.store.len()?;
+        assert_eq!(length, self.chain.len());
+        assert_eq!(length, self.headers.len());
 
-        Ok(cache)
+        Ok(self)
     }
 
     /// Iterate over a range of blocks.

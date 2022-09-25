@@ -23,6 +23,9 @@ pub enum Error {
     /// A data-corruption error.
     #[error("error: the store data is corrupt")]
     Corruption,
+    /// Operation was interrupted.
+    #[error("the operation was interrupted")]
+    Interrupted,
 }
 
 /// Represents an object (such as a header), that has a genesis.

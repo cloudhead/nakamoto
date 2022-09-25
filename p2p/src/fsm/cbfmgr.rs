@@ -1085,7 +1085,7 @@ mod tests {
             let cfheaders =
                 gen::cfheaders_from_blocks(FilterHeader::genesis(network), chain.tail.iter());
 
-            let mut cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
+            let mut cache = FilterCache::load(store::memory::Memory::genesis(network)).unwrap();
             cache.import_headers(cfheaders).unwrap();
             cache.verify(network).unwrap();
 
@@ -1222,7 +1222,7 @@ mod tests {
         };
         let mut cbfmgr = {
             let rng = fastrand::Rng::new();
-            let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
+            let cache = FilterCache::load(store::memory::Memory::genesis(network)).unwrap();
             let upstream = Outbox::new(network, PROTOCOL_VERSION);
 
             FilterManager::new(Config::default(), rng, cache, upstream, clock)
@@ -1501,7 +1501,7 @@ mod tests {
         let time = LocalTime::now();
 
         let mut cbfmgr = {
-            let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
+            let cache = FilterCache::load(store::memory::Memory::genesis(network)).unwrap();
             let rng = fastrand::Rng::new();
             let upstream = Outbox::new(network, PROTOCOL_VERSION);
             FilterManager::new(Config::default(), rng, cache, upstream, time)

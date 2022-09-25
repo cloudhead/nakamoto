@@ -568,6 +568,10 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
 
             // TODO: This will be removed.
             Error::BlockImportAborted(_, _, _) => Ok(()),
+
+            // This shouldn't happen here.
+            // TODO: Perhaps there's a better way to have this error not show up here.
+            Error::Interrupted => Ok(()),
         }
     }
 

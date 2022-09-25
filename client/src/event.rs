@@ -13,7 +13,46 @@ use nakamoto_p2p::fsm::{Link, PeerId};
 
 use crate::spv::TxStatus;
 
-/// Event emitted by the client.
+/// Event emitted by the client during the "loading" phase.
+#[derive(Clone, Debug)]
+pub enum Loading {
+    /// A block header was loaded from the store.
+    /// This event only fires during startup.
+    BlockHeaderLoaded {
+        /// Height of loaded block.
+        height: Height,
+    },
+    /// A filter header was loaded from the store.
+    /// This event only fires during startup.
+    FilterHeaderLoaded {
+        /// Height of loaded filter header.
+        height: Height,
+    },
+    /// A filter header was verified.
+    /// This event only fires during startup.
+    FilterHeaderVerified {
+        /// Height of verified filter header.
+        height: Height,
+    },
+}
+
+impl fmt::Display for Loading {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BlockHeaderLoaded { height } => {
+                write!(fmt, "block header #{} loaded", height)
+            }
+            Self::FilterHeaderLoaded { height } => {
+                write!(fmt, "filter header #{} loaded", height)
+            }
+            Self::FilterHeaderVerified { height } => {
+                write!(fmt, "filter header #{} verified", height)
+            }
+        }
+    }
+}
+
+/// Event emitted by the client, after the "loading" phase is over.
 #[derive(Debug, Clone)]
 pub enum Event {
     /// Ready to process peer events and start receiving commands.

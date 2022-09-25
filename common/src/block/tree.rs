@@ -51,6 +51,10 @@ pub enum Error {
     /// A storage error occured.
     #[error("storage error: {0}")]
     Store(#[from] store::Error),
+
+    /// The operation was interrupted.
+    #[error("the operation was interrupted")]
+    Interrupted,
 }
 
 /// A generic block header.

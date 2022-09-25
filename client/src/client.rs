@@ -36,7 +36,7 @@ pub use nakamoto_net::{Reactor, Waker};
 pub use nakamoto_p2p::fsm::{self, Command, CommandError, Peer};
 
 pub use crate::error::Error;
-pub use crate::event::Event;
+pub use crate::event::{Event, Loading};
 pub use crate::handle;
 pub use crate::peer;
 pub use crate::service::Service;
@@ -133,6 +133,7 @@ pub struct Client<R: Reactor> {
     events: event::Subscriber<fsm::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
+    loading: event::Subscriber<Loading>,
     subscriber: event::Subscriber<Event>,
     shutdown: chan::Sender<()>,
     listening: chan::Receiver<net::SocketAddr>,
@@ -183,12 +184,14 @@ where
             .register(publisher);
 
         let seeds = Vec::new();
+        let loading = event::Subscriber::default();
         let (shutdown, shutdown_recv) = chan::bounded(1);
         let (listening_send, listening) = chan::bounded(1);
         let reactor = R::new(shutdown_recv, listening_send)?;
 
         Ok(Self {
             events,
+            loading,
             handle,
             commands,
             reactor,
@@ -241,7 +244,6 @@ where
                     store.heal()?; // Rollback store to the last valid header.
                 }
                 log::info!("Store height = {}", store.height()?);
-                log::info!("Loading block headers from store..");
 
                 store
             }
@@ -251,8 +253,12 @@ where
         let local_time = SystemTime::now().into();
         let checkpoints = network.checkpoints().collect::<Vec<_>>();
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
-        let cache = BlockCache::from(store, params, &checkpoints)?;
         let rng = fastrand::Rng::new();
+
+        log::info!("Loading block headers from store..");
+
+        let cache = BlockCache::new(store, params, &checkpoints)?
+            .load_with(|height| self.loading.publish(Loading::BlockHeaderLoaded { height }))?;
 
         log::info!("Initializing block filters..");
 
@@ -272,16 +278,25 @@ where
                     store.heal()?; // Rollback store to the last valid header.
                 }
                 log::info!("Filters height = {}", store.height()?);
-                log::info!("Loading filter headers from store..");
 
                 store
             }
             Err(err) => return Err(err.into()),
         };
+        log::info!("Loading filter headers from store..");
 
-        let filters = FilterCache::from(cfheaders_store)?;
+        let filters = FilterCache::load_with(cfheaders_store, |height| {
+            self.loading.publish(Loading::FilterHeaderLoaded { height })
+        })?;
         log::info!("Verifying filter headers..");
-        filters.verify(network)?; // Verify store integrity.
+
+        filters.verify_with(network, |height| {
+            self.loading
+                .publish(Loading::FilterHeaderVerified { height })
+        })?; // Verify store integrity.
+
+        // Loading is done, close all channels.
+        self.loading.close();
 
         log::info!("Loading peer addresses..");
 
@@ -364,6 +379,7 @@ where
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
             timeout: time::Duration::from_secs(60),
+            loading: self.loading.clone(),
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
             subscriber: self.subscriber.clone(),
@@ -379,6 +395,7 @@ pub struct Handle<W: Waker> {
     events: event::Subscriber<fsm::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
+    loading: event::Subscriber<Loading>,
     subscriber: event::Subscriber<Event>,
     waker: W,
     timeout: time::Duration,
@@ -394,6 +411,7 @@ impl<W: Waker> Clone for Handle<W> {
             events: self.events.clone(),
             filters: self.filters.clone(),
             subscriber: self.subscriber.clone(),
+            loading: self.loading.clone(),
             timeout: self.timeout,
             waker: self.waker.clone(),
             shutdown: self.shutdown.clone(),
@@ -501,6 +519,10 @@ impl<W: Waker> handle::Handle for Handle<W> {
 
     fn subscribe(&self) -> chan::Receiver<Event> {
         self.subscriber.subscribe()
+    }
+
+    fn loading(&self) -> chan::Receiver<Loading> {
+        self.loading.subscribe()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {

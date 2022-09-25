@@ -52,7 +52,7 @@ fn network(
             move || {
                 let store = store::Memory::new((genesis, vec![]).into());
                 let cache = BlockCache::from(store, params, &checkpoints).unwrap();
-                let filters = FilterCache::from(store::Memory::default()).unwrap();
+                let filters = FilterCache::load(store::Memory::default()).unwrap();
                 let peers = HashMap::new();
                 let local_time = time::SystemTime::now().into();
                 let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
@@ -164,7 +164,7 @@ fn test_multiple_handle_events() {
     let client: Client<Reactor> = Client::new().unwrap();
     let store = store::Memory::new((genesis, vec![]).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
-    let filters = FilterCache::from(store::Memory::default()).unwrap();
+    let filters = FilterCache::load(store::Memory::default()).unwrap();
     let peers = HashMap::new();
 
     let alice = client.handle();
@@ -215,7 +215,7 @@ fn test_handle_shutdown() {
     let handle = client.handle();
     let store = store::Memory::new((genesis, vec![]).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
-    let filters = FilterCache::from(store::Memory::default()).unwrap();
+    let filters = FilterCache::load(store::Memory::default()).unwrap();
     let peers = HashMap::new();
 
     let th = thread::spawn(|| {
@@ -252,7 +252,7 @@ fn test_query_headers() {
     let handle = client.handle();
     let store = store::Memory::new((genesis, BITCOIN_HEADERS.tail.clone()).into());
     let cache = BlockCache::from(store, params, &[]).unwrap();
-    let filters = FilterCache::from(store::Memory::default()).unwrap();
+    let filters = FilterCache::load(store::Memory::default()).unwrap();
 
     thread::spawn(|| {
         let local_time = time::SystemTime::now().into();

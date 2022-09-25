@@ -13,4 +13,6 @@ pub type Memory = crate::store::memory::Memory<FilterHeader>;
 pub enum Error {
     #[error("filter store is corrupted")]
     Integrity,
+    #[error("the operation was interrupted")]
+    Interrupted,
 }

@@ -18,7 +18,7 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::fsm::Link;
 use nakamoto_p2p::fsm::{self, Command, CommandError, GetFiltersError, Peer};
 
-use crate::client::Event;
+use crate::client::{Event, Loading};
 
 /// An error resulting from a handle method.
 #[derive(Error, Debug)]
@@ -86,6 +86,8 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
     /// Subscribe to SPV events.
     fn subscribe(&self) -> chan::Receiver<Event>;
+    /// Subscribe to client loading events.
+    fn loading(&self) -> chan::Receiver<Loading>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Rescan the blockchain for matching scripts.
