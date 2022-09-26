@@ -239,6 +239,8 @@ pub struct PeerInfo {
     pub wtxidrelay: bool,
     /// The max protocol version supported by both the peer and nakamoto.
     pub version: u32,
+    /// Whether this is a persistent peer.
+    pub persistent: bool,
 
     /// Peer nonce. Used to detect self-connections.
     nonce: u64,
@@ -574,6 +576,7 @@ impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManage
                 }
             }
             let conn = conn.clone();
+            let persistent = self.config.persistent.contains(&conn.socket.addr);
 
             self.peers.insert(
                 conn.socket.addr,
@@ -584,6 +587,7 @@ impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManage
                         height: start_height as Height,
                         time_offset: timestamp - now.block_time() as i64,
                         services,
+                        persistent,
                         user_agent,
                         state: HandshakeState::ReceivedVersion { since: now },
                         relay,

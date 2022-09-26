@@ -629,6 +629,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protoco
                         peer.height,
                         peer.services,
                         conn.link,
+                        peer.persistent,
                         &self.tree,
                     );
                     self.syncmgr.peer_negotiated(

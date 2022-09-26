@@ -282,6 +282,7 @@ struct Peer {
     last_active: LocalTime,
     #[allow(dead_code)]
     socket: Socket,
+    persistent: bool,
 }
 
 /// A compact block filter manager.
@@ -342,16 +343,21 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
             if now >= *expiry {
                 let (start_height, stop_hash) = (*start_height, *stop_hash);
 
-                if let Some((peer, _)) = self.peers.sample_with(|p, _| p != addr) {
-                    let peer = *peer;
-
-                    self.peers.remove(addr);
+                // Nb. Purposefully allow re-sampling the same peer, for cases where we are only
+                // connected to one peer.
+                if let Some((a, peer)) = self.peers.sample() {
+                    let a = *a;
+                    // Disconnect only if we found a different peer, and this isn't
+                    // a persistent peer.
+                    if a != *addr && !peer.persistent {
+                        self.peers.remove(addr);
+                        self.upstream
+                            .disconnect(*addr, DisconnectReason::PeerTimeout("getcfheaders"));
+                    }
                     self.upstream
-                        .disconnect(*addr, DisconnectReason::PeerTimeout("getcfheaders"));
-                    self.upstream
-                        .get_cfheaders(peer, start_height, stop_hash, timeout);
+                        .get_cfheaders(a, start_height, stop_hash, timeout);
 
-                    *addr = peer;
+                    *addr = a;
                     *expiry = now + timeout;
                 }
             }
@@ -789,6 +795,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         height: Height,
         services: ServiceFlags,
         link: Link,
+        persistent: bool,
         tree: &T,
     ) {
         if !link.is_outbound() {
@@ -805,6 +812,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
                 last_active: time,
                 height,
                 socket,
+                persistent,
             },
         );
         self.sync(tree);
@@ -1252,6 +1260,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
         output::test::messages_from(&mut cbfmgr.upstream, &remote)
@@ -1313,6 +1322,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
         output::test::messages_from(&mut cbfmgr.upstream, &remote)
@@ -1372,6 +1382,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
         cbfmgr
@@ -1471,6 +1482,7 @@ mod tests {
             header_height,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
 
@@ -1526,6 +1538,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
 
@@ -1617,6 +1630,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
 
@@ -1730,6 +1744,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
 
@@ -1819,6 +1834,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
 
@@ -1898,6 +1914,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
         let matched = cbfmgr.rescan(
@@ -1993,6 +2010,7 @@ mod tests {
                 best,
                 REQUIRED_SERVICES,
                 Link::Outbound,
+                false,
                 &tree,
             );
             cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
@@ -2116,6 +2134,7 @@ mod tests {
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
+            false,
             &tree,
         );
         cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
