@@ -1,5 +1,7 @@
 target/
+notes/
 .nakamoto/
+errors.err
 headers.db
 TODO
 NOTES
