@@ -716,7 +716,7 @@ fn test_connect_to_peers() {
     quickcheck::QuickCheck::new()
         .tests(100)
         .max_tests(1000)
-        .min_tests_passed(95) // 95% success rate.
+        .min_tests_passed(90) // 90% success rate.
         .quickcheck(
             simulations::connect_to_peers as fn(Options, u64, arbitrary::InRange<1, 6>) -> bool,
         );
