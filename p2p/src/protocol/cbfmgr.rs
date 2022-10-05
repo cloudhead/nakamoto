@@ -569,15 +569,6 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
             });
         }
 
-        let prev_header = msg.previous_filter_header;
-        let (_, tip) = self.filters.tip();
-
-        // If the previous header doesn't match our tip, this could be a stale
-        // message arriving too late. Ignore it.
-        if tip != &prev_header {
-            return Ok(self.filters.height());
-        }
-
         let start_height = self.filters.height();
         let stop_height = if let Some((height, _)) = tree.get_block(&stop_hash) {
             height
@@ -587,6 +578,26 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
                 reason: "cfheaders: unknown stop hash",
             });
         };
+
+        // If we've already synced up to the stop hash, ignore.
+        if stop_height <= self.filters.height() {
+            return Ok(self.filters.height());
+        }
+
+        let (_, tip_header) = self.filters.tip();
+        let prev_header = msg.previous_filter_header;
+
+        // If the previous header of the message does not match our tip, it could be
+        // that our tip was updated while the message was inflight.
+        // Schedule a wake to make sure we sync the correct range this time around.
+        if &prev_header != tip_header {
+            self.schedule_wake();
+
+            return Err(Error::Ignored {
+                msg: "previous filter header does not match local tip",
+                from,
+            });
+        }
 
         let hashes = msg.filter_hashes;
         let count = hashes.len();
@@ -960,6 +971,11 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
             self.get_cfilters(range, tree)?;
         }
         Ok(())
+    }
+
+    fn schedule_wake(&mut self) {
+        self.last_idle = None; // Disable rate-limiting for the next tick.
+        self.upstream.wakeup(LocalDuration::from_secs(1));
     }
 }
 
