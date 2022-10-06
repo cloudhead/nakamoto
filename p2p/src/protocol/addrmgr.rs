@@ -15,8 +15,8 @@ use nakamoto_common::p2p::peer::{AddressSource, KnownAddress, Source, Store};
 use nakamoto_common::p2p::Domain;
 use nakamoto_net::DisconnectReason;
 
-use super::output::Wakeup;
-use super::{Link, PeerId};
+use super::output::{Wakeup, Wire};
+use super::Link;
 
 /// Time to wait until a request times out.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -31,29 +31,6 @@ pub const SAMPLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(3);
 const MAX_ADDR_ADDRESSES: usize = 1000;
 /// Maximum number of addresses we store for a given address range.
 const MAX_RANGE_SIZE: usize = 256;
-
-/// Address manager event emission.
-pub trait Events {
-    /// Emit an event.
-    fn event(&self, event: Event);
-}
-
-/// Capability of getting new addresses.
-pub trait SyncAddresses {
-    /// Get new addresses from a peer.
-    fn get_addresses(&mut self, addr: PeerId);
-    /// Send addresses to a peer.
-    fn send_addresses(&mut self, addr: PeerId, addrs: Vec<(BlockTime, Address)>);
-}
-
-impl SyncAddresses for () {
-    fn get_addresses(&mut self, _addr: PeerId) {}
-    fn send_addresses(&mut self, _addr: PeerId, _addrs: Vec<(BlockTime, Address)>) {}
-}
-
-impl Events for () {
-    fn event(&self, _event: Event) {}
-}
 
 /// An event emitted by the address manager.
 #[derive(Debug, Clone)]
@@ -174,7 +151,7 @@ pub struct AddressManager<P, U, C> {
     clock: C,
 }
 
-impl<P: Store, U: SyncAddresses + Wakeup + Events, C: Clock> AddressManager<P, U, C> {
+impl<P: Store, U: Wire<Event> + Wakeup, C: Clock> AddressManager<P, U, C> {
     /// Initialize the address manager.
     pub fn initialize(&mut self) {
         self.idle();
@@ -188,7 +165,7 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events, C: Clock> AddressManager<P, U
     /// Get addresses from peers.
     pub fn get_addresses(&mut self) {
         for peer in &self.sources {
-            self.upstream.get_addresses(*peer);
+            self.upstream.get_addr(*peer);
         }
     }
 
@@ -209,7 +186,7 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events, C: Clock> AddressManager<P, U
                 ka.addr.clone(),
             ));
         }
-        self.upstream.send_addresses(*from, addrs);
+        self.upstream.addr(*from, addrs);
     }
 
     /// Called when a tick is received.
@@ -220,7 +197,7 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events, C: Clock> AddressManager<P, U
         if local_time - self.last_request.unwrap_or_default() >= REQUEST_TIMEOUT
             && self.is_exhausted()
         {
-            Events::event(&self.upstream, Event::AddressBookExhausted);
+            self.upstream.event(Event::AddressBookExhausted);
 
             self.get_addresses();
             self.last_request = Some(local_time);
@@ -274,7 +251,7 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events, C: Clock> AddressManager<P, U
         if let Some(ka) = self.peers.get_mut(&addr.ip()) {
             // Only ask for addresses when connecting for the first time.
             if ka.last_success.is_none() {
-                self.upstream.get_addresses(*addr);
+                self.upstream.get_addr(*addr);
             }
             // Keep track of when the last successful handshake was.
             ka.last_success = Some(time);
@@ -320,7 +297,7 @@ impl<P: Store, U: SyncAddresses + Wakeup + Events, C: Clock> AddressManager<P, U
     }
 }
 
-impl<P: Store, U: Events, C: Clock> AddressManager<P, U, C> {
+impl<P: Store, U: Wire<Event>, C: Clock> AddressManager<P, U, C> {
     /// Create a new, empty address manager.
     pub fn new(cfg: Config, rng: fastrand::Rng, peers: P, upstream: U, clock: C) -> Self {
         let ips = peers.iter().map(|(ip, _)| *ip).collect::<Vec<_>>();
@@ -602,9 +579,7 @@ impl<P: Store, U: Events, C: Clock> AddressManager<P, U, C> {
     }
 }
 
-impl<P: Store, U: Events + SyncAddresses + Wakeup, C: Clock> AddressSource
-    for AddressManager<P, U, C>
-{
+impl<P: Store, U: Wire<Event> + Wakeup, C: Clock> AddressSource for AddressManager<P, U, C> {
     fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
         AddressManager::sample(self, services)
     }

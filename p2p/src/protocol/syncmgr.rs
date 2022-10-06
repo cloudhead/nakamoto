@@ -12,7 +12,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
-use super::output::{Disconnect, Wakeup};
+use super::output::{Disconnect, Wakeup, Wire};
 use super::{DisconnectReason, Link, Locators, PeerId, Socket};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
@@ -33,18 +33,6 @@ pub const REQUIRED_SERVICES: ServiceFlags = ServiceFlags::NETWORK;
 const MAX_UNSOLICITED_HEADERS: usize = 24;
 /// How long to wait between checks for longer chains from peers.
 const PEER_SAMPLE_INTERVAL: LocalDuration = LocalDuration::from_mins(60);
-
-/// The ability to get and send headers.
-pub trait SyncHeaders {
-    /// Get headers from a peer.
-    fn get_headers(&mut self, addr: PeerId, locators: Locators);
-    /// Send headers to a peer.
-    fn send_headers(&mut self, addr: PeerId, headers: Vec<BlockHeader>);
-    /// Send initial post-negotiation messages, eg. `sendheaders`.
-    fn negotiate(&mut self, addr: PeerId);
-    /// Emit a sync-related event.
-    fn event(&self, event: Event);
-}
 
 /// What to do if a timeout for a peer is received.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -200,7 +188,7 @@ struct GetHeaders {
     on_timeout: OnTimeout,
 }
 
-impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
+impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
     /// Create a new sync manager.
     pub fn new(config: Config, rng: fastrand::Rng, upstream: U, clock: C) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -263,7 +251,6 @@ impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
             self.upstream.event(Event::PeerHeightUpdated { height });
         }
 
-        self.upstream.negotiate(socket.addr);
         self.register(socket, height, preferred, link);
         self.sync(tree);
     }
@@ -290,7 +277,7 @@ impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
         if headers.is_empty() {
             return;
         }
-        self.upstream.send_headers(*addr, headers);
+        self.upstream.headers(*addr, headers);
     }
 
     /// Import blocks into our block tree.
@@ -743,7 +730,7 @@ impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
             for (addr, peer) in &*self.peers {
                 // TODO: Don't broadcast to peer that is currently syncing?
                 if peer.link == Link::Inbound && height > peer.height {
-                    self.upstream.send_headers(*addr, vec![*best]);
+                    self.upstream.headers(*addr, vec![*best]);
                 }
             }
         }

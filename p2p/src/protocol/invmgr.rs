@@ -32,7 +32,7 @@ use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::collections::{AddressBook, HashMap};
 
 use super::fees::{FeeEstimate, FeeEstimator};
-use super::output::Wakeup;
+use super::output::{Wakeup, Wire};
 use super::{Height, PeerId, Socket};
 
 /// Time between re-broadcasts of inventories.
@@ -49,18 +49,6 @@ pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 
 /// Block depth at which confirmed transactions are pruned and no longer reverted after a re-org.
 pub const TRANSACTION_PRUNE_DEPTH: Height = 12;
-
-/// The ability to send and receive inventory data.
-pub trait Inventories {
-    /// Sends an `inv` message to a peer.
-    fn inv(&mut self, addr: PeerId, inventories: Vec<Inventory>);
-    /// Sends a `getdata` message to a peer.
-    fn getdata(&mut self, addr: PeerId, inventories: Vec<Inventory>);
-    /// Sends a `tx` message to a peer.
-    fn tx(&mut self, addr: PeerId, tx: Transaction);
-    /// Fire an event.
-    fn event(&self, event: Event);
-}
 
 /// An event emitted by the inventory manager.
 #[derive(Debug, Clone)]
@@ -213,7 +201,7 @@ pub struct InventoryManager<U, C> {
     clock: C,
 }
 
-impl<U: Inventories + Wakeup, C: Clock> InventoryManager<U, C> {
+impl<U: Wire<Event> + Wakeup, C: Clock> InventoryManager<U, C> {
     /// Create a new inventory manager.
     pub fn new(rng: fastrand::Rng, upstream: U, clock: C) -> Self {
         Self {
@@ -369,7 +357,7 @@ impl<U: Inventories + Wakeup, C: Clock> InventoryManager<U, C> {
                 log::debug!("Requesting block {} from {}", block_hash, addr);
 
                 self.upstream
-                    .getdata(*addr, vec![Inventory::Block(*block_hash)]);
+                    .get_data(*addr, vec![Inventory::Block(*block_hash)]);
                 self.upstream.wakeup(REQUEST_TIMEOUT);
 
                 *last_request = Some(now);

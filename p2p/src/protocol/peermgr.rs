@@ -33,7 +33,7 @@ use nakamoto_net as network;
 use crate::protocol::addrmgr;
 use crate::protocol::DisconnectReason;
 
-use super::output::{Disconnect, Wakeup};
+use super::output::{Connect, Disconnect, Wakeup, Wire};
 use super::{Hooks, Link, PeerId, Socket, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
@@ -125,28 +125,6 @@ impl std::fmt::Display for Event {
             }
         }
     }
-}
-
-/// The ability to negotiate protocols between peers.
-pub trait Handshake {
-    /// Send a `version` message.
-    fn version(&mut self, addr: PeerId, msg: VersionMessage) -> &mut Self;
-    /// Send a `verack` message.
-    fn verack(&mut self, addr: PeerId) -> &mut Self;
-    /// Send a BIP-339 `wtxidrelay` message.
-    fn wtxidrelay(&mut self, addr: PeerId) -> &mut Self;
-}
-
-/// Ability to connect to peers.
-pub trait Connect {
-    /// Connect to peer.
-    fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration);
-}
-
-/// The ability to emit peer related events.
-pub trait Events {
-    /// Emit a peer-related event.
-    fn event(&self, event: Event);
 }
 
 /// Peer manager configuration.
@@ -274,7 +252,7 @@ pub struct PeerManager<U, C> {
     clock: C,
 }
 
-impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManager<U, C> {
+impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C> {
     /// Create a new peer manager.
     pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, upstream: U, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
@@ -419,12 +397,12 @@ impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManage
         debug_assert!(!self.is_disconnected(addr));
 
         if self.is_disconnecting(addr) || self.is_connected(addr) {
-            Events::event(&self.upstream, Event::Disconnected(*addr, reason));
+            self.upstream.event(Event::Disconnected(*addr, reason));
         } else if self.is_connecting(addr) {
             // If we haven't yet established a connection, the disconnect reason
             // should always be a `ConnectionError`.
             if let network::DisconnectReason::ConnectionError(err) = reason {
-                Events::event(&self.upstream, Event::ConnectionFailed(*addr, err));
+                self.upstream.event(Event::ConnectionFailed(*addr, err));
             }
         }
 
@@ -564,14 +542,16 @@ impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManage
                             conn.socket.addr,
                             self.version(conn.socket.addr, conn.local_addr, nonce, height, now),
                         )
-                        .wtxidrelay(conn.socket.addr)
+                        .wtxid_relay(conn.socket.addr)
                         .verack(conn.socket.addr)
+                        .send_headers(conn.socket.addr)
                         .wakeup(HANDSHAKE_TIMEOUT);
                 }
                 Link::Outbound => {
                     self.upstream
-                        .wtxidrelay(conn.socket.addr)
+                        .wtxid_relay(conn.socket.addr)
                         .verack(conn.socket.addr)
+                        .send_headers(conn.socket.addr)
                         .wakeup(HANDSHAKE_TIMEOUT);
                 }
             }
@@ -732,7 +712,7 @@ impl<U: Handshake + Wakeup + Connect + Disconnect + Events, C: Clock> PeerManage
 }
 
 /// Connection management functions.
-impl<U: Connect + Wakeup + Disconnect + Events, C: Clock> PeerManager<U, C> {
+impl<U: Connect + Disconnect + Wakeup + Wire<Event>, C: Clock> PeerManager<U, C> {
     /// Called when a peer is being connected to.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr) {
         // Since all "attempts" are made from this module, we expect that when a peer is

@@ -29,4 +29,42 @@ pub enum Event {
     Filter(protocol::FilterEvent),
     /// An inventory manager event.
     Inventory(protocol::InventoryEvent),
+    /// A ping manager event.
+    Ping(protocol::PingEvent),
+}
+
+impl From<protocol::ChainEvent> for Event {
+    fn from(e: protocol::ChainEvent) -> Self {
+        Self::Chain(e)
+    }
+}
+
+impl From<protocol::PeerEvent> for Event {
+    fn from(e: protocol::PeerEvent) -> Self {
+        Self::Peer(e)
+    }
+}
+
+impl From<protocol::FilterEvent> for Event {
+    fn from(e: protocol::FilterEvent) -> Self {
+        Self::Filter(e)
+    }
+}
+
+impl From<protocol::AddressEvent> for Event {
+    fn from(e: protocol::AddressEvent) -> Self {
+        Self::Address(e)
+    }
+}
+
+impl From<protocol::InventoryEvent> for Event {
+    fn from(e: protocol::InventoryEvent) -> Self {
+        Self::Inventory(e)
+    }
+}
+
+impl From<protocol::PingEvent> for Event {
+    fn from(e: protocol::PingEvent) -> Self {
+        Self::Ping(e)
+    }
 }

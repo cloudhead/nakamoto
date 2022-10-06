@@ -31,6 +31,7 @@ pub use addrmgr::Event as AddressEvent;
 pub use cbfmgr::Event as FilterEvent;
 pub use invmgr::Event as InventoryEvent;
 pub use peermgr::Event as PeerEvent;
+pub use pingmgr::Event as PingEvent;
 pub use syncmgr::Event as ChainEvent;
 
 use crate::stream;

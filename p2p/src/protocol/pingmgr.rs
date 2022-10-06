@@ -13,7 +13,7 @@ use nakamoto_common::collections::HashMap;
 use crate::protocol::PeerId;
 
 use super::{
-    output::{Disconnect, Wakeup},
+    output::{Disconnect, Wakeup, Wire},
     DisconnectReason,
 };
 
@@ -25,12 +25,14 @@ pub const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 /// Maximum number of latencies recorded per peer.
 const MAX_RECORDED_LATENCIES: usize = 64;
 
-/// The ability to send `ping` and `pong` messages.
-pub trait Ping {
-    /// Send a `ping` message.
-    fn ping(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self;
-    /// Send a `pong` message.
-    fn pong(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self;
+/// A ping-related event.
+#[derive(Clone, Debug)]
+pub enum Event {}
+
+impl std::fmt::Display for Event {
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
 }
 
 #[derive(Debug)]
@@ -73,7 +75,7 @@ pub struct PingManager<U, C> {
     clock: C,
 }
 
-impl<U: Ping + Wakeup + Disconnect, C: Clock> PingManager<U, C> {
+impl<U: Wire<Event> + Wakeup + Disconnect, C: Clock> PingManager<U, C> {
     /// Create a new ping manager.
     pub fn new(ping_timeout: LocalDuration, rng: fastrand::Rng, upstream: U, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());

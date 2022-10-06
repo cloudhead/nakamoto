@@ -27,7 +27,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 use crate::protocol::{Event, PeerId};
 
 use super::network::Network;
-use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr, Locators};
+use super::Locators;
 
 /// Output of a state transition of the `Protocol` state machine.
 pub type Io = nakamoto_net::Io<Event, super::DisconnectReason>;
@@ -69,6 +69,94 @@ pub(crate) mod message {
             .consensus_encode(writer)
         }
     }
+}
+
+/// Ability to connect to peers.
+pub trait Connect {
+    /// Connect to peer.
+    fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration);
+}
+
+/// Bitcoin wire protocol.
+pub trait Wire<E> {
+    /// Emit an event.
+    fn event(&self, event: E);
+
+    // Handshake messages //////////////////////////////////////////////////////
+
+    /// Send a `version` message.
+    fn version(&mut self, addr: PeerId, msg: VersionMessage) -> &mut Self;
+
+    /// Send a `verack` message.
+    fn verack(&mut self, addr: PeerId) -> &mut Self;
+
+    /// Send a BIP-339 `wtxidrelay` message.
+    fn wtxid_relay(&mut self, addr: PeerId) -> &mut Self;
+
+    /// Send a `sendheaders` message.
+    fn send_headers(&mut self, addr: PeerId) -> &mut Self;
+
+    // Ping/pong ///////////////////////////////////////////////////////////////
+
+    /// Send a `ping` message.
+    fn ping(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self;
+
+    /// Send a `pong` message.
+    fn pong(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self;
+
+    // Addresses //////////////////////////////////////////////////////////////
+
+    /// Send a `getaddr` message.
+    fn get_addr(&mut self, addr: PeerId);
+
+    /// Send an `addr` message.
+    fn addr(&mut self, addr: PeerId, addrs: Vec<(BlockTime, Address)>);
+
+    // Compact block filters ///////////////////////////////////////////////////
+
+    /// Get compact filter headers from peer, starting at the start height,
+    /// and ending at the stop hash.
+    fn get_cfheaders(
+        &mut self,
+        addr: PeerId,
+        start_height: Height,
+        stop_hash: BlockHash,
+        timeout: LocalDuration,
+    );
+
+    /// Get compact filters from a peer.
+    fn get_cfilters(
+        &mut self,
+        addr: PeerId,
+        start_height: Height,
+        stop_hash: BlockHash,
+        timeout: LocalDuration,
+    );
+
+    /// Send compact filter headers to a peer.
+    fn cfheaders(&mut self, addr: PeerId, headers: CFHeaders);
+
+    /// Send a compact filter to a peer.
+    fn cfilter(&mut self, addr: PeerId, filter: CFilter);
+
+    // Header sync /////////////////////////////////////////////////////////////
+
+    /// Get headers from a peer.
+    fn get_headers(&mut self, addr: PeerId, locators: Locators);
+
+    /// Send headers to a peer.
+    fn headers(&mut self, addr: PeerId, headers: Vec<BlockHeader>);
+
+    // Inventory ///////////////////////////////////////////////////////////////
+
+    /// Sends an `inv` message to a peer.
+    fn inv(&mut self, addr: PeerId, inventories: Vec<Inventory>);
+
+    /// Sends a `getdata` message to a peer.
+    fn get_data(&mut self, addr: PeerId, inventories: Vec<Inventory>);
+
+    /// Sends a `tx` message to a peer.
+    fn tx(&mut self, addr: PeerId, tx: Transaction);
 }
 
 /// Holds protocol outputs and pending I/O.
@@ -156,13 +244,10 @@ pub trait Disconnect {
 
 impl Disconnect for Outbox {
     fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason) {
-        debug!("{}: Disconnecting: {}", addr, reason);
+        debug!("Disconnecting from {}: {}", addr, reason);
+
         self.push(Io::Disconnect(addr, reason));
     }
-}
-
-impl Disconnect for () {
-    fn disconnect(&self, _addr: net::SocketAddr, _reason: super::DisconnectReason) {}
 }
 
 /// The ability to be woken up in the future.
@@ -178,62 +263,42 @@ impl Wakeup for Outbox {
     }
 }
 
-impl Wakeup for () {
-    fn wakeup(&self, _timeout: LocalDuration) -> &Self {
-        self
-    }
-}
-
-impl addrmgr::SyncAddresses for Outbox {
-    fn get_addresses(&mut self, addr: PeerId) {
-        self.message(addr, NetworkMessage::GetAddr);
-    }
-
-    fn send_addresses(&mut self, addr: PeerId, addrs: Vec<(BlockTime, Address)>) {
-        self.message(addr, NetworkMessage::Addr(addrs));
-    }
-}
-
-impl peermgr::Connect for Outbox {
+impl Connect for Outbox {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
-        info!("[conn] Connecting to {}..", addr);
+        info!("Connecting to {}..", addr);
 
         self.push(Io::Connect(addr));
         self.push(Io::Wakeup(timeout));
     }
 }
 
-impl peermgr::Connect for () {
-    fn connect(&self, _addr: net::SocketAddr, _timeout: LocalDuration) {}
-}
+impl<E: Into<Event> + std::fmt::Display> Wire<E> for Outbox {
+    fn event(&self, event: E) {
+        debug!("{}", &event);
 
-impl peermgr::Events for () {
-    fn event(&self, _event: peermgr::Event) {}
-}
-
-impl addrmgr::Events for Outbox {
-    fn event(&self, event: addrmgr::Event) {
-        match &event {
-            addrmgr::Event::Error(msg) => error!("[addr] {}", msg),
-            event @ addrmgr::Event::AddressDiscovered(_, _) => {
-                trace!("[addr] {}", &event);
-            }
-            event => {
-                debug!("[addr] {}", &event);
-            }
-        }
-        self.event(Event::Address(event));
+        self.event(event.into());
     }
-}
 
-impl peermgr::Events for Outbox {
-    fn event(&self, event: peermgr::Event) {
-        info!("[peer] {}", &event);
-        self.event(Event::Peer(event));
+    fn version(&mut self, addr: PeerId, msg: VersionMessage) -> &mut Self {
+        self.message(addr, NetworkMessage::Version(msg));
+        self
     }
-}
 
-impl pingmgr::Ping for Outbox {
+    fn verack(&mut self, addr: PeerId) -> &mut Self {
+        self.message(addr, NetworkMessage::Verack);
+        self
+    }
+
+    fn wtxid_relay(&mut self, addr: PeerId) -> &mut Self {
+        self.message(addr, NetworkMessage::WtxidRelay);
+        self
+    }
+
+    fn send_headers(&mut self, addr: PeerId) -> &mut Self {
+        self.message(addr, NetworkMessage::SendHeaders);
+        self
+    }
+
     fn ping(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self {
         self.message(addr, NetworkMessage::Ping(nonce));
         self
@@ -243,9 +308,15 @@ impl pingmgr::Ping for Outbox {
         self.message(addr, NetworkMessage::Pong(nonce));
         self
     }
-}
 
-impl syncmgr::SyncHeaders for Outbox {
+    fn get_addr(&mut self, addr: PeerId) {
+        self.message(addr, NetworkMessage::GetAddr);
+    }
+
+    fn addr(&mut self, addr: PeerId, addrs: Vec<(BlockTime, Address)>) {
+        self.message(addr, NetworkMessage::Addr(addrs));
+    }
+
     fn get_headers(&mut self, addr: PeerId, (locator_hashes, stop_hash): Locators) {
         let msg = NetworkMessage::GetHeaders(GetHeadersMessage {
             version: self.version,
@@ -258,59 +329,10 @@ impl syncmgr::SyncHeaders for Outbox {
         self.message(addr, msg);
     }
 
-    fn send_headers(&mut self, addr: PeerId, headers: Vec<BlockHeader>) {
+    fn headers(&mut self, addr: PeerId, headers: Vec<BlockHeader>) {
         self.message(addr, NetworkMessage::Headers(headers));
     }
 
-    fn negotiate(&mut self, addr: PeerId) {
-        self.message(addr, NetworkMessage::SendHeaders);
-    }
-
-    fn event(&self, event: syncmgr::Event) {
-        match &event {
-            syncmgr::Event::Synced { .. } => {
-                info!("[sync] {}", event);
-            }
-            _ => {
-                debug!("[sync] {}", &event);
-            }
-        }
-        self.event(Event::Chain(event));
-    }
-}
-
-impl peermgr::Handshake for Outbox {
-    fn version(&mut self, addr: PeerId, msg: VersionMessage) -> &mut Self {
-        self.message(addr, NetworkMessage::Version(msg));
-        self
-    }
-
-    fn verack(&mut self, addr: PeerId) -> &mut Self {
-        self.message(addr, NetworkMessage::Verack);
-        self
-    }
-
-    fn wtxidrelay(&mut self, addr: PeerId) -> &mut Self {
-        self.message(addr, NetworkMessage::WtxidRelay);
-        self
-    }
-}
-
-impl peermgr::Handshake for () {
-    fn version(&mut self, _addr: PeerId, _msg: VersionMessage) -> &mut Self {
-        self
-    }
-
-    fn verack(&mut self, _addr: PeerId) -> &mut Self {
-        self
-    }
-
-    fn wtxidrelay(&mut self, _addr: PeerId) -> &mut Self {
-        self
-    }
-}
-
-impl cbfmgr::SyncFilters for Outbox {
     fn get_cfheaders(
         &mut self,
         addr: PeerId,
@@ -329,7 +351,7 @@ impl cbfmgr::SyncFilters for Outbox {
         self.wakeup(timeout);
     }
 
-    fn send_cfheaders(&mut self, addr: PeerId, headers: CFHeaders) {
+    fn cfheaders(&mut self, addr: PeerId, headers: CFHeaders) {
         self.message(addr, NetworkMessage::CFHeaders(headers));
     }
 
@@ -351,42 +373,89 @@ impl cbfmgr::SyncFilters for Outbox {
         self.wakeup(timeout);
     }
 
-    fn send_cfilter(&mut self, addr: PeerId, cfilter: CFilter) {
+    fn cfilter(&mut self, addr: PeerId, cfilter: CFilter) {
         self.message(addr, NetworkMessage::CFilter(cfilter));
     }
-}
 
-impl invmgr::Inventories for Outbox {
     fn inv(&mut self, addr: PeerId, inventories: Vec<Inventory>) {
         self.message(addr, NetworkMessage::Inv(inventories));
     }
 
-    fn getdata(&mut self, addr: PeerId, inventories: Vec<Inventory>) {
+    fn get_data(&mut self, addr: PeerId, inventories: Vec<Inventory>) {
         self.message(addr, NetworkMessage::GetData(inventories));
     }
 
     fn tx(&mut self, addr: PeerId, tx: Transaction) {
         self.message(addr, NetworkMessage::Tx(tx));
     }
+}
 
-    fn event(&self, event: invmgr::Event) {
-        debug!("[invmgr] {}", &event);
-        self.event(Event::Inventory(event));
+#[cfg(test)]
+#[allow(unused_variables)]
+impl<E> Wire<E> for () {
+    fn event(&self, event: E) {}
+    fn tx(&mut self, addr: PeerId, tx: Transaction) {}
+    fn inv(&mut self, addr: PeerId, inventories: Vec<Inventory>) {}
+    fn get_data(&mut self, addr: PeerId, inventories: Vec<Inventory>) {}
+    fn get_headers(&mut self, addr: PeerId, locators: Locators) {}
+    fn get_addr(&mut self, addr: PeerId) {}
+    fn cfilter(&mut self, addr: PeerId, filter: CFilter) {}
+    fn headers(&mut self, addr: PeerId, headers: Vec<BlockHeader>) {}
+    fn addr(&mut self, addr: PeerId, addrs: Vec<(BlockTime, Address)>) {}
+    fn cfheaders(&mut self, addr: PeerId, headers: CFHeaders) {}
+    fn ping(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self {
+        self
+    }
+    fn pong(&mut self, addr: net::SocketAddr, nonce: u64) -> &Self {
+        self
+    }
+    fn verack(&mut self, addr: PeerId) -> &mut Self {
+        self
+    }
+    fn version(&mut self, addr: PeerId, msg: VersionMessage) -> &mut Self {
+        self
+    }
+    fn wtxid_relay(&mut self, addr: PeerId) -> &mut Self {
+        self
+    }
+    fn send_headers(&mut self, addr: PeerId) -> &mut Self {
+        self
+    }
+    fn get_cfilters(
+        &mut self,
+        addr: PeerId,
+        start_height: Height,
+        stop_hash: BlockHash,
+        timeout: LocalDuration,
+    ) {
+    }
+    fn get_cfheaders(
+        &mut self,
+        addr: PeerId,
+        start_height: Height,
+        stop_hash: BlockHash,
+        timeout: LocalDuration,
+    ) {
     }
 }
 
-impl cbfmgr::Events for Outbox {
-    fn event(&self, event: cbfmgr::Event) {
-        match event {
-            cbfmgr::Event::FilterHeadersImported { .. } => {
-                info!("[spv] {}", &event);
-            }
-            _ => {
-                debug!("[spv] {}", &event);
-            }
-        }
+#[cfg(test)]
+#[allow(unused_variables)]
+impl Connect for () {
+    fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {}
+}
 
-        self.event(Event::Filter(event));
+#[cfg(test)]
+#[allow(unused_variables)]
+impl Disconnect for () {
+    fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason) {}
+}
+
+#[cfg(test)]
+#[allow(unused_variables)]
+impl Wakeup for () {
+    fn wakeup(&self, duration: LocalDuration) -> &Self {
+        &()
     }
 }
 

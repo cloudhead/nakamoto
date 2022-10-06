@@ -21,7 +21,7 @@ use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::source;
 
 use super::filter_cache::FilterCache;
-use super::output::{Disconnect, Wakeup};
+use super::output::{Disconnect, Wakeup, Wire};
 use super::{DisconnectReason, Link, PeerId, Socket};
 
 use rescan::Rescan;
@@ -237,31 +237,6 @@ impl std::fmt::Display for Event {
     }
 }
 
-/// Compact filter synchronization.
-pub trait SyncFilters {
-    /// Get compact filter headers from peer, starting at the start height, and ending at the
-    /// stop hash.
-    fn get_cfheaders(
-        &mut self,
-        addr: PeerId,
-        start_height: Height,
-        stop_hash: BlockHash,
-        timeout: LocalDuration,
-    );
-    /// Get compact filters from a peer.
-    fn get_cfilters(
-        &mut self,
-        addr: PeerId,
-        start_height: Height,
-        stop_hash: BlockHash,
-        timeout: LocalDuration,
-    );
-    /// Send compact filter headers to a peer.
-    fn send_cfheaders(&mut self, addr: PeerId, headers: CFHeaders);
-    /// Send a compact filter to a peer.
-    fn send_cfilter(&mut self, addr: PeerId, filter: CFilter);
-}
-
 /// The ability to emit CBF related events.
 pub trait Events {
     /// Emit an CBF-related event.
@@ -330,7 +305,7 @@ pub struct FilterManager<F, U, C> {
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
 }
 
-impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> FilterManager<F, U, C> {
+impl<F: Filters, U: Wire<Event> + Wakeup + Disconnect, C: Clock> FilterManager<F, U, C> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U, clock: C) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -734,7 +709,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
                 "FilterManager::received_getcfheaders: all headers up to the tip must exist",
             );
 
-            self.upstream.send_cfheaders(
+            self.upstream.cfheaders(
                 from,
                 CFHeaders {
                     filter_type: msg.filter_type,
