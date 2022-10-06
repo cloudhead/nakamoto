@@ -27,7 +27,7 @@ use super::{DisconnectReason, Link, PeerId, Socket};
 use rescan::Rescan;
 
 /// Idle timeout.
-pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::BLOCK_INTERVAL;
+pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(60);
 
 /// Services required from peers for BIP 158 functionality.
 pub const REQUIRED_SERVICES: ServiceFlags = ServiceFlags::COMPACT_FILTERS;
@@ -851,6 +851,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         }
 
         if self.rescan.active {
+            // TODO: Don't do this too often.
             self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
                 .ok();
         }
@@ -900,11 +901,19 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
             stop_block.block_hash()
         };
 
+        self.get_cfheaders(start_height, stop_hash)
+    }
+
+    /// Lower level function that takes a start height and stop hash.
+    fn get_cfheaders(
+        &mut self,
+        start_height: Height,
+        stop_hash: BlockHash,
+    ) -> Option<(PeerId, Height, BlockHash)> {
         if self.inflight.contains_key(&stop_hash) {
             // Don't request the same thing twice.
             return None;
         }
-
         // TODO: We should select peers that are caught up to the requested height.
         if let Some((peer, _)) = self.peers.sample() {
             let time = self.clock.local_time();
