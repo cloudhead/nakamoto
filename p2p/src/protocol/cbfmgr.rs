@@ -48,7 +48,7 @@ pub const DEFAULT_REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(6);
 #[derive(Error, Debug)]
 pub enum Error {
     /// The request was ignored. This happens if we're not able to fulfill the request.
-    #[error("ignoring `{msg}` message from {from}")]
+    #[error("ignoring message from {from}: {msg}")]
     Ignored {
         /// Message that was ignored.
         msg: &'static str,
@@ -104,12 +104,21 @@ pub enum Event {
         /// Block hash corresponding to the tip of the filter header chain.
         block_hash: BlockHash,
     },
+    /// Filter header chain is out of sync with block headers.
+    OutOfSync {
+        /// Height of filter header chain.
+        filter_height: Height,
+        /// Height of block header chain.
+        block_height: Height,
+    },
     /// Started syncing filter headers with a peer.
     Syncing {
         /// The remote peer.
         peer: PeerId,
         /// The start height from which we're syncing.
         start_height: Height,
+        /// The stop height to which we're syncing.
+        stop_height: Height,
         /// The stop hash.
         stop_hash: BlockHash,
     },
@@ -171,21 +180,36 @@ impl std::fmt::Display for Event {
             Event::FilterHeadersImported { count, height, .. } => {
                 write!(
                     fmt,
-                    "Imported {} filter header(s) up to height = {}",
+                    "Imported {} filter header(s) (height = {})",
                     count, height
                 )
             }
             Event::Synced(height) => {
-                write!(fmt, "Filter headers synced up to height = {}", height)
+                write!(
+                    fmt,
+                    "Filter headers synced with block headers (height = {})",
+                    height
+                )
             }
+            Event::OutOfSync {
+                block_height,
+                filter_height,
+            } => write!(
+                fmt,
+                "Filter header chain is out of sync by {} header(s) ({} to {})",
+                block_height - filter_height,
+                filter_height,
+                block_height,
+            ),
             Event::Syncing {
                 peer,
                 start_height,
+                stop_height,
                 stop_hash,
             } => write!(
                 fmt,
-                "Syncing filter headers with {}, start = {}, stop = {}",
-                peer, start_height, stop_hash
+                "Syncing filter headers with {} from height {} to {} (block hash {})",
+                peer, start_height, stop_height, stop_hash
             ),
             Event::RescanStarted {
                 start,
@@ -194,7 +218,7 @@ impl std::fmt::Display for Event {
                 write!(fmt, "Rescan started from height {} to {}", start, end)
             }
             Event::RescanStarted { start, end: None } => {
-                write!(fmt, "Rescan started from height {}", start)
+                write!(fmt, "Rescan started from height {} to ..", start)
             }
             Event::RescanCompleted { height } => {
                 write!(fmt, "Rescan completed at height {}", height)
@@ -416,7 +440,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
             }
 
             log::debug!(
-                "Rollback from {} to {}, start = {}, height = {}",
+                "[spv] Rollback from {} to {}, start = {}, height = {}",
                 current,
                 self.rescan.current,
                 start,
@@ -536,6 +560,14 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
                 .block_hash();
             let timeout = self.config.request_timeout;
 
+            log::debug!(
+                "Requested filter(s) in range {} to {} from {} (stop = {})",
+                range.start(),
+                range.end(),
+                peer,
+                stop_hash
+            );
+
             self.upstream
                 .get_cfilters(*peer, *range.start(), stop_hash, timeout);
         }
@@ -555,17 +587,23 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         let from = *from;
         let stop_hash = msg.stop_hash;
 
+        log::debug!(
+            "[spv] Received {} filter header(s) from {}",
+            msg.filter_hashes.len(),
+            from
+        );
+
         if self.inflight.remove(&stop_hash).is_none() {
             return Err(Error::Ignored {
                 from,
-                msg: "cfheaders: unsolicited message",
+                msg: "unsolicited `cfheaders` message",
             });
         }
 
         if msg.filter_type != 0x0 {
             return Err(Error::InvalidMessage {
                 from,
-                reason: "cfheaders: invalid filter type",
+                reason: "invalid `cfheaders` filter type",
             });
         }
 
@@ -575,7 +613,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         } else {
             return Err(Error::InvalidMessage {
                 from,
-                reason: "cfheaders: unknown stop hash",
+                reason: "unknown `cfheaders` stop hash",
             });
         };
 
@@ -605,28 +643,28 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         if start_height > stop_height {
             return Err(Error::InvalidMessage {
                 from,
-                reason: "cfheaders: start height is greater than stop height",
+                reason: "`cfheaders` start height is greater than stop height",
             });
         }
 
         if count > MAX_MESSAGE_CFHEADERS {
             return Err(Error::InvalidMessage {
                 from,
-                reason: "cfheaders: header count exceeds maximum",
+                reason: "`cfheaders` header count exceeds maximum",
             });
         }
 
         if count == 0 {
             return Err(Error::InvalidMessage {
                 from,
-                reason: "cfheaders: empty header list",
+                reason: "`cfheaders` has an empty header list",
             });
         }
 
         if (stop_height - start_height) as usize != count {
             return Err(Error::InvalidMessage {
                 from,
-                reason: "cfheaders: header count does not match height range",
+                reason: "`cfheaders` header count does not match height range",
             });
         }
 
@@ -846,6 +884,11 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
         }
 
         if filter_height < block_height {
+            self.upstream.event(Event::OutOfSync {
+                filter_height,
+                block_height,
+            });
+
             // We need to sync the filter header chain.
             let start_height = self.filters.height() + 1;
             let stop_height = tree.height();
@@ -856,6 +899,7 @@ impl<F: Filters, U: SyncFilters + Events + Wakeup + Disconnect, C: Clock> Filter
                 self.upstream.event(Event::Syncing {
                     peer,
                     start_height,
+                    stop_height,
                     stop_hash,
                 });
             }
@@ -1070,7 +1114,7 @@ mod tests {
             cache.import_headers(cfheaders).unwrap();
             cache.verify(network).unwrap();
 
-            let upstream = Outbox::new(network, PROTOCOL_VERSION, "channel");
+            let upstream = Outbox::new(network, PROTOCOL_VERSION);
             let config = Config {
                 filter_cache_size,
                 ..Config::default()
@@ -1204,7 +1248,7 @@ mod tests {
         let mut cbfmgr = {
             let rng = fastrand::Rng::new();
             let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
-            let upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+            let upstream = Outbox::new(network, PROTOCOL_VERSION);
 
             FilterManager::new(Config::default(), rng, cache, upstream, clock)
         };
@@ -1484,7 +1528,7 @@ mod tests {
         let mut cbfmgr = {
             let cache = FilterCache::from(store::memory::Memory::genesis(network)).unwrap();
             let rng = fastrand::Rng::new();
-            let upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+            let upstream = Outbox::new(network, PROTOCOL_VERSION);
             FilterManager::new(Config::default(), rng, cache, upstream, time)
         };
 

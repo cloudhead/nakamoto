@@ -152,7 +152,11 @@ impl std::fmt::Display for Event {
                 write!(fmt, "Peer height updated to {}", height)
             }
             Event::Synced(hash, height) => {
-                write!(fmt, "Headers synced up to hash={} height={}", hash, height)
+                write!(
+                    fmt,
+                    "Headers synced up to height {} with hash {}",
+                    height, hash
+                )
             }
             Event::Syncing { current, best } => write!(fmt, "Syncing headers {}/{}", current, best),
             Event::BlockConnected { height, header } => {
@@ -352,7 +356,7 @@ impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
         }
         // When unsolicited, we don't want to process too many headers in case of a DoS.
         if length > MAX_UNSOLICITED_HEADERS && request.is_none() {
-            log::debug!("{}: Received {} unsolicited headers", from, length);
+            log::debug!("Received {} unsolicited headers from {}", length, from);
 
             return Ok(ImportResult::TipUnchanged);
         }
@@ -362,7 +366,7 @@ impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
         } else {
             return Ok(ImportResult::TipUnchanged);
         }
-        log::debug!("{}: Received {} headers", from, length);
+        log::debug!("[sync] Received {} block header(s) from {}", length, from);
 
         let root = headers.first().block_hash();
         let best = headers.last().block_hash();
@@ -702,6 +706,8 @@ impl<U: Wakeup + Disconnect + SyncHeaders, C: Clock> SyncManager<U, C> {
             let (tip, _) = tree.tip();
             let height = tree.height();
 
+            // TODO: This event can fire multiple times if `sync` is called while we're already
+            // in sync.
             self.upstream.event(Event::Synced(tip, height));
 
             return false;

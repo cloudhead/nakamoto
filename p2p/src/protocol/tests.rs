@@ -414,7 +414,7 @@ fn test_handshake_version_hook() {
         Ok(())
     });
 
-    let mut peer = Peer::config([48, 48, 48, 48], vec![], vec![], vec![], cfg, rng);
+    let mut peer = Peer::config("alice", [48, 48, 48, 48], vec![], vec![], vec![], cfg, rng);
     let craig = PeerDummy::new([131, 31, 11, 33], network, 144, ServiceFlags::NETWORK);
     let satoshi = PeerDummy::new([131, 31, 11, 66], network, 144, ServiceFlags::NETWORK);
 
@@ -658,7 +658,6 @@ fn prop_connect_timeout(seed: u64) {
     let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
     let config = Config {
-        target: "alice",
         target_outbound_peers: 3,
         connect: vec![
             ([77, 77, 77, 77], network.port()).into(),
@@ -669,6 +668,7 @@ fn prop_connect_timeout(seed: u64) {
         ..Config::default()
     };
     let mut alice = Peer::config(
+        "alice",
         [48, 48, 48, 48],
         vec![],
         vec![],

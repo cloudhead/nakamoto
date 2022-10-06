@@ -916,7 +916,7 @@ mod tests {
         }
 
         let mut addrmgr = {
-            let upstream = crate::protocol::output::Outbox::new(Network::Mainnet, 0, "test");
+            let upstream = crate::protocol::output::Outbox::new(Network::Mainnet, 0);
 
             AddressManager::new(
                 Config::default(),

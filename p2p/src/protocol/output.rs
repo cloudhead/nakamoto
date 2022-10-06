@@ -80,8 +80,6 @@ pub struct Outbox {
     outbound: Rc<RefCell<VecDeque<Io>>>,
     /// Network message builder.
     builder: message::Builder,
-    /// Log target.
-    target: &'static str,
 }
 
 impl Iterator for Outbox {
@@ -95,12 +93,11 @@ impl Iterator for Outbox {
 
 impl Outbox {
     /// Create a new channel.
-    pub fn new(network: Network, version: u32, target: &'static str) -> Self {
+    pub fn new(network: Network, version: u32) -> Self {
         Self {
             version,
             outbound: Rc::new(RefCell::new(VecDeque::new())),
             builder: message::Builder::new(network),
-            target,
         }
     }
 
@@ -123,7 +120,7 @@ impl Outbox {
 
     /// Push a message to the channel.
     pub fn message(&mut self, addr: PeerId, message: NetworkMessage) -> &Self {
-        debug!(target: self.target, "{}: Sending {:?}", addr, message.cmd());
+        debug!("Sending {:?} to {}", message.cmd(), addr);
 
         let mut buffer = Vec::new();
         // Nb. writing to a vector cannot result in an error.
@@ -159,7 +156,7 @@ pub trait Disconnect {
 
 impl Disconnect for Outbox {
     fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason) {
-        debug!(target: self.target, "{}: Disconnecting: {}", addr, reason);
+        debug!("{}: Disconnecting: {}", addr, reason);
         self.push(Io::Disconnect(addr, reason));
     }
 }
@@ -199,7 +196,8 @@ impl addrmgr::SyncAddresses for Outbox {
 
 impl peermgr::Connect for Outbox {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
-        info!(target: self.target, "[conn] {}: Connecting..", addr);
+        info!("[conn] Connecting to {}..", addr);
+
         self.push(Io::Connect(addr));
         self.push(Io::Wakeup(timeout));
     }
@@ -216,12 +214,12 @@ impl peermgr::Events for () {
 impl addrmgr::Events for Outbox {
     fn event(&self, event: addrmgr::Event) {
         match &event {
-            addrmgr::Event::Error(msg) => error!(target: self.target, "[addr] {}", msg),
+            addrmgr::Event::Error(msg) => error!("[addr] {}", msg),
             event @ addrmgr::Event::AddressDiscovered(_, _) => {
-                trace!(target: self.target, "[addr] {}", &event);
+                trace!("[addr] {}", &event);
             }
             event => {
-                debug!(target: self.target, "[addr] {}", &event);
+                debug!("[addr] {}", &event);
             }
         }
         self.event(Event::Address(event));
@@ -230,7 +228,7 @@ impl addrmgr::Events for Outbox {
 
 impl peermgr::Events for Outbox {
     fn event(&self, event: peermgr::Event) {
-        info!(target: self.target, "[peer] {}", &event);
+        info!("[peer] {}", &event);
         self.event(Event::Peer(event));
     }
 }
@@ -269,13 +267,13 @@ impl syncmgr::SyncHeaders for Outbox {
     }
 
     fn event(&self, event: syncmgr::Event) {
-        debug!(target: self.target, "[sync] {}", &event);
-
         match &event {
-            syncmgr::Event::Synced(tip, height) => {
-                info!(target: self.target, "Block height = {}, tip = {}", height, tip);
+            syncmgr::Event::Synced { .. } => {
+                info!("[sync] {}", event);
             }
-            _ => {}
+            _ => {
+                debug!("[sync] {}", &event);
+            }
         }
         self.event(Event::Chain(event));
     }
@@ -372,20 +370,20 @@ impl invmgr::Inventories for Outbox {
     }
 
     fn event(&self, event: invmgr::Event) {
-        debug!(target: self.target, "[invmgr] {}", &event);
+        debug!("[invmgr] {}", &event);
         self.event(Event::Inventory(event));
     }
 }
 
 impl cbfmgr::Events for Outbox {
     fn event(&self, event: cbfmgr::Event) {
-        debug!(target: self.target, "[spv] {}", &event);
-
         match event {
-            cbfmgr::Event::FilterHeadersImported { height, .. } => {
-                info!(target: self.target, "Filter height = {}", height);
+            cbfmgr::Event::FilterHeadersImported { .. } => {
+                info!("[spv] {}", &event);
             }
-            _ => {}
+            _ => {
+                debug!("[spv] {}", &event);
+            }
         }
 
         self.event(Event::Filter(event));

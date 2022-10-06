@@ -69,6 +69,7 @@ pub struct Peer<P> {
     pub protocol: P,
     pub addr: PeerId,
     pub cfg: Config,
+    pub name: &'static str,
 
     clock: RefClock<AdjustedTime<PeerId>>,
     initialized: bool,
@@ -77,7 +78,7 @@ pub struct Peer<P> {
 impl simulator::Peer<Protocol> for Peer<Protocol> {
     fn init(&mut self) {
         if !self.initialized {
-            info!(target: self.cfg.target, "Initializing: address = {}", self.addr);
+            info!("Initializing: address = {}", self.addr);
 
             self.initialized = true;
             self.protocol.initialize(self.clock.local_time());
@@ -116,13 +117,12 @@ impl Peer<Protocol> {
         let cfg = Config {
             network,
             params: Params::new(network.into()),
-            target: name,
             // We don't actually have the required services, but we pretend to
             // for testing purposes.
             services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
             ..Config::default()
         };
-        Self::config(ip, headers, cfheaders, peers, cfg, rng)
+        Self::config(name, ip, headers, cfheaders, peers, cfg, rng)
     }
 
     pub fn genesis(
@@ -136,6 +136,7 @@ impl Peer<Protocol> {
     }
 
     pub fn config(
+        name: &'static str,
         ip: impl Into<net::IpAddr>,
         headers: Vec<BlockHeader>,
         cfheaders: Vec<(FilterHash, FilterHeader)>,
@@ -170,6 +171,7 @@ impl Peer<Protocol> {
         let protocol = Protocol::new(tree, filters, peers, clock.clone(), rng, cfg.clone());
 
         Self {
+            name,
             protocol,
             clock,
             addr,
@@ -347,14 +349,13 @@ pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Pr
             let peers = address_books.get(addr).unwrap_or(&Vec::new()).clone();
             let cfg = Config {
                 network,
-                target: names[i],
                 // These nodes don't need to try connecting to other nodes.
                 target_outbound_peers: 0,
                 // These are full nodes.
                 services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
                 ..Config::default()
             };
-            Peer::config(addr.ip(), vec![], vec![], peers, cfg, rng.clone())
+            Peer::config(names[i], addr.ip(), vec![], vec![], peers, cfg, rng.clone())
         })
         .collect::<Vec<_>>()
 }

@@ -600,7 +600,7 @@ mod tests {
 
         let network = Network::Regtest;
 
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let mut rng = fastrand::Rng::new();
         let clock = RefClock::from(LocalTime::now());
 
@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn test_rebroadcast_timeout() {
         let network = Network::Mainnet;
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let mut rng = fastrand::Rng::with_seed(1);
@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn test_max_attemps() {
         let network = Network::Mainnet;
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
@@ -782,7 +782,7 @@ mod tests {
         let fork_block1 = gen::block_with(&tip, vec![tx.clone()], &mut rng);
         let fork_block2 = gen::block(&fork_block1.header, &mut rng);
 
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let time = LocalTime::now();
 
         let mut tree = model::Cache::from(headers);
@@ -840,7 +840,7 @@ mod tests {
     #[test]
     fn test_wtx_inv() {
         let network = Network::Mainnet;
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
@@ -883,7 +883,7 @@ mod tests {
     #[test]
     fn test_wtx_getdata() {
         let network = Network::Mainnet;
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION, "test");
+        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
 
         let mut rng = fastrand::Rng::with_seed(1);
 

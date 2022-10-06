@@ -373,8 +373,6 @@ pub struct Protocol<T, F, P, C> {
     invmgr: InventoryManager<Outbox, C>,
     /// Network-adjusted clock.
     clock: C,
-    /// Informational name of this protocol instance. Used for logging purposes only.
-    target: &'static str,
     /// Last time a "tick" was triggered.
     #[allow(dead_code)]
     last_tick: LocalTime,
@@ -415,8 +413,6 @@ pub struct Config {
     pub ping_timeout: LocalDuration,
     /// Size in bytes of the compact filter cache.
     pub filter_cache_size: usize,
-    /// Log target.
-    pub target: &'static str,
     /// Protocol event hooks.
     pub hooks: Hooks,
 }
@@ -437,7 +433,6 @@ impl Default for Config {
             ping_timeout: pingmgr::PING_TIMEOUT,
             filter_cache_size: cbfmgr::DEFAULT_FILTER_CACHE_SIZE,
             user_agent: USER_AGENT,
-            target: "self",
             hooks: Hooks::default(),
         }
     }
@@ -445,17 +440,12 @@ impl Default for Config {
 
 impl Config {
     /// Construct a new configuration.
-    pub fn from(
-        target: &'static str,
-        network: network::Network,
-        connect: Vec<net::SocketAddr>,
-    ) -> Self {
+    pub fn from(network: network::Network, connect: Vec<net::SocketAddr>) -> Self {
         let params = Params::new(network.into());
 
         Self {
             network,
             connect,
-            target,
             params,
             ..Self::default()
         }
@@ -505,12 +495,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protoco
             filter_cache_size,
             user_agent,
             required_services,
-            target,
             params,
             hooks,
         } = config;
 
-        let outbox = Outbox::new(network, protocol_version, target);
+        let outbox = Outbox::new(network, protocol_version);
         let inbox = HashMap::new();
         let syncmgr = SyncManager::new(
             syncmgr::Config {
@@ -568,7 +557,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protoco
         Self {
             tree,
             network,
-            target,
             clock,
             inbox,
             addrmgr,
@@ -594,19 +582,16 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protoco
         }
 
         if !self.peermgr.is_connected(&addr) {
-            debug!(target: self.target, "Received {:?} from unknown peer {}", cmd, addr);
+            debug!("[p2p] Received {:?} from unknown peer {}", cmd, addr);
             return;
         }
 
-        debug!(
-            target: self.target, "{}: Received {:?}",
-            addr, cmd
-        );
+        debug!("Received {:?} from {}", cmd, addr);
 
         if let Err(err) = (self.hooks.on_message)(addr, &msg.payload, &self.outbox) {
             debug!(
-                target: self.target,
-                "{}: Message {:?} dropped by user hook: {}", addr, cmd, err
+                "Message {:?} from {} dropped by user hook: {}",
+                cmd, addr, err
             );
             return;
         }
@@ -711,7 +696,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protoco
                     Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
                         self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
                     }
-                    _ => {}
+                    Err(err) => {
+                        log::warn!("Error receiving filter headers: {}", err);
+                    }
+                    Ok(_) => {}
                 }
             }
             NetworkMessage::GetCFHeaders(msg) => {
@@ -755,10 +743,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Protoco
             NetworkMessage::Unknown {
                 command: ref cmd, ..
             } => {
-                debug!(target: self.target, "{}: Ignoring unknown message {:?}", addr, cmd)
+                warn!("Ignoring unknown message {:?} from {}", cmd, addr)
             }
             _ => {
-                debug!(target: self.target, "{}: Ignoring {:?}", addr, cmd);
+                warn!("Ignoring {:?} from {}", cmd, addr);
             }
         }
     }
@@ -897,7 +885,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> nakamot
     }
 
     fn command(&mut self, cmd: Command) {
-        debug!(target: self.target, "Received command: {:?}", cmd);
+        debug!("Received command: {:?}", cmd);
 
         match cmd {
             Command::QueryTree(query) => {
@@ -998,13 +986,13 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> nakamot
     }
 
     fn tick(&mut self, local_time: LocalTime) {
-        trace!(target: self.target, "Received tick");
+        trace!("Received tick");
 
         self.clock.set(local_time);
     }
 
     fn wake(&mut self) {
-        trace!(target: self.target, "Received wake");
+        trace!("Received wake");
 
         self.invmgr.received_wake(&self.tree);
         self.syncmgr.received_wake(&self.tree);
