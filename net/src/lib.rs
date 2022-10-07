@@ -37,7 +37,7 @@ impl Link {
 
 /// Output of a state transition of the `Protocol` state machine.
 #[derive(Debug)]
-pub enum Io<E, D, Id: PeerId> {
+pub enum Io<E, D, Id: PeerId = net::SocketAddr> {
     /// There are some bytes ready to be sent to a peer.
     Write(Id, Vec<u8>),
     /// Connect to a peer.
@@ -102,7 +102,7 @@ where
 /// A protocol state-machine.
 ///
 /// Network protocols must implement this trait to be drivable by the reactor.
-pub trait Protocol<Id: PeerId>:
+pub trait Protocol<Id: PeerId = net::SocketAddr>:
     Iterator<Item = Io<Self::Event, Self::DisconnectReason, Id>>
 {
     /// Events emitted by the protocol.
@@ -159,7 +159,7 @@ pub trait Waker: Send + Sync + Clone {
 }
 
 /// Any network reactor that can drive the light-client protocol.
-pub trait Reactor<Id: PeerId> {
+pub trait Reactor<Id: PeerId = net::SocketAddr> {
     /// The type of waker this reactor uses.
     type Waker: Waker;
 

@@ -57,7 +57,7 @@ impl nakamoto_net::Waker for Waker {
 }
 
 /// A single-threaded non-blocking reactor.
-pub struct Reactor<R: Write + Read, Id: PeerId> {
+pub struct Reactor<R: Write + Read, Id: PeerId = net::SocketAddr> {
     peers: HashMap<Id, Socket<R>>,
     connecting: HashSet<Id>,
     sources: popol::Sources<Source<Id>>,
