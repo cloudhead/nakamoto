@@ -823,8 +823,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Iterato
     }
 }
 
-impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> nakamoto_net::Protocol
-    for Protocol<T, F, P, C>
+impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>>
+    nakamoto_net::Protocol<net::SocketAddr> for Protocol<T, F, P, C>
 {
     type Event = Event;
     type DisconnectReason = DisconnectReason;

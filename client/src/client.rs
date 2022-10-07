@@ -127,7 +127,7 @@ where
 }
 
 /// A light-client process.
-pub struct Client<R: Reactor> {
+pub struct Client<R: Reactor<net::SocketAddr>> {
     handle: chan::Sender<Command>,
     commands: chan::Receiver<Command>,
     events: event::Subscriber<protocol::Event>,
@@ -142,7 +142,7 @@ pub struct Client<R: Reactor> {
     reactor: R,
 }
 
-impl<R: Reactor> Client<R>
+impl<R: Reactor<net::SocketAddr>> Client<R>
 where
     Publisher<protocol::Event>: event::Publisher<protocol::Event>,
 {
@@ -345,7 +345,7 @@ where
     /// its own thread.
     pub fn run_with<P>(mut self, listen: Vec<net::SocketAddr>, protocol: P) -> Result<(), Error>
     where
-        P: nakamoto_net::Protocol<Event = protocol::Event, Command = Command>,
+        P: nakamoto_net::Protocol<net::SocketAddr, Event = protocol::Event, Command = Command>,
     {
         self.reactor.run::<P, Publisher<protocol::Event>>(
             &listen,

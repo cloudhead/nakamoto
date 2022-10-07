@@ -30,7 +30,7 @@ use super::network::Network;
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr, Locators};
 
 /// Output of a state transition of the `Protocol` state machine.
-pub type Io = nakamoto_net::Io<Event, super::DisconnectReason>;
+pub type Io = nakamoto_net::Io<Event, super::DisconnectReason, net::SocketAddr>;
 
 impl From<Event> for Io {
     fn from(event: Event) -> Self {

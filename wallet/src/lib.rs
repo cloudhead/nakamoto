@@ -95,7 +95,7 @@ impl<H: Handle> Wallet<H> {
 }
 
 /// The network reactor we're going to use.
-type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, net::SocketAddr>;
 
 /// Entry point for running the wallet.
 pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {

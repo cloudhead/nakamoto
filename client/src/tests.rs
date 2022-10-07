@@ -22,7 +22,7 @@ use crate::client::{self, Client, Config};
 use crate::error;
 use crate::handle::Handle as _;
 
-type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
+type Reactor = nakamoto_net_poll::Reactor<net::TcpStream, net::SocketAddr>;
 
 fn network(
     cfgs: &[Config],
