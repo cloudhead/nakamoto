@@ -561,10 +561,10 @@ mod tests {
 
     use std::net;
 
-    use crate::protocol;
-    use crate::protocol::network::Network;
-    use crate::protocol::output::{self, Outbox};
-    use crate::protocol::{Io, PROTOCOL_VERSION};
+    use crate::fsm;
+    use crate::fsm::network::Network;
+    use crate::fsm::output::{self, Outbox};
+    use crate::fsm::{Io, PROTOCOL_VERSION};
 
     use nakamoto_common::bitcoin::network::message::NetworkMessage;
     use nakamoto_common::block::time::RefClock;
@@ -577,7 +577,7 @@ mod tests {
 
     fn events(outputs: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
         outputs.filter_map(|o| match o {
-            Io::Event(protocol::Event::Inventory(e)) => Some(e),
+            Io::Event(fsm::Event::Inventory(e)) => Some(e),
             _ => None,
         })
     }

@@ -1,7 +1,7 @@
-//! Protocol events.
+//! State machine events.
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
-use crate::protocol::{self, Height, LocalTime, PeerId};
+use crate::fsm::{self, Height, LocalTime, PeerId};
 
 /// A peer-to-peer event.
 #[derive(Debug, Clone)]
@@ -20,51 +20,51 @@ pub enum Event {
     /// Received a message from a peer.
     Received(PeerId, NetworkMessage),
     /// An address manager event.
-    Address(protocol::AddressEvent),
+    Address(fsm::AddressEvent),
     /// A sync manager event.
-    Chain(protocol::ChainEvent),
+    Chain(fsm::ChainEvent),
     /// A peer manager event.
-    Peer(protocol::PeerEvent),
+    Peer(fsm::PeerEvent),
     /// A CBF manager event.
-    Filter(protocol::FilterEvent),
+    Filter(fsm::FilterEvent),
     /// An inventory manager event.
-    Inventory(protocol::InventoryEvent),
+    Inventory(fsm::InventoryEvent),
     /// A ping manager event.
-    Ping(protocol::PingEvent),
+    Ping(fsm::PingEvent),
 }
 
-impl From<protocol::ChainEvent> for Event {
-    fn from(e: protocol::ChainEvent) -> Self {
+impl From<fsm::ChainEvent> for Event {
+    fn from(e: fsm::ChainEvent) -> Self {
         Self::Chain(e)
     }
 }
 
-impl From<protocol::PeerEvent> for Event {
-    fn from(e: protocol::PeerEvent) -> Self {
+impl From<fsm::PeerEvent> for Event {
+    fn from(e: fsm::PeerEvent) -> Self {
         Self::Peer(e)
     }
 }
 
-impl From<protocol::FilterEvent> for Event {
-    fn from(e: protocol::FilterEvent) -> Self {
+impl From<fsm::FilterEvent> for Event {
+    fn from(e: fsm::FilterEvent) -> Self {
         Self::Filter(e)
     }
 }
 
-impl From<protocol::AddressEvent> for Event {
-    fn from(e: protocol::AddressEvent) -> Self {
+impl From<fsm::AddressEvent> for Event {
+    fn from(e: fsm::AddressEvent) -> Self {
         Self::Address(e)
     }
 }
 
-impl From<protocol::InventoryEvent> for Event {
-    fn from(e: protocol::InventoryEvent) -> Self {
+impl From<fsm::InventoryEvent> for Event {
+    fn from(e: fsm::InventoryEvent) -> Self {
         Self::Inventory(e)
     }
 }
 
-impl From<protocol::PingEvent> for Event {
-    fn from(e: protocol::PingEvent) -> Self {
+impl From<fsm::PingEvent> for Event {
+    fn from(e: fsm::PingEvent) -> Self {
         Self::Ping(e)
     }
 }

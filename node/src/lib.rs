@@ -8,7 +8,7 @@ pub use nakamoto_client::client::{self, Client, Config, Network};
 pub use nakamoto_client::error::Error;
 pub use nakamoto_client::Domain;
 
-use nakamoto_client::protocol;
+use nakamoto_client::fsm;
 
 pub mod logger;
 
@@ -25,11 +25,11 @@ pub fn run(
     network: Network,
 ) -> Result<(), Error> {
     let mut cfg = Config {
-        protocol: protocol::Config {
+        protocol: fsm::Config {
             connect: connect.to_vec(),
             domains: domains.to_vec(),
             network,
-            ..protocol::Config::default()
+            ..fsm::Config::default()
         },
         listen: if listen.is_empty() {
             vec![([0, 0, 0, 0], 0).into()]

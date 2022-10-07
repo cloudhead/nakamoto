@@ -34,7 +34,7 @@ impl FeeEstimate {
     /// Returns [`None`] if the list is empty.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::fees::FeeEstimate;
+    /// use nakamoto_p2p::fsm::fees::FeeEstimate;
     ///
     /// assert_eq!(
     ///     FeeEstimate::from(vec![3, 9, 2]),

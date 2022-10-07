@@ -8,7 +8,7 @@ use nakamoto_chain as chain;
 use nakamoto_common as common;
 use nakamoto_p2p as p2p;
 
-use p2p::protocol::Command;
+use p2p::fsm::Command;
 
 /// A client error.
 #[derive(Error, Debug)]

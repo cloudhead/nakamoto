@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::net;
 use std::ops::RangeInclusive;
@@ -5,7 +6,6 @@ use std::ops::RangeInclusive;
 use nakamoto_chain::block::Block;
 use nakamoto_chain::filter::BlockFilter;
 
-use nakamoto_common::bitcoin::consensus::encode::Encodable as _;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_common::bitcoin::network::Address;
@@ -20,12 +20,12 @@ use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_test::block::cache::model;
 
 use nakamoto_net::event;
-use nakamoto_net::Protocol as _;
-use nakamoto_p2p::protocol;
-use nakamoto_p2p::protocol::Command;
-use nakamoto_p2p::protocol::Link;
-use nakamoto_p2p::protocol::Peer;
-use nakamoto_p2p::protocol::Protocol;
+use nakamoto_net::StateMachine as _;
+use nakamoto_p2p::fsm;
+use nakamoto_p2p::fsm::Command;
+use nakamoto_p2p::fsm::Link;
+use nakamoto_p2p::fsm::Peer;
+use nakamoto_p2p::fsm::StateMachine;
 
 use crate::client::{chan, Event};
 use crate::handle::{self, Handle};
@@ -34,12 +34,12 @@ use crate::spv;
 pub struct Client {
     // Used by tests.
     pub network: Network,
-    pub events: chan::Sender<protocol::Event>,
+    pub events: chan::Sender<fsm::Event>,
     pub blocks: chan::Sender<(Block, Height)>,
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
-    pub subscriber: event::Broadcast<protocol::Event, Event>,
+    pub subscriber: event::Broadcast<fsm::Event, Event>,
     pub commands: chan::Receiver<Command>,
-    pub protocol: Protocol<
+    pub protocol: StateMachine<
         model::Cache,
         model::FilterCache,
         HashMap<net::IpAddr, KnownAddress>,
@@ -47,7 +47,7 @@ pub struct Client {
     >,
 
     // Used in handle.
-    events_: chan::Receiver<protocol::Event>,
+    events_: chan::Receiver<fsm::Event>,
     blocks_: chan::Receiver<(Block, Height)>,
     filters_: chan::Receiver<(BlockFilter, BlockHash, Height)>,
     subscriber_: event::Subscriber<Event>,
@@ -75,23 +75,20 @@ impl Client {
     }
 
     pub fn received(&mut self, remote: &net::SocketAddr, payload: NetworkMessage) {
-        let mut bytes = Vec::new();
-        RawNetworkMessage {
+        let msg = RawNetworkMessage {
             magic: self.network.magic(),
             payload,
-        }
-        .consensus_encode(&mut bytes)
-        .unwrap();
+        };
 
-        self.protocol.received_bytes(remote, &bytes);
+        self.protocol.received(remote, Cow::Owned(msg));
     }
 
-    pub fn step(&mut self) -> Vec<protocol::Io> {
+    pub fn step(&mut self) -> Vec<fsm::Io> {
         let mut outputs = Vec::new();
 
         for out in self.protocol.drain() {
             match out {
-                protocol::Io::Event(event) => {
+                fsm::Io::Event(event) => {
                     self.subscriber.broadcast(event.clone());
                     self.events.send(event).ok();
                 }
@@ -118,9 +115,9 @@ impl Default for Client {
             let time = LocalTime::now();
             let clock = AdjustedTime::new(time);
             let rng = fastrand::Rng::new();
-            let cfg = protocol::Config::default();
+            let cfg = fsm::Config::default();
 
-            Protocol::new(tree, cfilters, peers, clock, rng, cfg)
+            StateMachine::new(tree, cfilters, peers, clock, rng, cfg)
         };
 
         Self {
@@ -146,7 +143,7 @@ pub struct TestHandle {
 
     #[allow(dead_code)]
     network: Network,
-    events: chan::Receiver<protocol::Event>,
+    events: chan::Receiver<fsm::Event>,
     blocks: chan::Receiver<(Block, Height)>,
     filters: chan::Receiver<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
@@ -242,7 +239,7 @@ impl Handle for TestHandle {
 
     fn wait<F, T>(&self, _f: F) -> Result<T, handle::Error>
     where
-        F: FnMut(protocol::Event) -> Option<T>,
+        F: FnMut(fsm::Event) -> Option<T>,
     {
         unimplemented!()
     }
@@ -259,7 +256,7 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
-    fn events(&self) -> chan::Receiver<protocol::Event> {
+    fn events(&self) -> chan::Receiver<fsm::Event> {
         self.events.clone()
     }
 

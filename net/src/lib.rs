@@ -1,5 +1,6 @@
 //! Peer-to-peer networking core types.
 #![allow(clippy::type_complexity)]
+use std::borrow::Cow;
 use std::hash::Hash;
 use std::sync::Arc;
 use std::{fmt, io, net};
@@ -35,11 +36,11 @@ impl Link {
     }
 }
 
-/// Output of a state transition of the `Protocol` state machine.
+/// Output of a state transition of the state machine.
 #[derive(Debug)]
-pub enum Io<E, D, Id: PeerId = net::SocketAddr> {
+pub enum Io<M, E, D, Id: PeerId = net::SocketAddr> {
     /// There are some bytes ready to be sent to a peer.
-    Write(Id, Vec<u8>),
+    Write(Id, M),
     /// Connect to a peer.
     Connect(Id),
     /// Disconnect from a peer.
@@ -60,7 +61,7 @@ pub enum DisconnectReason<T> {
     /// after such an error is possible.
     ConnectionError(Arc<std::io::Error>),
     /// Peer was disconnected for another reason.
-    Protocol(T),
+    StateMachine(T),
 }
 
 impl<T> DisconnectReason<T> {
@@ -78,7 +79,7 @@ impl<T: fmt::Display> fmt::Display for DisconnectReason<T> {
         match self {
             Self::DialError(err) => write!(f, "{}", err),
             Self::ConnectionError(err) => write!(f, "{}", err),
-            Self::Protocol(reason) => write!(f, "{}", reason),
+            Self::StateMachine(reason) => write!(f, "{}", reason),
         }
     }
 }
@@ -99,56 +100,57 @@ where
     }
 }
 
-/// A protocol state-machine.
+/// A network service.
 ///
 /// Network protocols must implement this trait to be drivable by the reactor.
-pub trait Protocol<Id: PeerId = net::SocketAddr>:
-    Iterator<Item = Io<Self::Event, Self::DisconnectReason, Id>>
+pub trait Service<Id: PeerId = net::SocketAddr>: StateMachine<Id, Message = [u8]> {
+    /// User commands handled by service.
+    type Command;
+
+    /// An external command has been received.
+    fn command(&mut self, cmd: Self::Command);
+}
+
+/// A service state-machine.
+pub trait StateMachine<Id: PeerId = net::SocketAddr>:
+    Iterator<Item = Io<<Self::Message as ToOwned>::Owned, Self::Event, Self::DisconnectReason, Id>>
 {
-    /// Events emitted by the protocol.
+    /// Message type sent between peers.
+    type Message: fmt::Debug + ToOwned + ?Sized;
+    /// Events emitted by the state machine.
     type Event: fmt::Debug;
     /// Reason a peer was disconnected.
     type DisconnectReason: fmt::Debug
         + fmt::Display
         + Into<DisconnectReason<Self::DisconnectReason>>;
-    /// User commands handled by protocol.
-    type Command;
 
-    /// Initialize the protocol. Called once before any event is sent to the state machine.
+    /// Initialize the state machine. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
         // "He was alone. He was unheeded, happy and near to the wild heart of life. He was alone
         // and young and wilful and wildhearted, alone amid a waste of wild air and brackish waters
         // and the sea-harvest of shells and tangle and veiled grey sunlight and gayclad lightclad
         // figures of children and girls and voices childish and girlish in the air." -JJ
     }
-    /// Received bytes from a peer.
-    fn received_bytes(&mut self, addr: &Id, bytes: &[u8]);
+    /// Received message from a peer.
+    fn received(&mut self, addr: &Id, message: Cow<Self::Message>);
     /// Connection attempt underway.
     ///
     /// This is only encountered when an outgoing connection attempt is made,
-    /// and is always called before [`Protocol::connected`].
+    /// and is always called before [`StateMachine::connected`].
     ///
-    /// For incoming connections, [`Protocol::connected`] is called directly.
+    /// For incoming connections, [`StateMachine::connected`] is called directly.
     fn attempted(&mut self, addr: &Id);
     /// New connection with a peer.
     fn connected(&mut self, addr: Id, local_addr: &net::SocketAddr, link: Link);
     /// Disconnected from peer.
     fn disconnected(&mut self, addr: &Id, reason: DisconnectReason<Self::DisconnectReason>);
-    /// An external command has been received.
-    fn command(&mut self, cmd: Self::Command);
-    /// Used to update the protocol's internal clock.
+    /// Used to update the state machine's internal clock.
     ///
     /// "a regular short, sharp sound, especially that made by a clock or watch, typically
     /// every second."
     fn tick(&mut self, local_time: LocalTime);
     /// Used to advance the state machine after some timer rings.
     fn wake(&mut self);
-    /// Create a draining iterator over the protocol outputs.
-    fn drain(
-        &mut self,
-    ) -> Box<dyn Iterator<Item = Io<Self::Event, Self::DisconnectReason, Id>> + '_> {
-        Box::new(std::iter::from_fn(|| self.next()))
-    }
 }
 
 /// Used by certain types of reactors to wake the event loop.
@@ -158,12 +160,12 @@ pub trait Waker: Send + Sync + Clone {
     fn wake(&self) -> io::Result<()>;
 }
 
-/// Any network reactor that can drive the light-client protocol.
+/// Any network reactor that can drive the light-client service.
 pub trait Reactor<Id: PeerId = net::SocketAddr> {
     /// The type of waker this reactor uses.
     type Waker: Waker;
 
-    /// Create a new reactor, initializing it with a publisher for protocol events,
+    /// Create a new reactor, initializing it with a publisher for service events,
     /// a channel to receive commands, and a channel to shut it down.
     fn new(
         shutdown: chan::Receiver<()>,
@@ -172,18 +174,18 @@ pub trait Reactor<Id: PeerId = net::SocketAddr> {
     where
         Self: Sized;
 
-    /// Run the given protocol state machine with the reactor.
-    fn run<P, E>(
+    /// Run the given service with the reactor.
+    fn run<S, E>(
         &mut self,
         listen_addrs: &[net::SocketAddr],
-        protocol: P,
+        service: S,
         publisher: E,
-        commands: chan::Receiver<P::Command>,
+        commands: chan::Receiver<S::Command>,
     ) -> Result<(), error::Error>
     where
-        P: Protocol<Id>,
-        P::DisconnectReason: Into<DisconnectReason<P::DisconnectReason>>,
-        E: Publisher<P::Event>;
+        S: Service<Id>,
+        S::DisconnectReason: Into<DisconnectReason<S::DisconnectReason>>,
+        E: Publisher<S::Event>;
 
     /// Return a new waker.
     fn waker(&self) -> Self::Waker;

@@ -14,9 +14,8 @@ use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
-    chan, network::Network, output::message, BlockHash, BlockHeader, Command, Config,
-    DisconnectReason, Event, HashSet, Height, Io, NetworkMessage, PeerId, RawNetworkMessage,
-    ServiceFlags, VersionMessage,
+    chan, network::Network, BlockHash, BlockHeader, Command, Config, DisconnectReason, Event,
+    HashSet, Height, Io, NetworkMessage, PeerId, RawNetworkMessage, ServiceFlags, VersionMessage,
 };
 use super::{PROTOCOL_VERSION, USER_AGENT};
 
@@ -29,7 +28,7 @@ use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin_hashes::hex::FromHex;
 use nakamoto_common::block::time::Clock as _;
 use nakamoto_net::simulator::{Options, Peer as _, Simulation};
-use nakamoto_net::{Link, LocalDuration, LocalTime, Protocol as _};
+use nakamoto_net::{Link, LocalDuration, LocalTime, StateMachine as _};
 
 use quickcheck_macros::quickcheck;
 
@@ -54,7 +53,7 @@ use nakamoto_test::BITCOIN_HEADERS;
 #[allow(unused_imports)]
 use nakamoto_test::logger;
 
-pub type Protocol = super::Protocol<
+pub type Protocol = super::StateMachine<
     BlockCache<store::Memory<BlockHeader>>,
     model::FilterCache,
     HashMap<net::IpAddr, KnownAddress>,
@@ -174,7 +173,7 @@ fn test_inv_getheaders() {
             .unwrap();
 
     peer.connect_addr(&remote, Link::Outbound);
-    peer.received(remote, NetworkMessage::Inv(vec![Inventory::Block(hash)]));
+    peer.received(&remote, NetworkMessage::Inv(vec![Inventory::Block(hash)]));
 
     peer.messages(&remote)
         .find(|o| matches!(o, NetworkMessage::GetHeaders(_)))
@@ -192,7 +191,7 @@ fn test_bad_magic() {
     let remote: PeerId = ([241, 19, 44, 18], 8333).into();
 
     peer.connect_addr(&remote, Link::Outbound);
-    peer.protocol.received(
+    peer.received_raw(
         &remote,
         RawNetworkMessage {
             magic: 999,
@@ -297,7 +296,7 @@ fn test_getheaders_retry() {
     let mut asked = HashSet::new();
 
     // Trigger a `getheaders` by sending an inventory message to Alice.
-    alice.received(peers[0], NetworkMessage::Inv(vec![Inventory::Block(hash)]));
+    alice.received(&peers[0], NetworkMessage::Inv(vec![Inventory::Block(hash)]));
 
     // The first time we ask for headers, we ask the peer who sent us the `inv` message.
     alice
@@ -384,7 +383,7 @@ fn test_handshake_verack_timeout() {
         }
         peer.protocol.connected(remote.addr, &peer.addr, *link);
         peer.received(
-            remote.addr,
+            &remote.addr,
             NetworkMessage::Version(remote.version(peer.addr, 0)),
         );
         peer.outputs()
@@ -421,7 +420,7 @@ fn test_handshake_version_hook() {
     peer.protocol
         .connected(craig.addr, &peer.addr, Link::Inbound);
     peer.received(
-        craig.addr,
+        &craig.addr,
         NetworkMessage::Version(VersionMessage {
             user_agent: "/craig:0.1.0/".to_owned(),
             ..craig.version(peer.addr, 0)
@@ -434,7 +433,7 @@ fn test_handshake_version_hook() {
     peer.protocol
         .connected(satoshi.addr, &peer.addr, Link::Inbound);
     peer.received(
-        satoshi.addr,
+        &satoshi.addr,
         NetworkMessage::Version(VersionMessage {
             user_agent: "satoshi".to_owned(),
             ..satoshi.version(peer.addr, 0)
@@ -468,10 +467,10 @@ fn test_handshake_initial_messages() {
     peer.protocol.peermgr.connect(&remote.addr);
     peer.connected(remote.addr, &local, Link::Outbound);
     peer.received(
-        remote.addr,
+        &remote.addr,
         NetworkMessage::Version(remote.version(local, 0)),
     );
-    peer.received(remote.addr, NetworkMessage::Verack);
+    peer.received(&remote.addr, NetworkMessage::Verack);
 
     let msgs = peer.messages(&remote.addr).collect::<Vec<_>>();
 
@@ -536,7 +535,7 @@ fn test_getaddr() {
     // We respond to the `getaddr` with a new peer address, Toto.
     let toto: net::SocketAddr = ([14, 45, 16, 57], 8333).into();
     alice.received(
-        eve,
+        &eve,
         NetworkMessage::Addr(vec![(
             alice.local_time().block_time(),
             Address::new(&toto, ServiceFlags::NETWORK),
@@ -562,7 +561,7 @@ fn test_stale_tip() {
 
     alice.connect_addr(&remote, Link::Outbound);
     alice.received(
-        remote,
+        &remote,
         // Receive an unsolicited header announcement for the latest.
         NetworkMessage::Headers(vec![*headers
             .get(alice.protocol.tree.height() as usize + 1)
@@ -588,7 +587,7 @@ fn test_stale_tip() {
 
     // Now send another header and wait until the chain update is stale.
     alice.received(
-        remote,
+        &remote,
         NetworkMessage::Headers(vec![*headers
             .get(alice.protocol.tree.height() as usize + 1)
             .unwrap()]),
@@ -620,7 +619,7 @@ fn prop_addrs(seed: u64) {
 
     // Let alice know about these amazing peers.
     alice.received(
-        bob,
+        &bob,
         NetworkMessage::Addr(vec![
             (time, Address::new(&jak, ServiceFlags::NETWORK)),
             (time, Address::new(&jim, ServiceFlags::NETWORK)),
@@ -629,7 +628,7 @@ fn prop_addrs(seed: u64) {
     );
 
     // Let's query Alice to see if she has these addresses.
-    alice.received(bob, NetworkMessage::GetAddr);
+    alice.received(&bob, NetworkMessage::GetAddr);
     let msg = alice
         .messages(&bob)
         .find(|o| matches!(o, NetworkMessage::Addr(_)))
@@ -826,7 +825,7 @@ fn test_submit_transactions() {
         .expect("Alice sends an `inv` message");
 
     alice.elapse(LocalDuration::from_secs(30));
-    alice.received(remote1.addr, NetworkMessage::GetData(inventory));
+    alice.received(&remote1.addr, NetworkMessage::GetData(inventory));
     alice
         .messages(&remote1.addr)
         .find(|msg| matches!(msg, NetworkMessage::Tx(_)))
@@ -918,12 +917,12 @@ fn test_inv_partial_broadcast() {
     // The first peer asks only for the first inventory item.
     alice.elapse(LocalDuration::from_secs(3));
     alice.received(
-        remote1,
+        &remote1,
         NetworkMessage::GetData(vec![Inventory::Transaction(tx1.txid())]),
     );
     // The second peer asks only for the second inventory item.
     alice.received(
-        remote2,
+        &remote2,
         NetworkMessage::GetData(vec![Inventory::Transaction(tx2.txid())]),
     );
 
@@ -971,11 +970,11 @@ fn test_inv_partial_broadcast() {
 
     // Now the peers ask for the remaining inventories.
     alice.received(
-        remote1,
+        &remote1,
         NetworkMessage::GetData(vec![Inventory::Transaction(tx2.txid())]),
     );
     alice.received(
-        remote2,
+        &remote2,
         NetworkMessage::GetData(vec![Inventory::Transaction(tx1.txid())]),
     );
 
@@ -1038,14 +1037,14 @@ fn test_confirmed_transaction() {
     alice.protocol.invmgr.get_block(blk2.block_hash());
 
     alice.tock();
-    alice.received(remote, NetworkMessage::Block(blk2.clone()));
+    alice.received(&remote, NetworkMessage::Block(blk2.clone()));
     alice
         .events()
         .find(|e| matches!(e, Event::Inventory(invmgr::Event::BlockReceived { .. })))
         .expect("Alice receives the 2nd block");
 
     alice.elapse(LocalDuration::from_mins(1));
-    alice.received(remote, NetworkMessage::Block(blk1.clone()));
+    alice.received(&remote, NetworkMessage::Block(blk1.clone()));
 
     let mut events = alice.events().filter_map(|e| {
         if let Event::Inventory(event) = e {
@@ -1165,7 +1164,7 @@ fn test_submitted_transaction_filtering() {
     let (cfhash, _) = gen::cfheader(parent, &cfilter);
 
     // Alice receives a header announcement.
-    alice.received(remote, NetworkMessage::Headers(vec![matching.header]));
+    alice.received(&remote, NetworkMessage::Headers(vec![matching.header]));
 
     alice
         .messages(&remote)
@@ -1174,7 +1173,7 @@ fn test_submitted_transaction_filtering() {
 
     // Alice receives the cfheaders.
     alice.received(
-        remote,
+        &remote,
         NetworkMessage::CFHeaders(CFHeaders {
             filter_type,
             stop_hash: matching.block_hash(),
@@ -1190,7 +1189,7 @@ fn test_submitted_transaction_filtering() {
 
     // Alice receives the cfilter, which we expect to match.
     alice.received(
-        remote,
+        &remote,
         NetworkMessage::CFilter(CFilter {
             filter_type,
             block_hash: matching.block_hash(),
@@ -1206,7 +1205,7 @@ fn test_submitted_transaction_filtering() {
         .messages(&remote)
         .find(|m| matches!(m, NetworkMessage::GetData(data) if data == &expected))
         .expect("Alice asks for the matching block");
-    alice.received(remote, NetworkMessage::Block(matching));
+    alice.received(&remote, NetworkMessage::Block(matching));
 
     assert!(alice.protocol.invmgr.is_empty(), "The mempool is empty");
     assert!(
@@ -1283,11 +1282,11 @@ fn test_transaction_reverted_reconfirm() {
         alice.tick(LocalTime::from_block_time(chain_tip.header.time));
 
         // Alice receives a header announcement.
-        alice.received(remote, NetworkMessage::Headers(vec![matching.header]));
+        alice.received(&remote, NetworkMessage::Headers(vec![matching.header]));
 
         // Alice receives the cfheaders.
         alice.received(
-            remote,
+            &remote,
             NetworkMessage::CFHeaders(CFHeaders {
                 filter_type,
                 stop_hash: matching.block_hash(),
@@ -1297,7 +1296,7 @@ fn test_transaction_reverted_reconfirm() {
         );
         // Alice receives the cfilter, which we expect to match.
         alice.received(
-            remote,
+            &remote,
             NetworkMessage::CFilter(CFilter {
                 filter_type,
                 block_hash: matching.block_hash(),
@@ -1305,7 +1304,7 @@ fn test_transaction_reverted_reconfirm() {
             }),
         );
         // Alice receives the matching block.
-        alice.received(remote, NetworkMessage::Block(matching));
+        alice.received(&remote, NetworkMessage::Block(matching));
         alice
             .events()
             .find(|e| {
@@ -1335,7 +1334,7 @@ fn test_transaction_reverted_reconfirm() {
 
         // Alice receives a new header announcement for a longer chain.
         alice.received(
-            remote,
+            &remote,
             NetworkMessage::Headers(fork.iter().map(|b| b.header).collect()),
         );
         alice
@@ -1364,7 +1363,7 @@ fn test_transaction_reverted_reconfirm() {
             .expect("Alice asks for the cfheaders");
 
         alice.received(
-            remote,
+            &remote,
             NetworkMessage::CFHeaders(CFHeaders {
                 filter_type,
                 stop_hash: fork_tip.block_hash(),
@@ -1385,7 +1384,7 @@ fn test_transaction_reverted_reconfirm() {
 
         for (cfilter, block) in fork_cfilters.into_iter().zip(fork.iter()) {
             alice.received(
-                remote,
+                &remote,
                 NetworkMessage::CFilter(CFilter {
                     filter_type,
                     block_hash: block.block_hash(),
@@ -1404,7 +1403,7 @@ fn test_transaction_reverted_reconfirm() {
             })
             .expect("The new block is matched");
 
-        alice.received(remote, NetworkMessage::Block(fork_matching.clone()));
+        alice.received(&remote, NetworkMessage::Block(fork_matching.clone()));
         alice
             .events()
             .find(|e| {
@@ -1481,10 +1480,10 @@ fn test_block_events() {
     // Receive "extra" block.
     alice.connect_addr(&remote, Link::Outbound);
     alice.received(
-        remote,
+        &remote,
         NetworkMessage::Inv(vec![Inventory::Block(extra.block_hash())]),
     );
-    alice.received(remote, NetworkMessage::Headers(vec![extra.header]));
+    alice.received(&remote, NetworkMessage::Headers(vec![extra.header]));
 
     let mut events = filter(alice.events());
     assert_matches!(

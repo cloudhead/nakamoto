@@ -14,13 +14,13 @@ use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
 use nakamoto_net::event;
-use nakamoto_p2p::protocol;
-use nakamoto_p2p::protocol::Protocol;
+use nakamoto_p2p::fsm;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
 use crate::client::{self, Client, Config};
 use crate::error;
 use crate::handle::Handle as _;
+use crate::service::Service;
 
 type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
 
@@ -60,7 +60,7 @@ fn network(
 
                 node.run_with(
                     vec![([0, 0, 0, 0], 0).into()],
-                    Protocol::new(cache, filters, peers, clock, rng, cfg.protocol),
+                    Service::new(cache, filters, peers, clock, rng, cfg.protocol),
                 )
                 .unwrap();
             }
@@ -86,9 +86,9 @@ fn test_full_sync() {
     fn config(name: &'static str) -> Config {
         Config {
             name,
-            protocol: protocol::Config {
+            protocol: fsm::Config {
                 services: ServiceFlags::NETWORK,
-                ..protocol::Config::default()
+                ..fsm::Config::default()
             },
             ..Config::default()
         }
@@ -125,9 +125,9 @@ fn test_wait_for_peers() {
 
     let cfgs = vec![
         Config {
-            protocol: protocol::Config {
+            protocol: fsm::Config {
                 services: ServiceFlags::NETWORK,
-                ..protocol::Config::default()
+                ..fsm::Config::default()
             },
             ..Default::default()
         };
@@ -158,7 +158,7 @@ fn test_send_handle() {
 fn test_multiple_handle_events() {
     use std::time;
 
-    let cfg = protocol::Config::default();
+    let cfg = fsm::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
     let client: Client<Reactor> = Client::new().unwrap();
@@ -180,7 +180,7 @@ fn test_multiple_handle_events() {
         client
             .run_with(
                 vec![([0, 0, 0, 0], 0).into()],
-                Protocol::new(cache, filters, peers, clock, rng, cfg),
+                Service::new(cache, filters, peers, clock, rng, cfg),
             )
             .unwrap();
     });
@@ -188,7 +188,7 @@ fn test_multiple_handle_events() {
     event::wait(
         &alice_events,
         |e| match e {
-            protocol::Event::Ready { .. } => Some(()),
+            fsm::Event::Ready { .. } => Some(()),
             _ => None,
         },
         time::Duration::from_secs(2),
@@ -198,7 +198,7 @@ fn test_multiple_handle_events() {
     event::wait(
         &bob_events,
         |e| match e {
-            protocol::Event::Ready { .. } => Some(()),
+            fsm::Event::Ready { .. } => Some(()),
             _ => None,
         },
         time::Duration::from_secs(2),
@@ -208,7 +208,7 @@ fn test_multiple_handle_events() {
 
 #[test]
 fn test_handle_shutdown() {
-    let cfg = protocol::Config::default();
+    let cfg = fsm::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
     let client: Client<Reactor> = Client::new().unwrap();
@@ -223,10 +223,7 @@ fn test_handle_shutdown() {
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
 
-        client.run_with(
-            vec![],
-            Protocol::new(cache, filters, peers, clock, rng, cfg),
-        )
+        client.run_with(vec![], Service::new(cache, filters, peers, clock, rng, cfg))
     });
 
     handle.shutdown().unwrap();
@@ -248,7 +245,7 @@ fn test_client_dropped() {
 
 #[test]
 fn test_query_headers() {
-    let cfg = protocol::Config::default();
+    let cfg = fsm::Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
     let client: Client<Reactor> = Client::new().unwrap();
@@ -264,7 +261,7 @@ fn test_query_headers() {
 
         client.run_with(
             vec![],
-            Protocol::new(cache, filters, HashMap::new(), clock, rng, cfg),
+            Service::new(cache, filters, HashMap::new(), clock, rng, cfg),
         )
     });
 

@@ -1,7 +1,7 @@
 //! Nakamoto's peer-to-peer library.
 //!
 //! The `p2p` crate implements the core protocol state-machine. It can be found under the
-//! [protocol](crate::protocol) module.
+//! [fsm](crate::fsm) module.
 //!
 //! Nakamoto's implementation of the peer-to-peer protocol(s) is *I/O-free*. The
 //! core logic is implemented as a state machine with *inputs* and *outputs* and a
@@ -24,8 +24,8 @@
 #![allow(clippy::inconsistent_struct_constructor)]
 #![allow(clippy::too_many_arguments)]
 #![deny(missing_docs, unsafe_code)]
-pub mod protocol;
+pub mod fsm;
 pub mod stream;
 
+pub use fsm::{Command, Config, DisconnectReason, Event, Io, Link, PeerId, StateMachine};
 pub use nakamoto_net as net;
-pub use protocol::{Link, PeerId};

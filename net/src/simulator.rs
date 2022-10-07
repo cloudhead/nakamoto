@@ -1,12 +1,15 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 #![allow(clippy::collapsible_if)]
 
-use crate::{DisconnectReason, Io, Link, LocalDuration, LocalTime, Protocol};
+use crate::{DisconnectReason, Io, Link, LocalDuration, LocalTime};
 use log::*;
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::{Deref, DerefMut, Range};
 use std::{fmt, io, net};
+
+use crate::StateMachine;
 
 #[cfg(feature = "quickcheck")]
 pub mod arbitrary;
@@ -23,7 +26,7 @@ type NodeId = net::IpAddr;
 /// A simulated peer. Protocol instances have to be wrapped in this type to be simulated.
 pub trait Peer<P>: Deref<Target = P> + DerefMut<Target = P> + 'static
 where
-    P: Protocol<net::SocketAddr>,
+    P: StateMachine,
 {
     /// Initialize the peer. This should at minimum initialize the protocol with the
     /// current time.
@@ -34,7 +37,7 @@ where
 
 /// Simulated protocol input.
 #[derive(Debug, Clone)]
-pub enum Input<D> {
+pub enum Input<M, D> {
     /// Connection attempt underway.
     Connecting {
         /// Remote peer address.
@@ -52,28 +55,28 @@ pub enum Input<D> {
     /// Disconnected from peer.
     Disconnected(net::SocketAddr, DisconnectReason<D>),
     /// Received a message from a remote peer.
-    Received(net::SocketAddr, Vec<u8>),
+    Received(net::SocketAddr, M),
     /// Used to advance the state machine after some wall time has passed.
     Wake,
 }
 
 /// A scheduled protocol input.
 #[derive(Debug, Clone)]
-pub struct Scheduled<D> {
+pub struct Scheduled<M, D> {
     /// The node for which this input is scheduled.
     pub node: NodeId,
     /// The remote peer from which this input originates.
     /// If the input originates from the local node, this should be set to the zero address.
     pub remote: net::SocketAddr,
     /// The input being scheduled.
-    pub input: Input<D>,
+    pub input: Input<M, D>,
 }
 
-impl<D: fmt::Display> fmt::Display for Scheduled<D> {
+impl<M: fmt::Debug, D: fmt::Display> fmt::Display for Scheduled<M, D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.input {
-            Input::Received(from, bytes) => {
-                write!(f, "{} <- {} ({}B)", self.node, from, bytes.len())
+            Input::Received(from, msg) => {
+                write!(f, "{} <- {} ({:?})", self.node, from, msg)
             }
             Input::Connected {
                 addr,
@@ -102,15 +105,15 @@ impl<D: fmt::Display> fmt::Display for Scheduled<D> {
 
 /// Inbox of scheduled state machine inputs to be delivered to the simulated nodes.
 #[derive(Debug)]
-pub struct Inbox<D> {
+pub struct Inbox<M, D> {
     /// The set of scheduled inputs. We use a `BTreeMap` to ensure inputs are always
     /// ordered by scheduled delivery time.
-    messages: BTreeMap<LocalTime, Scheduled<D>>,
+    messages: BTreeMap<LocalTime, Scheduled<M, D>>,
 }
 
-impl<D: Clone> Inbox<D> {
+impl<M: Clone, D: Clone> Inbox<M, D> {
     /// Add a scheduled input to the inbox.
-    fn insert(&mut self, mut time: LocalTime, msg: Scheduled<D>) {
+    fn insert(&mut self, mut time: LocalTime, msg: Scheduled<M, D>) {
         // Make sure we don't overwrite an existing message by using the same time slot.
         while self.messages.contains_key(&time) {
             time = time + MIN_LATENCY;
@@ -119,7 +122,7 @@ impl<D: Clone> Inbox<D> {
     }
 
     /// Get the next scheduled input to be delivered.
-    fn next(&mut self) -> Option<(LocalTime, Scheduled<D>)> {
+    fn next(&mut self) -> Option<(LocalTime, Scheduled<M, D>)> {
         self.messages
             .iter()
             .next()
@@ -127,7 +130,11 @@ impl<D: Clone> Inbox<D> {
     }
 
     /// Get the last message sent between two peers. Only checks one direction.
-    fn last(&self, node: &NodeId, remote: &net::SocketAddr) -> Option<(&LocalTime, &Scheduled<D>)> {
+    fn last(
+        &self,
+        node: &NodeId,
+        remote: &net::SocketAddr,
+    ) -> Option<(&LocalTime, &Scheduled<M, D>)> {
         self.messages
             .iter()
             .rev()
@@ -157,14 +164,14 @@ impl Default for Options {
 /// A peer-to-peer node simulation.
 pub struct Simulation<T>
 where
-    T: Protocol<net::SocketAddr>,
+    T: StateMachine,
 {
     /// Inbox of inputs to be delivered by the simulation.
-    inbox: Inbox<T::DisconnectReason>,
+    inbox: Inbox<<T::Message as ToOwned>::Owned, T::DisconnectReason>,
     /// Events emitted during simulation.
     events: BTreeMap<NodeId, VecDeque<T::Event>>,
     /// Priority events that should happen immediately.
-    priority: VecDeque<Scheduled<T::DisconnectReason>>,
+    priority: VecDeque<Scheduled<<T::Message as ToOwned>::Owned, T::DisconnectReason>>,
     /// Simulated latencies between nodes.
     latencies: BTreeMap<(NodeId, NodeId), LocalDuration>,
     /// Network partitions between two nodes.
@@ -185,8 +192,10 @@ where
 
 impl<T> Simulation<T>
 where
-    T: Protocol<net::SocketAddr> + 'static,
+    T: StateMachine + 'static,
     T::DisconnectReason: Clone + Into<DisconnectReason<T::DisconnectReason>>,
+
+    <T::Message as ToOwned>::Owned: fmt::Debug + Clone,
 {
     /// Create a new simulation.
     pub fn new(time: LocalTime, rng: fastrand::Rng, opts: Options) -> Self {
@@ -387,7 +396,7 @@ where
                     }
                     Input::Wake => p.wake(),
                     Input::Received(addr, msg) => {
-                        p.received_bytes(&addr, &msg);
+                        p.received(&addr, Cow::Owned(msg));
                     }
                 }
                 for o in p.by_ref() {
@@ -407,15 +416,12 @@ where
     pub fn schedule(
         &mut self,
         node: &NodeId,
-        out: Io<T::Event, T::DisconnectReason, net::SocketAddr>,
+        out: Io<<T::Message as ToOwned>::Owned, T::Event, T::DisconnectReason, net::SocketAddr>,
     ) {
         let node = *node;
 
         match out {
             Io::Write(receiver, msg) => {
-                if msg.is_empty() {
-                    return;
-                }
                 // If the other end has disconnected the sender with some latency, there may not be
                 // a connection remaining to use.
                 let port = if let Some(port) = self.connections.get(&(node, receiver.ip())) {

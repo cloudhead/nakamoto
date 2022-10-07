@@ -1053,9 +1053,9 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::BITCOIN_HEADERS;
 
-    use crate::protocol;
-    use crate::protocol::output::{self, Outbox};
-    use crate::protocol::PROTOCOL_VERSION;
+    use crate::fsm;
+    use crate::fsm::output::{self, Outbox};
+    use crate::fsm::PROTOCOL_VERSION;
 
     use super::*;
 
@@ -1166,9 +1166,9 @@ mod tests {
             data.windows(2).all(|w| w[0] <= w[1])
         }
 
-        pub fn events(outputs: impl Iterator<Item = protocol::Io>) -> impl Iterator<Item = Event> {
+        pub fn events(outputs: impl Iterator<Item = fsm::Io>) -> impl Iterator<Item = Event> {
             outputs.filter_map(|o| match o {
-                protocol::Io::Event(protocol::Event::Filter(e)) => Some(e),
+                fsm::Io::Event(fsm::Event::Filter(e)) => Some(e),
                 _ => None,
             })
         }

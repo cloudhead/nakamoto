@@ -14,7 +14,7 @@ use std::rc::Rc;
 pub use crossbeam_channel as chan;
 
 use nakamoto_common::bitcoin::network::address::Address;
-use nakamoto_common::bitcoin::network::message::NetworkMessage;
+use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use nakamoto_common::bitcoin::network::message_filter::{
     CFHeaders, CFilter, GetCFHeaders, GetCFilters,
@@ -24,13 +24,13 @@ use nakamoto_common::bitcoin::Transaction;
 use nakamoto_common::block::time::LocalDuration;
 use nakamoto_common::block::{BlockHash, BlockHeader, BlockTime, Height};
 
-use crate::protocol::{Event, PeerId};
+use crate::fsm::{Event, PeerId};
 
 use super::network::Network;
 use super::Locators;
 
 /// Output of a state transition of the `Protocol` state machine.
-pub type Io = nakamoto_net::Io<Event, super::DisconnectReason>;
+pub type Io = nakamoto_net::Io<RawNetworkMessage, Event, super::DisconnectReason>;
 
 impl From<Event> for Io {
     fn from(event: Event) -> Self {
@@ -38,43 +38,22 @@ impl From<Event> for Io {
     }
 }
 
-pub(crate) mod message {
-    use nakamoto_common::bitcoin::consensus::Encodable;
-    use nakamoto_common::bitcoin::network::message::RawNetworkMessage;
-
-    use super::*;
-    use std::io;
-
-    #[derive(Debug, Clone)]
-    pub struct Builder {
-        magic: u32,
-    }
-
-    impl Builder {
-        pub fn new(network: Network) -> Self {
-            Builder {
-                magic: network.magic(),
-            }
-        }
-
-        pub fn write<W: io::Write>(
-            &self,
-            payload: NetworkMessage,
-            writer: W,
-        ) -> Result<usize, io::Error> {
-            RawNetworkMessage {
-                payload,
-                magic: self.magic,
-            }
-            .consensus_encode(writer)
-        }
-    }
-}
-
 /// Ability to connect to peers.
 pub trait Connect {
     /// Connect to peer.
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration);
+}
+
+/// Ability to disconnect from peers.
+pub trait Disconnect {
+    /// Disconnect from peer.
+    fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason);
+}
+
+/// The ability to be woken up in the future.
+pub trait Wakeup {
+    /// Ask to be woken up in a predefined amount of time.
+    fn wakeup(&self, duration: LocalDuration) -> &Self;
 }
 
 /// Bitcoin wire protocol.
@@ -164,10 +143,10 @@ pub trait Wire<E> {
 pub struct Outbox {
     /// Protocol version.
     version: u32,
+    /// Bitcoin network.
+    network: Network,
     /// Output queue.
     outbound: Rc<RefCell<VecDeque<Io>>>,
-    /// Network message builder.
-    builder: message::Builder,
 }
 
 impl Iterator for Outbox {
@@ -184,8 +163,8 @@ impl Outbox {
     pub fn new(network: Network, version: u32) -> Self {
         Self {
             version,
+            network,
             outbound: Rc::new(RefCell::new(VecDeque::new())),
-            builder: message::Builder::new(network),
         }
     }
 
@@ -207,13 +186,16 @@ impl Outbox {
     }
 
     /// Push a message to the channel.
-    pub fn message(&mut self, addr: PeerId, message: NetworkMessage) -> &Self {
-        debug!("Sending {:?} to {}", message.cmd(), addr);
+    pub fn message(&mut self, addr: PeerId, payload: NetworkMessage) -> &Self {
+        debug!("Sending {:?} to {}", payload.cmd(), addr);
 
-        let mut buffer = Vec::new();
-        // Nb. writing to a vector cannot result in an error.
-        self.builder.write(message, &mut buffer).ok();
-        self.push(Io::Write(addr, buffer));
+        self.push(Io::Write(
+            addr,
+            RawNetworkMessage {
+                magic: self.network.magic(),
+                payload,
+            },
+        ));
         self
     }
 
@@ -236,24 +218,12 @@ impl Iterator for Drain {
     }
 }
 
-/// Ability to disconnect from peers.
-pub trait Disconnect {
-    /// Disconnect from peer.
-    fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason);
-}
-
 impl Disconnect for Outbox {
     fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason) {
         debug!("Disconnecting from {}: {}", addr, reason);
 
         self.push(Io::Disconnect(addr, reason));
     }
-}
-
-/// The ability to be woken up in the future.
-pub trait Wakeup {
-    /// Ask to be woken up in a predefined amount of time.
-    fn wakeup(&self, duration: LocalDuration) -> &Self;
 }
 
 impl Wakeup for Outbox {
@@ -462,42 +432,33 @@ impl Wakeup for () {
 #[cfg(test)]
 pub mod test {
     use super::*;
-    use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
     pub fn messages_from(
         outbox: &mut Outbox,
         addr: &net::SocketAddr,
     ) -> impl Iterator<Item = NetworkMessage> {
-        let mut stream = crate::stream::Decoder::new(2048);
         let mut msgs = Vec::new();
 
         outbox.outbound.borrow_mut().retain(|o| match o {
-            Io::Write(a, bytes) if a == addr => {
-                stream.input(bytes);
+            Io::Write(a, msg) if a == addr => {
+                msgs.push(msg.payload.clone());
                 false
             }
             _ => true,
         });
 
-        while let Some(msg) = stream.decode_next::<RawNetworkMessage>().unwrap() {
-            msgs.push(msg.payload);
-        }
         msgs.into_iter()
     }
 
     pub fn messages(
         outbox: &mut Outbox,
     ) -> impl Iterator<Item = (net::SocketAddr, NetworkMessage)> {
-        let mut stream = crate::stream::Decoder::new(2048);
         let mut msgs = Vec::new();
 
         outbox.outbound.borrow_mut().retain(|o| match o {
-            Io::Write(addr, bytes) => {
-                stream.input(bytes);
-
-                while let Some(msg) = stream.decode_next::<RawNetworkMessage>().unwrap() {
-                    msgs.push((*addr, msg.payload));
-                }
+            Io::Write(addr, msg) => {
+                msgs.push((*addr, msg.payload.clone()));
                 false
             }
             _ => true,

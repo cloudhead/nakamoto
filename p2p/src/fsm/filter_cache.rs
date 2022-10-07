@@ -63,7 +63,7 @@ impl<T: Filter> FilterCache<T> {
     /// Return the cache capacity in bytes.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
+    /// use nakamoto_p2p::fsm::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::<BlockFilter>::new(32);
@@ -89,7 +89,7 @@ impl<T: Filter> FilterCache<T> {
     /// subsequent to the last filter height.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
+    /// use nakamoto_p2p::fsm::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(8);
@@ -140,7 +140,7 @@ impl<T: Filter> FilterCache<T> {
     /// Get the start height of the cache.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
+    /// use nakamoto_p2p::fsm::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(32);
@@ -174,7 +174,7 @@ impl<T: Filter> FilterCache<T> {
     /// Get a filter in the cache by height.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
+    /// use nakamoto_p2p::fsm::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(32);
@@ -196,7 +196,7 @@ impl<T: Filter> FilterCache<T> {
     /// than the given height.
     ///
     /// ```
-    /// use nakamoto_p2p::protocol::filter_cache::FilterCache;
+    /// use nakamoto_p2p::fsm::filter_cache::FilterCache;
     /// use nakamoto_common::block::filter::BlockFilter;
     ///
     /// let mut cache = FilterCache::new(0);

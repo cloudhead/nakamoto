@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 
 use super::*;
@@ -18,6 +19,8 @@ use nakamoto_common::p2p::peer::KnownAddress;
 
 use nakamoto_net::simulator;
 use nakamoto_test::block::cache::model;
+
+use crate as p2p;
 
 pub struct PeerDummy {
     pub addr: PeerId,
@@ -220,7 +223,7 @@ impl Peer<Protocol> {
         &mut self,
         addr: &net::SocketAddr,
     ) -> impl Iterator<Item = NetworkMessage> + '_ {
-        crate::protocol::output::test::messages_from(&mut self.protocol.outbox, addr)
+        p2p::fsm::output::test::messages_from(&mut self.protocol.outbox, addr)
     }
 
     pub fn events(&mut self) -> impl Iterator<Item = Event> + '_ {
@@ -230,13 +233,18 @@ impl Peer<Protocol> {
         })
     }
 
-    pub fn received(&mut self, remote: net::SocketAddr, payload: NetworkMessage) {
-        let msg = message::Builder::new(self.protocol.network);
+    pub fn received(&mut self, remote: &net::SocketAddr, payload: NetworkMessage) {
+        self.protocol.received(
+            remote,
+            Cow::Owned(RawNetworkMessage {
+                magic: self.protocol.network.magic(),
+                payload,
+            }),
+        );
+    }
 
-        let mut buf = Vec::new();
-        msg.write(payload, &mut buf).unwrap();
-
-        self.protocol.received_bytes(&remote, &buf);
+    pub fn received_raw(&mut self, remote: &net::SocketAddr, raw: RawNetworkMessage) {
+        self.protocol.received(remote, Cow::Owned(raw));
     }
 
     pub fn drain(&mut self) {
@@ -258,7 +266,7 @@ impl Peer<Protocol> {
 
         // Receive `version`.
         self.received(
-            remote.addr,
+            &remote.addr,
             NetworkMessage::Version(remote.version(local, rng.u64(..))),
         );
 
@@ -277,7 +285,7 @@ impl Peer<Protocol> {
         }
 
         // Receive `verack`.
-        self.received(remote.addr, NetworkMessage::Verack);
+        self.received(&remote.addr, NetworkMessage::Verack);
 
         // Expect hanshake event.
         self.protocol

@@ -10,7 +10,7 @@ use std::net;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::collections::HashMap;
 
-use crate::protocol::PeerId;
+use crate::fsm::PeerId;
 
 use super::{
     output::{Disconnect, Wakeup, Wire},

@@ -15,8 +15,8 @@ use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::{BlockReader, ImportResult};
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
-use nakamoto_p2p::protocol::Link;
-use nakamoto_p2p::protocol::{self, Command, CommandError, GetFiltersError, Peer};
+use nakamoto_p2p::fsm::Link;
+use nakamoto_p2p::fsm::{self, Command, CommandError, GetFiltersError, Peer};
 
 use crate::client::Event;
 
@@ -149,7 +149,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Import peer addresses into the node's address book.
     fn import_addresses(&self, addrs: Vec<Address>) -> Result<(), Error>;
     /// Wait for the given predicate to be fulfilled.
-    fn wait<F: FnMut(protocol::Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
+    fn wait<F: FnMut(fsm::Event) -> Option<T>, T>(&self, f: F) -> Result<T, Error>;
     /// Wait for a given number of peers to be connected with the given services.
     fn wait_for_peers(
         &self,
@@ -160,7 +160,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// is returned.
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;
     /// Listen on events.
-    fn events(&self) -> chan::Receiver<protocol::Event>;
+    fn events(&self) -> chan::Receiver<fsm::Event>;
     /// Shutdown the node process.
     fn shutdown(self) -> Result<(), Error>;
 }

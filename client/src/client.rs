@@ -29,24 +29,24 @@ use nakamoto_common::p2p::peer::{Source, Store as _};
 pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
 
-use nakamoto_p2p::protocol::Link;
-use nakamoto_p2p::protocol::Protocol;
+use nakamoto_p2p::fsm::Link;
 
 pub use nakamoto_net::event;
 pub use nakamoto_net::{Reactor, Waker};
-pub use nakamoto_p2p::protocol::{self, Command, CommandError, Peer};
+pub use nakamoto_p2p::fsm::{self, Command, CommandError, Peer};
 
 pub use crate::error::Error;
 pub use crate::event::Event;
 pub use crate::handle;
 pub use crate::peer;
+pub use crate::service::Service;
 pub use crate::spv;
 
 /// Client configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
     /// Client protocol configuration.
-    pub protocol: protocol::Config,
+    pub protocol: fsm::Config,
     /// Client listen addresses.
     pub listen: Vec<net::SocketAddr>,
     /// Client home path, where runtime data is stored, eg. block headers and filters.
@@ -59,9 +59,9 @@ impl Config {
     /// Create a new configuration for the given network.
     pub fn new(network: Network) -> Self {
         Self {
-            protocol: protocol::Config {
+            protocol: fsm::Config {
                 network,
-                ..protocol::Config::default()
+                ..fsm::Config::default()
             },
             ..Self::default()
         }
@@ -86,7 +86,7 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            protocol: protocol::Config::default(),
+            protocol: fsm::Config::default(),
             listen: vec![([0, 0, 0, 0], 0).into()],
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
             name: "client",
@@ -130,28 +130,28 @@ where
 pub struct Client<R: Reactor> {
     handle: chan::Sender<Command>,
     commands: chan::Receiver<Command>,
-    events: event::Subscriber<protocol::Event>,
+    events: event::Subscriber<fsm::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
     shutdown: chan::Sender<()>,
     listening: chan::Receiver<net::SocketAddr>,
     seeds: Vec<net::SocketAddr>,
-    publisher: Publisher<protocol::Event>,
+    publisher: Publisher<fsm::Event>,
 
     reactor: R,
 }
 
 impl<R: Reactor> Client<R>
 where
-    Publisher<protocol::Event>: event::Publisher<protocol::Event>,
+    Publisher<fsm::Event>: event::Publisher<fsm::Event>,
 {
     /// Create a new client.
     pub fn new() -> Result<Self, Error> {
         let (handle, commands) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(|e, p| p.emit(e));
         let (blocks_pub, blocks) = event::broadcast(|e, p| {
-            if let protocol::Event::Inventory(protocol::InventoryEvent::BlockProcessed {
+            if let fsm::Event::Inventory(fsm::InventoryEvent::BlockProcessed {
                 block,
                 height,
                 ..
@@ -161,7 +161,7 @@ where
             }
         });
         let (filters_pub, filters) = event::broadcast(|e, p| {
-            if let protocol::Event::Filter(protocol::FilterEvent::FilterReceived {
+            if let fsm::Event::Filter(fsm::FilterEvent::FilterReceived {
                 filter,
                 block_hash,
                 height,
@@ -326,7 +326,7 @@ where
 
         self.reactor.run(
             &listen,
-            Protocol::new(
+            Service::new(
                 cache,
                 filters,
                 peers,
@@ -345,9 +345,9 @@ where
     /// its own thread.
     pub fn run_with<P>(mut self, listen: Vec<net::SocketAddr>, protocol: P) -> Result<(), Error>
     where
-        P: nakamoto_net::Protocol<Event = protocol::Event, Command = Command>,
+        P: nakamoto_net::Service<Event = fsm::Event, Command = Command>,
     {
-        self.reactor.run::<P, Publisher<protocol::Event>>(
+        self.reactor.run::<P, Publisher<fsm::Event>>(
             &listen,
             protocol,
             self.publisher,
@@ -376,7 +376,7 @@ where
 /// An instance of [`handle::Handle`] for [`Client`].
 pub struct Handle<W: Waker> {
     commands: chan::Sender<Command>,
-    events: event::Subscriber<protocol::Event>,
+    events: event::Subscriber<fsm::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
@@ -532,7 +532,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::Peer(protocol::PeerEvent::Connected(a, link))
+                fsm::Event::Peer(fsm::PeerEvent::Connected(a, link))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(link)
@@ -551,7 +551,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::Peer(protocol::PeerEvent::Disconnected(a, _))
+                fsm::Event::Peer(fsm::PeerEvent::Disconnected(a, _))
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(())
@@ -592,7 +592,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
 
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>
     where
-        F: FnMut(protocol::Event) -> Option<T>,
+        F: FnMut(fsm::Event) -> Option<T>,
     {
         let events = self.events();
         let result = event::wait(&events, f, self.timeout)?;
@@ -624,7 +624,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         event::wait(
             &events,
             |e| match e {
-                protocol::Event::Peer(protocol::PeerEvent::Negotiated {
+                fsm::Event::Peer(fsm::PeerEvent::Negotiated {
                     addr,
                     height,
                     services,
@@ -655,9 +655,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
             None => event::wait(
                 &events,
                 |e| match e {
-                    protocol::Event::Chain(protocol::ChainEvent::Synced(hash, height))
-                        if height == h =>
-                    {
+                    fsm::Event::Chain(fsm::ChainEvent::Synced(hash, height)) if height == h => {
                         Some(hash)
                     }
                     _ => None,
@@ -668,7 +666,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         }
     }
 
-    fn events(&self) -> chan::Receiver<protocol::Event> {
+    fn events(&self) -> chan::Receiver<fsm::Event> {
         self.events.subscribe()
     }
 

@@ -47,12 +47,12 @@ use nakamoto_common::bitcoin::OutPoint;
 use nakamoto_common::block::time::Clock as _;
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
-use nakamoto_net::{DisconnectReason, Link, LocalTime, Protocol as _};
+use nakamoto_net::{DisconnectReason, Link, LocalTime, Service as _, StateMachine as _};
 use nakamoto_test::assert_matches;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;
 
-use p2p::protocol::Command;
+use p2p::fsm::Command;
 
 use super::utxos::Utxos;
 use super::Event;
@@ -152,7 +152,7 @@ fn test_peer_height_updated() {
 
     let version = |height: Height| -> NetworkMessage {
         NetworkMessage::Version(VersionMessage {
-            version: protocol::MIN_PROTOCOL_VERSION,
+            version: fsm::MIN_PROTOCOL_VERSION,
             services: ServiceFlags::NETWORK,
             timestamp: local_time.block_time() as i64,
             receiver: Address::new(&remote, ServiceFlags::NONE),
@@ -212,7 +212,7 @@ fn test_peer_negotiated() {
     client.step();
 
     let version = NetworkMessage::Version(VersionMessage {
-        version: protocol::MIN_PROTOCOL_VERSION,
+        version: fsm::MIN_PROTOCOL_VERSION,
         services: ServiceFlags::NETWORK,
         timestamp: local_time.block_time() as i64,
         receiver: Address::new(&remote, ServiceFlags::NONE),
@@ -261,7 +261,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
     let subscriber = client.subscribe();
 
     mock.subscriber
-        .broadcast(protocol::Event::Chain(protocol::ChainEvent::Synced(
+        .broadcast(fsm::Event::Chain(fsm::ChainEvent::Synced(
             chain.last().block_hash(),
             height,
         )));
@@ -270,24 +270,22 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         let matched = heights.contains(&h);
         let block = chain[h as usize].clone();
 
-        mock.subscriber.broadcast(protocol::Event::Filter(
-            protocol::FilterEvent::FilterProcessed {
+        mock.subscriber
+            .broadcast(fsm::Event::Filter(fsm::FilterEvent::FilterProcessed {
                 block: block.block_hash(),
                 height: h,
                 matched,
                 cached: false,
                 valid: true,
-            },
-        ));
+            }));
 
         if matched {
-            mock.subscriber.broadcast(protocol::Event::Inventory(
-                protocol::InventoryEvent::BlockProcessed {
+            mock.subscriber
+                .broadcast(fsm::Event::Inventory(fsm::InventoryEvent::BlockProcessed {
                     block,
                     height: h,
                     fees: None,
-                },
-            ));
+                }));
         }
     }
 

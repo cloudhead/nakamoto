@@ -30,8 +30,8 @@ use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::source;
 use nakamoto_net as network;
 
-use crate::protocol::addrmgr;
-use crate::protocol::DisconnectReason;
+use crate::fsm::addrmgr;
+use crate::fsm::DisconnectReason;
 
 use super::output::{Connect, Disconnect, Wakeup, Wire};
 use super::{Hooks, Link, PeerId, Socket, Whitelist};
@@ -935,11 +935,11 @@ mod tests {
 
         pub fn config() -> Config {
             Config {
-                protocol_version: crate::protocol::PROTOCOL_VERSION,
+                protocol_version: crate::fsm::PROTOCOL_VERSION,
                 target_outbound_peers: TARGET_OUTBOUND_PEERS,
                 max_inbound_peers: MAX_INBOUND_PEERS,
                 domains: Domain::all(),
-                user_agent: crate::protocol::USER_AGENT,
+                user_agent: crate::fsm::USER_AGENT,
                 persistent: vec![],
                 retry_max_wait: LocalDuration::from_mins(60),
                 retry_min_wait: LocalDuration::from_secs(1),

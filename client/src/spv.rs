@@ -13,7 +13,7 @@ use nakamoto_common::bitcoin::{Block, Txid};
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_net::event::Emitter;
 use nakamoto_p2p as p2p;
-use p2p::protocol;
+use p2p::fsm;
 
 use crate::client::Event;
 
@@ -113,9 +113,9 @@ impl Mapper {
     }
 
     /// Process protocol event and map it to client event(s).
-    pub fn process(&mut self, event: protocol::Event, emitter: &Emitter<Event>) {
+    pub fn process(&mut self, event: fsm::Event, emitter: &Emitter<Event>) {
         match event {
-            protocol::Event::Ready {
+            fsm::Event::Ready {
                 height,
                 filter_height,
                 ..
@@ -125,13 +125,13 @@ impl Mapper {
                     filter_tip: filter_height,
                 });
             }
-            protocol::Event::Peer(protocol::PeerEvent::Connected(addr, link)) => {
+            fsm::Event::Peer(fsm::PeerEvent::Connected(addr, link)) => {
                 emitter.emit(Event::PeerConnected { addr, link });
             }
-            protocol::Event::Peer(protocol::PeerEvent::ConnectionFailed(addr, error)) => {
+            fsm::Event::Peer(fsm::PeerEvent::ConnectionFailed(addr, error)) => {
                 emitter.emit(Event::PeerConnectionFailed { addr, error });
             }
-            protocol::Event::Peer(protocol::PeerEvent::Negotiated {
+            fsm::Event::Peer(fsm::PeerEvent::Negotiated {
                 addr,
                 link,
                 services,
@@ -148,30 +148,30 @@ impl Mapper {
                     version,
                 });
             }
-            protocol::Event::Peer(protocol::PeerEvent::Disconnected(addr, reason)) => {
+            fsm::Event::Peer(fsm::PeerEvent::Disconnected(addr, reason)) => {
                 emitter.emit(Event::PeerDisconnected { addr, reason });
             }
-            protocol::Event::Chain(protocol::ChainEvent::PeerHeightUpdated { height }) => {
+            fsm::Event::Chain(fsm::ChainEvent::PeerHeightUpdated { height }) => {
                 emitter.emit(Event::PeerHeightUpdated { height });
             }
-            protocol::Event::Chain(protocol::ChainEvent::Synced(_, height)) => {
+            fsm::Event::Chain(fsm::ChainEvent::Synced(_, height)) => {
                 self.tip = height;
             }
-            protocol::Event::Chain(protocol::ChainEvent::BlockConnected { header, height }) => {
+            fsm::Event::Chain(fsm::ChainEvent::BlockConnected { header, height }) => {
                 emitter.emit(Event::BlockConnected {
                     header,
                     hash: header.block_hash(),
                     height,
                 });
             }
-            protocol::Event::Chain(protocol::ChainEvent::BlockDisconnected { header, height }) => {
+            fsm::Event::Chain(fsm::ChainEvent::BlockDisconnected { header, height }) => {
                 emitter.emit(Event::BlockDisconnected {
                     header,
                     hash: header.block_hash(),
                     height,
                 });
             }
-            protocol::Event::Inventory(protocol::InventoryEvent::BlockProcessed {
+            fsm::Event::Inventory(fsm::InventoryEvent::BlockProcessed {
                 block,
                 height,
                 fees,
@@ -186,7 +186,7 @@ impl Mapper {
                     });
                 }
             }
-            protocol::Event::Inventory(protocol::InventoryEvent::Confirmed {
+            fsm::Event::Inventory(fsm::InventoryEvent::Confirmed {
                 transaction,
                 height,
                 block,
@@ -196,20 +196,20 @@ impl Mapper {
                     status: TxStatus::Confirmed { height, block },
                 });
             }
-            protocol::Event::Inventory(protocol::InventoryEvent::Acknowledged { txid, peer }) => {
+            fsm::Event::Inventory(fsm::InventoryEvent::Acknowledged { txid, peer }) => {
                 emitter.emit(Event::TxStatusChanged {
                     txid,
                     status: TxStatus::Acknowledged { peer },
                 });
             }
-            protocol::Event::Filter(protocol::FilterEvent::RescanStarted { start, .. }) => {
+            fsm::Event::Filter(fsm::FilterEvent::RescanStarted { start, .. }) => {
                 self.pending.clear();
 
                 self.filter_height = start;
                 self.sync_height = start;
                 self.block_height = start;
             }
-            protocol::Event::Filter(protocol::FilterEvent::FilterProcessed {
+            fsm::Event::Filter(fsm::FilterEvent::FilterProcessed {
                 block,
                 height,
                 matched,

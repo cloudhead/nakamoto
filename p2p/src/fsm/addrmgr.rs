@@ -274,7 +274,7 @@ impl<P: Store, U: Wire<Event> + Wakeup, C: Clock> AddressManager<P, U, C> {
             // connect to this peer again, then remove the peer from the address book.
             // Otherwise, we leave it in the address buckets so that it can be chosen
             // in the future.
-            if let DisconnectReason::Protocol(r) = reason {
+            if let DisconnectReason::StateMachine(r) = reason {
                 if !r.is_transient() {
                     self.ban(&addr.ip());
                 }
@@ -667,7 +667,7 @@ fn ipv6_is_routable(_addr: &net::Ipv6Addr) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol;
+    use crate::fsm;
     use std::collections::HashMap;
     use std::iter;
 
@@ -815,7 +815,7 @@ mod tests {
         addrmgr.peer_negotiated(&([44, 44, 44, 44], 8333).into(), services, Link::Outbound);
         addrmgr.peer_disconnected(
             &([44, 44, 44, 44], 8333).into(),
-            protocol::DisconnectReason::PeerTimeout("timeout").into(),
+            fsm::DisconnectReason::PeerTimeout("timeout").into(),
         );
         assert!(!addrmgr.is_exhausted());
         assert!(addrmgr.sample(services).is_some());
@@ -836,7 +836,7 @@ mod tests {
         addrmgr.peer_connected(&([55, 55, 55, 55], 8333).into());
         addrmgr.peer_disconnected(
             &([55, 55, 55, 55], 8333).into(),
-            protocol::DisconnectReason::PeerTimeout("timeout").into(),
+            fsm::DisconnectReason::PeerTimeout("timeout").into(),
         );
         assert!(addrmgr.sample(services).is_none());
     }
@@ -869,7 +869,7 @@ mod tests {
         addrmgr.peer_negotiated(addr, services, Link::Outbound);
         addrmgr.peer_disconnected(
             addr,
-            protocol::DisconnectReason::PeerMisbehaving("misbehaving").into(),
+            fsm::DisconnectReason::PeerMisbehaving("misbehaving").into(),
         );
 
         // Peer is now disconnected for non-transient reasons.
@@ -891,7 +891,7 @@ mod tests {
         }
 
         let mut addrmgr = {
-            let upstream = crate::protocol::output::Outbox::new(Network::Mainnet, 0);
+            let upstream = crate::fsm::output::Outbox::new(Network::Mainnet, 0);
 
             AddressManager::new(
                 Config::default(),

@@ -7,6 +7,7 @@ pub mod error;
 pub mod event;
 pub mod handle;
 pub mod peer;
+pub mod service;
 pub mod spv;
 
 pub use client::*;
