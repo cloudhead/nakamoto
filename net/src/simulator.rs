@@ -18,12 +18,12 @@ pub const MAX_EVENTS: usize = 2048;
 
 /// Identifier for a simulated node/peer.
 /// The simulator requires each peer to have a distinct IP address.
-type NodeId = std::net::IpAddr;
+type NodeId = net::IpAddr;
 
 /// A simulated peer. Protocol instances have to be wrapped in this type to be simulated.
 pub trait Peer<P>: Deref<Target = P> + DerefMut<Target = P> + 'static
 where
-    P: Protocol,
+    P: Protocol<net::SocketAddr>,
 {
     /// Initialize the peer. This should at minimum initialize the protocol with the
     /// current time.
@@ -157,7 +157,7 @@ impl Default for Options {
 /// A peer-to-peer node simulation.
 pub struct Simulation<T>
 where
-    T: Protocol,
+    T: Protocol<net::SocketAddr>,
 {
     /// Inbox of inputs to be delivered by the simulation.
     inbox: Inbox<T::DisconnectReason>,
@@ -185,7 +185,7 @@ where
 
 impl<T> Simulation<T>
 where
-    T: Protocol + 'static,
+    T: Protocol<net::SocketAddr> + 'static,
     T::DisconnectReason: Clone + Into<DisconnectReason<T::DisconnectReason>>,
 {
     /// Create a new simulation.
@@ -404,7 +404,11 @@ where
     }
 
     /// Process a protocol output event from a node.
-    pub fn schedule(&mut self, node: &NodeId, out: Io<T::Event, T::DisconnectReason>) {
+    pub fn schedule(
+        &mut self,
+        node: &NodeId,
+        out: Io<T::Event, T::DisconnectReason, net::SocketAddr>,
+    ) {
         let node = *node;
 
         match out {
