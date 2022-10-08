@@ -4,7 +4,7 @@ use crossbeam_channel as chan;
 use nakamoto_net::error::Error;
 use nakamoto_net::event::Publisher;
 use nakamoto_net::time::{LocalDuration, LocalTime};
-use nakamoto_net::{DisconnectReason, Io};
+use nakamoto_net::{DisconnectReason, Io, PeerId};
 use nakamoto_net::{Link, Protocol};
 
 use log::*;
@@ -33,8 +33,8 @@ const WAIT_TIMEOUT: LocalDuration = LocalDuration::from_mins(60);
 const READ_BUFFER_SIZE: usize = 1024 * 192;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
-enum Source {
-    Peer(net::SocketAddr),
+enum Source<Id: PeerId> {
+    Peer(Id),
     Listener,
     Waker,
 }
@@ -43,7 +43,7 @@ enum Source {
 pub struct Waker(Arc<popol::Waker>);
 
 impl Waker {
-    fn new(sources: &mut popol::Sources<Source>) -> io::Result<Self> {
+    fn new<Id: PeerId>(sources: &mut popol::Sources<Source<Id>>) -> io::Result<Self> {
         let waker = Arc::new(popol::Waker::new(sources, Source::Waker)?);
 
         Ok(Self(waker))
@@ -57,10 +57,10 @@ impl nakamoto_net::Waker for Waker {
 }
 
 /// A single-threaded non-blocking reactor.
-pub struct Reactor<R: Write + Read> {
-    peers: HashMap<net::SocketAddr, Socket<R>>,
-    connecting: HashSet<net::SocketAddr>,
-    sources: popol::Sources<Source>,
+pub struct Reactor<R: Write + Read, Id: PeerId = net::SocketAddr> {
+    peers: HashMap<Id, Socket<R>>,
+    connecting: HashSet<Id>,
+    sources: popol::Sources<Source<Id>>,
     waker: Waker,
     timeouts: TimeoutManager<()>,
     shutdown: chan::Receiver<()>,
@@ -68,32 +68,34 @@ pub struct Reactor<R: Write + Read> {
 }
 
 /// The `R` parameter represents the underlying stream type, eg. `net::TcpStream`.
-impl<R: Write + Read + AsRawFd> Reactor<R> {
+impl<R: Write + Read + AsRawFd, Id: PeerId> Reactor<R, Id> {
     /// Register a peer with the reactor.
-    fn register_peer(&mut self, addr: net::SocketAddr, stream: R, link: Link) {
+    fn register_peer(&mut self, addr: Id, stream: R, link: Link) {
+        let socket_addr = addr.to_socket_addr();
         self.sources
-            .register(Source::Peer(addr), &stream, popol::interest::ALL);
-        self.peers.insert(addr, Socket::from(stream, addr, link));
+            .register(Source::Peer(addr.clone()), &stream, popol::interest::ALL);
+        self.peers
+            .insert(addr, Socket::from(stream, socket_addr, link));
     }
 
     /// Unregister a peer from the reactor.
     fn unregister_peer<P>(
         &mut self,
-        addr: net::SocketAddr,
+        addr: Id,
         reason: DisconnectReason<P::DisconnectReason>,
         protocol: &mut P,
     ) where
-        P: Protocol,
+        P: Protocol<Id>,
     {
         self.connecting.remove(&addr);
-        self.sources.unregister(&Source::Peer(addr));
         self.peers.remove(&addr);
+        self.sources.unregister(&Source::Peer(addr.clone()));
 
         protocol.disconnected(&addr, reason);
     }
 }
 
-impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
+impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
     type Waker = Waker;
 
     /// Construct a new reactor, given a channel to send events on.
@@ -128,7 +130,7 @@ impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
         commands: chan::Receiver<P::Command>,
     ) -> Result<(), Error>
     where
-        P: Protocol,
+        P: Protocol<Id>,
         P::DisconnectReason: Into<DisconnectReason<P::DisconnectReason>>,
         E: Publisher<P::Event>,
     {
@@ -185,31 +187,32 @@ impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
                     for (source, ev) in events.iter() {
                         match source {
                             Source::Peer(addr) => {
+                                let socket_addr = addr.to_socket_addr();
                                 if ev.errored || ev.hangup {
                                     // Let the subsequent read fail.
-                                    trace!("{}: Socket error triggered: {:?}", addr, ev);
+                                    trace!("{}: Socket error triggered: {:?}", socket_addr, ev);
                                 }
                                 if ev.invalid {
                                     // File descriptor was closed and is invalid.
                                     // Nb. This shouldn't happen. It means the source wasn't
                                     // properly unregistered, or there is a duplicate source.
-                                    error!("{}: Socket is invalid, removing", addr);
+                                    error!("{}: Socket is invalid, removing", socket_addr);
 
-                                    self.sources.unregister(&Source::Peer(*addr));
+                                    self.sources.unregister(source);
                                     continue;
                                 }
 
                                 if ev.writable {
-                                    self.handle_writable(addr, source, &mut protocol)?;
+                                    self.handle_writable(addr.clone(), source, &mut protocol)?;
                                 }
                                 if ev.readable {
-                                    self.handle_readable(addr, &mut protocol);
+                                    self.handle_readable(addr.clone(), &mut protocol);
                                 }
                             }
                             Source::Listener => loop {
                                 if let Some(ref listener) = listener {
-                                    let (conn, addr) = match listener.accept() {
-                                        Ok((conn, addr)) => (conn, addr),
+                                    let (conn, socket_addr) = match listener.accept() {
+                                        Ok((conn, socket_addr)) => (conn, socket_addr),
                                         Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                             break;
                                         }
@@ -218,14 +221,15 @@ impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
                                             break;
                                         }
                                     };
-                                    trace!("{}: Accepting peer connection", addr);
+                                    let addr = Id::from(socket_addr);
+                                    trace!("{}: Accepting peer connection", socket_addr);
 
                                     conn.set_nonblocking(true)?;
 
                                     let local_addr = conn.local_addr()?;
                                     let link = Link::Inbound;
 
-                                    self.register_peer(addr, conn, link);
+                                    self.register_peer(addr.clone(), conn, link);
 
                                     protocol.connected(addr, &local_addr, link);
                                 }
@@ -274,11 +278,11 @@ impl nakamoto_net::Reactor for Reactor<net::TcpStream> {
     }
 }
 
-impl Reactor<net::TcpStream> {
+impl<Id: PeerId> Reactor<net::TcpStream, Id> {
     /// Process protocol state machine outputs.
     fn process<P, E>(&mut self, protocol: &mut P, publisher: &mut E, local_time: LocalTime)
     where
-        P: Protocol,
+        P: Protocol<Id>,
         E: Publisher<P::Event>,
         P::DisconnectReason: Into<DisconnectReason<P::DisconnectReason>>,
     {
@@ -295,14 +299,15 @@ impl Reactor<net::TcpStream> {
                     }
                 }
                 Io::Connect(addr) => {
-                    trace!("Connecting to {}...", &addr);
+                    let socket_addr = addr.to_socket_addr();
+                    trace!("Connecting to {}...", socket_addr);
 
-                    match self::dial(&addr) {
+                    match self::dial(&socket_addr) {
                         Ok(stream) => {
                             trace!("{:#?}", stream);
 
-                            self.register_peer(addr, stream, Link::Outbound);
-                            self.connecting.insert(addr);
+                            self.register_peer(addr.clone(), stream, Link::Outbound);
+                            self.connecting.insert(addr.clone());
 
                             protocol.attempted(&addr);
                         }
@@ -311,7 +316,7 @@ impl Reactor<net::TcpStream> {
                             // this socket.
                         }
                         Err(err) => {
-                            error!("{}: Dial error: {}", addr, err.to_string());
+                            error!("{}: Dial error: {}", socket_addr, err.to_string());
 
                             protocol
                                 .disconnected(&addr, DisconnectReason::DialError(Arc::new(err)));
@@ -320,7 +325,7 @@ impl Reactor<net::TcpStream> {
                 }
                 Io::Disconnect(addr, reason) => {
                     if let Some(peer) = self.peers.get(&addr) {
-                        trace!("{}: Disconnecting: {}", addr, reason);
+                        trace!("{}: Disconnecting: {}", addr.to_socket_addr(), reason);
 
                         // Shutdown the connection, ignoring any potential errors.
                         // If the socket was already disconnected, this will yield
@@ -343,17 +348,18 @@ impl Reactor<net::TcpStream> {
         }
     }
 
-    fn handle_readable<P>(&mut self, addr: &net::SocketAddr, protocol: &mut P)
+    fn handle_readable<P>(&mut self, addr: Id, protocol: &mut P)
     where
-        P: Protocol,
+        P: Protocol<Id>,
     {
         // Nb. If the socket was readable and writable at the same time, and it was disconnected
         // during an attempt to write, it will no longer be registered and hence available
         // for reads.
-        if let Some(socket) = self.peers.get_mut(addr) {
+        if let Some(socket) = self.peers.get_mut(&addr) {
             let mut buffer = [0; READ_BUFFER_SIZE];
 
-            trace!("{}: Socket is readable", addr);
+            let socket_addr = addr.to_socket_addr();
+            trace!("{}: Socket is readable", socket_addr);
 
             // Nb. Since `poll`, which this reactor is based on, is *level-triggered*,
             // we will be notified again if there is still data to be read on the socket.
@@ -362,16 +368,16 @@ impl Reactor<net::TcpStream> {
             match socket.read(&mut buffer) {
                 Ok(count) => {
                     if count > 0 {
-                        trace!("{}: Read {} bytes", addr, count);
+                        trace!("{}: Read {} bytes", socket_addr, count);
 
-                        protocol.received_bytes(addr, &buffer[..count]);
+                        protocol.received_bytes(&addr, &buffer[..count]);
                     } else {
-                        trace!("{}: Read 0 bytes", addr);
+                        trace!("{}: Read 0 bytes", socket_addr);
                         // If we get zero bytes read as a return value, it means the peer has
                         // performed an orderly shutdown.
                         socket.disconnect().ok();
                         self.unregister_peer(
-                            *addr,
+                            addr,
                             DisconnectReason::ConnectionError(Arc::new(io::Error::from(
                                 io::ErrorKind::ConnectionReset,
                             ))),
@@ -385,11 +391,11 @@ impl Reactor<net::TcpStream> {
                     // conditions change.
                 }
                 Err(err) => {
-                    trace!("{}: Read error: {}", addr, err.to_string());
+                    trace!("{}: Read error: {}", socket_addr, err.to_string());
 
                     socket.disconnect().ok();
                     self.unregister_peer(
-                        *addr,
+                        addr,
                         DisconnectReason::ConnectionError(Arc::new(err)),
                         protocol,
                     );
@@ -398,26 +404,27 @@ impl Reactor<net::TcpStream> {
         }
     }
 
-    fn handle_writable<P: Protocol>(
+    fn handle_writable<P: Protocol<Id>>(
         &mut self,
-        addr: &net::SocketAddr,
-        source: &Source,
+        addr: Id,
+        source: &Source<Id>,
         protocol: &mut P,
     ) -> io::Result<()> {
-        trace!("{}: Socket is writable", addr);
+        let socket_addr = addr.to_socket_addr();
+        trace!("{}: Socket is writable", socket_addr);
 
         let source = self.sources.get_mut(source).unwrap();
-        let socket = self.peers.get_mut(addr).unwrap();
+        let socket = self.peers.get_mut(&addr).unwrap();
 
         // "A file descriptor for a socket that is connecting asynchronously shall indicate
         // that it is ready for writing, once a connection has been established."
         //
         // Since we perform a non-blocking connect, we're only really connected once the socket
         // is writable.
-        if self.connecting.remove(addr) {
+        if self.connecting.remove(&addr) {
             let local_addr = socket.local_address()?;
 
-            protocol.connected(socket.address, &local_addr, socket.link);
+            protocol.connected(addr.clone(), &local_addr, socket.link);
         }
 
         match socket.flush() {
@@ -436,11 +443,11 @@ impl Reactor<net::TcpStream> {
                 source.set(popol::interest::WRITE);
             }
             Err(err) => {
-                error!("{}: Write error: {}", addr, err.to_string());
+                error!("{}: Write error: {}", socket_addr, err.to_string());
 
                 socket.disconnect().ok();
                 self.unregister_peer(
-                    *addr,
+                    addr,
                     DisconnectReason::ConnectionError(Arc::new(err)),
                     protocol,
                 );

@@ -1,5 +1,6 @@
 //! Peer-to-peer networking core types.
 #![allow(clippy::type_complexity)]
+use std::hash::Hash;
 use std::sync::Arc;
 use std::{fmt, io, net};
 
@@ -36,13 +37,13 @@ impl Link {
 
 /// Output of a state transition of the `Protocol` state machine.
 #[derive(Debug)]
-pub enum Io<E, D> {
+pub enum Io<E, D, Id: PeerId = net::SocketAddr> {
     /// There are some bytes ready to be sent to a peer.
-    Write(net::SocketAddr, Vec<u8>),
+    Write(Id, Vec<u8>),
     /// Connect to a peer.
-    Connect(net::SocketAddr),
+    Connect(Id),
     /// Disconnect from a peer.
-    Disconnect(net::SocketAddr, D),
+    Disconnect(Id, D),
     /// Ask for a wakeup in a specified amount of time.
     Wakeup(LocalDuration),
     /// Emit an event.
@@ -82,10 +83,28 @@ impl<T: fmt::Display> fmt::Display for DisconnectReason<T> {
     }
 }
 
+/// Remote peer id, which must be convertible into a [`net::SocketAddr`]
+pub trait PeerId: Eq + Ord + Clone + Hash + fmt::Debug + From<net::SocketAddr> {
+    fn to_socket_addr(&self) -> net::SocketAddr;
+}
+
+impl<T> PeerId for T
+where
+    T: Eq + Ord + Clone + Hash + fmt::Debug,
+    T: Into<net::SocketAddr>,
+    T: From<net::SocketAddr>,
+{
+    fn to_socket_addr(&self) -> net::SocketAddr {
+        self.clone().into()
+    }
+}
+
 /// A protocol state-machine.
 ///
 /// Network protocols must implement this trait to be drivable by the reactor.
-pub trait Protocol: Iterator<Item = Io<Self::Event, Self::DisconnectReason>> {
+pub trait Protocol<Id: PeerId = net::SocketAddr>:
+    Iterator<Item = Io<Self::Event, Self::DisconnectReason, Id>>
+{
     /// Events emitted by the protocol.
     type Event: fmt::Debug;
     /// Reason a peer was disconnected.
@@ -103,22 +122,18 @@ pub trait Protocol: Iterator<Item = Io<Self::Event, Self::DisconnectReason>> {
         // figures of children and girls and voices childish and girlish in the air." -JJ
     }
     /// Received bytes from a peer.
-    fn received_bytes(&mut self, addr: &net::SocketAddr, bytes: &[u8]);
+    fn received_bytes(&mut self, addr: &Id, bytes: &[u8]);
     /// Connection attempt underway.
     ///
     /// This is only encountered when an outgoing connection attempt is made,
     /// and is always called before [`Protocol::connected`].
     ///
     /// For incoming connections, [`Protocol::connected`] is called directly.
-    fn attempted(&mut self, addr: &net::SocketAddr);
+    fn attempted(&mut self, addr: &Id);
     /// New connection with a peer.
-    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link);
+    fn connected(&mut self, addr: Id, local_addr: &net::SocketAddr, link: Link);
     /// Disconnected from peer.
-    fn disconnected(
-        &mut self,
-        addr: &net::SocketAddr,
-        reason: DisconnectReason<Self::DisconnectReason>,
-    );
+    fn disconnected(&mut self, addr: &Id, reason: DisconnectReason<Self::DisconnectReason>);
     /// An external command has been received.
     fn command(&mut self, cmd: Self::Command);
     /// Used to update the protocol's internal clock.
@@ -129,7 +144,9 @@ pub trait Protocol: Iterator<Item = Io<Self::Event, Self::DisconnectReason>> {
     /// Used to advance the state machine after some timer rings.
     fn wake(&mut self);
     /// Create a draining iterator over the protocol outputs.
-    fn drain(&mut self) -> Box<dyn Iterator<Item = Io<Self::Event, Self::DisconnectReason>> + '_> {
+    fn drain(
+        &mut self,
+    ) -> Box<dyn Iterator<Item = Io<Self::Event, Self::DisconnectReason, Id>> + '_> {
         Box::new(std::iter::from_fn(|| self.next()))
     }
 }
@@ -142,7 +159,7 @@ pub trait Waker: Send + Sync + Clone {
 }
 
 /// Any network reactor that can drive the light-client protocol.
-pub trait Reactor {
+pub trait Reactor<Id: PeerId = net::SocketAddr> {
     /// The type of waker this reactor uses.
     type Waker: Waker;
 
@@ -164,7 +181,7 @@ pub trait Reactor {
         commands: chan::Receiver<P::Command>,
     ) -> Result<(), error::Error>
     where
-        P: Protocol,
+        P: Protocol<Id>,
         P::DisconnectReason: Into<DisconnectReason<P::DisconnectReason>>,
         E: Publisher<P::Event>;
 
