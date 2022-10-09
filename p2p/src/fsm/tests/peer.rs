@@ -21,6 +21,7 @@ use nakamoto_net::simulator;
 use nakamoto_test::block::cache::model;
 
 use crate as p2p;
+use crate::fsm::Limits;
 
 pub struct PeerDummy {
     pub addr: PeerId,
@@ -358,7 +359,10 @@ pub fn network(network: Network, size: usize, rng: fastrand::Rng) -> Vec<Peer<Pr
             let cfg = Config {
                 network,
                 // These nodes don't need to try connecting to other nodes.
-                target_outbound_peers: 0,
+                limits: Limits {
+                    max_outbound_peers: 0,
+                    ..Limits::default()
+                },
                 // These are full nodes.
                 services: syncmgr::REQUIRED_SERVICES | cbfmgr::REQUIRED_SERVICES,
                 ..Config::default()

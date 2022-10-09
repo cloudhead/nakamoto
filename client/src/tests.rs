@@ -37,9 +37,9 @@ fn network(
     let mut handles = Vec::new();
 
     for cfg in cfgs.iter().cloned() {
-        let checkpoints = cfg.protocol.network.checkpoints().collect::<Vec<_>>();
-        let genesis = cfg.protocol.network.genesis();
-        let params = cfg.protocol.network.params();
+        let checkpoints = cfg.network.checkpoints().collect::<Vec<_>>();
+        let genesis = cfg.network.genesis();
+        let params = cfg.network.params();
 
         let node = Client::<Reactor>::new()?;
         let mut handle = node.handle();
@@ -60,7 +60,7 @@ fn network(
 
                 node.run_with(
                     vec![([0, 0, 0, 0], 0).into()],
-                    Service::new(cache, filters, peers, clock, rng, cfg.protocol),
+                    Service::new(cache, filters, peers, clock, rng, cfg),
                 )
                 .unwrap();
             }
@@ -83,18 +83,14 @@ fn network(
 fn test_full_sync() {
     logger::init(log::Level::Debug);
 
-    fn config(name: &'static str) -> Config {
+    let cfgs = vec![
         Config {
-            name,
-            protocol: fsm::Config {
-                services: ServiceFlags::NETWORK,
-                ..fsm::Config::default()
-            },
+            services: ServiceFlags::NETWORK,
             ..Config::default()
-        }
-    }
-
-    let nodes = network(&[config("olive"), config("alice"), config("misha")]).unwrap();
+        };
+        3
+    ];
+    let nodes = network(&cfgs).unwrap();
     let (handle, _, _) = nodes.last().unwrap();
     let headers = BITCOIN_HEADERS.tail.clone();
     let height = headers.len() as Height;
@@ -125,10 +121,7 @@ fn test_wait_for_peers() {
 
     let cfgs = vec![
         Config {
-            protocol: fsm::Config {
-                services: ServiceFlags::NETWORK,
-                ..fsm::Config::default()
-            },
+            services: ServiceFlags::NETWORK,
             ..Default::default()
         };
         5
@@ -158,7 +151,7 @@ fn test_send_handle() {
 fn test_multiple_handle_events() {
     use std::time;
 
-    let cfg = fsm::Config::default();
+    let cfg = Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
     let client: Client<Reactor> = Client::new().unwrap();
@@ -208,7 +201,7 @@ fn test_multiple_handle_events() {
 
 #[test]
 fn test_handle_shutdown() {
-    let cfg = fsm::Config::default();
+    let cfg = Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
     let client: Client<Reactor> = Client::new().unwrap();
@@ -245,7 +238,7 @@ fn test_client_dropped() {
 
 #[test]
 fn test_query_headers() {
-    let cfg = fsm::Config::default();
+    let cfg = Config::default();
     let genesis = cfg.network.genesis();
     let params = cfg.network.params();
     let client: Client<Reactor> = Client::new().unwrap();

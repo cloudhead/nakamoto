@@ -29,11 +29,11 @@ use nakamoto_common::p2p::peer::{Source, Store as _};
 pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
 
-use nakamoto_p2p::fsm::Link;
+use nakamoto_p2p::fsm;
 
 pub use nakamoto_net::event;
 pub use nakamoto_net::{Reactor, Waker};
-pub use nakamoto_p2p::fsm::{self, Command, CommandError, Peer};
+pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
 
 pub use crate::error::Error;
 pub use crate::event::{Event, Loading};
@@ -45,24 +45,31 @@ pub use crate::spv;
 /// Client configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Client protocol configuration.
-    pub protocol: fsm::Config,
+    /// Bitcoin network.
+    pub network: Network,
+    /// Connect via these network domains, eg. IPv4, IPv6.
+    pub domains: Vec<Domain>,
+    /// Peers to connect to instead of using the peer discovery mechanism.
+    pub connect: Vec<net::SocketAddr>,
     /// Client listen addresses.
     pub listen: Vec<net::SocketAddr>,
     /// Client home path, where runtime data is stored, eg. block headers and filters.
     pub root: PathBuf,
-    /// Client name. Used for logging only.
-    pub name: &'static str,
+    /// User agent string.
+    pub user_agent: &'static str,
+    /// Client hooks.
+    pub hooks: Hooks,
+    /// Services offered by this node.
+    pub services: ServiceFlags,
+    /// Configured limits.
+    pub limits: Limits,
 }
 
 impl Config {
     /// Create a new configuration for the given network.
     pub fn new(network: Network) -> Self {
         Self {
-            protocol: fsm::Config {
-                network,
-                ..fsm::Config::default()
-            },
+            network,
             ..Self::default()
         }
     }
@@ -77,7 +84,7 @@ impl Config {
             })
             .collect::<io::Result<Vec<_>>>()?;
 
-        self.protocol.connect.extend(connect);
+        self.connect.extend(connect);
 
         Ok(())
     }
@@ -86,10 +93,15 @@ impl Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            protocol: fsm::Config::default(),
+            network: Network::default(),
+            connect: Vec::new(),
+            domains: Domain::all(),
             listen: vec![([0, 0, 0, 0], 0).into()],
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
-            name: "client",
+            user_agent: fsm::USER_AGENT,
+            hooks: Hooks::default(),
+            limits: Limits::default(),
+            services: ServiceFlags::NONE,
         }
     }
 }
@@ -217,7 +229,7 @@ where
     /// Start the client process. This function is meant to be run in its own thread.
     pub fn run(mut self, config: Config) -> Result<(), Error> {
         let home = config.root.join(".nakamoto");
-        let network = config.protocol.network;
+        let network = config.network;
         let dir = home.join(network.as_str());
         let listen = config.listen.clone();
 
@@ -328,7 +340,7 @@ where
 
         log::trace!("{:#?}", peers);
 
-        if config.protocol.connect.is_empty() && peers.is_empty() {
+        if config.connect.is_empty() && peers.is_empty() {
             log::info!("Address book is empty. Trying DNS seeds..");
             peers.seed(
                 network.seeds().iter().map(|s| (*s, network.port())),
@@ -341,14 +353,7 @@ where
 
         self.reactor.run(
             &listen,
-            Service::new(
-                cache,
-                filters,
-                peers,
-                RefClock::from(clock),
-                rng,
-                config.protocol,
-            ),
+            Service::new(cache, filters, peers, RefClock::from(clock), rng, config),
             self.publisher,
             self.commands,
         )?;

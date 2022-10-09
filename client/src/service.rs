@@ -10,6 +10,7 @@ use nakamoto_common::block::time::{AdjustedClock, LocalTime};
 use nakamoto_net::{DisconnectReason, Io, Link, StateMachine};
 use nakamoto_p2p as p2p;
 
+use crate::client::Config;
 use crate::peer;
 use nakamoto_common::block::filter;
 
@@ -29,11 +30,28 @@ impl<T: BlockTree, F: filter::Filters, P: peer::Store, C: AdjustedClock<net::Soc
         peers: P,
         clock: C,
         rng: fastrand::Rng,
-        config: p2p::Config,
+        config: Config,
     ) -> Self {
         Self {
             inboxes: HashMap::new(),
-            machine: p2p::StateMachine::new(tree, filters, peers, clock, rng, config),
+            machine: p2p::StateMachine::new(
+                tree,
+                filters,
+                peers,
+                clock,
+                rng,
+                p2p::Config {
+                    network: config.network,
+                    domains: config.domains,
+                    connect: config.connect,
+                    user_agent: config.user_agent,
+                    hooks: config.hooks,
+                    limits: config.limits,
+                    services: config.services,
+
+                    ..p2p::Config::default()
+                },
+            ),
         }
     }
 }

@@ -8,8 +8,6 @@ pub use nakamoto_client::client::{self, Client, Config, Network};
 pub use nakamoto_client::error::Error;
 pub use nakamoto_client::Domain;
 
-use nakamoto_client::fsm;
-
 pub mod logger;
 
 /// The network reactor we're going to use.
@@ -25,12 +23,9 @@ pub fn run(
     network: Network,
 ) -> Result<(), Error> {
     let mut cfg = Config {
-        protocol: fsm::Config {
-            connect: connect.to_vec(),
-            domains: domains.to_vec(),
-            network,
-            ..fsm::Config::default()
-        },
+        network,
+        connect: connect.to_vec(),
+        domains: domains.to_vec(),
         listen: if listen.is_empty() {
             vec![([0, 0, 0, 0], 0).into()]
         } else {
@@ -42,7 +37,7 @@ pub fn run(
         cfg.root = path;
     }
     if !connect.is_empty() {
-        cfg.protocol.target_outbound_peers = connect.len();
+        cfg.limits.max_outbound_peers = connect.len();
     }
 
     Client::<Reactor>::new()?.run(cfg)

@@ -387,6 +387,27 @@ pub struct StateMachine<T, F, P, C> {
     hooks: Hooks,
 }
 
+/// Configured limits.
+#[derive(Debug, Clone)]
+pub struct Limits {
+    /// Target outbound peer connections.
+    pub max_outbound_peers: usize,
+    /// Maximum inbound peer connections.
+    pub max_inbound_peers: usize,
+    /// Size in bytes of the compact filter cache.
+    pub filter_cache_size: usize,
+}
+
+impl Default for Limits {
+    fn default() -> Self {
+        Self {
+            max_outbound_peers: peermgr::TARGET_OUTBOUND_PEERS,
+            max_inbound_peers: peermgr::MAX_INBOUND_PEERS,
+            filter_cache_size: cbfmgr::DEFAULT_FILTER_CACHE_SIZE,
+        }
+    }
+}
+
 /// State machine configuration.
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -408,16 +429,12 @@ pub struct Config {
     pub protocol_version: u32,
     /// Our user agent.
     pub user_agent: &'static str,
-    /// Target outbound peer connections.
-    pub target_outbound_peers: usize,
-    /// Maximum inbound peer connections.
-    pub max_inbound_peers: usize,
     /// Ping timeout, after which remotes are disconnected.
     pub ping_timeout: LocalDuration,
-    /// Size in bytes of the compact filter cache.
-    pub filter_cache_size: usize,
     /// State machine event hooks.
     pub hooks: Hooks,
+    /// Configured limits.
+    pub limits: Limits,
 }
 
 impl Default for Config {
@@ -431,12 +448,10 @@ impl Default for Config {
             required_services: ServiceFlags::NETWORK,
             whitelist: Whitelist::default(),
             protocol_version: PROTOCOL_VERSION,
-            target_outbound_peers: peermgr::TARGET_OUTBOUND_PEERS,
-            max_inbound_peers: peermgr::MAX_INBOUND_PEERS,
             ping_timeout: pingmgr::PING_TIMEOUT,
-            filter_cache_size: cbfmgr::DEFAULT_FILTER_CACHE_SIZE,
             user_agent: USER_AGENT,
             hooks: Hooks::default(),
+            limits: Limits::default(),
         }
     }
 }
@@ -492,14 +507,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             services,
             whitelist,
             protocol_version,
-            target_outbound_peers,
-            max_inbound_peers,
             ping_timeout,
-            filter_cache_size,
             user_agent,
             required_services,
             params,
             hooks,
+            limits,
         } = config;
 
         let outbox = Outbox::new(network, protocol_version);
@@ -517,7 +530,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
         let pingmgr = PingManager::new(ping_timeout, rng.clone(), outbox.clone(), clock.clone());
         let cbfmgr = FilterManager::new(
             cbfmgr::Config {
-                filter_cache_size,
+                filter_cache_size: limits.filter_cache_size,
                 ..cbfmgr::Config::default()
             },
             rng.clone(),
@@ -531,8 +544,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
                 whitelist,
                 persistent: connect,
                 domains: domains.clone(),
-                target_outbound_peers,
-                max_inbound_peers,
+                target_outbound_peers: limits.max_outbound_peers,
+                max_inbound_peers: limits.max_inbound_peers,
                 retry_max_wait: LocalDuration::from_mins(60),
                 retry_min_wait: LocalDuration::from_secs(1),
                 required_services,

@@ -15,7 +15,8 @@ use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
     chan, network::Network, BlockHash, BlockHeader, Command, Config, DisconnectReason, Event,
-    HashSet, Height, Io, NetworkMessage, PeerId, RawNetworkMessage, ServiceFlags, VersionMessage,
+    HashSet, Height, Io, Limits, NetworkMessage, PeerId, RawNetworkMessage, ServiceFlags,
+    VersionMessage,
 };
 use super::{PROTOCOL_VERSION, USER_AGENT};
 
@@ -657,7 +658,10 @@ fn prop_connect_timeout(seed: u64) {
     let rng = fastrand::Rng::with_seed(seed);
     let network = Network::Mainnet;
     let config = Config {
-        target_outbound_peers: 3,
+        limits: Limits {
+            max_outbound_peers: 3,
+            ..Limits::default()
+        },
         connect: vec![
             ([77, 77, 77, 77], network.port()).into(),
             ([88, 88, 88, 88], network.port()).into(),
