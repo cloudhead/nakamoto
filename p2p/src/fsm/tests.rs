@@ -758,7 +758,6 @@ fn test_connect_to_peers_3() {
 }
 
 #[test]
-#[ignore]
 // TODO: This test fails.
 fn test_connect_to_peers_4() {
     assert!(simulations::connect_to_peers(
@@ -768,6 +767,30 @@ fn test_connect_to_peers_4() {
         },
         714649005678913971,
         arbitrary::InRange(8)
+    ));
+}
+
+#[test]
+fn test_connect_to_peers_5() {
+    assert!(simulations::connect_to_peers(
+        Options {
+            latency: 1..3,
+            failure_rate: 0.2147059622448722
+        },
+        8568929271887842621,
+        arbitrary::InRange(4)
+    ));
+}
+
+#[test]
+fn test_connect_to_peers_6() {
+    assert!(simulations::connect_to_peers(
+        Options {
+            latency: 1..3,
+            failure_rate: 0.08821669803054283
+        },
+        7414060157716016948,
+        arbitrary::InRange(1)
     ));
 }
 
