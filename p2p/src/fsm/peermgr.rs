@@ -37,7 +37,7 @@ use super::output::{Connect, Disconnect, Wakeup, Wire};
 use super::{Hooks, Link, PeerId, Socket, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
-pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(10);
+pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(12);
 /// Time to wait for a new connection.
 /// TODO: Should be in config.
 pub const CONNECTION_TIMEOUT: LocalDuration = LocalDuration::from_secs(6);
