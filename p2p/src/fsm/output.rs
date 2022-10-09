@@ -187,7 +187,7 @@ impl Outbox {
 
     /// Push a message to the channel.
     pub fn message(&mut self, addr: PeerId, payload: NetworkMessage) -> &Self {
-        debug!("Sending {:?} to {}", payload.cmd(), addr);
+        debug!(target: "p2p", "Sending {:?} to {}", payload.cmd(), addr);
 
         self.push(Io::Write(
             addr,
@@ -220,7 +220,7 @@ impl Iterator for Drain {
 
 impl Disconnect for Outbox {
     fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason) {
-        debug!("Disconnecting from {}: {}", addr, reason);
+        debug!(target: "p2p", "Disconnecting from {}: {}", addr, reason);
 
         self.push(Io::Disconnect(addr, reason));
     }
@@ -235,8 +235,6 @@ impl Wakeup for Outbox {
 
 impl Connect for Outbox {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
-        info!("Connecting to {}..", addr);
-
         self.push(Io::Connect(addr));
         self.push(Io::Wakeup(timeout));
     }
@@ -244,7 +242,7 @@ impl Connect for Outbox {
 
 impl<E: Into<Event> + std::fmt::Display> Wire<E> for Outbox {
     fn event(&self, event: E) {
-        debug!("{}", &event);
+        info!(target: "p2p", "{}", &event);
 
         self.event(event.into());
     }

@@ -642,7 +642,7 @@ impl<T, F, P, C> Iterator for StateMachine<T, F, P, C> {
 impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMachine<T, F, P, C> {
     /// Process a user command.
     pub fn command(&mut self, cmd: Command) {
-        debug!("Received command: {:?}", cmd);
+        debug!(target: "p2p", "Received command: {:?}", cmd);
 
         match cmd {
             Command::QueryTree(query) => {
@@ -775,14 +775,15 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         }
 
         if !self.peermgr.is_connected(&addr) {
-            debug!("[p2p] Received {:?} from unknown peer {}", cmd, addr);
+            debug!(target: "p2p", "Received {:?} from unknown peer {}", cmd, addr);
             return;
         }
 
-        debug!("Received {:?} from {}", cmd, addr);
+        debug!(target: "p2p", "Received {:?} from {}", cmd, addr);
 
         if let Err(err) = (self.hooks.on_message)(addr, &msg.payload, &self.outbox) {
             debug!(
+                target: "p2p",
                 "Message {:?} from {} dropped by user hook: {}",
                 cmd, addr, err
             );
@@ -1038,13 +1039,14 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
             msg.push(format!("connecting = {}/{}", connecting, target));
             msg.push(format!("addresses = {}", addresses));
 
-            log::info!("{}", msg.join(", "));
+            log::info!(target: "p2p", "{}", msg.join(", "));
 
             if self.cbfmgr.rescan.active {
                 let rescan = &self.cbfmgr.rescan;
-                log::info!("{}", rescan.info());
+                log::info!(target: "p2p", "{}", rescan.info());
             }
             log::info!(
+                target: "p2p",
                 "inventory block queue = {}, requested = {}, mempool = {}",
                 self.invmgr.received.len(),
                 self.invmgr.remaining.len(),

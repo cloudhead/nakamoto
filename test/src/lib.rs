@@ -66,7 +66,7 @@ pub mod logger {
                 }
                 target => {
                     if self.enabled(record.metadata()) {
-                        let s = format!("{:<8} {}", format!("<{}>", target), record.args());
+                        let s = format!("{:<5} {}", format!("{}:", target), record.args());
                         println!("{}", s.dimmed());
                     }
                 }

@@ -454,8 +454,8 @@ where
 
                 info!(
                     target: "sim",
-                    "{:05} {} -> {}: ({})",
-                    elapsed, sender, receiver, latency
+                    "{:05} {} -> {}: ({:?}) ({})",
+                    elapsed, sender, receiver, &msg, latency
                 );
 
                 self.inbox.insert(

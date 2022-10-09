@@ -96,7 +96,7 @@ impl std::fmt::Display for Event {
         match self {
             Self::VersionReceived { addr, msg } => write!(
                 fmt,
-                "{}: Peer version = {}, height = {}, agent = {}, services = {}, timestamp = {}",
+                "Peer address = {}, version = {}, height = {}, agent = {}, services = {}, timestamp = {}",
                 addr, msg.version, msg.start_height, msg.user_agent, msg.services, msg.timestamp
             ),
             Self::Negotiated {

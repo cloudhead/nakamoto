@@ -81,7 +81,7 @@ pub struct Peer<P> {
 impl simulator::Peer<Protocol> for Peer<Protocol> {
     fn init(&mut self) {
         if !self.initialized {
-            info!("Initializing: address = {}", self.addr);
+            info!(target: "test", "Initializing: address = {}", self.addr);
 
             self.initialized = true;
             self.protocol.initialize(self.clock.local_time());
