@@ -1,8 +1,6 @@
 //! SPV event mapper.
 #![allow(clippy::manual_range_contains, clippy::new_without_default)]
 
-pub mod utxos;
-
 #[cfg(test)]
 mod tests;
 

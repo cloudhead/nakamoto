@@ -1,127 +1,92 @@
-//! A watch-only wallet.
+//! A TUI Bitcoin wallet.
+pub mod error;
+pub mod input;
 pub mod logger;
+pub mod wallet;
 
-use thiserror::Error;
-
-use std::collections::HashSet;
+use std::path::Path;
 use std::{io, net, thread};
 
-use nakamoto_common::bitcoin::Address;
+use termion::raw::IntoRawMode;
 
-use nakamoto_client::handle::{self, Handle};
-use nakamoto_client::spv::utxos::Utxos;
+use nakamoto_client::handle::Handle;
 use nakamoto_client::Network;
-use nakamoto_client::{Client, Config, Event};
+use nakamoto_client::{Client, Config, Limits};
 use nakamoto_common::block::Height;
-use nakamoto_common::network::Services;
 
-/// An error occuring in the wallet.
-#[derive(Error, Debug)]
-pub enum Error {
-    #[error("client handle error: {0}")]
-    Handle(#[from] handle::Error),
-
-    #[error("client error: {0}")]
-    Client(#[from] nakamoto_client::error::Error),
-
-    #[error("io error: {0}")]
-    Io(#[from] io::Error),
-}
-
-/// A Bitcoin wallet.
-pub struct Wallet<H> {
-    client: H,
-    addresses: HashSet<Address>,
-    utxos: Utxos,
-}
-
-impl<H: Handle> Wallet<H> {
-    /// Create a new wallet, given a client handle and a list of watch addresses.
-    pub fn new(client: H, addresses: Vec<Address>) -> Self {
-        Self {
-            client,
-            addresses: addresses.into_iter().collect(),
-            utxos: Utxos::new(),
-        }
-    }
-
-    /// Rescan the blockchain for matching transactions.
-    pub fn rescan(&mut self, birth: Height) -> Result<(), Error> {
-        // Convert our address list into scripts.
-        let addresses: Vec<_> = self.addresses.iter().map(|a| a.script_pubkey()).collect();
-        let events = self.client.subscribe();
-
-        log::info!("Waiting for peers..");
-        self.client.wait_for_peers(1, Services::Chain)?;
-
-        // Start a re-scan from the birht height, which keeps scanning as new blocks arrive.
-        log::info!("Starting re-scan from block height {}", birth);
-        self.client.rescan(birth.., addresses.iter().cloned())?;
-
-        while let Ok(event) = events.recv() {
-            match event {
-                Event::BlockMatched {
-                    transactions,
-                    height,
-                    ..
-                } => {
-                    for t in &transactions {
-                        self.utxos.apply(t, &addresses);
-                    }
-                    log::info!(
-                        "Processed block at height #{} (balance = {})",
-                        height,
-                        self.balance()
-                    );
-                }
-                Event::Synced { height, tip } => {
-                    log::info!(
-                        "Synced up to height {} ({:.1}%) ({} remaining)",
-                        height,
-                        height as f64 / tip as f64 * 100.,
-                        tip - height
-                    );
-                }
-                _ => {}
-            }
-        }
-
-        Ok(())
-    }
-
-    fn balance(&self) -> u64 {
-        self.utxos.balance()
-    }
-}
+use crate::error::Error;
+use crate::wallet::Db;
+use crate::wallet::Wallet;
 
 /// The network reactor we're going to use.
 type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
 
 /// Entry point for running the wallet.
-pub fn run(addresses: Vec<Address>, birth: Height) -> Result<(), Error> {
+pub fn run(wallet: &Path, birth: Height, connect: net::SocketAddr) -> Result<(), Error> {
+    let network = Network::Mainnet;
     let cfg = Config {
-        network: Network::Mainnet,
+        network,
         listen: vec![], // Don't listen for incoming connections.
+        connect: vec![connect],
+        limits: Limits {
+            max_outbound_peers: 1,
+            ..Limits::default()
+        },
         ..Config::default()
     };
 
     // Create a new client using `Reactor` for networking.
     let client = Client::<Reactor>::new()?;
     let handle = client.handle();
+    let client_recv = handle.subscribe();
+    let loading_recv = handle.loading();
 
-    // Create a new wallet and rescan the chain from the provided `birth` height for
-    // matching addresses.
-    let mut wallet = Wallet::new(handle.clone(), addresses);
+    log::info!("Opening wallet file `{}`..", wallet.display());
 
+    let db = Db::open(wallet)?;
+
+    let (inputs_tx, inputs_rx) = crossbeam_channel::unbounded();
+    let (exit_tx, exit_rx) = crossbeam_channel::bounded(1);
+    let (signals_tx, signals_rx) = crossbeam_channel::unbounded();
+
+    log::info!("Spawning client threads..");
+
+    // Start the UI loop in the background.
+    let t1 = thread::spawn(|| input::run(inputs_tx, exit_rx));
+    // Start the signal handler thread.
+    let t2 = thread::spawn(|| input::signals(signals_tx));
     // Start the network client in the background.
-    thread::spawn(|| client.run(cfg).unwrap());
+    let t3 = thread::spawn(|| client.run(cfg));
 
-    wallet.rescan(birth)?;
+    log::info!("Switching to alternative screen..");
 
-    log::info!("Balance is {} sats", wallet.balance());
-    log::info!("Rescan complete.");
+    let stdout = io::stdout().into_raw_mode()?;
+    let term = termion::screen::AlternateScreen::from(termion::cursor::HideCursor::from(
+        termion::input::MouseTerminal::from(stdout),
+    ));
 
+    // Run the main wallet loop. This will block until the wallet exits.
+    log::info!("Running main wallet loop..");
+    Wallet::new(handle.clone(), network, db).run(
+        birth,
+        inputs_rx,
+        signals_rx,
+        loading_recv,
+        client_recv,
+        term,
+    )?;
+
+    // Tell other threads that they should exit.
+    log::info!("Exiting..");
+    exit_tx.send(()).unwrap();
+
+    // Shutdown the client, since the main loop exited.
+    log::info!("Shutting down client..");
     handle.shutdown()?;
+
+    t1.join().unwrap()?;
+    t2.join().unwrap()?;
+    t3.join().unwrap()?;
 
     Ok(())
 }

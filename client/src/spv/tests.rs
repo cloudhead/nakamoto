@@ -55,7 +55,6 @@ use nakamoto_test::logger;
 
 use p2p::fsm::Command;
 
-use super::utxos::Utxos;
 use super::Event;
 use super::*;
 

@@ -14,6 +14,8 @@ use lazy_static::*;
 use nakamoto_common::block::BlockHeader;
 use nakamoto_common::nonempty::NonEmpty;
 
+pub use fastrand;
+
 lazy_static! {
     pub static ref BITCOIN_HEADERS: NonEmpty<BlockHeader> = {
         let genesis = constants::genesis_block(bitcoin::Network::Bitcoin).header;

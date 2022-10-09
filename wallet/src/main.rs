@@ -1,3 +1,6 @@
+use std::net;
+use std::path::PathBuf;
+
 use argh::FromArgs;
 
 use nakamoto_common::bitcoin::Address;
@@ -14,6 +17,12 @@ pub struct Options {
     /// wallet genesis height, from which to start scanning
     #[argh(option)]
     pub genesis: Height,
+    /// connect to this node
+    #[argh(option)]
+    pub connect: net::SocketAddr,
+    /// wallet file
+    #[argh(option)]
+    pub wallet: PathBuf,
     /// enable debug logging
     #[argh(switch)]
     pub debug: bool,
@@ -31,16 +40,11 @@ fn main() {
     let level = if opts.debug {
         log::Level::Debug
     } else {
-        log::Level::Info
+        log::Level::Error
     };
     logger::init(level).expect("initializing logger for the first time");
 
-    if opts.addresses.is_empty() {
-        log::error!("Fatal: at least one address must be specified with `--addresses`");
-        std::process::exit(1);
-    }
-
-    if let Err(err) = nakamoto_wallet::run(opts.addresses, opts.genesis) {
+    if let Err(err) = nakamoto_wallet::run(&opts.wallet, opts.genesis, opts.connect) {
         log::error!("Fatal: {}", err);
         std::process::exit(1);
     }

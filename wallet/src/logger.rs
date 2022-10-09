@@ -6,6 +6,7 @@ use log::{Level, Log, Metadata, Record, SetLoggerError};
 
 struct Logger {
     level: Level,
+    stream: io::Stderr,
 }
 
 impl Log for Logger {
@@ -15,19 +16,12 @@ impl Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let module = record.module_path().unwrap_or_default();
+            write(record, &self.stream);
 
-            if record.level() == Level::Error {
-                write(record, module, io::stderr());
-            } else {
-                write(record, module, io::stdout());
-            }
-
-            fn write(record: &log::Record, module: &str, mut stream: impl io::Write) {
+            fn write(record: &log::Record, mut stream: impl io::Write) {
                 let now =
                     DateTime::from(SystemTime::now()).to_rfc3339_opts(SecondsFormat::Millis, true);
-                writeln!(stream, "{} [{}] {}", now, module, record.args())
-                    .expect("write shouldn't fail");
+                writeln!(stream, "{} {}", now, record.args()).expect("write shouldn't fail");
             }
         }
     }
@@ -37,7 +31,10 @@ impl Log for Logger {
 
 /// Initialize a new logger.
 pub fn init(level: Level) -> Result<(), SetLoggerError> {
-    let logger = Logger { level };
+    let logger = Logger {
+        level,
+        stream: io::stderr(),
+    };
 
     log::set_boxed_logger(Box::new(logger))?;
     log::set_max_level(level.to_level_filter());
