@@ -718,14 +718,15 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
             let current = tree.height();
             let best = self.best_height().unwrap_or(current);
 
-            self.request(addr, locators, timeout, OnTimeout::Ignore);
-            self.upstream.event(Event::Syncing { current, best });
+            if best > current {
+                self.request(addr, locators, timeout, OnTimeout::Ignore);
+                self.upstream.event(Event::Syncing { current, best });
 
-            true
-        } else {
-            // TODO: No peer found to sync.. emit event.
-            false
+                return true;
+            }
         }
+        // TODO: No peer found to sync.. emit event.
+        false
     }
 
     /// Broadcast our best block header to connected peers who don't have it.
