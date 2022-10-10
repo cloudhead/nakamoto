@@ -12,6 +12,20 @@ use nakamoto_common::block::Height;
 
 use crate::wallet::db;
 
+/// Redraw flags. Sets what needs redrawing.
+type Redraw = u8;
+
+/// Don't redraw anything.
+const REDRAW_NONE: Redraw = 0b0000;
+/// Redraw the header.
+const REDRAW_HEADER: Redraw = 0b0001;
+/// Redraw the main area.
+const REDRAW_MAIN: Redraw = 0b0010;
+/// Redraw the footer.
+const REDRAW_FOOTER: Redraw = 0b0100;
+/// Redraw everything.
+const REDRAW_ALL: Redraw = REDRAW_MAIN | REDRAW_HEADER | REDRAW_FOOTER;
+
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -96,9 +110,7 @@ pub struct Ui {
     size: Vec2D,
 
     last_redraw: Option<time::Instant>,
-    redraw_header: bool,
-    redraw_main: bool,
-    redraw_message: bool,
+    redraw: Redraw,
 }
 
 impl Default for Ui {
@@ -111,18 +123,14 @@ impl Default for Ui {
             status: Status::LoadingBlockHeaders { height: 0 },
             message: String::new(),
             last_redraw: None,
-            redraw_header: true,
-            redraw_main: true,
-            redraw_message: true,
+            redraw: REDRAW_ALL,
         }
     }
 }
 
 impl Ui {
     pub fn redraw<D: db::Read, W: io::Write>(&mut self, db: &D, term: &mut W) -> Result<(), Error> {
-        self.redraw_message = true;
-        self.redraw_main = true;
-        self.redraw_header = true;
+        self.redraw = REDRAW_ALL;
         self.reset(term)?;
         self.decorations(term)?;
 
@@ -156,14 +164,13 @@ impl Ui {
 
     pub fn set_balance(&mut self, balance: u64) {
         self.balance = Balance(balance);
-        self.redraw_header = true;
-        self.redraw_main = true;
+        self.redraw |= REDRAW_HEADER;
     }
 
     pub fn handle_ready(&mut self, height: Height) {
         self.tip = height;
         self.status = Status::Ready { height };
-        self.redraw_header = true;
+        self.redraw |= REDRAW_HEADER;
     }
 
     pub fn handle_filter_processed(&mut self, height: Height) {
@@ -171,7 +178,7 @@ impl Ui {
             height,
             tip: self.tip,
         };
-        self.redraw_header = true;
+        self.redraw |= REDRAW_HEADER;
     }
 
     pub fn handle_peer_height(&mut self, height: Height) {
@@ -185,7 +192,7 @@ impl Ui {
             Status::Syncing { height, tip }
         };
         self.tip = tip;
-        self.redraw_header = true;
+        self.redraw |= REDRAW_HEADER;
     }
 
     pub fn handle_input_event(&mut self, input: Event) -> io::Result<ControlFlow<()>> {
@@ -193,13 +200,11 @@ impl Ui {
             // Switch tabs.
             Event::Key(Key::Right | Key::Char('\t')) => {
                 self.tab.next();
-                self.redraw_header = true;
-                self.redraw_main = true;
+                self.redraw |= REDRAW_HEADER | REDRAW_MAIN;
             }
             Event::Key(Key::Left) => {
                 self.tab.prev();
-                self.redraw_header = true;
-                self.redraw_main = true;
+                self.redraw |= REDRAW_HEADER | REDRAW_MAIN;
             }
             Event::Mouse(MouseEvent::Press(_, _x, _y)) => {}
             _ => (),
@@ -224,7 +229,7 @@ impl Ui {
             .last_redraw
             .map_or(true, |t| t.elapsed() > time::Duration::from_millis(16))
         {
-            self.redraw_header = true;
+            self.redraw |= REDRAW_HEADER;
         }
         Ok(ControlFlow::Continue(()))
     }
@@ -327,16 +332,16 @@ impl fmt::Display for Tab {
 pub fn refresh<D: db::Read, W: io::Write>(ui: &mut Ui, db: &D, term: &mut W) -> Result<(), Error> {
     ui.size = termion::terminal_size()?.into();
 
-    if ui.redraw_header {
+    if ui.redraw | REDRAW_HEADER == ui.redraw {
         draw_header(ui, term)?;
     }
-    if ui.redraw_main {
+    if ui.redraw | REDRAW_MAIN == ui.redraw {
         draw_main(db, term)?;
     }
-    if ui.redraw_message {
-        draw_message(ui, term)?;
+    if ui.redraw | REDRAW_FOOTER == ui.redraw {
+        draw_footer(ui, term)?;
     }
-    if ui.redraw_header || ui.redraw_main || ui.redraw_message {
+    if ui.redraw != REDRAW_NONE {
         write!(
             term,
             "{}{}{}",
@@ -346,9 +351,7 @@ pub fn refresh<D: db::Read, W: io::Write>(ui: &mut Ui, db: &D, term: &mut W) -> 
         )?;
         term.flush()?;
 
-        ui.redraw_header = false;
-        ui.redraw_main = false;
-        ui.redraw_message = false;
+        ui.redraw = REDRAW_NONE;
         ui.last_redraw = Some(time::Instant::now());
     }
 
@@ -425,7 +428,7 @@ pub fn draw_main<D: db::Read, W: io::Write>(db: &D, term: &mut W) -> Result<(), 
     Ok(())
 }
 
-pub fn draw_message<W: io::Write>(ui: &Ui, term: &mut W) -> io::Result<()> {
+pub fn draw_footer<W: io::Write>(ui: &Ui, term: &mut W) -> io::Result<()> {
     let Vec2D { y: height, .. } = ui.size;
 
     write!(
