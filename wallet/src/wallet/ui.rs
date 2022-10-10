@@ -193,9 +193,13 @@ impl Ui {
             // Switch tabs.
             Event::Key(Key::Right | Key::Char('\t')) => {
                 self.tab.next();
+                self.redraw_header = true;
+                self.redraw_main = true;
             }
             Event::Key(Key::Left) => {
                 self.tab.prev();
+                self.redraw_header = true;
+                self.redraw_main = true;
             }
             Event::Mouse(MouseEvent::Press(_, _x, _y)) => {}
             _ => (),
