@@ -21,6 +21,7 @@ chrono = { version = "0.4", features = ["std"], default-features = false }
 thiserror = { version = "1.0" }
 sqlite = { version = "0.27.0" }
 sqlite3-sys = { version = "0.14", default-features = false }
+sqlite3-src = { version = "0.4.0", features = ["bundled"] }
 termion = { version = "1.5.6" }
 signal-hook = { version = "0.3.14", features = ["iterator"], default-features = false }
 

@@ -390,6 +390,7 @@ dependencies = [
  "nakamoto-test",
  "signal-hook",
  "sqlite",
+ "sqlite3-src",
  "sqlite3-sys",
  "termion",
  "thiserror",
