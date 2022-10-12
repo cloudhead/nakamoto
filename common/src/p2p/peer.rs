@@ -232,7 +232,7 @@ impl KnownAddress {
         let ip = &self.addr.address;
         let port = &self.addr.port;
         let address = net::SocketAddr::from((*ip, *port)).to_string();
-        let services = self.addr.services.as_u64();
+        let services = self.addr.services.to_u64();
 
         let mut obj = Object::new();
 

@@ -66,7 +66,7 @@ pub mod gen {
     use bitcoin::util::bip158;
     use bitcoin::util::uint::Uint256;
 
-    use nakamoto_common::bitcoin::{self, Witness};
+    use nakamoto_common::bitcoin::{self, PackedLockTime, Sequence, Witness};
     use nakamoto_common::bitcoin_hashes::{hash160, Hash as _};
     use nakamoto_common::block::filter::{BlockFilter, FilterHash, FilterHeader};
     use nakamoto_common::block::*;
@@ -92,7 +92,7 @@ pub mod gen {
                     vout: rng.u32(0..16),
                 },
                 script_sig: Script::new(),
-                sequence: 0xFFFFFFFF,
+                sequence: Sequence::MAX,
                 witness: Witness::new(),
             };
             input.push(inp);
@@ -106,7 +106,7 @@ pub mod gen {
 
         Transaction {
             version: 1,
-            lock_time: 0,
+            lock_time: PackedLockTime::ZERO,
             input,
             output,
         }
@@ -124,7 +124,7 @@ pub mod gen {
         let input = TxIn {
             previous_output,
             script_sig: Script::new(),
-            sequence: 0xFFFFFFFF,
+            sequence: Sequence::MAX,
             witness: Witness::new(),
         };
         let fee = rng.u64(0..value);
@@ -149,7 +149,7 @@ pub mod gen {
 
         Transaction {
             version: 1,
-            lock_time: 0,
+            lock_time: PackedLockTime::ZERO,
             input: vec![input],
             output,
         }
@@ -182,12 +182,12 @@ pub mod gen {
         let input = TxIn {
             previous_output: OutPoint::null(),
             script_sig: Script::new(),
-            sequence: 0xFFFFFFFF,
+            sequence: Sequence::MAX,
             witness: Witness::new(),
         };
         Transaction {
             version: 1,
-            lock_time: 0,
+            lock_time: PackedLockTime::ZERO,
             input: vec![input],
             output,
         }
@@ -211,7 +211,10 @@ pub mod gen {
     ) -> Block {
         let merkle_root =
             bitcoin::util::hash::bitcoin_merkle_root(txdata.iter().map(|tx| tx.txid().as_hash()));
-        let merkle_root = TxMerkleNode::from_hash(merkle_root.unwrap_or_default());
+        let merkle_root = match merkle_root {
+            Some(hash) => TxMerkleNode::from_hash(hash),
+            None => TxMerkleNode::all_zeros(),
+        };
         let header = header(prev_header, merkle_root, rng);
 
         Block { header, txdata }
@@ -247,7 +250,10 @@ pub mod gen {
         let txdata = vec![coinbase(rng)];
         let merkle_root =
             bitcoin::util::hash::bitcoin_merkle_root(txdata.iter().map(|tx| tx.txid().as_hash()));
-        let merkle_root = TxMerkleNode::from_hash(merkle_root.unwrap_or_default());
+        let merkle_root = match merkle_root {
+            Some(hash) => TxMerkleNode::from_hash(hash),
+            None => TxMerkleNode::all_zeros(),
+        };
 
         let target = Uint256([
             0xffffffffffffffffu64,
@@ -263,7 +269,7 @@ pub mod gen {
             nonce: 0,
             bits,
             merkle_root,
-            prev_blockhash: BlockHash::default(),
+            prev_blockhash: BlockHash::all_zeros(),
         };
         super::solve(&mut header);
 
@@ -338,7 +344,7 @@ pub mod gen {
         assert!(height > 0);
 
         for _ in 0..height {
-            let header = header(&prev_header, TxMerkleNode::default(), rng);
+            let header = header(&prev_header, TxMerkleNode::all_zeros(), rng);
             prev_header = header;
 
             chain.push(header);
@@ -404,7 +410,7 @@ pub mod gen {
             let bytes = std::iter::repeat_with(|| rng.u8(..))
                 .take(32)
                 .collect::<Vec<_>>();
-            let hash = FilterHash::consensus_decode(bytes.as_slice()).unwrap();
+            let hash = FilterHash::consensus_decode(&mut bytes.as_slice()).unwrap();
             let header = hash.filter_header(&parent);
 
             parent = header;

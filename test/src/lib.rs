@@ -22,7 +22,7 @@ lazy_static! {
         let mut headers = NonEmpty::new(genesis);
 
         while f.read_exact(&mut buf).is_ok() {
-            let header = BlockHeader::consensus_decode(&buf[..]).unwrap();
+            let header = BlockHeader::consensus_decode(&mut buf.as_slice()).unwrap();
             headers.push(header);
         }
         headers

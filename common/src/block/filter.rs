@@ -3,6 +3,7 @@
 
 use std::ops::RangeInclusive;
 
+use bitcoin_hashes::Hash;
 use thiserror::Error;
 
 pub use bitcoin::hash_types::{FilterHash, FilterHeader};
@@ -32,7 +33,7 @@ impl Genesis for FilterHeader {
     /// ```
     fn genesis(network: Network) -> Self {
         let filter = BlockFilter::genesis(network);
-        filter.filter_header(&FilterHeader::default())
+        filter.filter_header(&FilterHeader::all_zeros())
     }
 }
 
@@ -64,7 +65,7 @@ pub trait Filters {
     fn get_prev_header(&self, height: Height) -> Option<FilterHeader> {
         if height == 0 {
             // If the start height is `0` (genesis), we return the zero hash as the parent.
-            Some(FilterHeader::default())
+            Some(FilterHeader::all_zeros())
         } else {
             self.get_header(height - 1).map(|(_, h)| h)
         }

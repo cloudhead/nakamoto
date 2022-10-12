@@ -33,7 +33,7 @@ fn get<H: Decodable, S: Seek + Read>(mut stream: S, ix: u64) -> Result<H, Error>
     stream.seek(io::SeekFrom::Start(ix * size as u64))?;
     stream.read_exact(&mut buf)?;
 
-    H::consensus_decode(&buf[..]).map_err(Error::from)
+    H::consensus_decode(&mut buf.as_slice()).map_err(Error::from)
 }
 
 /// An iterator over block headers in a file.
@@ -196,6 +196,10 @@ impl<H: 'static + Copy + Encodable + Decodable> Store for File<H> {
 mod test {
     use std::{io, iter};
 
+    use nakamoto_common::bitcoin::TxMerkleNode;
+    use nakamoto_common::bitcoin_hashes::Hash;
+    use nakamoto_common::block::BlockHash;
+
     use super::{Error, File, Height, Store};
     use crate::block::BlockHeader;
 
@@ -205,8 +209,8 @@ mod test {
         let tmp = tempfile::tempdir().unwrap();
         let genesis = BlockHeader {
             version: 1,
-            prev_blockhash: Default::default(),
-            merkle_root: Default::default(),
+            prev_blockhash: BlockHash::all_zeros(),
+            merkle_root: TxMerkleNode::all_zeros(),
             bits: 0x2ffffff,
             time: 39123818,
             nonce: 0,
@@ -222,7 +226,7 @@ mod test {
         let header = BlockHeader {
             version: 1,
             prev_blockhash: store.genesis.block_hash(),
-            merkle_root: Default::default(),
+            merkle_root: TxMerkleNode::all_zeros(),
             bits: 0x2ffffff,
             time: 1842918273,
             nonce: 312143,
@@ -255,7 +259,7 @@ mod test {
         let header = BlockHeader {
             version: 1,
             prev_blockhash: store.genesis().block_hash(),
-            merkle_root: Default::default(),
+            merkle_root: TxMerkleNode::all_zeros(),
             bits: 0x2ffffff,
             time: 1842918273,
             nonce: 0,
@@ -319,7 +323,7 @@ mod test {
         let header = BlockHeader {
             version: 1,
             prev_blockhash: store.genesis().block_hash(),
-            merkle_root: Default::default(),
+            merkle_root: TxMerkleNode::all_zeros(),
             bits: 0x2ffffff,
             time: 1842918273,
             nonce: 0,
@@ -351,15 +355,15 @@ mod test {
             BlockHeader {
                 version: 1,
                 prev_blockhash: store.genesis().block_hash(),
-                merkle_root: Default::default(),
+                merkle_root: TxMerkleNode::all_zeros(),
                 bits: 0x2ffffff,
                 time: 1842918273,
                 nonce: 312143,
             },
             BlockHeader {
                 version: 1,
-                prev_blockhash: Default::default(),
-                merkle_root: Default::default(),
+                prev_blockhash: BlockHash::all_zeros(),
+                merkle_root: TxMerkleNode::all_zeros(),
                 bits: 0x1ffffff,
                 time: 1842918920,
                 nonce: 913716378,

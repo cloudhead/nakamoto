@@ -3,6 +3,7 @@
 
 use std::ops::RangeInclusive;
 
+use nakamoto_common::bitcoin_hashes::Hash;
 use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader, Filters};
 use nakamoto_common::block::iter::Iter;
 use nakamoto_common::block::tree::{BlockReader, BlockTree, Branch, Error, ImportResult};
@@ -241,7 +242,7 @@ pub struct FilterCache {
 impl FilterCache {
     pub fn new(genesis: FilterHeader) -> Self {
         Self {
-            headers: NonEmpty::new((FilterHash::default(), genesis)),
+            headers: NonEmpty::new((FilterHash::all_zeros(), genesis)),
             filters: BTreeMap::new(),
         }
     }

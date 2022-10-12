@@ -6,6 +6,7 @@ use std::ops::RangeInclusive;
 
 use nakamoto_common::bitcoin::consensus::{encode, Decodable, Encodable};
 
+use nakamoto_common::bitcoin_hashes::Hash;
 pub use nakamoto_common::block::filter::{
     self, BlockFilter, Error, FilterHash, FilterHeader, Filters,
 };
@@ -18,27 +19,36 @@ use nakamoto_common::nonempty::NonEmpty;
 
 use crate::filter::store;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct StoredHeader {
     pub hash: FilterHash,
     pub header: FilterHeader,
 }
 
+impl Default for StoredHeader {
+    fn default() -> Self {
+        Self {
+            hash: FilterHash::all_zeros(),
+            header: FilterHeader::all_zeros(),
+        }
+    }
+}
+
 impl Encodable for StoredHeader {
-    fn consensus_encode<W: io::Write>(&self, mut e: W) -> Result<usize, io::Error> {
+    fn consensus_encode<W: io::Write + ?Sized>(&self, e: &mut W) -> Result<usize, io::Error> {
         let mut len = 0;
 
-        len += self.hash.consensus_encode(&mut e)?;
-        len += self.header.consensus_encode(&mut e)?;
+        len += self.hash.consensus_encode(e)?;
+        len += self.header.consensus_encode(e)?;
 
         Ok(len)
     }
 }
 
 impl Decodable for StoredHeader {
-    fn consensus_decode<D: io::Read>(mut d: D) -> Result<Self, encode::Error> {
-        let hash = FilterHash::consensus_decode(&mut d)?;
-        let header = FilterHeader::consensus_decode(&mut d)?;
+    fn consensus_decode<D: io::Read + ?Sized>(d: &mut D) -> Result<Self, encode::Error> {
+        let hash = FilterHash::consensus_decode(d)?;
+        let header = FilterHeader::consensus_decode(d)?;
 
         Ok(StoredHeader { hash, header })
     }
@@ -96,7 +106,7 @@ impl<S> FilterCache<S> {
         network: Network,
         progress: impl Fn(Height) -> bool,
     ) -> Result<(), store::Error> {
-        let mut prev_header = FilterHeader::default();
+        let mut prev_header = FilterHeader::all_zeros();
 
         if self.headers.first().header != FilterHeader::genesis(network) {
             return Err(store::Error::Integrity);

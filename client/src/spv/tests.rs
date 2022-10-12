@@ -39,6 +39,7 @@
 #![allow(unused_imports)]
 use std::{io, iter, net, thread};
 
+use nakamoto_common::bitcoin_hashes::Hash;
 use quickcheck::TestResult;
 use quickcheck_macros::quickcheck;
 
@@ -332,20 +333,20 @@ fn test_tx_status_ordering() {
             peer: ([0, 0, 0, 0], 0).into()
         } < TxStatus::Confirmed {
             height: 0,
-            block: BlockHash::default(),
+            block: BlockHash::all_zeros(),
         }
     );
     assert!(
         TxStatus::Confirmed {
             height: 0,
-            block: BlockHash::default(),
+            block: BlockHash::all_zeros(),
         } < TxStatus::Reverted
     );
     assert!(
         TxStatus::Reverted
             < TxStatus::Stale {
-                replaced_by: Default::default(),
-                block: BlockHash::default()
+                replaced_by: Txid::all_zeros(),
+                block: BlockHash::all_zeros()
             }
     );
 }

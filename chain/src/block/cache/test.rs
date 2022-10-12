@@ -1,5 +1,6 @@
 use super::BlockCache;
 
+use nakamoto_common::bitcoin_hashes::Hash;
 use nakamoto_common::block::time::{AdjustedTime, Clock, LocalTime};
 use nakamoto_common::block::tree::{BlockReader, BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockTime, Height, Target};
@@ -278,7 +279,7 @@ fn arbitrary_header(
         time,
         nonce: 0,
         bits,
-        merkle_root: TxMerkleNode::default(),
+        merkle_root: TxMerkleNode::all_zeros(),
         prev_blockhash,
     };
     block::solve(&mut header);
@@ -288,7 +289,7 @@ fn arbitrary_header(
 
 fn arbitrary_chain(height: Height, g: &mut Gen) -> NonEmpty<BlockHeader> {
     let mut prev_time = 0; // Epoch.
-    let mut prev_hash = BlockHash::default();
+    let mut prev_hash = BlockHash::all_zeros();
 
     let genesis = arbitrary_header(prev_hash, prev_time, &TARGET, g);
     let mut chain = NonEmpty::new(genesis);
@@ -406,7 +407,7 @@ fn test_invalid_orphan_block_target() {
         time: genesis.time,
         version: genesis.version,
         nonce: 0,
-        merkle_root: TxMerkleNode::default(),
+        merkle_root: TxMerkleNode::all_zeros(),
     };
     block::solve(&mut header);
 
@@ -460,7 +461,7 @@ fn test_invalid_orphan_block_pow() {
         time: genesis.time,
         version: genesis.version,
         nonce: 94173,
-        merkle_root: TxMerkleNode::default(),
+        merkle_root: TxMerkleNode::all_zeros(),
     };
 
     assert!(
@@ -518,8 +519,8 @@ fn test_bitcoin_difficulty() {
                 version: 1,
                 time,
                 bits,
-                merkle_root: Default::default(),
-                prev_blockhash: Default::default(),
+                merkle_root: TxMerkleNode::all_zeros(),
+                prev_blockhash: BlockHash::all_zeros(),
                 nonce: 0,
             },
         );
@@ -614,7 +615,7 @@ impl Tree {
         let mut header = BlockHeader {
             version: 1,
             prev_blockhash: self.hash,
-            merkle_root: Default::default(),
+            merkle_root: TxMerkleNode::all_zeros(),
             bits: BlockHeader::compact_target_from_u256(&TARGET),
             time: self.time + TARGET_SPACING,
             nonce,
@@ -637,7 +638,7 @@ impl Tree {
         let mut header = BlockHeader {
             version: 1,
             prev_blockhash: self.hash,
-            merkle_root: Default::default(),
+            merkle_root: TxMerkleNode::all_zeros(),
             bits: BlockHeader::compact_target_from_u256(&TARGET),
             time: self.time + TARGET_SPACING,
             nonce,
@@ -1012,7 +1013,7 @@ fn test_cache_import_equal_difficulty_blocks() {
                 "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
             )
             .unwrap(),
-            merkle_root: Default::default(),
+            merkle_root: TxMerkleNode::all_zeros(),
             time: 1296688662,
             bits: 545259519,
             nonce: 3705677718,
@@ -1023,7 +1024,7 @@ fn test_cache_import_equal_difficulty_blocks() {
                 "40e6856aba3aa0bab2ba97b5612dc22a485c3a583dc98a9f1cd1706dd858f623",
             )
             .unwrap(),
-            merkle_root: Default::default(),
+            merkle_root: TxMerkleNode::all_zeros(),
             time: 1296688722,
             bits: 545259519,
             nonce: 3581550584,
@@ -1034,7 +1035,7 @@ fn test_cache_import_equal_difficulty_blocks() {
                 "40e6856aba3aa0bab2ba97b5612dc22a485c3a583dc98a9f1cd1706dd858f623",
             )
             .unwrap(),
-            merkle_root: Default::default(),
+            merkle_root: TxMerkleNode::all_zeros(),
             time: 1296688722,
             bits: 545259519,
             nonce: 3850925874,
@@ -1099,14 +1100,22 @@ fn test_cache_import_with_checkpoints() {
     let mut cache = BlockCache::from(store.clone(), params.clone(), &[]).unwrap();
     cache.import_blocks(tree.branch([&a1, &a3]), &ctx).unwrap();
 
-    let mut cache =
-        BlockCache::from(store.clone(), params.clone(), &[(32, Default::default())]).unwrap();
+    let mut cache = BlockCache::from(
+        store.clone(),
+        params.clone(),
+        &[(32, BlockHash::all_zeros())],
+    )
+    .unwrap();
     cache
         .import_blocks(tree.branch([&a1, &a3]), &ctx)
         .expect("A checkpoint in the future cannot cause any error");
 
-    let mut cache =
-        BlockCache::from(store.clone(), params.clone(), &[(1, Default::default())]).unwrap();
+    let mut cache = BlockCache::from(
+        store.clone(),
+        params.clone(),
+        &[(1, BlockHash::all_zeros())],
+    )
+    .unwrap();
     assert!(
         matches! {
             cache.import_block(a1.block(), &ctx),
@@ -1267,7 +1276,7 @@ fn test_cache_import_fork_with_future_checkpoint() {
     let a2 = a1.next(g);
 
     // Create a checkpoint block [c4] in the future, at height 4.
-    let checkpoints = &[(0, genesis.block_hash()), (4, BlockHash::default())];
+    let checkpoints = &[(0, genesis.block_hash()), (4, BlockHash::all_zeros())];
     let mut cache = BlockCache::from(store, params, checkpoints).unwrap();
 
     cache.import_blocks(a0.branch([&a1, &a2]), &ctx).unwrap();
@@ -1437,7 +1446,7 @@ fn test_cache_locate_headers() {
     cache.import_blocks(chain.iter().cloned(), &ctx).unwrap();
 
     assert!(cache
-        .locate_headers(&[], BlockHash::default(), 1)
+        .locate_headers(&[], BlockHash::all_zeros(), 1)
         .is_empty());
 
     assert_eq!(
@@ -1451,7 +1460,7 @@ fn test_cache_locate_headers() {
             .unwrap();
 
     assert_eq!(
-        cache.locate_headers(&[unknown, unknown], BlockHash::default(), 4),
+        cache.locate_headers(&[unknown, unknown], BlockHash::all_zeros(), 4),
         chain.iter().skip(1).take(4).cloned().collect::<Vec<_>>(),
         "When the locators are unknown, starts from genesis"
     );
@@ -1462,7 +1471,7 @@ fn test_cache_locate_headers() {
     assert_eq!(
         cache.locate_headers(
             &[unknown, known1.block_hash(), known2.block_hash()],
-            BlockHash::default(),
+            BlockHash::all_zeros(),
             9
         ),
         chain
@@ -1475,7 +1484,7 @@ fn test_cache_locate_headers() {
     );
 
     assert_eq!(
-        cache.locate_headers(&[chain.last().block_hash()], BlockHash::default(), 9),
+        cache.locate_headers(&[chain.last().block_hash()], BlockHash::all_zeros(), 9),
         vec![],
         "Nothing is returned if we're starting from the tip"
     );
@@ -1483,7 +1492,7 @@ fn test_cache_locate_headers() {
     assert_eq!(
         cache.locate_headers(
             &[chain.get(height - 3).unwrap().block_hash()],
-            BlockHash::default(),
+            BlockHash::all_zeros(),
             9
         ),
         vec![

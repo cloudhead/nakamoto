@@ -5,6 +5,7 @@ use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
 
+use nakamoto_common::bitcoin_hashes::Hash;
 use nakamoto_common::block::store;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockReader, BlockTree, Error, ImportResult};
@@ -393,7 +394,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
                     self.broadcast_tip(&tip, tree);
                     self.sync(tree);
                 } else {
-                    let locators = (vec![tip], BlockHash::default());
+                    let locators = (vec![tip], BlockHash::all_zeros());
                     let timeout = self.config.request_timeout;
 
                     self.request(*from, locators, timeout, OnTimeout::Disconnect);
@@ -609,7 +610,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
     fn register(&mut self, socket: Socket, height: Height, preferred: bool, link: Link) {
         let last_active = None;
         let last_asked = None;
-        let tip = BlockHash::default();
+        let tip = BlockHash::all_zeros();
 
         self.peers.insert(
             socket.addr,
@@ -706,7 +707,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
 
         // ... It looks like we're out of sync ...
 
-        let locators = (tree.locator_hashes(tree.height()), BlockHash::default());
+        let locators = (tree.locator_hashes(tree.height()), BlockHash::all_zeros());
 
         // If we're already fetching these headers, just wait.
         if self.syncing(&locators) {
@@ -766,7 +767,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
         for addr in addrs {
             self.request(
                 addr,
-                (locators.clone(), BlockHash::default()),
+                (locators.clone(), BlockHash::all_zeros()),
                 self.config.request_timeout,
                 OnTimeout::Ignore,
             );

@@ -3,8 +3,8 @@
 use bitcoin::blockdata::block::{Block, BlockHeader};
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::hashes::hex::FromHex;
 use bitcoin::network::constants::ServiceFlags;
-use bitcoin_hashes::hex::FromHex;
 
 use bitcoin_hashes::sha256d;
 
@@ -176,7 +176,7 @@ impl Network {
             Self::Regtest => genesis::REGTEST,
             Self::Signet => genesis::SIGNET,
         };
-        BlockHash::from(
+        BlockHash::from_hash(
             sha256d::Hash::from_slice(hash)
                 .expect("the genesis hash has the right number of bytes"),
         )
