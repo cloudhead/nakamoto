@@ -66,6 +66,10 @@ impl<T: Clone> Subscriber<T> {
 
     pub fn publish(&self, event: T) -> bool {
         let mut subs = self.subscribers.lock().unwrap();
+        if subs.is_empty() {
+            return true;
+        }
+        // Keep the subscribers that are able to receive the event
         subs.retain(|s| s.try_send(event.clone()).is_ok());
         subs.is_empty().not()
     }
