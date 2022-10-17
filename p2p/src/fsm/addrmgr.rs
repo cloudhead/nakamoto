@@ -42,8 +42,6 @@ pub enum Event {
         /// Source of addresses received.
         source: Source,
     },
-    /// A new peer address was discovered.
-    AddressDiscovered(Address, Source),
     /// Address book exhausted.
     AddressBookExhausted,
     /// An error was encountered.
@@ -59,9 +57,6 @@ impl std::fmt::Display for Event {
                     "received {} addresse(s) from source `{}`",
                     count, source
                 )
-            }
-            Event::AddressDiscovered(addr, source) => {
-                write!(fmt, "{:?} discovered from source `{}`", addr, source)
             }
             Event::AddressBookExhausted => {
                 write!(
@@ -426,7 +421,6 @@ impl<P: Store, U: Wire<Event>, C: Clock> AddressManager<P, U, C> {
             }
 
             self.populate_address_ranges(&net_addr.ip());
-            self.upstream.event(Event::AddressDiscovered(addr, source));
         }
     }
 

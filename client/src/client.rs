@@ -238,24 +238,24 @@ where
         let genesis = network.genesis();
         let params = network.params();
 
-        log::info!("Initializing client ({:?})..", network);
-        log::info!("Genesis block hash is {}", network.genesis_hash());
+        log::info!(target: "client", "Initializing client ({:?})..", network);
+        log::info!(target: "client", "Genesis block hash is {}", network.genesis_hash());
 
         let path = dir.join("headers.db");
         let store = match store::File::create(&path, genesis) {
             Ok(store) => {
-                log::info!("Initializing new block store {:?}", path);
+                log::info!(target: "client", "Initializing new block store {:?}", path);
                 store
             }
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
-                log::info!("Found existing store {:?}", path);
+                log::info!(target: "client", "Found existing store {:?}", path);
                 let store = store::File::open(path, genesis)?;
 
                 if store.check().is_err() {
-                    log::warn!("Corruption detected in header store, healing..");
+                    log::warn!(target: "client", "Corruption detected in header store, healing..");
                     store.heal()?; // Rollback store to the last valid header.
                 }
-                log::info!("Store height = {}", store.height()?);
+                log::info!(target: "client", "Store height = {}", store.height()?);
 
                 store
             }
@@ -267,40 +267,40 @@ where
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
 
-        log::info!("Loading block headers from store..");
+        log::info!(target: "client", "Loading block headers from store..");
 
         let cache = BlockCache::new(store, params, &checkpoints)?
             .load_with(|height| self.loading.publish(Loading::BlockHeaderLoaded { height }))?;
 
-        log::info!("Initializing block filters..");
+        log::info!(target: "client", "Initializing block filters..");
 
         let cfheaders_genesis = filter::cache::StoredHeader::genesis(network);
         let cfheaders_path = dir.join("filters.db");
         let cfheaders_store = match store::File::create(&cfheaders_path, cfheaders_genesis) {
             Ok(store) => {
-                log::info!("Initializing new filter header store {:?}", cfheaders_path);
+                log::info!(target: "client", "Initializing new filter header store {:?}", cfheaders_path);
                 store
             }
             Err(store::Error::Io(e)) if e.kind() == io::ErrorKind::AlreadyExists => {
-                log::info!("Found existing store {:?}", cfheaders_path);
+                log::info!(target: "client", "Found existing store {:?}", cfheaders_path);
                 let store = store::File::open(cfheaders_path, cfheaders_genesis)?;
 
                 if store.check().is_err() {
-                    log::warn!("Corruption detected in filter store, healing..");
+                    log::warn!(target: "client", "Corruption detected in filter store, healing..");
                     store.heal()?; // Rollback store to the last valid header.
                 }
-                log::info!("Filters height = {}", store.height()?);
+                log::info!(target: "client", "Filters height = {}", store.height()?);
 
                 store
             }
             Err(err) => return Err(err.into()),
         };
-        log::info!("Loading filter headers from store..");
+        log::info!(target: "client", "Loading filter headers from store..");
 
         let filters = FilterCache::load_with(cfheaders_store, |height| {
             self.loading.publish(Loading::FilterHeaderLoaded { height })
         })?;
-        log::info!("Verifying filter headers..");
+        log::info!(target: "client", "Verifying filter headers..");
 
         filters.verify_with(network, |height| {
             self.loading
@@ -310,12 +310,12 @@ where
         // Loading is done, close all channels.
         self.loading.close();
 
-        log::info!("Loading peer addresses..");
+        log::info!(target: "client", "Loading peer addresses..");
 
         let peers_path = dir.join("peers.json");
         let mut peers = match peer::Cache::create(&peers_path) {
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
-                log::info!("Found existing peer cache {:?}", peers_path);
+                log::info!(target: "client", "Found existing peer cache {:?}", peers_path);
                 let cache = peer::Cache::open(&peers_path).map_err(Error::PeerStore)?;
                 let cfpeers = cache
                     .iter()
@@ -323,6 +323,7 @@ where
                     .count();
 
                 log::info!(
+                    target: "client",
                     "{} peer(s) found.. {} with compact filters support",
                     cache.len(),
                     cfpeers
@@ -333,22 +334,22 @@ where
                 return Err(Error::PeerStore(err));
             }
             Ok(cache) => {
-                log::info!("Initializing new peer address cache {:?}", peers_path);
+                log::info!(target: "client", "Initializing new peer address cache {:?}", peers_path);
                 cache
             }
         };
 
-        log::trace!("{:#?}", peers);
+        log::trace!(target: "client", "{:#?}", peers);
 
         if config.connect.is_empty() && peers.is_empty() {
-            log::info!("Address book is empty. Trying DNS seeds..");
+            log::info!(target: "client", "Address book is empty. Trying DNS seeds..");
             peers.seed(
                 network.seeds().iter().map(|s| (*s, network.port())),
                 Source::Dns,
             )?;
             peers.flush()?;
 
-            log::info!("{} seeds added to address book", peers.len());
+            log::info!(target: "client", "{} seeds added to address book", peers.len());
         }
 
         self.reactor.run(

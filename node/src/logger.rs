@@ -16,16 +16,16 @@ impl Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            let module = record.module_path().unwrap_or_default();
+            let target = record.target();
 
             if record.level() == Level::Error {
-                write(record, module, io::stderr());
+                write(record, target, io::stderr());
             } else {
-                write(record, module, io::stdout());
+                write(record, target, io::stdout());
             }
 
-            fn write(record: &log::Record, module: &str, mut stream: impl io::Write) {
-                let message = format!("{} {} {}", record.level(), module.bold(), record.args());
+            fn write(record: &log::Record, target: &str, mut stream: impl io::Write) {
+                let message = format!("{} {} {}", record.level(), target.bold(), record.args());
                 let message = match record.level() {
                     Level::Error => message.red(),
                     Level::Warn => message.yellow(),

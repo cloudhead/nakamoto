@@ -66,7 +66,7 @@ fn main() {
     };
 
     if let Err(e) = nakamoto_node::run(&opts.connect, &opts.listen, opts.root, &domains, network) {
-        log::error!("Exiting: {}", e);
+        log::error!(target: "node", "Exiting: {}", e);
         std::process::exit(1);
     }
 }

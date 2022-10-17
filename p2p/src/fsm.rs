@@ -904,7 +904,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
                         self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
                     }
                     Err(err) => {
-                        log::warn!("Error receiving filter headers: {}", err);
+                        log::warn!(target: "p2p", "Error receiving filter headers: {}", err);
                     }
                     Ok(_) => {}
                 }
@@ -947,13 +947,16 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
             NetworkMessage::WtxidRelay => {
                 self.peermgr.received_wtxidrelay(&addr);
             }
+            NetworkMessage::SendHeaders => {
+                // We adhere to `sendheaders` by default.
+            }
             NetworkMessage::Unknown {
                 command: ref cmd, ..
             } => {
-                warn!("Ignoring unknown message {:?} from {}", cmd, addr)
+                warn!(target: "p2p", "Ignoring unknown message {:?} from {}", cmd, addr)
             }
             _ => {
-                warn!("Ignoring {:?} from {}", cmd, addr);
+                warn!(target: "p2p", "Ignoring {:?} from {}", cmd, addr);
             }
         }
     }

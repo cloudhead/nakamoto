@@ -145,12 +145,12 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
                 .register(Source::Listener, &listener, popol::interest::READ);
             self.listening.send(local_addr).ok();
 
-            info!("Listening on {}", local_addr);
+            info!(target: "net", "Listening on {}", local_addr);
 
             Some(listener)
         };
 
-        info!("Initializing service..");
+        info!(target: "net", "Initializing service..");
 
         let local_time = SystemTime::now().into();
         service.initialize(local_time);
@@ -197,7 +197,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
                                     // File descriptor was closed and is invalid.
                                     // Nb. This shouldn't happen. It means the source wasn't
                                     // properly unregistered, or there is a duplicate source.
-                                    error!("{}: Socket is invalid, removing", socket_addr);
+                                    error!(target: "net", "{}: Socket is invalid, removing", socket_addr);
 
                                     self.sources.unregister(source);
                                     continue;
@@ -218,7 +218,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
                                             break;
                                         }
                                         Err(e) => {
-                                            error!("Accept error: {}", e.to_string());
+                                            error!(target: "net", "Accept error: {}", e.to_string());
                                             break;
                                         }
                                     };
@@ -317,7 +317,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                             // this socket.
                         }
                         Err(err) => {
-                            error!("{}: Dial error: {}", socket_addr, err.to_string());
+                            error!(target: "net", "{}: Dial error: {}", socket_addr, err.to_string());
 
                             service.disconnected(&addr, DisconnectReason::DialError(Arc::new(err)));
                         }
@@ -443,7 +443,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                 source.set(popol::interest::WRITE);
             }
             Err(err) => {
-                error!("{}: Write error: {}", socket_addr, err.to_string());
+                error!(target: "net", "{}: Write error: {}", socket_addr, err.to_string());
 
                 socket.disconnect().ok();
                 self.unregister_peer(
