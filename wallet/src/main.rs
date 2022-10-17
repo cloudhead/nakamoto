@@ -5,6 +5,7 @@ use argh::FromArgs;
 
 use nakamoto_common::bitcoin::Address;
 
+use nakamoto_common::bitcoin::util::bip32::DerivationPath;
 use nakamoto_common::block::Height;
 use nakamoto_wallet::logger;
 
@@ -23,6 +24,9 @@ pub struct Options {
     /// wallet file
     #[argh(option)]
     pub wallet: PathBuf,
+    /// wallet derivation path, eg. m/84'/0'/0'/0.
+    #[argh(option)]
+    pub hd_path: DerivationPath,
     /// enable debug logging
     #[argh(switch)]
     pub debug: bool,
@@ -44,7 +48,7 @@ fn main() {
     };
     logger::init(level).expect("initializing logger for the first time");
 
-    if let Err(err) = nakamoto_wallet::run(&opts.wallet, opts.genesis, opts.connect) {
+    if let Err(err) = nakamoto_wallet::run(&opts.wallet, opts.genesis, opts.connect, opts.hd_path) {
         log::error!("Fatal: {}", err);
         std::process::exit(1);
     }

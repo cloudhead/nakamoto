@@ -14,6 +14,9 @@ jobs:
         os: ['ubuntu-latest', 'macos-latest']
     runs-on: ${{ matrix.os }}
     steps:
+      - name: Dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: sudo apt-get install -y libhidapi-dev libusb-1.0-0-dev
       - uses: actions/checkout@v2
       - name: Build
         run: cargo build --verbose
@@ -27,6 +30,8 @@ jobs:
     name: Docs
     runs-on: ubuntu-latest
     steps:
+      - name: Dependencies
+        run: sudo apt-get install -y libhidapi-dev libusb-1.0-0-dev
       - uses: actions/checkout@v2
       - name: Docs
         run: cargo doc --all
@@ -37,6 +42,8 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
+      - name: Dependencies
+        run: sudo apt-get install -y libhidapi-dev libusb-1.0-0-dev
       - uses: actions/checkout@v2
       - uses: actions-rs/toolchain@v1
         with:

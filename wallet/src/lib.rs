@@ -12,17 +12,24 @@ use termion::raw::IntoRawMode;
 use nakamoto_client::handle::Handle;
 use nakamoto_client::Network;
 use nakamoto_client::{Client, Config, Limits};
+use nakamoto_common::bitcoin::util::bip32::DerivationPath;
 use nakamoto_common::block::Height;
 
 use crate::error::Error;
 use crate::wallet::Db;
+use crate::wallet::Hw;
 use crate::wallet::Wallet;
 
 /// The network reactor we're going to use.
 type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
 
 /// Entry point for running the wallet.
-pub fn run(wallet: &Path, birth: Height, connect: net::SocketAddr) -> Result<(), Error> {
+pub fn run(
+    wallet: &Path,
+    birth: Height,
+    connect: net::SocketAddr,
+    hd_path: DerivationPath,
+) -> Result<(), Error> {
     let network = Network::Mainnet;
     let cfg = Config {
         network,
@@ -44,6 +51,7 @@ pub fn run(wallet: &Path, birth: Height, connect: net::SocketAddr) -> Result<(),
     log::info!("Opening wallet file `{}`..", wallet.display());
 
     let db = Db::open(wallet)?;
+    let hw = Hw::new(hd_path);
 
     let (inputs_tx, inputs_rx) = crossbeam_channel::unbounded();
     let (exit_tx, exit_rx) = crossbeam_channel::bounded(1);
@@ -67,7 +75,7 @@ pub fn run(wallet: &Path, birth: Height, connect: net::SocketAddr) -> Result<(),
 
     // Run the main wallet loop. This will block until the wallet exits.
     log::info!("Running main wallet loop..");
-    Wallet::new(handle.clone(), network, db).run(
+    Wallet::new(handle.clone(), network, db, hw).run(
         birth,
         inputs_rx,
         signals_rx,

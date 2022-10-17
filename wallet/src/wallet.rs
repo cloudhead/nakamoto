@@ -1,4 +1,5 @@
 pub mod db;
+pub mod hw;
 pub mod ui;
 
 use std::collections::HashSet;
@@ -20,6 +21,7 @@ use crate::input::Signal;
 
 pub use db::Db;
 pub use db::{Read as _, Write as _};
+pub use hw::Hw;
 pub use ui::Ui;
 
 pub type Utxos = Vec<(OutPoint, TxOut)>;
@@ -29,16 +31,18 @@ pub struct Wallet<H> {
     client: H,
     db: Db,
     ui: Ui,
+    hw: Hw,
     network: client::Network,
     watch: HashSet<Address>,
 }
 
 impl<H: Handle> Wallet<H> {
     /// Create a new wallet.
-    pub fn new(client: H, network: client::Network, db: Db) -> Self {
+    pub fn new(client: H, network: client::Network, db: Db, hw: Hw) -> Self {
         Self {
             client,
             db,
+            hw,
             network,
             watch: HashSet::new(),
             ui: Ui::default(),
@@ -87,13 +91,21 @@ impl<H: Handle> Wallet<H> {
         events: chan::Receiver<client::Event>,
         mut term: W,
     ) -> Result<(), Error> {
-        self.watch = self
-            .db
-            .addresses()?
-            .into_iter()
-            .take(16)
-            .map(|r| r.address)
-            .collect();
+        let addresses = self.db.addresses()?;
+        if addresses.is_empty() {
+            log::info!("No addresses found, requesting from hardware device..");
+
+            match self.hw.request_addresses(0..16, hw::AddressFormat::P2WPKH) {
+                Ok(addrs) => {
+                    for (ix, addr) in addrs {
+                        self.db.add_address(&addr, ix, None)?;
+                    }
+                }
+                Err(err) => {
+                    log::warn!("Failed to request addresses from hardware device: {err}");
+                }
+            }
+        }
 
         // Convert our address list into scripts.
         let watch: Vec<_> = self.watch.iter().map(|a| a.script_pubkey()).collect();
@@ -143,7 +155,7 @@ impl<H: Handle> Wallet<H> {
                 recv(inputs) -> input => {
                     let input = input?;
 
-                    if let Break(()) = self.ui.handle_input_event(input)? {
+                    if let Break(()) = self.handle_input(input)? {
                         return Ok(());
                     }
                 }
@@ -165,6 +177,19 @@ impl<H: Handle> Wallet<H> {
             ui::refresh(&mut self.ui, &self.db, &mut term)?;
         }
         Ok(())
+    }
+
+    fn handle_input(&mut self, input: Event) -> Result<ControlFlow<()>, Error> {
+        use termion::event::Key;
+
+        match input {
+            Event::Key(Key::F(1)) => {
+                self.hw.connect()?;
+            }
+            _ => return self.ui.handle_input_event(input).map_err(Error::from),
+        }
+
+        Ok(Continue(()))
     }
 
     fn handle_signal<W: io::Write>(

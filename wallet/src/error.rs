@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     input,
-    wallet::{db, ui},
+    wallet::{db, hw, ui},
 };
 
 /// An error occuring in the wallet.
@@ -25,4 +25,6 @@ pub enum Error {
     Channel(#[from] crossbeam_channel::RecvError),
     #[error(transparent)]
     Db(#[from] db::Error),
+    #[error(transparent)]
+    Hw(#[from] hw::Error),
 }

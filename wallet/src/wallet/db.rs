@@ -44,6 +44,13 @@ pub trait Write {
     fn add_utxo(&self, txid: Txid, vout: u32, address: Address, value: u64) -> Result<bool, Error>;
     /// Remove a UTXO. Returns the removed UTXO.
     fn remove_utxo(&self, prev_out: &OutPoint) -> Result<Option<(OutPoint, TxOut)>, Error>;
+    /// Add an address we own.
+    fn add_address(
+        &self,
+        address: &Address,
+        index: usize,
+        label: Option<&str>,
+    ) -> Result<bool, Error>;
 }
 
 /// Wallet database.
@@ -171,6 +178,32 @@ impl Write for Db {
             .next()?;
 
         Ok(utxo)
+    }
+
+    fn add_address(
+        &self,
+        address: &Address,
+        index: usize,
+        label: Option<&str>,
+    ) -> Result<bool, Error> {
+        self.raw
+            .prepare(
+                "INSERT INTO addresses (`id`, `index`, `label`)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT DO UPDATE
+                 SET label = ?3",
+            )?
+            .into_cursor()
+            .bind(&[
+                sql::Value::String(address.to_string()),
+                sql::Value::Integer(index as i64),
+                label
+                    .map(|s| sql::Value::String(s.to_owned()))
+                    .unwrap_or(sql::Value::Null),
+            ])?
+            .next();
+
+        Ok(self.raw.change_count() > 0)
     }
 }
 
