@@ -2,6 +2,7 @@
 //! Compact block filter cache.
 
 use std::io;
+use std::ops::ControlFlow;
 use std::ops::RangeInclusive;
 
 use nakamoto_common::bitcoin::consensus::{encode, Decodable, Encodable};
@@ -70,12 +71,12 @@ pub struct FilterCache<S> {
 
 impl<S: Store<Header = StoredHeader>> FilterCache<S> {
     pub fn load(header_store: S) -> Result<Self, nakamoto_common::block::store::Error> {
-        Self::load_with(header_store, |_| true)
+        Self::load_with(header_store, |_| ControlFlow::Continue(()))
     }
 
     pub fn load_with(
         header_store: S,
-        progress: impl Fn(Height) -> bool,
+        progress: impl Fn(Height) -> ControlFlow<()>,
     ) -> Result<Self, nakamoto_common::block::store::Error> {
         let mut headers = NonEmpty::new(header_store.genesis());
 
@@ -83,7 +84,7 @@ impl<S: Store<Header = StoredHeader>> FilterCache<S> {
             let (_, header) = result?;
             headers.push(header);
 
-            if !progress(height as Height) {
+            if progress(height as Height).is_break() {
                 return Err(nakamoto_common::block::store::Error::Interrupted);
             }
         }
@@ -98,13 +99,13 @@ impl<S: Store<Header = StoredHeader>> FilterCache<S> {
 impl<S> FilterCache<S> {
     /// Verify the filter header chain. Returns `true` if the chain is valid.
     pub fn verify(&self, network: Network) -> Result<(), store::Error> {
-        self.verify_with(network, |_| true)
+        self.verify_with(network, |_| ControlFlow::Continue(()))
     }
 
     pub fn verify_with(
         &self,
         network: Network,
-        progress: impl Fn(Height) -> bool,
+        progress: impl Fn(Height) -> ControlFlow<()>,
     ) -> Result<(), store::Error> {
         let mut prev_header = FilterHeader::all_zeros();
 
@@ -121,7 +122,7 @@ impl<S> FilterCache<S> {
             }
             prev_header = actual;
 
-            if !progress(height as Height) {
+            if progress(height as Height).is_break() {
                 return Err(store::Error::Interrupted);
             }
         }

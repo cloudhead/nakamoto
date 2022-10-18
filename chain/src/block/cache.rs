@@ -9,6 +9,7 @@ pub mod test;
 
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::ops::ControlFlow;
 
 use nakamoto_common::bitcoin;
 use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
@@ -118,19 +119,22 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
     /// Load the block headers from the store, into the cache.
     pub fn load(self) -> Result<Self, Error> {
-        self.load_with(|_| true)
+        self.load_with(|_| ControlFlow::Continue(()))
     }
 
     /// Load the block headers from the store, into the cache.
     /// Takes a function that is called for each block imported.
-    pub fn load_with(mut self, progress: impl Fn(Height) -> bool) -> Result<Self, Error> {
+    pub fn load_with(
+        mut self,
+        progress: impl Fn(Height) -> ControlFlow<()>,
+    ) -> Result<Self, Error> {
         for result in self.store.iter().skip(1) {
             let (height, header) = result?;
             let hash = header.block_hash();
 
             self.extend_chain(height, hash, header);
 
-            if !progress(height) {
+            if progress(height).is_break() {
                 return Err(Error::Interrupted);
             }
         }

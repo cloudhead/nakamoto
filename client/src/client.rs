@@ -5,6 +5,7 @@ use std::env;
 use std::fs;
 use std::io;
 use std::net;
+use std::ops::ControlFlow;
 use std::ops::RangeInclusive;
 use std::path::PathBuf;
 use std::time::{self, SystemTime};
@@ -145,7 +146,7 @@ pub struct Client<R: Reactor> {
     events: event::Subscriber<fsm::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    loading: event::Subscriber<Loading>,
+    loading: event::Emitter<Loading>,
     subscriber: event::Subscriber<Event>,
     shutdown: chan::Sender<()>,
     listening: chan::Receiver<net::SocketAddr>,
@@ -196,7 +197,7 @@ where
             .register(publisher);
 
         let seeds = Vec::new();
-        let loading = event::Subscriber::default();
+        let loading = event::Emitter::default();
         let (shutdown, shutdown_recv) = chan::bounded(1);
         let (listening_send, listening) = chan::bounded(1);
         let reactor = R::new(shutdown_recv, listening_send)?;
@@ -269,8 +270,10 @@ where
 
         log::info!(target: "client", "Loading block headers from store..");
 
-        let cache = BlockCache::new(store, params, &checkpoints)?
-            .load_with(|height| self.loading.publish(Loading::BlockHeaderLoaded { height }))?;
+        let cache = BlockCache::new(store, params, &checkpoints)?.load_with(|height| {
+            self.loading.emit(Loading::BlockHeaderLoaded { height });
+            ControlFlow::Continue(())
+        })?;
 
         log::info!(target: "client", "Initializing block filters..");
 
@@ -298,13 +301,14 @@ where
         log::info!(target: "client", "Loading filter headers from store..");
 
         let filters = FilterCache::load_with(cfheaders_store, |height| {
-            self.loading.publish(Loading::FilterHeaderLoaded { height })
+            self.loading.emit(Loading::FilterHeaderLoaded { height });
+            ControlFlow::Continue(())
         })?;
         log::info!(target: "client", "Verifying filter headers..");
 
         filters.verify_with(network, |height| {
-            self.loading
-                .publish(Loading::FilterHeaderVerified { height })
+            self.loading.emit(Loading::FilterHeaderVerified { height });
+            ControlFlow::Continue(())
         })?; // Verify store integrity.
 
         // Loading is done, close all channels.
@@ -385,7 +389,7 @@ where
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
             timeout: time::Duration::from_secs(60),
-            loading: self.loading.clone(),
+            loading: self.loading.subscriber(),
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
             subscriber: self.subscriber.clone(),
