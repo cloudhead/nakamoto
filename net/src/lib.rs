@@ -91,6 +91,8 @@ impl<T: fmt::Display> fmt::Display for DisconnectReason<T> {
 ///
 /// Automatically implemented for all types which can be constructed from and
 /// converted into [`net::SocketAddr`].
+// TODO: Investigate a problem that a PeerId can't be constructed with the remote
+//       peer public key from just a socket address upon `accept`.
 pub trait PeerId: Eq + Ord + Clone + Hash + fmt::Debug + From<net::SocketAddr> {
     fn to_socket_addr(&self) -> net::SocketAddr;
 }
