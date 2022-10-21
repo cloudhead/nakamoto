@@ -15,9 +15,9 @@ pub struct Options {
     /// watch the following addresses
     #[argh(option)]
     pub addresses: Vec<Address>,
-    /// wallet genesis height, from which to start scanning
+    /// wallet birth height, from which to start scanning
     #[argh(option)]
-    pub genesis: Height,
+    pub birth_height: Height,
     /// connect to this node
     #[argh(option)]
     pub connect: net::SocketAddr,
@@ -48,7 +48,9 @@ fn main() {
     };
     logger::init(level).expect("initializing logger for the first time");
 
-    if let Err(err) = nakamoto_wallet::run(&opts.wallet, opts.genesis, opts.connect, opts.hd_path) {
+    if let Err(err) =
+        nakamoto_wallet::run(&opts.wallet, opts.birth_height, opts.connect, opts.hd_path)
+    {
         log::error!("Fatal: {}", err);
         std::process::exit(1);
     }
