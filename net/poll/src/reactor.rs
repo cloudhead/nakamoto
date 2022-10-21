@@ -4,8 +4,8 @@ use crossbeam_channel as chan;
 use nakamoto_net::error::Error;
 use nakamoto_net::event::Publisher;
 use nakamoto_net::time::{LocalDuration, LocalTime};
-use nakamoto_net::{DisconnectReason, ReactorDispatch, PeerId};
 use nakamoto_net::{ConnDirection, PeerService};
+use nakamoto_net::{DisconnectReason, PeerId, ReactorDispatch};
 
 use log::*;
 

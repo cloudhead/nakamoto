@@ -966,7 +966,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         self.peermgr.peer_attempted(addr);
     }
 
-    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: ConnDirection) {
+    fn connected(
+        &mut self,
+        addr: net::SocketAddr,
+        local_addr: &net::SocketAddr,
+        link: ConnDirection,
+    ) {
         let height = self.tree.height();
 
         self.addrmgr.record_local_address(*local_addr);

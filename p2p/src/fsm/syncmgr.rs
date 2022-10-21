@@ -14,7 +14,7 @@ use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
 use super::output::{Disconnect, Wakeup, Wire};
-use super::{DisconnectReason, ConnDirection, Locators, PeerId, Socket};
+use super::{ConnDirection, DisconnectReason, Locators, PeerId, Socket};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);

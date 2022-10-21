@@ -7,7 +7,7 @@ use std::sync::Arc;
 use nakamoto_chain::BlockTree;
 use nakamoto_common::bitcoin::consensus::Encodable;
 use nakamoto_common::block::time::{AdjustedClock, LocalTime};
-use nakamoto_net::{DisconnectReason, ReactorDispatch, ConnDirection, PeerProtocol};
+use nakamoto_net::{ConnDirection, DisconnectReason, PeerProtocol, ReactorDispatch};
 use nakamoto_p2p as p2p;
 
 use crate::client::Config;
@@ -122,7 +122,12 @@ where
         self.machine.attempted(addr)
     }
 
-    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: ConnDirection) {
+    fn connected(
+        &mut self,
+        addr: net::SocketAddr,
+        local_addr: &net::SocketAddr,
+        link: ConnDirection,
+    ) {
         self.inboxes.insert(addr, p2p::stream::Decoder::new(1024));
         self.machine.connected(addr, local_addr, link)
     }
@@ -151,9 +156,13 @@ impl<T, F, P, C> Iterator for Service<T, F, P, C> {
 
                 Some(ReactorDispatch::SendPeer(addr, buf))
             }
-            Some(ReactorDispatch::NotifySubscribers(e)) => Some(ReactorDispatch::NotifySubscribers(e)),
+            Some(ReactorDispatch::NotifySubscribers(e)) => {
+                Some(ReactorDispatch::NotifySubscribers(e))
+            }
             Some(ReactorDispatch::ConnectPeer(a)) => Some(ReactorDispatch::ConnectPeer(a)),
-            Some(ReactorDispatch::DisconnectPeer(a, r)) => Some(ReactorDispatch::DisconnectPeer(a, r)),
+            Some(ReactorDispatch::DisconnectPeer(a, r)) => {
+                Some(ReactorDispatch::DisconnectPeer(a, r))
+            }
             Some(ReactorDispatch::SetTimer(d)) => Some(ReactorDispatch::SetTimer(d)),
 
             None => None,

@@ -48,7 +48,9 @@ use nakamoto_common::bitcoin::OutPoint;
 use nakamoto_common::block::time::Clock as _;
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
-use nakamoto_net::{DisconnectReason, ConnDirection, LocalTime, PeerService as _, PeerProtocol as _};
+use nakamoto_net::{
+    ConnDirection, DisconnectReason, LocalTime, PeerProtocol as _, PeerService as _,
+};
 use nakamoto_test::assert_matches;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;

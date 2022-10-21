@@ -34,7 +34,7 @@ use crate::fsm::addrmgr;
 use crate::fsm::DisconnectReason;
 
 use super::output::{Connect, Disconnect, Wakeup, Wire};
-use super::{Hooks, ConnDirection, PeerId, Socket, Whitelist};
+use super::{ConnDirection, Hooks, PeerId, Socket, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(12);
@@ -784,7 +784,10 @@ impl<U: Connect + Disconnect + Wakeup + Wire<Event>, C: Clock> PeerManager<U, C>
     }
 
     /// Iterator over fully negotiated peers.
-    pub fn negotiated(&self, link: ConnDirection) -> impl Iterator<Item = (&PeerInfo, &Connection)> + Clone {
+    pub fn negotiated(
+        &self,
+        link: ConnDirection,
+    ) -> impl Iterator<Item = (&PeerInfo, &Connection)> + Clone {
         self.peers()
             .filter(move |(p, c)| p.is_negotiated() && c.link == link)
     }

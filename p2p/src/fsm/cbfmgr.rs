@@ -22,7 +22,7 @@ use nakamoto_common::source;
 
 use super::filter_cache::FilterCache;
 use super::output::{Disconnect, Wakeup, Wire};
-use super::{DisconnectReason, ConnDirection, PeerId, Socket};
+use super::{ConnDirection, DisconnectReason, PeerId, Socket};
 
 use rescan::Rescan;
 

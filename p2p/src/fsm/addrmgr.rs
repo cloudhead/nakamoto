@@ -230,7 +230,12 @@ impl<P: Store, U: Wire<Event> + Wakeup, C: Clock> AddressManager<P, U, C> {
     }
 
     /// Called when a peer has handshaked.
-    pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags, link: ConnDirection) {
+    pub fn peer_negotiated(
+        &mut self,
+        addr: &net::SocketAddr,
+        services: ServiceFlags,
+        link: ConnDirection,
+    ) {
         let time = self.clock.local_time();
 
         if !self.connected.contains(&addr.ip()) {
@@ -806,7 +811,11 @@ mod tests {
         // If a peer has been connected to successfully, and then disconnected for a transient
         // reason, its address should be once again available.
         addrmgr.peer_connected(&([44, 44, 44, 44], 8333).into());
-        addrmgr.peer_negotiated(&([44, 44, 44, 44], 8333).into(), services, ConnDirection::Outbound);
+        addrmgr.peer_negotiated(
+            &([44, 44, 44, 44], 8333).into(),
+            services,
+            ConnDirection::Outbound,
+        );
         addrmgr.peer_disconnected(
             &([44, 44, 44, 44], 8333).into(),
             fsm::DisconnectReason::PeerTimeout("timeout").into(),

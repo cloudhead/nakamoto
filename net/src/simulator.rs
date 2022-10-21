@@ -1,7 +1,7 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 #![allow(clippy::collapsible_if)]
 
-use crate::{DisconnectReason, ReactorDispatch, ConnDirection, LocalDuration, LocalTime};
+use crate::{ConnDirection, DisconnectReason, LocalDuration, LocalTime, ReactorDispatch};
 use log::*;
 
 use std::borrow::Cow;
@@ -416,7 +416,12 @@ where
     pub fn schedule(
         &mut self,
         node: &NodeId,
-        out: ReactorDispatch<<T::PeerMessage as ToOwned>::Owned, T::Notification, T::DisconnectDemand, net::SocketAddr>,
+        out: ReactorDispatch<
+            <T::PeerMessage as ToOwned>::Owned,
+            T::Notification,
+            T::DisconnectDemand,
+            net::SocketAddr,
+        >,
     ) {
         let node = *node;
 

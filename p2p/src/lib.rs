@@ -27,5 +27,5 @@
 pub mod fsm;
 pub mod stream;
 
-pub use fsm::{Command, Config, DisconnectReason, Event, Io, ConnDirection, PeerId, StateMachine};
+pub use fsm::{Command, Config, ConnDirection, DisconnectReason, Event, Io, PeerId, StateMachine};
 pub use nakamoto_net as net;

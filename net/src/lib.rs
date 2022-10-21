@@ -141,7 +141,14 @@ pub trait PeerService<Id: PeerId = net::SocketAddr>: PeerProtocol<Id, PeerMessag
 /// State machine generates instructions to the reactor by operating as an
 /// iterator over .
 pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
-    Iterator<Item = ReactorDispatch<<Self::PeerMessage as ToOwned>::Owned, Self::Notification, Self::DisconnectDemand, Id>>
+    Iterator<
+    Item = ReactorDispatch<
+        <Self::PeerMessage as ToOwned>::Owned,
+        Self::Notification,
+        Self::DisconnectDemand,
+        Id,
+    >,
+>
 {
     /// Message type sent between peers.
     type PeerMessage: ToOwned + ?Sized;

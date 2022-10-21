@@ -34,7 +34,7 @@ use nakamoto_p2p::fsm;
 
 pub use nakamoto_net::event;
 pub use nakamoto_net::{Reactor, Waker};
-pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, ConnDirection, Peer};
+pub use nakamoto_p2p::fsm::{Command, CommandError, ConnDirection, Hooks, Limits, Peer};
 
 pub use crate::error::Error;
 pub use crate::event::{Event, Loading};
@@ -370,7 +370,7 @@ where
     /// its own thread.
     pub fn run_with<P>(mut self, listen: Vec<net::SocketAddr>, protocol: P) -> Result<(), Error>
     where
-        P: nakamoto_net::PeerService<Notification= fsm::Event, Command = Command>,
+        P: nakamoto_net::PeerService<Notification = fsm::Event, Command = Command>,
     {
         self.reactor.run::<P, Publisher<fsm::Event>>(
             &listen,
