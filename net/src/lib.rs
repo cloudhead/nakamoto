@@ -226,23 +226,19 @@ pub trait Reactor<Id: PeerId = net::SocketAddr> {
     /// - `listen_addrs`: list of IP sockets to bind to;
     /// - `service`: a concrete network protocol implementation to run in the
     ///   reactor event loop;
-    /// - `publisher`: a concrete implementation of multiple subscribers single
+    /// - `notification_publisher`: a concrete implementation of multiple subscribers single
     ///   publisher channel, used by the reactor to provide user threads
-    ///   (subscribers) with the events of type `S::Event` emitted by the
-    ///   network `service` business logic;
-    /// - `commands_channel`: the receiver part of the channel with the user thread
+    ///   (subscribers) with the notifications of type `S::Notification`, emitted
+    ///   by the network `service` business logic;
+    /// - `commands_receiver`: the receiver part of the channel with the user thread
     ///   used to process commands from outside of the event loop.
-    fn run<S, E>(
+    fn run<N, C>(
         &mut self,
         listen_addrs: &[net::SocketAddr],
-        service: S,
-        publisher: E,
-        commands_channel: chan::Receiver<S::Command>,
-    ) -> Result<(), error::Error>
-    where
-        S: PeerService<Id>,
-        S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
-        E: Publisher<S::Event>;
+        service: impl PeerService<Id, Notification = N, Command = C>,
+        notification_publisher: impl Publisher<N>,
+        commands_receiver: chan::Receiver<C>,
+    ) -> Result<(), error::Error>;
 
     /// Construct a new instance of the reactor waker.
     ///
