@@ -30,7 +30,7 @@ use super::network::Network;
 use super::Locators;
 
 /// Output of a state transition of the `Protocol` state machine.
-pub type Io = nakamoto_net::Io<RawNetworkMessage, Event, super::DisconnectReason>;
+pub type Io = nakamoto_net::ReactorDispatch<RawNetworkMessage, Event, super::DisconnectReason>;
 
 impl From<Event> for Io {
     fn from(event: Event) -> Self {

@@ -1,7 +1,7 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 #![allow(clippy::collapsible_if)]
 
-use crate::{DisconnectReason, Io, Link, LocalDuration, LocalTime};
+use crate::{DisconnectReason, ReactorDispatch, Link, LocalDuration, LocalTime};
 use log::*;
 
 use std::borrow::Cow;
@@ -167,11 +167,11 @@ where
     T: StateMachine,
 {
     /// Inbox of inputs to be delivered by the simulation.
-    inbox: Inbox<<T::Message as ToOwned>::Owned, T::DisconnectReason>,
+    inbox: Inbox<<T::PeerMessage as ToOwned>::Owned, T::DisconnectSubreason>,
     /// Events emitted during simulation.
     events: BTreeMap<NodeId, VecDeque<T::Event>>,
     /// Priority events that should happen immediately.
-    priority: VecDeque<Scheduled<<T::Message as ToOwned>::Owned, T::DisconnectReason>>,
+    priority: VecDeque<Scheduled<<T::PeerMessage as ToOwned>::Owned, T::DisconnectSubreason>>,
     /// Simulated latencies between nodes.
     latencies: BTreeMap<(NodeId, NodeId), LocalDuration>,
     /// Network partitions between two nodes.
@@ -193,9 +193,9 @@ where
 impl<T> Simulation<T>
 where
     T: StateMachine + 'static,
-    T::DisconnectReason: Clone + Into<DisconnectReason<T::DisconnectReason>>,
+    T::DisconnectSubreason: Clone + Into<DisconnectReason<T::DisconnectSubreason>>,
 
-    <T::Message as ToOwned>::Owned: fmt::Debug + Clone,
+    <T::PeerMessage as ToOwned>::Owned: fmt::Debug + Clone,
 {
     /// Create a new simulation.
     pub fn new(time: LocalTime, rng: fastrand::Rng, opts: Options) -> Self {
@@ -416,12 +416,12 @@ where
     pub fn schedule(
         &mut self,
         node: &NodeId,
-        out: Io<<T::Message as ToOwned>::Owned, T::Event, T::DisconnectReason, net::SocketAddr>,
+        out: ReactorDispatch<<T::PeerMessage as ToOwned>::Owned, T::Event, T::DisconnectSubreason, net::SocketAddr>,
     ) {
         let node = *node;
 
         match out {
-            Io::Write(receiver, msg) => {
+            ReactorDispatch::Write(receiver, msg) => {
                 // If the other end has disconnected the sender with some latency, there may not be
                 // a connection remaining to use.
                 let port = if let Some(port) = self.connections.get(&(node, receiver.ip())) {
@@ -467,7 +467,7 @@ where
                     },
                 );
             }
-            Io::Connect(remote) => {
+            ReactorDispatch::Connect(remote) => {
                 assert!(remote.ip() != node, "self-connections are not allowed");
 
                 // Create an ephemeral sockaddr for the connecting (local) node.
@@ -533,7 +533,7 @@ where
                     },
                 );
             }
-            Io::Disconnect(remote, reason) => {
+            ReactorDispatch::Disconnect(remote, reason) => {
                 // The local node is immediately disconnected.
                 self.priority.push_back(Scheduled {
                     remote,
@@ -571,7 +571,7 @@ where
                     },
                 );
             }
-            Io::Wakeup(duration) => {
+            ReactorDispatch::Wakeup(duration) => {
                 let time = self.time + duration;
 
                 if !matches!(
@@ -592,7 +592,7 @@ where
                     );
                 }
             }
-            Io::Event(event) => {
+            ReactorDispatch::Event(event) => {
                 let events = self.events.entry(node).or_insert_with(VecDeque::new);
                 if events.len() >= MAX_EVENTS {
                     warn!(target: "sim", "Dropping event: buffer is full");

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use nakamoto_chain::BlockTree;
 use nakamoto_common::bitcoin::consensus::Encodable;
 use nakamoto_common::block::time::{AdjustedClock, LocalTime};
-use nakamoto_net::{DisconnectReason, Io, Link, StateMachine};
+use nakamoto_net::{DisconnectReason, ReactorDispatch, Link, StateMachine};
 use nakamoto_p2p as p2p;
 
 use crate::client::Config;
@@ -65,7 +65,7 @@ where
 {
     type Command = p2p::Command;
 
-    fn command(&mut self, cmd: Self::Command) {
+    fn command_received(&mut self, cmd: Self::Command) {
         // TODO: Commands shouldn't be handled by the inner state machine.
         self.machine.command(cmd)
     }
@@ -78,9 +78,9 @@ where
     P: peer::Store,
     C: AdjustedClock<net::SocketAddr>,
 {
-    type Message = [u8];
+    type PeerMessage = [u8];
     type Event = p2p::Event;
-    type DisconnectReason = p2p::DisconnectReason;
+    type DisconnectSubreason = p2p::DisconnectReason;
 
     fn initialize(&mut self, time: LocalTime) {
         self.machine.initialize(time);
@@ -130,7 +130,7 @@ where
     fn disconnected(
         &mut self,
         addr: &net::SocketAddr,
-        reason: DisconnectReason<Self::DisconnectReason>,
+        reason: DisconnectReason<Self::DisconnectSubreason>,
     ) {
         self.inboxes.remove(addr);
         self.machine.disconnected(addr, reason)
@@ -138,23 +138,23 @@ where
 }
 
 impl<T, F, P, C> Iterator for Service<T, F, P, C> {
-    type Item = Io<Vec<u8>, p2p::Event, p2p::DisconnectReason>;
+    type Item = ReactorDispatch<Vec<u8>, p2p::Event, p2p::DisconnectReason>;
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.machine.next() {
-            Some(Io::Write(addr, msg)) => {
+            Some(ReactorDispatch::Write(addr, msg)) => {
                 log::debug!("Write {:?} to {}", &msg, addr.ip());
                 let mut buf = Vec::new();
 
                 msg.consensus_encode(&mut buf)
                     .expect("writing to an in-memory buffer doesn't fail");
 
-                Some(Io::Write(addr, buf))
+                Some(ReactorDispatch::Write(addr, buf))
             }
-            Some(Io::Event(e)) => Some(Io::Event(e)),
-            Some(Io::Connect(a)) => Some(Io::Connect(a)),
-            Some(Io::Disconnect(a, r)) => Some(Io::Disconnect(a, r)),
-            Some(Io::Wakeup(d)) => Some(Io::Wakeup(d)),
+            Some(ReactorDispatch::Event(e)) => Some(ReactorDispatch::Event(e)),
+            Some(ReactorDispatch::Connect(a)) => Some(ReactorDispatch::Connect(a)),
+            Some(ReactorDispatch::Disconnect(a, r)) => Some(ReactorDispatch::Disconnect(a, r)),
+            Some(ReactorDispatch::Wakeup(d)) => Some(ReactorDispatch::Wakeup(d)),
 
             None => None,
         }

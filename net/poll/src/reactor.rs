@@ -4,7 +4,7 @@ use crossbeam_channel as chan;
 use nakamoto_net::error::Error;
 use nakamoto_net::event::Publisher;
 use nakamoto_net::time::{LocalDuration, LocalTime};
-use nakamoto_net::{DisconnectReason, Io, PeerId};
+use nakamoto_net::{DisconnectReason, ReactorDispatch, PeerId};
 use nakamoto_net::{Link, Service};
 
 use log::*;
@@ -83,7 +83,7 @@ impl<R: Write + Read + AsRawFd, Id: PeerId> Reactor<R, Id> {
     fn unregister_peer<S>(
         &mut self,
         addr: Id,
-        reason: DisconnectReason<S::DisconnectReason>,
+        reason: DisconnectReason<S::DisconnectSubreason>,
         service: &mut S,
     ) where
         S: Service<Id>,
@@ -132,7 +132,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
     ) -> Result<(), Error>
     where
         S: Service<Id>,
-        S::DisconnectReason: Into<DisconnectReason<S::DisconnectReason>>,
+        S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
         E: Publisher<S::Event>,
     {
         let listener = if listen_addrs.is_empty() {
@@ -249,7 +249,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
                                 debug_assert!(!commands.is_empty());
 
                                 for cmd in commands.try_iter() {
-                                    service.command(cmd);
+                                    service.command_received(cmd);
                                 }
                             }
                         }
@@ -285,13 +285,13 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
     where
         S: Service<Id>,
         E: Publisher<S::Event>,
-        S::DisconnectReason: Into<DisconnectReason<S::DisconnectReason>>,
+        S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
         while let Some(out) = service.next() {
             match out {
-                Io::Write(addr, bytes) => {
+                ReactorDispatch::Write(addr, bytes) => {
                     if let Some(socket) = self.peers.get_mut(&addr) {
                         if let Some(source) = self.sources.get_mut(&Source::Peer(addr)) {
                             socket.push(&bytes);
@@ -299,7 +299,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         }
                     }
                 }
-                Io::Connect(addr) => {
+                ReactorDispatch::Connect(addr) => {
                     let socket_addr = addr.to_socket_addr();
                     trace!("Connecting to {}...", socket_addr);
 
@@ -323,7 +323,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         }
                     }
                 }
-                Io::Disconnect(addr, reason) => {
+                ReactorDispatch::Disconnect(addr, reason) => {
                     if let Some(peer) = self.peers.get(&addr) {
                         trace!("{}: Disconnecting: {}", addr.to_socket_addr(), reason);
 
@@ -336,10 +336,10 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         self.unregister_peer(addr, reason.into(), service);
                     }
                 }
-                Io::Wakeup(timeout) => {
+                ReactorDispatch::Wakeup(timeout) => {
                     self.timeouts.register((), local_time + timeout);
                 }
-                Io::Event(event) => {
+                ReactorDispatch::Event(event) => {
                     trace!("Event: {:?}", event);
 
                     publisher.publish(event);

@@ -759,9 +759,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
 impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits::StateMachine
     for StateMachine<T, F, P, C>
 {
-    type Message = RawNetworkMessage;
+    type PeerMessage = RawNetworkMessage;
     type Event = Event;
-    type DisconnectReason = DisconnectReason;
+    type DisconnectSubreason = DisconnectReason;
 
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set(time);
