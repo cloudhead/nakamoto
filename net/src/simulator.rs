@@ -193,7 +193,7 @@ where
 impl<T> Simulation<T>
 where
     T: PeerProtocol + 'static,
-    T::DisconnectSubreason: Clone + Into<DisconnectReason<T::DisconnectSubreason>>,
+    T::DisconnectSubreason: Clone + fmt::Debug + fmt::Display,
 
     <T::PeerMessage as ToOwned>::Owned: fmt::Debug + Clone,
 {

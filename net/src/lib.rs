@@ -87,6 +87,12 @@ impl<T: fmt::Display> fmt::Display for DisconnectReason<T> {
     }
 }
 
+impl<T> From<T> for DisconnectReason<T> {
+    fn from(r: T) -> Self {
+        DisconnectReason::StateMachine(r)
+    }
+}
+
 /// Remote peer id, which must be interconvertible with [`net::SocketAddr`].
 ///
 /// Automatically implemented for all types which can be constructed from and
@@ -145,9 +151,7 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
 
     /// Reason a peer was disconnected in case the disconnection was caused by
     /// a state machine-specific reason.
-    type DisconnectSubreason: fmt::Debug
-        + fmt::Display
-        + Into<DisconnectReason<Self::DisconnectSubreason>>;
+    type DisconnectSubreason;
 
     /// Initialize the state machine. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
