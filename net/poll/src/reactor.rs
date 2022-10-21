@@ -123,17 +123,13 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
     }
 
     /// Run the given service with the reactor.
-    fn run<S, E>(
+    fn run<N, C>(
         &mut self,
         listen_addrs: &[net::SocketAddr],
-        mut service: S,
-        mut publisher: E,
-        commands: chan::Receiver<S::Command>,
+        mut service: impl PeerService<Id, Notification = N, Command = C>,
+        mut publisher: impl Publisher<N>,
+        commands: chan::Receiver<C>,
     ) -> Result<(), Error>
-    where
-        S: PeerService<Id>,
-        S::DisconnectDemand: Into<DisconnectReason<S::DisconnectDemand>>,
-        E: Publisher<S::Notification>,
     {
         let listener = if listen_addrs.is_empty() {
             None
@@ -285,7 +281,6 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
     where
         S: PeerService<Id>,
         E: Publisher<S::Notification>,
-        S::DisconnectDemand: Into<DisconnectReason<S::DisconnectDemand>>,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.

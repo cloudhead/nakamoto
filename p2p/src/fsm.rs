@@ -159,12 +159,6 @@ impl DisconnectReason {
     }
 }
 
-impl From<DisconnectReason> for nakamoto_net::DisconnectReason<DisconnectReason> {
-    fn from(reason: DisconnectReason) -> Self {
-        Self::OnDemand(reason)
-    }
-}
-
 impl fmt::Display for DisconnectReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

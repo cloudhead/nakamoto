@@ -155,11 +155,13 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
 
     /// Notifications which are sent by the reactor from the protocol state machine to
     /// the user thread via publisher provided to the reactor.
-    type Notification;
+    // TODO: Remove fmt::Debug requirement
+    type Notification: fmt::Debug;
 
     /// Reason a peer was disconnected in case the disconnection was demanded by
     /// this protocol.
-    type DisconnectDemand;
+    // TODO: Remove fmt::Display requirement
+    type DisconnectDemand: fmt::Display;
 
     /// Initialize the state machine. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
