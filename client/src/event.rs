@@ -9,7 +9,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_net::DisconnectReason;
 use nakamoto_p2p::fsm;
 use nakamoto_p2p::fsm::fees::FeeEstimate;
-use nakamoto_p2p::fsm::{Link, PeerId};
+use nakamoto_p2p::fsm::{ConnDirection, PeerId};
 
 use crate::spv::TxStatus;
 
@@ -70,7 +70,7 @@ pub enum Event {
         /// Peer address.
         addr: PeerId,
         /// Connection link.
-        link: Link,
+        link: ConnDirection,
     },
     /// Peer disconnected after successful connection.
     PeerDisconnected {
@@ -91,7 +91,7 @@ pub enum Event {
         /// Peer address.
         addr: PeerId,
         /// Connection link.
-        link: Link,
+        link: ConnDirection,
         /// Peer services.
         services: ServiceFlags,
         /// Peer height.

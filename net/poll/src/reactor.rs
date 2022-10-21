@@ -5,7 +5,7 @@ use nakamoto_net::error::Error;
 use nakamoto_net::event::Publisher;
 use nakamoto_net::time::{LocalDuration, LocalTime};
 use nakamoto_net::{DisconnectReason, ReactorDispatch, PeerId};
-use nakamoto_net::{Link, PeerService};
+use nakamoto_net::{ConnDirection, PeerService};
 
 use log::*;
 
@@ -71,7 +71,7 @@ pub struct Reactor<R: Write + Read, Id: PeerId = net::SocketAddr> {
 /// The `R` parameter represents the underlying stream type, eg. `net::TcpStream`.
 impl<R: Write + Read + AsRawFd, Id: PeerId> Reactor<R, Id> {
     /// Register a peer with the reactor.
-    fn register_peer(&mut self, addr: Id, stream: R, link: Link) {
+    fn register_peer(&mut self, addr: Id, stream: R, link: ConnDirection) {
         let socket_addr = addr.to_socket_addr();
         self.sources
             .register(Source::Peer(addr.clone()), &stream, popol::interest::ALL);
@@ -133,7 +133,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
     where
         S: PeerService<Id>,
         S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
-        E: Publisher<S::Event>,
+        E: Publisher<S::Notification>,
     {
         let listener = if listen_addrs.is_empty() {
             None
@@ -228,7 +228,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
                                     conn.set_nonblocking(true)?;
 
                                     let local_addr = conn.local_addr()?;
-                                    let link = Link::Inbound;
+                                    let link = ConnDirection::Inbound;
 
                                     self.register_peer(addr.clone(), conn, link);
 
@@ -284,14 +284,14 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
     fn process<S, E>(&mut self, service: &mut S, publisher: &mut E, local_time: LocalTime)
     where
         S: PeerService<Id>,
-        E: Publisher<S::Event>,
+        E: Publisher<S::Notification>,
         S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
         while let Some(out) = service.next() {
             match out {
-                ReactorDispatch::Write(addr, bytes) => {
+                ReactorDispatch::SendPeer(addr, bytes) => {
                     if let Some(socket) = self.peers.get_mut(&addr) {
                         if let Some(source) = self.sources.get_mut(&Source::Peer(addr)) {
                             socket.push(&bytes);
@@ -299,7 +299,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         }
                     }
                 }
-                ReactorDispatch::Connect(addr) => {
+                ReactorDispatch::ConnectPeer(addr) => {
                     let socket_addr = addr.to_socket_addr();
                     trace!("Connecting to {}...", socket_addr);
 
@@ -307,7 +307,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         Ok(stream) => {
                             trace!("{:#?}", stream);
 
-                            self.register_peer(addr.clone(), stream, Link::Outbound);
+                            self.register_peer(addr.clone(), stream, ConnDirection::Outbound);
                             self.connecting.insert(addr.clone());
 
                             service.attempted(&addr);
@@ -323,7 +323,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         }
                     }
                 }
-                ReactorDispatch::Disconnect(addr, reason) => {
+                ReactorDispatch::DisconnectPeer(addr, reason) => {
                     if let Some(peer) = self.peers.get(&addr) {
                         trace!("{}: Disconnecting: {}", addr.to_socket_addr(), reason);
 
@@ -336,10 +336,10 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         self.unregister_peer(addr, reason.into(), service);
                     }
                 }
-                ReactorDispatch::Wakeup(timeout) => {
+                ReactorDispatch::SetTimer(timeout) => {
                     self.timeouts.register((), local_time + timeout);
                 }
-                ReactorDispatch::Event(event) => {
+                ReactorDispatch::NotifySubscribers(event) => {
                     trace!("Event: {:?}", event);
 
                     publisher.publish(event);

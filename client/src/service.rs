@@ -7,7 +7,7 @@ use std::sync::Arc;
 use nakamoto_chain::BlockTree;
 use nakamoto_common::bitcoin::consensus::Encodable;
 use nakamoto_common::block::time::{AdjustedClock, LocalTime};
-use nakamoto_net::{DisconnectReason, ReactorDispatch, Link, PeerProtocol};
+use nakamoto_net::{DisconnectReason, ReactorDispatch, ConnDirection, PeerProtocol};
 use nakamoto_p2p as p2p;
 
 use crate::client::Config;
@@ -79,7 +79,7 @@ where
     C: AdjustedClock<net::SocketAddr>,
 {
     type PeerMessage = [u8];
-    type Event = p2p::Event;
+    type Notification = p2p::Event;
     type DisconnectSubreason = p2p::DisconnectReason;
 
     fn initialize(&mut self, time: LocalTime) {
@@ -122,7 +122,7 @@ where
         self.machine.attempted(addr)
     }
 
-    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link) {
+    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: ConnDirection) {
         self.inboxes.insert(addr, p2p::stream::Decoder::new(1024));
         self.machine.connected(addr, local_addr, link)
     }
@@ -142,19 +142,19 @@ impl<T, F, P, C> Iterator for Service<T, F, P, C> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match self.machine.next() {
-            Some(ReactorDispatch::Write(addr, msg)) => {
+            Some(ReactorDispatch::SendPeer(addr, msg)) => {
                 log::debug!("Write {:?} to {}", &msg, addr.ip());
                 let mut buf = Vec::new();
 
                 msg.consensus_encode(&mut buf)
                     .expect("writing to an in-memory buffer doesn't fail");
 
-                Some(ReactorDispatch::Write(addr, buf))
+                Some(ReactorDispatch::SendPeer(addr, buf))
             }
-            Some(ReactorDispatch::Event(e)) => Some(ReactorDispatch::Event(e)),
-            Some(ReactorDispatch::Connect(a)) => Some(ReactorDispatch::Connect(a)),
-            Some(ReactorDispatch::Disconnect(a, r)) => Some(ReactorDispatch::Disconnect(a, r)),
-            Some(ReactorDispatch::Wakeup(d)) => Some(ReactorDispatch::Wakeup(d)),
+            Some(ReactorDispatch::NotifySubscribers(e)) => Some(ReactorDispatch::NotifySubscribers(e)),
+            Some(ReactorDispatch::ConnectPeer(a)) => Some(ReactorDispatch::ConnectPeer(a)),
+            Some(ReactorDispatch::DisconnectPeer(a, r)) => Some(ReactorDispatch::DisconnectPeer(a, r)),
+            Some(ReactorDispatch::SetTimer(d)) => Some(ReactorDispatch::SetTimer(d)),
 
             None => None,
         }

@@ -29,7 +29,7 @@ use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin_hashes::hex::FromHex;
 use nakamoto_common::block::time::Clock as _;
 use nakamoto_net::simulator::{Options, Peer as _, Simulation};
-use nakamoto_net::{Link, LocalDuration, LocalTime, PeerProtocol as _};
+use nakamoto_net::{ConnDirection, LocalDuration, LocalTime, PeerProtocol as _};
 
 use quickcheck_macros::quickcheck;
 
@@ -94,8 +94,8 @@ fn test_handshake() {
     let outbound = ([241, 19, 44, 19], 8333).into();
     let inbound = ([241, 19, 44, 18], 8333).into();
 
-    peer.connect_addr(&inbound, Link::Inbound);
-    peer.connect_addr(&outbound, Link::Outbound);
+    peer.connect_addr(&inbound, ConnDirection::Inbound);
+    peer.connect_addr(&outbound, ConnDirection::Outbound);
 }
 
 #[test]
@@ -145,7 +145,7 @@ fn test_idle_disconnect() {
     let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote = ([241, 19, 44, 18], 8333).into();
 
-    peer.connect_addr(&remote, Link::Outbound);
+    peer.connect_addr(&remote, ConnDirection::Outbound);
 
     // Let a certain amount of time pass.
     peer.elapse(pingmgr::PING_INTERVAL);
@@ -157,7 +157,7 @@ fn test_idle_disconnect() {
     peer.elapse(pingmgr::PING_TIMEOUT);
     // Peer now decides to disconnect remote.
     peer.outputs()
-        .find(|o| matches!(o, Io::Disconnect(addr, DisconnectReason::PeerTimeout("ping")) if addr == &remote))
+        .find(|o| matches!(o, Io::DisconnectPeer(addr, DisconnectReason::PeerTimeout("ping")) if addr == &remote))
         .expect("peer disconnects remote");
 }
 
@@ -173,14 +173,14 @@ fn test_inv_getheaders() {
         BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
-    peer.connect_addr(&remote, Link::Outbound);
+    peer.connect_addr(&remote, ConnDirection::Outbound);
     peer.received(&remote, NetworkMessage::Inv(vec![Inventory::Block(hash)]));
 
     peer.messages(&remote)
         .find(|o| matches!(o, NetworkMessage::GetHeaders(_)))
         .expect("a `getheaders` message should be returned");
     peer.outputs()
-        .find(|o| matches!(o, Io::Wakeup(_)))
+        .find(|o| matches!(o, Io::SetTimer(_)))
         .expect("a timer should be returned");
 }
 
@@ -191,7 +191,7 @@ fn test_bad_magic() {
     let mut peer = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let remote: PeerId = ([241, 19, 44, 18], 8333).into();
 
-    peer.connect_addr(&remote, Link::Outbound);
+    peer.connect_addr(&remote, ConnDirection::Outbound);
     peer.received_raw(
         &remote,
         RawNetworkMessage {
@@ -201,7 +201,7 @@ fn test_bad_magic() {
     );
 
     peer.outputs()
-        .find(|o| matches!(o, Io::Disconnect(addr, DisconnectReason::PeerMagic(999)) if addr == &remote))
+        .find(|o| matches!(o, Io::DisconnectPeer(addr, DisconnectReason::PeerMagic(999)) if addr == &remote))
         .expect("peer should be disconnected");
 }
 
@@ -228,7 +228,7 @@ fn test_maintain_connections() {
 
     // Keep track of who Alice is connected to.
     for peer in peers.iter() {
-        alice.connect_addr(peer, Link::Outbound);
+        alice.connect_addr(peer, ConnDirection::Outbound);
         alice.protocol.peermgr.is_connected(peer);
     }
 
@@ -248,7 +248,7 @@ fn test_maintain_connections() {
         let addr = alice
             .outputs()
             .find_map(|o| match o {
-                Io::Connect(addr) => Some(addr),
+                Io::ConnectPeer(addr) => Some(addr),
                 _ => None,
             })
             .expect("Alice connects to a new peer");
@@ -285,7 +285,7 @@ fn test_getheaders_retry() {
                 relay: true,
                 time: alice.local_time(),
             },
-            Link::Outbound,
+            ConnDirection::Outbound,
         );
     }
     assert_eq!(
@@ -349,19 +349,19 @@ fn test_handshake_version_timeout() {
 
     peer.init();
 
-    for link in &[Link::Outbound, Link::Inbound] {
+    for link in &[ConnDirection::Outbound, ConnDirection::Inbound] {
         if link.is_outbound() {
             peer.protocol.peermgr.connect(&remote);
         }
         peer.protocol.connected(remote, &peer.addr, *link);
         peer.outputs()
-            .find(|o| matches!(o, Io::Wakeup(_)))
+            .find(|o| matches!(o, Io::SetTimer(_)))
             .expect("a timer should be returned");
 
         peer.elapse(peermgr::HANDSHAKE_TIMEOUT);
         peer.outputs()
             .find(|o| {
-                matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout("handshake")) if a == &remote)
+                matches!(o, Io::DisconnectPeer(a, DisconnectReason::PeerTimeout("handshake")) if a == &remote)
             })
             .expect("peer should disconnect when no `version` is received");
 
@@ -378,7 +378,7 @@ fn test_handshake_verack_timeout() {
 
     peer.init();
 
-    for link in &[Link::Outbound, Link::Inbound] {
+    for link in &[ConnDirection::Outbound, ConnDirection::Inbound] {
         if link.is_outbound() {
             peer.protocol.peermgr.connect(&remote.addr);
         }
@@ -388,13 +388,13 @@ fn test_handshake_verack_timeout() {
             NetworkMessage::Version(remote.version(peer.addr, 0)),
         );
         peer.outputs()
-            .find(|o| matches!(o, Io::Wakeup(_)))
+            .find(|o| matches!(o, Io::SetTimer(_)))
             .expect("a timer should be returned");
 
         peer.elapse(LocalDuration::from_secs(60));
         peer.outputs()
             .find(|o| {
-                matches!(o, Io::Disconnect(a, DisconnectReason::PeerTimeout("handshake")) if a == &remote.addr)
+                matches!(o, Io::DisconnectPeer(a, DisconnectReason::PeerTimeout("handshake")) if a == &remote.addr)
             })
             .expect("peer should disconnect if no `verack` is received");
 
@@ -419,7 +419,7 @@ fn test_handshake_version_hook() {
     let satoshi = PeerDummy::new([131, 31, 11, 66], network, 144, ServiceFlags::NETWORK);
 
     peer.protocol
-        .connected(craig.addr, &peer.addr, Link::Inbound);
+        .connected(craig.addr, &peer.addr, ConnDirection::Inbound);
     peer.received(
         &craig.addr,
         NetworkMessage::Version(VersionMessage {
@@ -428,11 +428,11 @@ fn test_handshake_version_hook() {
         }),
     );
     peer.outputs()
-        .find(|o| matches!(o, Io::Disconnect(a, _) if a == &craig.addr))
+        .find(|o| matches!(o, Io::DisconnectPeer(a, _) if a == &craig.addr))
         .expect("peer should disconnect when the 'on_version' hook returns an error");
 
     peer.protocol
-        .connected(satoshi.addr, &peer.addr, Link::Inbound);
+        .connected(satoshi.addr, &peer.addr, ConnDirection::Inbound);
     peer.received(
         &satoshi.addr,
         NetworkMessage::Version(VersionMessage {
@@ -466,7 +466,7 @@ fn test_handshake_initial_messages() {
 
     // Handshake
     peer.protocol.peermgr.connect(&remote.addr);
-    peer.connected(remote.addr, &local, Link::Outbound);
+    peer.connected(remote.addr, &local, ConnDirection::Outbound);
     peer.received(
         &remote.addr,
         NetworkMessage::Version(remote.version(local, 0)),
@@ -491,7 +491,7 @@ fn test_connection_error() {
 
     peer.command(Command::Connect(remote.addr));
     peer.outputs()
-        .find(|o| matches!(o, Io::Connect(addr) if addr == &remote.addr))
+        .find(|o| matches!(o, Io::ConnectPeer(addr) if addr == &remote.addr))
         .expect("Alice should try to connect to remote");
     peer.attempted(&remote.addr);
     // Make sure we can handle a disconnection before an established connection.
@@ -511,8 +511,8 @@ fn test_getaddr() {
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
     let eve: PeerId = ([241, 19, 44, 19], 8333).into();
 
-    alice.connect_addr(&bob, Link::Outbound);
-    alice.connect_addr(&eve, Link::Outbound);
+    alice.connect_addr(&bob, ConnDirection::Outbound);
+    alice.connect_addr(&eve, ConnDirection::Outbound);
 
     // Disconnect a peer.
     alice.disconnected(&bob, DisconnectReason::Command.into());
@@ -548,7 +548,7 @@ fn test_getaddr() {
 
     alice
         .outputs()
-        .find(|o| matches!(o, Io::Connect(addr) if addr == &toto))
+        .find(|o| matches!(o, Io::ConnectPeer(addr) if addr == &toto))
         .expect("Alice tries to connect to Toto");
 }
 
@@ -560,7 +560,7 @@ fn test_stale_tip() {
     let remote: PeerId = ([33, 33, 33, 33], network.port()).into();
     let headers = &BITCOIN_HEADERS;
 
-    alice.connect_addr(&remote, Link::Outbound);
+    alice.connect_addr(&remote, ConnDirection::Outbound);
     alice.received(
         &remote,
         // Receive an unsolicited header announcement for the latest.
@@ -610,7 +610,7 @@ fn prop_addrs(seed: u64) {
     let mut alice = Peer::genesis("alice", [48, 48, 48, 48], network, vec![], rng);
     let bob: PeerId = ([241, 19, 44, 18], 8333).into();
 
-    alice.connect_addr(&bob, Link::Outbound);
+    alice.connect_addr(&bob, ConnDirection::Outbound);
 
     let jak: PeerId = ([88, 13, 16, 59], 8333).into();
     let jim: PeerId = ([99, 45, 180, 58], 8333).into();
@@ -684,7 +684,7 @@ fn prop_connect_timeout(seed: u64) {
 
     let result = alice
         .outputs()
-        .filter(|o| matches!(o, Io::Connect(_)))
+        .filter(|o| matches!(o, Io::ConnectPeer(_)))
         .collect::<Vec<_>>();
 
     assert_eq!(
@@ -695,7 +695,7 @@ fn prop_connect_timeout(seed: u64) {
     let mut attempted: Vec<net::SocketAddr> = result
         .into_iter()
         .map(|r| match r {
-            Io::Connect(addr) => addr,
+            Io::ConnectPeer(addr) => addr,
             _ => panic!(),
         })
         .collect();
@@ -709,7 +709,7 @@ fn prop_connect_timeout(seed: u64) {
     alice.elapse(peermgr::IDLE_TIMEOUT);
 
     assert!(alice.outputs().all(|o| match o {
-        Io::Connect(addr) => !attempted.contains(&addr),
+        Io::ConnectPeer(addr) => !attempted.contains(&addr),
         _ => true,
     }));
 }
@@ -822,12 +822,12 @@ fn test_submit_transactions() {
         ..remote1
     };
 
-    alice.connect(&remote1, Link::Outbound);
+    alice.connect(&remote1, ConnDirection::Outbound);
     assert!(
         alice
             .protocol
             .peermgr
-            .negotiated(Link::Outbound)
+            .negotiated(ConnDirection::Outbound)
             .map(|(p, _)| p)
             .next()
             .unwrap()
@@ -838,7 +838,7 @@ fn test_submit_transactions() {
     let tx = gen::transaction(&mut rng);
     let wtxid = tx.txid();
     let inventory = vec![Inventory::Transaction(wtxid)];
-    alice.connect(&remote2, Link::Outbound);
+    alice.connect(&remote2, ConnDirection::Outbound);
     alice.command(Command::SubmitTransaction(tx.clone(), transmit));
 
     let remotes = receive.recv().unwrap().unwrap();
@@ -874,7 +874,7 @@ fn test_inv_rebroadcast() {
     let tx2 = gen::transaction(&mut rng);
     let (transmit, _) = chan::unbounded();
 
-    alice.connect_addr(&remote1, Link::Outbound);
+    alice.connect_addr(&remote1, ConnDirection::Outbound);
     alice.command(Command::SubmitTransaction(tx1, transmit.clone()));
     alice.command(Command::SubmitTransaction(tx2, transmit));
     alice.tock(); // Broadcasting doesn't happen immediately
@@ -889,7 +889,7 @@ fn test_inv_rebroadcast() {
         .expect("Alice sends an initial `inv`");
 
     alice.outputs().count(); // Drain outputs
-    alice.connect_addr(&remote2, Link::Outbound); // A new peer connects
+    alice.connect_addr(&remote2, ConnDirection::Outbound); // A new peer connects
     alice.tock(); // No delay until invs are sent to it
     alice
         .messages(&remote2)
@@ -935,8 +935,8 @@ fn test_inv_partial_broadcast() {
     let tx2 = gen::transaction(&mut rng);
     let (transmit, _) = chan::unbounded();
 
-    alice.connect_addr(&remote1, Link::Outbound);
-    alice.connect_addr(&remote2, Link::Outbound);
+    alice.connect_addr(&remote1, ConnDirection::Outbound);
+    alice.connect_addr(&remote2, ConnDirection::Outbound);
     alice.command(Command::SubmitTransaction(tx1.clone(), transmit.clone()));
     alice.command(Command::SubmitTransaction(tx2.clone(), transmit));
     alice.tock();
@@ -1052,7 +1052,7 @@ fn test_confirmed_transaction() {
     let tx1 = &blk1.txdata[rng.usize(0..blk1.txdata.len())];
     let tx2 = &blk2.txdata[rng.usize(0..blk2.txdata.len())];
 
-    alice.connect_addr(&remote, Link::Outbound);
+    alice.connect_addr(&remote, ConnDirection::Outbound);
     alice.command(Command::SubmitTransaction(tx1.clone(), transmit.clone()));
     alice.command(Command::SubmitTransaction(tx2.clone(), transmit));
     alice.tock();
@@ -1170,7 +1170,7 @@ fn test_submitted_transaction_filtering() {
             relay: true,
             time: alice.local_time(),
         },
-        Link::Outbound,
+        ConnDirection::Outbound,
     );
 
     // Start a rescan, to make sure we catch the transaction when it's confirmed.
@@ -1283,7 +1283,7 @@ fn test_transaction_reverted_reconfirm() {
             relay: true,
             time: alice.local_time(),
         },
-        Link::Outbound,
+        ConnDirection::Outbound,
     );
 
     let (submit_reply, _) = chan::bounded(1);
@@ -1505,7 +1505,7 @@ fn test_block_events() {
     assert_eq!(events.count(), 0);
 
     // Receive "extra" block.
-    alice.connect_addr(&remote, Link::Outbound);
+    alice.connect_addr(&remote, ConnDirection::Outbound);
     alice.received(
         &remote,
         NetworkMessage::Inv(vec![Inventory::Block(extra.block_hash())]),

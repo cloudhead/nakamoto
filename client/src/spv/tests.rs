@@ -48,7 +48,7 @@ use nakamoto_common::bitcoin::OutPoint;
 use nakamoto_common::block::time::Clock as _;
 use nakamoto_common::network::Network;
 use nakamoto_common::nonempty::NonEmpty;
-use nakamoto_net::{DisconnectReason, Link, LocalTime, PeerService as _, PeerProtocol as _};
+use nakamoto_net::{DisconnectReason, ConnDirection, LocalTime, PeerService as _, PeerProtocol as _};
 use nakamoto_test::assert_matches;
 use nakamoto_test::block::gen;
 use nakamoto_test::logger;
@@ -86,13 +86,13 @@ fn test_peer_connected_disconnected() {
 
     client
         .protocol
-        .connected(remote, &local_addr, Link::Inbound);
+        .connected(remote, &local_addr, ConnDirection::Inbound);
     client.step();
 
     assert_matches!(
         events.try_recv(),
         Ok(Event::PeerConnected { addr, link, .. })
-        if addr == remote && link == Link::Inbound
+        if addr == remote && link == ConnDirection::Inbound
     );
 
     client.protocol.disconnected(
@@ -166,7 +166,7 @@ fn test_peer_height_updated() {
 
     client
         .protocol
-        .connected(remote, &local_addr, Link::Inbound);
+        .connected(remote, &local_addr, ConnDirection::Inbound);
     client.received(&remote, version(42));
     client.received(&remote, NetworkMessage::Verack);
     client.step();
@@ -180,7 +180,7 @@ fn test_peer_height_updated() {
 
     client
         .protocol
-        .connected(remote, &local_addr, Link::Inbound);
+        .connected(remote, &local_addr, ConnDirection::Inbound);
     client.received(&remote, version(43));
     client.received(&remote, NetworkMessage::Verack);
     client.step();
@@ -208,7 +208,7 @@ fn test_peer_negotiated() {
 
     client
         .protocol
-        .connected(remote, &local_addr, Link::Inbound);
+        .connected(remote, &local_addr, ConnDirection::Inbound);
     client.step();
 
     let version = NetworkMessage::Version(VersionMessage {

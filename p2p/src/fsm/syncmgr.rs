@@ -14,7 +14,7 @@ use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
 use super::output::{Disconnect, Wakeup, Wire};
-use super::{DisconnectReason, Link, Locators, PeerId, Socket};
+use super::{DisconnectReason, ConnDirection, Locators, PeerId, Socket};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
@@ -52,7 +52,7 @@ struct Peer {
     height: Height,
     preferred: bool,
     tip: BlockHash,
-    link: Link,
+    link: ConnDirection,
     last_active: Option<LocalTime>,
     last_asked: Option<Locators>,
 
@@ -241,7 +241,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
         height: Height,
         services: ServiceFlags,
         preferred: bool,
-        link: Link,
+        link: ConnDirection,
         tree: &T,
     ) {
         if link.is_outbound() && !services.has(REQUIRED_SERVICES) {
@@ -607,7 +607,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
     }
 
     /// Register a new peer.
-    fn register(&mut self, socket: Socket, height: Height, preferred: bool, link: Link) {
+    fn register(&mut self, socket: Socket, height: Height, preferred: bool, link: ConnDirection) {
         let last_active = None;
         let last_asked = None;
         let tip = BlockHash::all_zeros();
@@ -735,7 +735,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
         if let Some((height, best)) = tree.get_block(hash) {
             for (addr, peer) in &*self.peers {
                 // TODO: Don't broadcast to peer that is currently syncing?
-                if peer.link == Link::Inbound && height > peer.height {
+                if peer.link == ConnDirection::Inbound && height > peer.height {
                     self.upstream.headers(*addr, vec![*best]);
                 }
             }

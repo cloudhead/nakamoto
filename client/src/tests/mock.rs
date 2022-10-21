@@ -23,7 +23,7 @@ use nakamoto_net::event;
 use nakamoto_net::PeerProtocol as _;
 use nakamoto_p2p::fsm;
 use nakamoto_p2p::fsm::Command;
-use nakamoto_p2p::fsm::Link;
+use nakamoto_p2p::fsm::ConnDirection;
 use nakamoto_p2p::fsm::Peer;
 use nakamoto_p2p::fsm::StateMachine;
 
@@ -90,7 +90,7 @@ impl Client {
 
         for out in self.protocol.drain() {
             match out {
-                fsm::Io::Event(event) => {
+                fsm::Io::NotifySubscribers(event) => {
                     self.subscriber.broadcast(event.clone());
                     self.events.send(event).ok();
                 }
@@ -213,7 +213,7 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
-    fn connect(&self, _addr: net::SocketAddr) -> Result<Link, handle::Error> {
+    fn connect(&self, _addr: net::SocketAddr) -> Result<ConnDirection, handle::Error> {
         unimplemented!()
     }
 

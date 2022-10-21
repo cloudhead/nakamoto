@@ -15,7 +15,7 @@ use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::{BlockReader, ImportResult};
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
-use nakamoto_p2p::fsm::Link;
+use nakamoto_p2p::fsm::ConnDirection;
 use nakamoto_p2p::fsm::{self, Command, CommandError, GetFiltersError, Peer};
 
 use crate::client::{Event, Loading};
@@ -135,7 +135,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// peer or nothing if no peer was available.
     fn query(&self, msg: NetworkMessage) -> Result<Option<net::SocketAddr>, Error>;
     /// Connect to the designated peer address.
-    fn connect(&self, addr: net::SocketAddr) -> Result<Link, Error>;
+    fn connect(&self, addr: net::SocketAddr) -> Result<ConnDirection, Error>;
     /// Disconnect from the designated peer address.
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), Error>;
     /// Submit a transaction to the network.

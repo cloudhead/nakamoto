@@ -192,7 +192,7 @@ impl Peer<Protocol> {
         self.protocol.clock.local_time()
     }
 
-    pub fn connect_addr(&mut self, addr: &PeerId, link: Link) {
+    pub fn connect_addr(&mut self, addr: &PeerId, link: ConnDirection) {
         self.connect(
             &PeerDummy {
                 addr: *addr,
@@ -229,7 +229,7 @@ impl Peer<Protocol> {
 
     pub fn events(&mut self) -> impl Iterator<Item = Event> + '_ {
         self.protocol.drain().filter_map(|o| match o {
-            Io::Event(e) => Some(e),
+            Io::NotifySubscribers(e) => Some(e),
             _ => None,
         })
     }
@@ -252,7 +252,7 @@ impl Peer<Protocol> {
         self.protocol.drain().for_each(drop);
     }
 
-    pub fn connect(&mut self, remote: &PeerDummy, link: Link) {
+    pub fn connect(&mut self, remote: &PeerDummy, link: ConnDirection) {
         <Self as simulator::Peer<Protocol>>::init(self);
 
         let local = self.addr;
@@ -294,7 +294,7 @@ impl Peer<Protocol> {
             .find(|o| {
                 matches!(
                     o,
-                    Io::Event(
+                    Io::NotifySubscribers(
                         Event::Peer(peermgr::Event::Negotiated { addr, services, .. })
                     ) if addr == &remote.addr && services.has(ServiceFlags::NETWORK)
                 )

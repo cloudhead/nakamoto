@@ -1,7 +1,7 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 #![allow(clippy::collapsible_if)]
 
-use crate::{DisconnectReason, ReactorDispatch, Link, LocalDuration, LocalTime};
+use crate::{DisconnectReason, ReactorDispatch, ConnDirection, LocalDuration, LocalTime};
 use log::*;
 
 use std::borrow::Cow;
@@ -50,7 +50,7 @@ pub enum Input<M, D> {
         /// Local peer id.
         local_addr: net::SocketAddr,
         /// Link direction.
-        link: Link,
+        link: ConnDirection,
     },
     /// Disconnected from peer.
     Disconnected(net::SocketAddr, DisconnectReason<D>),
@@ -81,13 +81,13 @@ impl<M: fmt::Debug, D: fmt::Display> fmt::Display for Scheduled<M, D> {
             Input::Connected {
                 addr,
                 local_addr,
-                link: Link::Inbound,
+                link: ConnDirection::Inbound,
                 ..
             } => write!(f, "{} <== {}: Connected", local_addr, addr),
             Input::Connected {
                 local_addr,
                 addr,
-                link: Link::Outbound,
+                link: ConnDirection::Outbound,
                 ..
             } => write!(f, "{} ==> {}: Connected", local_addr, addr),
             Input::Connecting { addr } => {
@@ -169,7 +169,7 @@ where
     /// Inbox of inputs to be delivered by the simulation.
     inbox: Inbox<<T::PeerMessage as ToOwned>::Owned, T::DisconnectSubreason>,
     /// Events emitted during simulation.
-    events: BTreeMap<NodeId, VecDeque<T::Event>>,
+    events: BTreeMap<NodeId, VecDeque<T::Notification>>,
     /// Priority events that should happen immediately.
     priority: VecDeque<Scheduled<<T::PeerMessage as ToOwned>::Owned, T::DisconnectSubreason>>,
     /// Simulated latencies between nodes.
@@ -237,7 +237,7 @@ where
     }
 
     /// Get a node's emitted events.
-    pub fn events(&mut self, node: &NodeId) -> impl Iterator<Item = T::Event> + '_ {
+    pub fn events(&mut self, node: &NodeId) -> impl Iterator<Item = T::Notification> + '_ {
         self.events.entry(*node).or_default().drain(..)
     }
 
@@ -416,12 +416,12 @@ where
     pub fn schedule(
         &mut self,
         node: &NodeId,
-        out: ReactorDispatch<<T::PeerMessage as ToOwned>::Owned, T::Event, T::DisconnectSubreason, net::SocketAddr>,
+        out: ReactorDispatch<<T::PeerMessage as ToOwned>::Owned, T::Notification, T::DisconnectSubreason, net::SocketAddr>,
     ) {
         let node = *node;
 
         match out {
-            ReactorDispatch::Write(receiver, msg) => {
+            ReactorDispatch::SendPeer(receiver, msg) => {
                 // If the other end has disconnected the sender with some latency, there may not be
                 // a connection remaining to use.
                 let port = if let Some(port) = self.connections.get(&(node, receiver.ip())) {
@@ -467,7 +467,7 @@ where
                     },
                 );
             }
-            ReactorDispatch::Connect(remote) => {
+            ReactorDispatch::ConnectPeer(remote) => {
                 assert!(remote.ip() != node, "self-connections are not allowed");
 
                 // Create an ephemeral sockaddr for the connecting (local) node.
@@ -515,7 +515,7 @@ where
                         input: Input::Connected {
                             addr: local_addr,
                             local_addr: remote,
-                            link: Link::Inbound,
+                            link: ConnDirection::Inbound,
                         },
                     },
                 );
@@ -528,12 +528,12 @@ where
                         input: Input::Connected {
                             addr: remote,
                             local_addr,
-                            link: Link::Outbound,
+                            link: ConnDirection::Outbound,
                         },
                     },
                 );
             }
-            ReactorDispatch::Disconnect(remote, reason) => {
+            ReactorDispatch::DisconnectPeer(remote, reason) => {
                 // The local node is immediately disconnected.
                 self.priority.push_back(Scheduled {
                     remote,
@@ -571,7 +571,7 @@ where
                     },
                 );
             }
-            ReactorDispatch::Wakeup(duration) => {
+            ReactorDispatch::SetTimer(duration) => {
                 let time = self.time + duration;
 
                 if !matches!(
@@ -592,7 +592,7 @@ where
                     );
                 }
             }
-            ReactorDispatch::Event(event) => {
+            ReactorDispatch::NotifySubscribers(event) => {
                 let events = self.events.entry(node).or_insert_with(VecDeque::new);
                 if events.len() >= MAX_EVENTS {
                     warn!(target: "sim", "Dropping event: buffer is full");

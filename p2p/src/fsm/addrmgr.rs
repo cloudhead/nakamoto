@@ -16,7 +16,7 @@ use nakamoto_common::p2p::Domain;
 use nakamoto_net::DisconnectReason;
 
 use super::output::{Wakeup, Wire};
-use super::Link;
+use super::ConnDirection;
 
 /// Time to wait until a request times out.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -230,7 +230,7 @@ impl<P: Store, U: Wire<Event> + Wakeup, C: Clock> AddressManager<P, U, C> {
     }
 
     /// Called when a peer has handshaked.
-    pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags, link: Link) {
+    pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags, link: ConnDirection) {
         let time = self.clock.local_time();
 
         if !self.connected.contains(&addr.ip()) {
@@ -269,7 +269,7 @@ impl<P: Store, U: Wire<Event> + Wakeup, C: Clock> AddressManager<P, U, C> {
             // connect to this peer again, then remove the peer from the address book.
             // Otherwise, we leave it in the address buckets so that it can be chosen
             // in the future.
-            if let DisconnectReason::StateMachine(r) = reason {
+            if let DisconnectReason::OnDemand(r) = reason {
                 if !r.is_transient() {
                     self.ban(&addr.ip());
                 }
@@ -741,7 +741,7 @@ mod tests {
         assert!(ka.last_sampled.is_none());
 
         // Only when it is negotiated is it a "success".
-        addrmgr.peer_negotiated(addr, services, Link::Outbound);
+        addrmgr.peer_negotiated(addr, services, ConnDirection::Outbound);
 
         let ka = addrmgr.peers.get(&addr.ip()).unwrap();
         assert!(ka.last_success.is_some());
@@ -806,7 +806,7 @@ mod tests {
         // If a peer has been connected to successfully, and then disconnected for a transient
         // reason, its address should be once again available.
         addrmgr.peer_connected(&([44, 44, 44, 44], 8333).into());
-        addrmgr.peer_negotiated(&([44, 44, 44, 44], 8333).into(), services, Link::Outbound);
+        addrmgr.peer_negotiated(&([44, 44, 44, 44], 8333).into(), services, ConnDirection::Outbound);
         addrmgr.peer_disconnected(
             &([44, 44, 44, 44], 8333).into(),
             fsm::DisconnectReason::PeerTimeout("timeout").into(),
@@ -860,7 +860,7 @@ mod tests {
 
         addrmgr.peer_attempted(addr);
         addrmgr.peer_connected(addr);
-        addrmgr.peer_negotiated(addr, services, Link::Outbound);
+        addrmgr.peer_negotiated(addr, services, ConnDirection::Outbound);
         addrmgr.peer_disconnected(
             addr,
             fsm::DisconnectReason::PeerMisbehaving("misbehaving").into(),

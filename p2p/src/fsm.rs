@@ -37,7 +37,7 @@ pub use syncmgr::Event as ChainEvent;
 use crate::stream;
 
 pub use event::Event;
-pub use nakamoto_net::Link;
+pub use nakamoto_net::ConnDirection;
 pub use output::Io;
 
 use std::borrow::Cow;
@@ -161,7 +161,7 @@ impl DisconnectReason {
 
 impl From<DisconnectReason> for nakamoto_net::DisconnectReason<DisconnectReason> {
     fn from(reason: DisconnectReason) -> Self {
-        Self::StateMachine(reason)
+        Self::OnDemand(reason)
     }
 }
 
@@ -192,7 +192,7 @@ pub struct Peer {
     /// Local peer address.
     pub local_addr: net::SocketAddr,
     /// Whether this is an inbound or outbound peer connection.
-    pub link: Link,
+    pub link: ConnDirection,
     /// Connected since this time.
     pub since: LocalTime,
     /// The peer's best height.
@@ -625,7 +625,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
     {
         let peers = self
             .peermgr
-            .negotiated(Link::Outbound)
+            .negotiated(ConnDirection::Outbound)
             .map(Peer::from)
             .filter(f)
             .collect::<Vec<_>>();
@@ -760,7 +760,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
     for StateMachine<T, F, P, C>
 {
     type PeerMessage = RawNetworkMessage;
-    type Event = Event;
+    type Notification = Event;
     type DisconnectSubreason = DisconnectReason;
 
     fn initialize(&mut self, time: LocalTime) {
@@ -966,7 +966,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         self.peermgr.peer_attempted(addr);
     }
 
-    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link) {
+    fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: ConnDirection) {
         let height = self.tree.height();
 
         self.addrmgr.record_local_address(*local_addr);
@@ -1021,15 +1021,15 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
             } else {
                 0.
             };
-            let outbound = self.peermgr.negotiated(Link::Outbound).count();
-            let inbound = self.peermgr.negotiated(Link::Inbound).count();
+            let outbound = self.peermgr.negotiated(ConnDirection::Outbound).count();
+            let inbound = self.peermgr.negotiated(ConnDirection::Inbound).count();
             let connecting = self.peermgr.connecting().count();
             let target = self.peermgr.config.target_outbound_peers;
             let max_inbound = self.peermgr.config.max_inbound_peers;
             let addresses = self.addrmgr.len();
             let preferred = self
                 .peermgr
-                .negotiated(Link::Outbound)
+                .negotiated(ConnDirection::Outbound)
                 .filter(|(p, _)| p.services.has(self.peermgr.config.preferred_services))
                 .count();
 

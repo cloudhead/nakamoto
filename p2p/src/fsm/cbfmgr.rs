@@ -22,7 +22,7 @@ use nakamoto_common::source;
 
 use super::filter_cache::FilterCache;
 use super::output::{Disconnect, Wakeup, Wire};
-use super::{DisconnectReason, Link, PeerId, Socket};
+use super::{DisconnectReason, ConnDirection, PeerId, Socket};
 
 use rescan::Rescan;
 
@@ -818,7 +818,7 @@ impl<F: Filters, U: Wire<Event> + Wakeup + Disconnect, C: Clock> FilterManager<F
         socket: Socket,
         height: Height,
         services: ServiceFlags,
-        link: Link,
+        link: ConnDirection,
         persistent: bool,
         tree: &T,
     ) {
@@ -1168,7 +1168,7 @@ mod tests {
 
         pub fn events(outputs: impl Iterator<Item = fsm::Io>) -> impl Iterator<Item = Event> {
             outputs.filter_map(|o| match o {
-                fsm::Io::Event(fsm::Event::Filter(e)) => Some(e),
+                fsm::Io::NotifySubscribers(fsm::Event::Filter(e)) => Some(e),
                 _ => None,
             })
         }
@@ -1303,7 +1303,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -1365,7 +1365,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -1425,7 +1425,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -1525,7 +1525,7 @@ mod tests {
             Socket::new(remote),
             header_height,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -1581,7 +1581,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -1673,7 +1673,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -1787,7 +1787,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -1877,7 +1877,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -1957,7 +1957,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );
@@ -2053,7 +2053,7 @@ mod tests {
                 Socket::new(remote),
                 best,
                 REQUIRED_SERVICES,
-                Link::Outbound,
+                ConnDirection::Outbound,
                 false,
                 &tree,
             );
@@ -2177,7 +2177,7 @@ mod tests {
             Socket::new(remote),
             best,
             REQUIRED_SERVICES,
-            Link::Outbound,
+            ConnDirection::Outbound,
             false,
             &tree,
         );

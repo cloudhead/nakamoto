@@ -17,22 +17,22 @@ pub use time::{LocalDuration, LocalTime};
 
 /// Link direction of the peer connection.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Link {
+pub enum ConnDirection {
     /// Inbound conneciton.
     Inbound,
     /// Outbound connection.
     Outbound,
 }
 
-impl Link {
+impl ConnDirection {
     /// Check whether the link is outbound.
     pub fn is_outbound(&self) -> bool {
-        *self == Link::Outbound
+        *self == ConnDirection::Outbound
     }
 
     /// Check whether the link is inbound.
     pub fn is_inbound(&self) -> bool {
-        *self == Link::Inbound
+        *self == ConnDirection::Inbound
     }
 }
 
@@ -41,30 +41,31 @@ impl Link {
 #[derive(Debug)]
 pub enum ReactorDispatch<M, E, D, Id: PeerId = net::SocketAddr> {
     /// There are some bytes ready to be sent to a peer.
-    Write(Id, M),
+    SendPeer(Id, M),
     /// Connect to a peer.
-    Connect(Id),
+    ConnectPeer(Id),
     /// Disconnect from a peer.
-    Disconnect(Id, D),
-    /// Ask for a wakeup in a specified amount of time once.
-    Wakeup(LocalDuration),
-    /// Emit an event.
-    Event(E),
+    DisconnectPeer(Id, D),
+    /// Ask for a single timer-based wakeup.
+    SetTimer(LocalDuration),
+    /// Emit an event to all subscribers from the user threads.
+    NotifySubscribers(E),
 }
 
 /// Disconnect reason originating either from the network interface or provided
 /// by the network protocol state machine in form of
-/// [`ReactorDispatch::Disconnect`] instruction.
+/// [`ReactorDispatch::DisconnectPeer`] instruction.
 #[derive(Debug, Clone)]
 pub enum DisconnectReason<T> {
     /// Error while dialing the remote. This error occures before a connection is
     /// even established. Errors of this kind are usually not transient.
-    DialError(Arc<std::io::Error>),
+    DialError(Arc<io::Error>),
     /// Error with an underlying established connection. Sometimes, reconnecting
     /// after such an error is possible.
-    ConnectionError(Arc<std::io::Error>),
-    /// Peer was disconnected for another reason.
-    StateMachine(T),
+    ConnectionError(Arc<io::Error>),
+    /// Peer was disconnected due to a request from the network protocol
+    /// business logic.
+    OnDemand(T),
 }
 
 impl<T> DisconnectReason<T> {
@@ -82,14 +83,14 @@ impl<T: fmt::Display> fmt::Display for DisconnectReason<T> {
         match self {
             Self::DialError(err) => write!(f, "{}", err),
             Self::ConnectionError(err) => write!(f, "{}", err),
-            Self::StateMachine(reason) => write!(f, "{}", reason),
+            Self::OnDemand(reason) => write!(f, "{}", reason),
         }
     }
 }
 
 impl<T> From<T> for DisconnectReason<T> {
     fn from(r: T) -> Self {
-        DisconnectReason::StateMachine(r)
+        DisconnectReason::OnDemand(r)
     }
 }
 
@@ -140,14 +141,14 @@ pub trait PeerService<Id: PeerId = net::SocketAddr>: PeerProtocol<Id, PeerMessag
 /// State machine generates instructions to the reactor by operating as an
 /// iterator over .
 pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
-    Iterator<Item = ReactorDispatch<<Self::PeerMessage as ToOwned>::Owned, Self::Event, Self::DisconnectSubreason, Id>>
+    Iterator<Item = ReactorDispatch<<Self::PeerMessage as ToOwned>::Owned, Self::Notification, Self::DisconnectSubreason, Id>>
 {
     /// Message type sent between peers.
-    type PeerMessage: fmt::Debug + ToOwned + ?Sized;
+    type PeerMessage: ToOwned + ?Sized;
 
-    /// Events which are sent by the reactor from the protocol state machine to
+    /// Notifications which are sent by the reactor from the protocol state machine to
     /// the user thread via publisher provided to the reactor.
-    type Event: fmt::Debug;
+    type Notification;
 
     /// Reason a peer was disconnected in case the disconnection was caused by
     /// a state machine-specific reason.
@@ -173,7 +174,7 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
     fn attempted(&mut self, remote_peer: &Id);
 
     /// Called whenever a new connection with a peer is established.
-    fn connected(&mut self, remote_peer: Id, local_addr: &net::SocketAddr, link: Link);
+    fn connected(&mut self, remote_peer: Id, local_addr: &net::SocketAddr, link: ConnDirection);
 
     /// Called whenever remote peer got disconnected, either because of the
     /// network event or due to a local instruction from this state machine in

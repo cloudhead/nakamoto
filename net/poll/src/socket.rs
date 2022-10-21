@@ -3,7 +3,7 @@ use std::fmt::Debug;
 use std::io::{self, Read, Write};
 use std::net;
 
-use nakamoto_net::Link;
+use nakamoto_net::ConnDirection;
 
 use crate::fallible;
 
@@ -11,7 +11,7 @@ use crate::fallible;
 #[derive(Debug)]
 pub struct Socket<R: Read + Write> {
     pub address: net::SocketAddr,
-    pub link: Link,
+    pub link: ConnDirection,
 
     buffer: Vec<u8>,
     raw: R,
@@ -31,7 +31,7 @@ impl Socket<net::TcpStream> {
 
 impl<R: Read + Write> Socket<R> {
     /// Create a new socket from a `io::Read` and an address pair.
-    pub fn from(raw: R, address: net::SocketAddr, link: Link) -> Self {
+    pub fn from(raw: R, address: net::SocketAddr, link: ConnDirection) -> Self {
         Self {
             raw,
             link,

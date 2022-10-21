@@ -33,7 +33,7 @@ pub fn connect_to_peers(
     let (mut prev_negotiated, mut prev_connecting, mut prev_connected) = (0, 0, 0);
 
     while simulator.step(iter::once(&mut alice).chain(&mut peers)) {
-        let negotiated = alice.protocol.peermgr.negotiated(Link::Outbound).count();
+        let negotiated = alice.protocol.peermgr.negotiated(ConnDirection::Outbound).count();
         let connecting = alice.protocol.peermgr.connecting().count();
         let connected = alice.protocol.peermgr.connected().count();
 

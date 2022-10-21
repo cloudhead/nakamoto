@@ -34,7 +34,7 @@ pub type Io = nakamoto_net::ReactorDispatch<RawNetworkMessage, Event, super::Dis
 
 impl From<Event> for Io {
     fn from(event: Event) -> Self {
-        Io::Event(event)
+        Io::NotifySubscribers(event)
     }
 }
 
@@ -189,7 +189,7 @@ impl Outbox {
     pub fn message(&mut self, addr: PeerId, payload: NetworkMessage) -> &Self {
         debug!(target: "p2p", "Sending {:?} to {}", payload.cmd(), addr);
 
-        self.push(Io::Write(
+        self.push(Io::SendPeer(
             addr,
             RawNetworkMessage {
                 magic: self.network.magic(),
@@ -201,7 +201,7 @@ impl Outbox {
 
     /// Push an event to the channel.
     pub fn event(&self, event: Event) {
-        self.push(Io::Event(event));
+        self.push(Io::NotifySubscribers(event));
     }
 }
 
@@ -222,21 +222,21 @@ impl Disconnect for Outbox {
     fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason) {
         debug!(target: "p2p", "Disconnecting from {}: {}", addr, reason);
 
-        self.push(Io::Disconnect(addr, reason));
+        self.push(Io::DisconnectPeer(addr, reason));
     }
 }
 
 impl Wakeup for Outbox {
     fn wakeup(&self, duration: LocalDuration) -> &Self {
-        self.push(Io::Wakeup(duration));
+        self.push(Io::SetTimer(duration));
         self
     }
 }
 
 impl Connect for Outbox {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
-        self.push(Io::Connect(addr));
-        self.push(Io::Wakeup(timeout));
+        self.push(Io::ConnectPeer(addr));
+        self.push(Io::SetTimer(timeout));
     }
 }
 
@@ -439,7 +439,7 @@ pub mod test {
         let mut msgs = Vec::new();
 
         outbox.outbound.borrow_mut().retain(|o| match o {
-            Io::Write(a, msg) if a == addr => {
+            Io::SendPeer(a, msg) if a == addr => {
                 msgs.push(msg.payload.clone());
                 false
             }
@@ -455,7 +455,7 @@ pub mod test {
         let mut msgs = Vec::new();
 
         outbox.outbound.borrow_mut().retain(|o| match o {
-            Io::Write(addr, msg) => {
+            Io::SendPeer(addr, msg) => {
                 msgs.push((*addr, msg.payload.clone()));
                 false
             }
@@ -468,7 +468,7 @@ pub mod test {
         let mut events = Vec::new();
 
         outbox.outbound.borrow_mut().retain(|o| match o {
-            Io::Event(e) => {
+            Io::NotifySubscribers(e) => {
                 events.push(e.clone());
                 false
             }

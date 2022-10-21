@@ -34,7 +34,7 @@ use crate::fsm::addrmgr;
 use crate::fsm::DisconnectReason;
 
 use super::output::{Connect, Disconnect, Wakeup, Wire};
-use super::{Hooks, Link, PeerId, Socket, Whitelist};
+use super::{Hooks, ConnDirection, PeerId, Socket, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(12);
@@ -69,7 +69,7 @@ pub enum Event {
         /// The peer's id.
         addr: PeerId,
         /// Connection link.
-        link: Link,
+        link: ConnDirection,
         /// Services offered by negotiated peer.
         services: ServiceFlags,
         /// Peer user agent.
@@ -86,7 +86,7 @@ pub enum Event {
     /// A new peer has connected and is ready to accept messages.
     /// This event is triggered *before* the peer handshake
     /// has successfully completed.
-    Connected(PeerId, Link),
+    Connected(PeerId, ConnDirection),
     /// A peer has been disconnected.
     Disconnected(PeerId, network::DisconnectReason<DisconnectReason>),
 }
@@ -175,7 +175,7 @@ pub struct Connection {
     /// Local peer address.
     pub local_addr: net::SocketAddr,
     /// Whether this is an inbound or outbound peer connection.
-    pub link: Link,
+    pub link: ConnDirection,
     /// Connected since this time.
     pub since: LocalTime,
 }
@@ -329,7 +329,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
         &mut self,
         addr: net::SocketAddr,
         local_addr: net::SocketAddr,
-        link: Link,
+        link: ConnDirection,
         height: Height,
     ) {
         let local_time = self.clock.local_time();
@@ -360,7 +360,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
         self.retrier_remove_peer(&addr);
 
         match link {
-            Link::Inbound => {
+            ConnDirection::Inbound => {
                 if self.connected().filter(|c| c.link.is_inbound()).count()
                     >= self.config.max_inbound_peers
                 {
@@ -371,7 +371,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
                     // Wait for their version message..
                 }
             }
-            Link::Outbound => {
+            ConnDirection::Outbound => {
                 let nonce = self.rng.u64(..);
                 self.upstream.version(
                     addr,
@@ -520,7 +520,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
             // disconnect this peer.
             if conn.link.is_outbound()
                 && !services.has(preferred)
-                && self.negotiated(Link::Outbound).count() >= target
+                && self.negotiated(ConnDirection::Outbound).count() >= target
             {
                 return Err(DisconnectReason::ConnectionLimit);
             }
@@ -536,7 +536,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
             }
 
             match conn.link {
-                Link::Inbound => {
+                ConnDirection::Inbound => {
                     self.upstream
                         .version(
                             conn.socket.addr,
@@ -547,7 +547,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
                         .send_headers(conn.socket.addr)
                         .wakeup(HANDSHAKE_TIMEOUT);
                 }
-                Link::Outbound => {
+                ConnDirection::Outbound => {
                     self.upstream
                         .wtxid_relay(conn.socket.addr)
                         .verack(conn.socket.addr)
@@ -654,7 +654,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
         // dropped from all other sub-protocols and we are holding on to the last reference,
         // there is no use in keeping this peer around.
         let dropped = self
-            .negotiated(Link::Outbound)
+            .negotiated(ConnDirection::Outbound)
             .filter(|(_, c)| c.socket.refs() == 1)
             .map(|(_, c)| c.socket.addr)
             .collect::<Vec<_>>();
@@ -784,7 +784,7 @@ impl<U: Connect + Disconnect + Wakeup + Wire<Event>, C: Clock> PeerManager<U, C>
     }
 
     /// Iterator over fully negotiated peers.
-    pub fn negotiated(&self, link: Link) -> impl Iterator<Item = (&PeerInfo, &Connection)> + Clone {
+    pub fn negotiated(&self, link: ConnDirection) -> impl Iterator<Item = (&PeerInfo, &Connection)> + Clone {
         self.peers()
             .filter(move |(p, c)| p.is_negotiated() && c.link == link)
     }
@@ -824,12 +824,12 @@ impl<U: Connect + Disconnect + Wakeup + Wire<Event>, C: Clock> PeerManager<U, C>
     fn delta(&self) -> usize {
         // Peers with our preferred services.
         let primary = self
-            .negotiated(Link::Outbound)
+            .negotiated(ConnDirection::Outbound)
             .filter(|(p, _)| p.services.has(self.config.preferred_services))
             .count();
         // Peers only with required services, which we'd eventually want to drop in favor of peers
         // that have all services.
-        let secondary = self.negotiated(Link::Outbound).count() - primary;
+        let secondary = self.negotiated(ConnDirection::Outbound).count() - primary;
         // Connected peers that have not yet completed handshake.
         let connected = self.connected().count() - primary - secondary;
         // Connecting peers.
@@ -862,7 +862,7 @@ impl<U: Connect + Disconnect + Wakeup + Wire<Event>, C: Clock> PeerManager<U, C>
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections<A: AddressSource>(&mut self, addrs: &mut A) {
         let delta = self.delta();
-        let negotiated = self.negotiated(Link::Outbound).count();
+        let negotiated = self.negotiated(ConnDirection::Outbound).count();
         let target = self.config.target_outbound_peers;
 
         // Keep track of new addresses we're connecting to, and loop until
@@ -970,7 +970,7 @@ mod tests {
         peermgr.initialize(&mut addrs);
         assert_eq!(peermgr.connecting().next(), Some(&remote));
 
-        peermgr.peer_connected(remote, local, Link::Outbound, height);
+        peermgr.peer_connected(remote, local, ConnDirection::Outbound, height);
         assert_eq!(
             peermgr.connected().map(|c| &c.socket.addr).next(),
             Some(&remote)
@@ -1025,7 +1025,7 @@ mod tests {
 
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
-        peermgr.peer_connected(remote, local, Link::Outbound, height);
+        peermgr.peer_connected(remote, local, ConnDirection::Outbound, height);
         peermgr.received_version(&remote, version, height, &mut addrs);
 
         assert_matches!(
@@ -1060,7 +1060,7 @@ mod tests {
 
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
-        peermgr.peer_connected(remote, local, Link::Outbound, height);
+        peermgr.peer_connected(remote, local, ConnDirection::Outbound, height);
         peermgr.received_version(&remote, version, height, &mut addrs);
         peermgr.received_verack(&remote, time);
         peermgr.received_wtxidrelay(&remote);
@@ -1117,7 +1117,7 @@ mod tests {
 
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
-        peermgr.peer_connected(remote, local, Link::Outbound, height);
+        peermgr.peer_connected(remote, local, ConnDirection::Outbound, height);
         peermgr.received_version(&remote, version, height, &mut addrs);
 
         let (_, conn) = peermgr.received_verack(&remote, time).unwrap();
@@ -1125,7 +1125,7 @@ mod tests {
         assert_eq!(socket.refs(), 2);
 
         peermgr
-            .negotiated(Link::Outbound)
+            .negotiated(ConnDirection::Outbound)
             .find(|(_, c)| c.socket.addr == remote)
             .unwrap();
 
@@ -1163,7 +1163,7 @@ mod tests {
         assert_eq!(peermgr.connecting().next(), Some(&remote1));
         assert_eq!(peermgr.connected().next(), None);
 
-        peermgr.peer_connected(remote1, local, Link::Outbound, height);
+        peermgr.peer_connected(remote1, local, ConnDirection::Outbound, height);
 
         assert_eq!(peermgr.connecting().next(), None);
         assert_eq!(
@@ -1197,7 +1197,7 @@ mod tests {
         // Connect, then disconnect remote#3.
         addrs.push_back((Address::new(&remote4, services), Source::Dns));
 
-        peermgr.peer_connected(remote3, local, Link::Outbound, height);
+        peermgr.peer_connected(remote3, local, ConnDirection::Outbound, height);
         peermgr.disconnect(remote3, DisconnectReason::Command);
         peermgr.peer_disconnected(&remote3, &mut addrs, reason);
 
@@ -1275,7 +1275,7 @@ mod tests {
             for i in 0..connected {
                 let remote = ([55, 55, 55, i as u8], 8333).into();
                 peermgr.connect(&remote);
-                peermgr.peer_connected(remote, local, Link::Outbound, height);
+                peermgr.peer_connected(remote, local, ConnDirection::Outbound, height);
                 assert!(peermgr.peers.contains_key(&remote));
             }
             for i in 0..required {
@@ -1286,7 +1286,7 @@ mod tests {
                 };
 
                 peermgr.connect(&remote);
-                peermgr.peer_connected(remote, local, Link::Outbound, height);
+                peermgr.peer_connected(remote, local, ConnDirection::Outbound, height);
                 assert!(peermgr.peers.contains_key(&remote));
 
                 peermgr.received_version(&remote, version, height, &mut addrs);
@@ -1306,7 +1306,7 @@ mod tests {
                 };
 
                 peermgr.connect(&remote);
-                peermgr.peer_connected(remote, local, Link::Outbound, height);
+                peermgr.peer_connected(remote, local, ConnDirection::Outbound, height);
                 assert!(peermgr.peers.contains_key(&remote));
 
                 peermgr.received_version(&remote, version, height, &mut addrs);

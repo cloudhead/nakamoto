@@ -577,7 +577,7 @@ mod tests {
 
     fn events(outputs: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
         outputs.filter_map(|o| match o {
-            Io::Event(fsm::Event::Inventory(e)) => Some(e),
+            Io::NotifySubscribers(fsm::Event::Inventory(e)) => Some(e),
             _ => None,
         })
     }
@@ -667,7 +667,7 @@ mod tests {
         assert_eq!(
             upstream
                 .drain()
-                .filter(|o| matches!(o, Io::Write(_, _)))
+                .filter(|o| matches!(o, Io::SendPeer(_, _)))
                 .count(),
             0,
             "No more requests are sent"
