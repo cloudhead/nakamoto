@@ -39,7 +39,7 @@ impl ConnDirection {
 /// Instructions received from a network protocol state machine and dispatched
 /// by the reactor.
 #[derive(Debug)]
-pub enum ReactorDispatch<M, E, D, Id: PeerId = net::SocketAddr> {
+pub enum ReactorDispatch<M, N, D, Id: PeerId = net::SocketAddr> {
     /// There are some bytes ready to be sent to a peer.
     SendPeer(Id, M),
     /// Connect to a peer.
@@ -49,7 +49,7 @@ pub enum ReactorDispatch<M, E, D, Id: PeerId = net::SocketAddr> {
     /// Ask for a single timer-based wakeup.
     SetTimer(LocalDuration),
     /// Emit an event to all subscribers from the user threads.
-    NotifySubscribers(E),
+    NotifySubscribers(N),
 }
 
 /// Disconnect reason originating either from the network interface or provided
@@ -57,7 +57,7 @@ pub enum ReactorDispatch<M, E, D, Id: PeerId = net::SocketAddr> {
 /// [`ReactorDispatch::DisconnectPeer`] instruction.
 #[derive(Debug, Clone)]
 pub enum DisconnectReason<T> {
-    /// Error while dialing the remote. This error occures before a connection is
+    /// Error while dialing the remote. This error occurs before a connection is
     /// even established. Errors of this kind are usually not transient.
     DialError(Arc<io::Error>),
     /// Error with an underlying established connection. Sometimes, reconnecting
@@ -141,7 +141,7 @@ pub trait PeerService<Id: PeerId = net::SocketAddr>: PeerProtocol<Id, PeerMessag
 /// State machine generates instructions to the reactor by operating as an
 /// iterator over .
 pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
-    Iterator<Item = ReactorDispatch<<Self::PeerMessage as ToOwned>::Owned, Self::Notification, Self::DisconnectSubreason, Id>>
+    Iterator<Item = ReactorDispatch<<Self::PeerMessage as ToOwned>::Owned, Self::Notification, Self::DisconnectDemand, Id>>
 {
     /// Message type sent between peers.
     type PeerMessage: ToOwned + ?Sized;
@@ -150,9 +150,9 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
     /// the user thread via publisher provided to the reactor.
     type Notification;
 
-    /// Reason a peer was disconnected in case the disconnection was caused by
-    /// a state machine-specific reason.
-    type DisconnectSubreason;
+    /// Reason a peer was disconnected in case the disconnection was demanded by
+    /// this protocol.
+    type DisconnectDemand;
 
     /// Initialize the state machine. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
@@ -179,7 +179,7 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
     /// Called whenever remote peer got disconnected, either because of the
     /// network event or due to a local instruction from this state machine in
     /// form of [`ReactorDispatch::Disconnect`]
-    fn disconnected(&mut self, remote_peer: &Id, reason: DisconnectReason<Self::DisconnectSubreason>);
+    fn disconnected(&mut self, remote_peer: &Id, reason: DisconnectReason<Self::DisconnectDemand>);
 
     /// Called by the reactor every time the event loop gets data from the network.
     ///
@@ -189,12 +189,11 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
     /// every second."
     fn tick(&mut self, local_time: LocalTime);
 
-    /// Called by the reactor after a timeout whenever an Io::Wakeup was received
-    /// by the reactor from this state machine iterator. Used to advance the state
-    /// machine after some timer rings.
+    /// Called by the reactor after a timeout whenever an [`ReactorDispatch::SetTimer`]
+    /// was received by the reactor from this iterator.
     ///
-    /// NB: called together with [`StateMachine::wake`]
-    fn wake(&mut self);
+    /// NB: on each of this calls [`StateMachine::tick`] is also called.
+    fn on_timer(&mut self);
 }
 
 /// Used by certain types of reactors to wake the event loop to receive a user

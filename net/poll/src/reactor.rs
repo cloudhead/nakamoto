@@ -83,7 +83,7 @@ impl<R: Write + Read + AsRawFd, Id: PeerId> Reactor<R, Id> {
     fn unregister_peer<S>(
         &mut self,
         addr: Id,
-        reason: DisconnectReason<S::DisconnectSubreason>,
+        reason: DisconnectReason<S::DisconnectDemand>,
         service: &mut S,
     ) where
         S: PeerService<Id>,
@@ -132,7 +132,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
     ) -> Result<(), Error>
     where
         S: PeerService<Id>,
-        S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
+        S::DisconnectDemand: Into<DisconnectReason<S::DisconnectDemand>>,
         E: Publisher<S::Notification>,
     {
         let listener = if listen_addrs.is_empty() {
@@ -262,7 +262,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
 
                     if !timeouts.is_empty() {
                         timeouts.clear();
-                        service.wake();
+                        service.on_timer();
                     }
                 }
                 Err(err) => return Err(err.into()),
@@ -285,7 +285,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
     where
         S: PeerService<Id>,
         E: Publisher<S::Notification>,
-        S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
+        S::DisconnectDemand: Into<DisconnectReason<S::DisconnectDemand>>,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.

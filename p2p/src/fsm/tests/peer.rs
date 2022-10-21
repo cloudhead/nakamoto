@@ -209,11 +209,11 @@ impl Peer<Protocol> {
     pub fn elapse(&mut self, duration: LocalDuration) {
         let time = self.clock.local_time();
         self.clock.borrow_mut().set_local_time(time + duration);
-        self.protocol.wake();
+        self.protocol.on_timer();
     }
 
     pub fn tock(&mut self) {
-        self.protocol.wake();
+        self.protocol.on_timer();
     }
 
     pub fn outputs(&mut self) -> impl Iterator<Item = Io> + '_ {

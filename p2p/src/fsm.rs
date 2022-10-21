@@ -761,7 +761,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
 {
     type PeerMessage = RawNetworkMessage;
     type Notification = Event;
-    type DisconnectSubreason = DisconnectReason;
+    type DisconnectDemand = DisconnectReason;
 
     fn initialize(&mut self, time: LocalTime) {
         self.clock.set(time);
@@ -996,7 +996,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         self.clock.set(local_time);
     }
 
-    fn wake(&mut self) {
+    fn on_timer(&mut self) {
         trace!("Received wake");
 
         self.invmgr.received_wake(&self.tree);

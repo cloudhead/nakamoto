@@ -167,11 +167,11 @@ where
     T: PeerProtocol,
 {
     /// Inbox of inputs to be delivered by the simulation.
-    inbox: Inbox<<T::PeerMessage as ToOwned>::Owned, T::DisconnectSubreason>,
+    inbox: Inbox<<T::PeerMessage as ToOwned>::Owned, T::DisconnectDemand>,
     /// Events emitted during simulation.
     events: BTreeMap<NodeId, VecDeque<T::Notification>>,
     /// Priority events that should happen immediately.
-    priority: VecDeque<Scheduled<<T::PeerMessage as ToOwned>::Owned, T::DisconnectSubreason>>,
+    priority: VecDeque<Scheduled<<T::PeerMessage as ToOwned>::Owned, T::DisconnectDemand>>,
     /// Simulated latencies between nodes.
     latencies: BTreeMap<(NodeId, NodeId), LocalDuration>,
     /// Network partitions between two nodes.
@@ -193,7 +193,7 @@ where
 impl<T> Simulation<T>
 where
     T: PeerProtocol + 'static,
-    T::DisconnectSubreason: Clone + fmt::Debug + fmt::Display,
+    T::DisconnectDemand: Clone + fmt::Debug + fmt::Display,
 
     <T::PeerMessage as ToOwned>::Owned: fmt::Debug + Clone,
 {
@@ -394,7 +394,7 @@ where
                             p.disconnected(&addr, reason);
                         }
                     }
-                    Input::Wake => p.wake(),
+                    Input::Wake => p.on_timer(),
                     Input::Received(addr, msg) => {
                         p.received(&addr, Cow::Owned(msg));
                     }
@@ -416,7 +416,7 @@ where
     pub fn schedule(
         &mut self,
         node: &NodeId,
-        out: ReactorDispatch<<T::PeerMessage as ToOwned>::Owned, T::Notification, T::DisconnectSubreason, net::SocketAddr>,
+        out: ReactorDispatch<<T::PeerMessage as ToOwned>::Owned, T::Notification, T::DisconnectDemand, net::SocketAddr>,
     ) {
         let node = *node;
 

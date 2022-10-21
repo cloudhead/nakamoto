@@ -80,7 +80,7 @@ where
 {
     type PeerMessage = [u8];
     type Notification = p2p::Event;
-    type DisconnectSubreason = p2p::DisconnectReason;
+    type DisconnectDemand = p2p::DisconnectReason;
 
     fn initialize(&mut self, time: LocalTime) {
         self.machine.initialize(time);
@@ -90,8 +90,8 @@ where
         self.machine.tick(local_time);
     }
 
-    fn wake(&mut self) {
-        self.machine.wake();
+    fn on_timer(&mut self) {
+        self.machine.on_timer();
     }
 
     fn received(&mut self, addr: &net::SocketAddr, bytes: Cow<[u8]>) {
@@ -130,7 +130,7 @@ where
     fn disconnected(
         &mut self,
         addr: &net::SocketAddr,
-        reason: DisconnectReason<Self::DisconnectSubreason>,
+        reason: DisconnectReason<Self::DisconnectDemand>,
     ) {
         self.inboxes.remove(addr);
         self.machine.disconnected(addr, reason)
