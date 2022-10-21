@@ -123,7 +123,7 @@ pub trait PeerService<Id: PeerId = net::SocketAddr>: PeerProtocol<Id, PeerMessag
     /// Commands handled by service. These commands should originate from an
     /// external "user" thread. They are passed through crossbeam channel provided
     /// in the `commands_channel` argument to the [`Reactor::run`] method. The
-    /// commands are processed by the reactor calling [`Service::command_received`]
+    /// commands are processed by the reactor calling [`Self::command_received`]
     /// method.
     type Command;
 
@@ -177,9 +177,9 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
     /// Connection attempt underway.
     ///
     /// This is only encountered when an outgoing connection attempt is made,
-    /// and is always called before [`StateMachine::connected`].
+    /// and is always called before [`Self::connected`].
     ///
-    /// For incoming connections, [`StateMachine::connected`] is called directly.
+    /// For incoming connections, [`Self::connected`] is called directly.
     fn attempted(&mut self, remote_peer: &Id);
 
     /// Called whenever a new connection with a peer is established.
@@ -187,7 +187,7 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
 
     /// Called whenever remote peer got disconnected, either because of the
     /// network event or due to a local instruction from this state machine in
-    /// form of [`ReactorDispatch::Disconnect`]
+    /// form of [`ReactorDispatch::DisconnectPeer`]
     fn disconnected(&mut self, remote_peer: &Id, reason: DisconnectReason<Self::DisconnectDemand>);
 
     /// Called by the reactor every time the event loop gets data from the network.
@@ -201,7 +201,7 @@ pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
     /// Called by the reactor after a timeout whenever an [`ReactorDispatch::SetTimer`]
     /// was received by the reactor from this iterator.
     ///
-    /// NB: on each of this calls [`StateMachine::tick`] is also called.
+    /// NB: on each of this calls [`Self::tick`] is also called.
     fn on_timer(&mut self);
 }
 

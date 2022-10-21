@@ -129,8 +129,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
         mut service: impl PeerService<Id, Notification = N, Command = C>,
         mut publisher: impl Publisher<N>,
         commands: chan::Receiver<C>,
-    ) -> Result<(), Error>
-    {
+    ) -> Result<(), Error> {
         let listener = if listen_addrs.is_empty() {
             None
         } else {

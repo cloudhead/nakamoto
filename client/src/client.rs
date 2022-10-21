@@ -372,12 +372,8 @@ where
     where
         P: nakamoto_net::PeerService<Notification = fsm::Event, Command = Command>,
     {
-        self.reactor.run(
-            &listen,
-            protocol,
-            self.publisher,
-            self.commands,
-        )?;
+        self.reactor
+            .run(&listen, protocol, self.publisher, self.commands)?;
 
         Ok(())
     }
