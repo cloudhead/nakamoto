@@ -20,7 +20,7 @@ use nakamoto_common::p2p::peer::KnownAddress;
 use nakamoto_test::block::cache::model;
 
 use nakamoto_net::event;
-use nakamoto_net::StateMachine as _;
+use nakamoto_net::PeerProtocol as _;
 use nakamoto_p2p::fsm;
 use nakamoto_p2p::fsm::Command;
 use nakamoto_p2p::fsm::Link;

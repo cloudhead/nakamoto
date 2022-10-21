@@ -370,7 +370,7 @@ where
     /// its own thread.
     pub fn run_with<P>(mut self, listen: Vec<net::SocketAddr>, protocol: P) -> Result<(), Error>
     where
-        P: nakamoto_net::Service<Event = fsm::Event, Command = Command>,
+        P: nakamoto_net::PeerService<Event = fsm::Event, Command = Command>,
     {
         self.reactor.run::<P, Publisher<fsm::Event>>(
             &listen,

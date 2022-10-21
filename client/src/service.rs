@@ -7,7 +7,7 @@ use std::sync::Arc;
 use nakamoto_chain::BlockTree;
 use nakamoto_common::bitcoin::consensus::Encodable;
 use nakamoto_common::block::time::{AdjustedClock, LocalTime};
-use nakamoto_net::{DisconnectReason, ReactorDispatch, Link, StateMachine};
+use nakamoto_net::{DisconnectReason, ReactorDispatch, Link, PeerProtocol};
 use nakamoto_p2p as p2p;
 
 use crate::client::Config;
@@ -56,7 +56,7 @@ impl<T: BlockTree, F: filter::Filters, P: peer::Store, C: AdjustedClock<net::Soc
     }
 }
 
-impl<T, F, P, C> nakamoto_net::Service for Service<T, F, P, C>
+impl<T, F, P, C> nakamoto_net::PeerService for Service<T, F, P, C>
 where
     T: BlockTree,
     F: filter::Filters,
@@ -71,7 +71,7 @@ where
     }
 }
 
-impl<T, F, P, C> StateMachine for Service<T, F, P, C>
+impl<T, F, P, C> PeerProtocol for Service<T, F, P, C>
 where
     T: BlockTree,
     F: filter::Filters,

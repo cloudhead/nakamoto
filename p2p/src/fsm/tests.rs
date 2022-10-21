@@ -29,7 +29,7 @@ use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin_hashes::hex::FromHex;
 use nakamoto_common::block::time::Clock as _;
 use nakamoto_net::simulator::{Options, Peer as _, Simulation};
-use nakamoto_net::{Link, LocalDuration, LocalTime, StateMachine as _};
+use nakamoto_net::{Link, LocalDuration, LocalTime, PeerProtocol as _};
 
 use quickcheck_macros::quickcheck;
 

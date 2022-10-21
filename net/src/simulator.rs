@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ops::{Deref, DerefMut, Range};
 use std::{fmt, io, net};
 
-use crate::StateMachine;
+use crate::PeerProtocol;
 
 #[cfg(feature = "quickcheck")]
 pub mod arbitrary;
@@ -26,7 +26,7 @@ type NodeId = net::IpAddr;
 /// A simulated peer. Protocol instances have to be wrapped in this type to be simulated.
 pub trait Peer<P>: Deref<Target = P> + DerefMut<Target = P> + 'static
 where
-    P: StateMachine,
+    P: PeerProtocol,
 {
     /// Initialize the peer. This should at minimum initialize the protocol with the
     /// current time.
@@ -164,7 +164,7 @@ impl Default for Options {
 /// A peer-to-peer node simulation.
 pub struct Simulation<T>
 where
-    T: StateMachine,
+    T: PeerProtocol,
 {
     /// Inbox of inputs to be delivered by the simulation.
     inbox: Inbox<<T::PeerMessage as ToOwned>::Owned, T::DisconnectSubreason>,
@@ -192,7 +192,7 @@ where
 
 impl<T> Simulation<T>
 where
-    T: StateMachine + 'static,
+    T: PeerProtocol + 'static,
     T::DisconnectSubreason: Clone + Into<DisconnectReason<T::DisconnectSubreason>>,
 
     <T::PeerMessage as ToOwned>::Owned: fmt::Debug + Clone,

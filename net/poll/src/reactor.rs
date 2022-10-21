@@ -5,7 +5,7 @@ use nakamoto_net::error::Error;
 use nakamoto_net::event::Publisher;
 use nakamoto_net::time::{LocalDuration, LocalTime};
 use nakamoto_net::{DisconnectReason, ReactorDispatch, PeerId};
-use nakamoto_net::{Link, Service};
+use nakamoto_net::{Link, PeerService};
 
 use log::*;
 
@@ -86,7 +86,7 @@ impl<R: Write + Read + AsRawFd, Id: PeerId> Reactor<R, Id> {
         reason: DisconnectReason<S::DisconnectSubreason>,
         service: &mut S,
     ) where
-        S: Service<Id>,
+        S: PeerService<Id>,
     {
         self.connecting.remove(&addr);
         self.peers.remove(&addr);
@@ -131,7 +131,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
         commands: chan::Receiver<S::Command>,
     ) -> Result<(), Error>
     where
-        S: Service<Id>,
+        S: PeerService<Id>,
         S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
         E: Publisher<S::Event>,
     {
@@ -283,7 +283,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
     /// Process service state machine outputs.
     fn process<S, E>(&mut self, service: &mut S, publisher: &mut E, local_time: LocalTime)
     where
-        S: Service<Id>,
+        S: PeerService<Id>,
         E: Publisher<S::Event>,
         S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
     {
@@ -350,7 +350,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
 
     fn handle_readable<S>(&mut self, addr: Id, service: &mut S)
     where
-        S: Service<Id>,
+        S: PeerService<Id>,
     {
         // Nb. If the socket was readable and writable at the same time, and it was disconnected
         // during an attempt to write, it will no longer be registered and hence available
@@ -404,7 +404,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
         }
     }
 
-    fn handle_writable<S: Service<Id>>(
+    fn handle_writable<S: PeerService<Id>>(
         &mut self,
         addr: Id,
         source: &Source<Id>,

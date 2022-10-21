@@ -108,13 +108,11 @@ where
     }
 }
 
-/// A network service.
+/// Peer network service which may be controlled from multiple user threads
+/// user thread outside of the network event loop.
 ///
 /// Network protocols must implement this trait to be drivable by the reactor.
-///
-/// A service is a protocols state machine which can be controlled from external
-/// user thread outside of the network event loop.
-pub trait Service<Id: PeerId = net::SocketAddr>: StateMachine<Id, PeerMessage = [u8]> {
+pub trait PeerService<Id: PeerId = net::SocketAddr>: PeerProtocol<Id, PeerMessage = [u8]> {
     /// Commands handled by service. These commands should originate from an
     /// external "user" thread. They are passed through crossbeam channel provided
     /// in the `commands_channel` argument to the [`Reactor::run`] method. The
@@ -127,7 +125,7 @@ pub trait Service<Id: PeerId = net::SocketAddr>: StateMachine<Id, PeerMessage = 
     fn command_received(&mut self, cmd: Self::Command);
 }
 
-/// A state-machine for a network protocol business logic.
+/// Peer network protocol business logic.
 ///
 /// This trait defines API for connecting specific protocol business logic to the
 /// reactor implementation. It is parametrized by a peer id, which is the id
@@ -135,7 +133,7 @@ pub trait Service<Id: PeerId = net::SocketAddr>: StateMachine<Id, PeerMessage = 
 ///
 /// State machine generates instructions to the reactor by operating as an
 /// iterator over .
-pub trait StateMachine<Id: PeerId = net::SocketAddr>:
+pub trait PeerProtocol<Id: PeerId = net::SocketAddr>:
     Iterator<Item = ReactorDispatch<<Self::PeerMessage as ToOwned>::Owned, Self::Event, Self::DisconnectSubreason, Id>>
 {
     /// Message type sent between peers.
@@ -237,7 +235,7 @@ pub trait Reactor<Id: PeerId = net::SocketAddr> {
         commands_channel: chan::Receiver<S::Command>,
     ) -> Result<(), error::Error>
     where
-        S: Service<Id>,
+        S: PeerService<Id>,
         S::DisconnectSubreason: Into<DisconnectReason<S::DisconnectSubreason>>,
         E: Publisher<S::Event>;
 
