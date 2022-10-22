@@ -314,9 +314,9 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
         }
 
         for addr in reconnect {
-            let connecting = self.connect(&addr);
-            // FIXME: This fails in rare cases.
-            assert!(connecting);
+            if !self.connect(&addr) {
+                log::error!(target: "p2p", "Couldn't establish connection with {addr}");
+            }
         }
     }
 
@@ -787,6 +787,9 @@ impl<U: Connect + Disconnect + Wakeup + Wire<Event>, C: Clock> PeerManager<U, C>
     pub fn connect(&mut self, addr: &PeerId) -> bool {
         let time = self.clock.local_time();
 
+        if self.is_connected(addr) || self.is_connecting(addr) {
+            return true;
+        }
         if !self.is_disconnected(addr) && !self.is_disconnecting(addr) {
             return false;
         }
