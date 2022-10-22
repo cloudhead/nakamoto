@@ -855,6 +855,12 @@ impl<U: Connect + Disconnect + Wakeup + Wire<Event>, C: Clock> PeerManager<U, C>
 
     /// Attempt to maintain a certain number of outbound peers.
     fn maintain_connections<A: AddressSource>(&mut self, addrs: &mut A) {
+        // If we have persistent peers configured, we don't use this mechanism for maintaining
+        // connections. Instead, we retry the configured peers.
+        if !self.config.persistent.is_empty() {
+            return;
+        }
+
         let delta = self.delta();
         let negotiated = self.negotiated(Link::Outbound).count();
         let target = self.config.target_outbound_peers;
