@@ -239,13 +239,12 @@ pub struct PeerManager<U, C> {
     /// Peer manager configuration.
     pub config: Config,
 
-    retry_at: HashMap<net::SocketAddr, LocalTime>,
-    retry_attempts: HashMap<net::SocketAddr, u32>,
-
     /// Last time we were idle.
     last_idle: Option<LocalTime>,
     /// Connection states.
     peers: HashMap<net::SocketAddr, Peer>,
+    /// Peers that have been disconnected and a retry attempt is scheduled.
+    disconnected: HashMap<net::SocketAddr, (Option<LocalTime>, usize)>,
     upstream: U,
     rng: fastrand::Rng,
     hooks: Hooks,
@@ -256,13 +255,13 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
     /// Create a new peer manager.
     pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, upstream: U, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
+        let disconnected = HashMap::with_hasher(rng.clone().into());
 
         Self {
             config,
-            retry_at: HashMap::with_hasher(rng.clone().into()),
-            retry_attempts: HashMap::with_hasher(rng.clone().into()),
             last_idle: None,
             peers,
+            disconnected,
             upstream,
             rng,
             hooks,
@@ -272,16 +271,11 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
 
     /// Initialize the peer manager. Must be called once.
     pub fn initialize<A: AddressSource>(&mut self, addrs: &mut A) {
-        let peers = self
-            .config
-            .persistent
-            .iter()
-            .take(self.config.target_outbound_peers)
-            .cloned()
-            .collect::<Vec<_>>();
+        let peers = self.config.persistent.clone();
 
         for addr in peers {
             if !self.connect(&addr) {
+                // TODO: Return error here, or send event.
                 panic!(
                     "{}: unable to connect to persistent peer: {}",
                     source!(),
@@ -293,34 +287,36 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
         self.maintain_connections(addrs);
     }
 
-    fn retrier_add_peer(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
-        let attempts = self.retry_attempts.entry(*addr).or_default();
-        let delay = LocalDuration::from_secs(2_u64.saturating_pow(*attempts))
+    /// A persistent peer has been disconnected.
+    fn persistent_disconnected(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
+        let (retry_at, attempts) = self.disconnected.entry(*addr).or_default();
+        let delay = LocalDuration::from_secs(2u64.saturating_pow(*attempts as u32))
             .clamp(self.config.retry_min_wait, self.config.retry_max_wait);
-        self.retry_at.insert(*addr, local_time + delay);
-        self.upstream.wakeup(delay);
+
+        *retry_at = Some(local_time + delay);
         *attempts += 1;
+
+        self.upstream.wakeup(delay);
     }
 
-    fn retrier_remove_peer(&mut self, addr: &net::SocketAddr) {
-        debug_assert!(self.is_connected(addr));
-        self.retry_attempts.remove(addr);
-        self.retry_at.remove(addr);
-    }
-
-    fn retrier_reconnect(&mut self) {
+    /// Maintain persistent peer connections.
+    fn maintain_persistent(&mut self) {
         let local_time = self.clock.local_time();
-        let peers: Vec<_> = self
-            .retry_at
-            .iter()
-            .filter(|(_, v)| *v <= &local_time)
-            .map(|(k, _)| *k)
-            .collect();
+        let mut reconnect = Vec::new();
 
-        for peer in peers {
-            let connecting = self.connect(&peer);
+        for (addr, (retry_at, _)) in &mut self.disconnected {
+            if let Some(t) = retry_at {
+                if *t <= local_time {
+                    *retry_at = None;
+                    reconnect.push(*addr);
+                }
+            }
+        }
+
+        for addr in reconnect {
+            let connecting = self.connect(&addr);
+            // FIXME: This fails in rare cases.
             assert!(connecting);
-            self.retry_at.remove(&peer);
         }
     }
 
@@ -357,7 +353,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
                 peer: None,
             },
         );
-        self.retrier_remove_peer(&addr);
+        self.disconnected.remove(&addr);
 
         match link {
             Link::Inbound => {
@@ -405,11 +401,10 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
                 self.upstream.event(Event::ConnectionFailed(*addr, err));
             }
         }
-
         self.peers.remove(addr);
 
         if self.config.persistent.contains(addr) {
-            self.retrier_add_peer(addr, local_time);
+            self.persistent_disconnected(addr, local_time);
         } else {
             // If an outbound peer disconnected, we should make sure to maintain
             // our target outbound connection count.
@@ -667,8 +662,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
             self.upstream.wakeup(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
-
-        self.retrier_reconnect();
+        self.maintain_persistent();
     }
 
     /// Whitelist a peer.
