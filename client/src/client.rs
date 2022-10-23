@@ -27,6 +27,7 @@ use nakamoto_common::block::tree::{self, BlockReader, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::{Source, Store as _};
+use nakamoto_p2p::fsm;
 
 pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
@@ -34,14 +35,13 @@ pub use nakamoto_net::event;
 pub use nakamoto_net::{Reactor, Waker};
 pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
 
-use nakamoto_p2p::fsm;
-
 pub use crate::error::Error;
 pub use crate::event::{Event, Loading};
 pub use crate::handle;
-pub use crate::peer;
 pub use crate::service::Service;
-pub use crate::spv;
+
+use crate::peer;
+use crate::spv;
 
 /// Client configuration.
 #[derive(Debug, Clone)]

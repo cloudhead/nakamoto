@@ -14,7 +14,7 @@ pub enum Error {
     #[error("client handle error: {0}")]
     Handle(#[from] handle::Error),
     #[error("client error: {0}")]
-    Client(#[from] nakamoto_client::error::Error),
+    Client(#[from] nakamoto_client::Error),
     #[error("i/o error: {0}")]
     Io(#[from] io::Error),
     #[error("input error: {0}")]

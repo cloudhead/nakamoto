@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use argh::FromArgs;
 
-use nakamoto_client::client::Network;
+use nakamoto_client::Network;
 use nakamoto_node::{logger, Domain};
 
 #[derive(FromArgs)]

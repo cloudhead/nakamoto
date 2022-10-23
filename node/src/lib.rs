@@ -4,8 +4,7 @@
 use std::net;
 use std::path::PathBuf;
 
-pub use nakamoto_client::client::{self, Client, Config, Network};
-pub use nakamoto_client::error::Error;
+pub use nakamoto_client::{Client, Config, Error, Network};
 pub use nakamoto_client::{Domain, LoadingHandler};
 
 pub mod logger;
