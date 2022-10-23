@@ -34,7 +34,6 @@ use crate::spv;
 pub struct Client {
     // Used by tests.
     pub network: Network,
-    pub events: chan::Sender<fsm::Event>,
     pub blocks: chan::Sender<(Block, Height)>,
     pub filters: chan::Sender<(BlockFilter, BlockHash, Height)>,
     pub subscriber: event::Broadcast<fsm::Event, Event>,
@@ -48,7 +47,6 @@ pub struct Client {
     >,
 
     // Used in handle.
-    events_: chan::Receiver<fsm::Event>,
     blocks_: chan::Receiver<(Block, Height)>,
     filters_: chan::Receiver<(BlockFilter, BlockHash, Height)>,
     subscriber_: event::Subscriber<Event>,
@@ -67,7 +65,6 @@ impl Client {
         TestHandle {
             tip: (0, self.network.genesis()),
             network: self.network,
-            events: self.events_.clone(),
             blocks: self.blocks_.clone(),
             filters: self.filters_.clone(),
             subscriber: self.subscriber_.clone(),
@@ -91,7 +88,6 @@ impl Client {
             match out {
                 fsm::Io::Event(event) => {
                     self.subscriber.broadcast(event.clone());
-                    self.events.send(event).ok();
                 }
                 _ => outputs.push(out),
             }
@@ -102,7 +98,6 @@ impl Client {
 
 impl Default for Client {
     fn default() -> Self {
-        let (events, events_) = chan::unbounded();
         let (blocks, blocks_) = chan::unbounded();
         let (filters, filters_) = chan::unbounded();
         let (commands_, commands) = chan::unbounded();
@@ -126,8 +121,6 @@ impl Default for Client {
             network,
             protocol,
             loading,
-            events,
-            events_,
             blocks,
             blocks_,
             filters,
@@ -146,7 +139,6 @@ pub struct TestHandle {
 
     #[allow(dead_code)]
     network: Network,
-    events: chan::Receiver<fsm::Event>,
     blocks: chan::Receiver<(Block, Height)>,
     filters: chan::Receiver<(BlockFilter, BlockHash, Height)>,
     subscriber: event::Subscriber<Event>,
@@ -257,10 +249,6 @@ impl Handle for TestHandle {
 
     fn wait_for_height(&self, _h: Height) -> Result<BlockHash, handle::Error> {
         unimplemented!()
-    }
-
-    fn events(&self) -> chan::Receiver<fsm::Event> {
-        self.events.clone()
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {

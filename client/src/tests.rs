@@ -14,7 +14,6 @@ use nakamoto_common::block::time::AdjustedTime;
 use nakamoto_common::block::Height;
 use nakamoto_common::network::Services;
 use nakamoto_net::event;
-use nakamoto_p2p::fsm;
 use nakamoto_test::{logger, BITCOIN_HEADERS};
 
 use crate::client::{self, Client, Config};
@@ -162,8 +161,8 @@ fn test_multiple_handle_events() {
 
     let alice = client.handle();
     let bob = alice.clone();
-    let alice_events = alice.events();
-    let bob_events = bob.events();
+    let alice_events = alice.subscribe();
+    let bob_events = bob.subscribe();
 
     thread::spawn(|| {
         let local_time = time::SystemTime::now().into();
@@ -181,7 +180,7 @@ fn test_multiple_handle_events() {
     event::wait(
         &alice_events,
         |e| match e {
-            fsm::Event::Ready { .. } => Some(()),
+            client::Event::Ready { .. } => Some(()),
             _ => None,
         },
         time::Duration::from_secs(2),
@@ -191,7 +190,7 @@ fn test_multiple_handle_events() {
     event::wait(
         &bob_events,
         |e| match e {
-            fsm::Event::Ready { .. } => Some(()),
+            client::Event::Ready { .. } => Some(()),
             _ => None,
         },
         time::Duration::from_secs(2),

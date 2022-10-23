@@ -84,7 +84,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
-    /// Subscribe to SPV events.
+    /// Subscribe to client events.
     fn subscribe(&self) -> chan::Receiver<Event>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
@@ -159,8 +159,6 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Wait for the node's active chain to reach a certain height. The hash at that height
     /// is returned.
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;
-    /// Listen on events.
-    fn events(&self) -> chan::Receiver<fsm::Event>;
     /// Shutdown the node process.
     fn shutdown(self) -> Result<(), Error>;
 }

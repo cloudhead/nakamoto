@@ -248,7 +248,7 @@ where
         let seeds = Vec::new();
         let (shutdown, shutdown_recv) = chan::bounded(1);
         let (listening_send, listening) = chan::bounded(1);
-        let reactor = R::new(shutdown_recv, listening_send)?;
+        let reactor = <R as Reactor>::new(shutdown_recv, listening_send)?;
         let handle = Handle {
             commands: commands_tx,
             events,
@@ -595,7 +595,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
     }
 
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, handle::Error> {
-        let events = self.events();
+        let events = self.events.subscribe();
         self.command(Command::Connect(addr))?;
 
         event::wait(
@@ -614,7 +614,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
     }
 
     fn disconnect(&self, addr: net::SocketAddr) -> Result<(), handle::Error> {
-        let events = self.events();
+        let events = self.events.subscribe();
 
         self.command(Command::Disconnect(addr))?;
         event::wait(
@@ -663,7 +663,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
     where
         F: FnMut(fsm::Event) -> Option<T>,
     {
-        let events = self.events();
+        let events = self.events.subscribe();
         let result = event::wait(&events, f, self.timeout)?;
 
         Ok(result)
@@ -674,7 +674,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         count: usize,
         required_services: impl Into<ServiceFlags>,
     ) -> Result<Vec<(net::SocketAddr, Height, ServiceFlags)>, handle::Error> {
-        let events = self.events();
+        let events = self.events.subscribe();
         let required_services = required_services.into();
 
         let negotiated = self.get_peers(required_services)?;
@@ -717,7 +717,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
     }
 
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, handle::Error> {
-        let events = self.events();
+        let events = self.events.subscribe();
 
         match self.get_block_by_height(h)? {
             Some(e) => Ok(e.block_hash()),
@@ -733,10 +733,6 @@ impl<W: Waker> handle::Handle for Handle<W> {
             )
             .map_err(handle::Error::from),
         }
-    }
-
-    fn events(&self) -> chan::Receiver<fsm::Event> {
-        self.events.subscribe()
     }
 
     fn shutdown(self) -> Result<(), handle::Error> {
