@@ -715,6 +715,7 @@ fn prop_connect_timeout(seed: u64) {
 }
 
 #[test]
+#[ignore]
 fn test_connect_to_peers() {
     quickcheck::QuickCheck::new()
         .tests(100)
