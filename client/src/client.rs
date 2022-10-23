@@ -179,8 +179,8 @@ pub struct ClientRunner<R> {
         RefClock<AdjustedTime<net::SocketAddr>>,
     >,
     listen: Vec<net::SocketAddr>,
-    publisher: Publisher<fsm::Event>,
     commands: chan::Receiver<Command>,
+    publisher: Publisher<fsm::Event>,
 
     reactor: R,
 }
@@ -197,15 +197,9 @@ impl<R: Reactor> ClientRunner<R> {
 
 /// A light-client process.
 pub struct Client<R: Reactor> {
-    handle: chan::Sender<Command>,
-    commands: chan::Receiver<Command>,
-    events: event::Subscriber<fsm::Event>,
-    blocks: event::Subscriber<(Block, Height)>,
-    filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    subscriber: event::Subscriber<Event>,
-    shutdown: chan::Sender<()>,
-    listening: chan::Receiver<net::SocketAddr>,
+    handle: Handle<R::Waker>,
     seeds: Vec<net::SocketAddr>,
+    commands: chan::Receiver<Command>,
     publisher: Publisher<fsm::Event>,
 
     reactor: R,
@@ -217,7 +211,7 @@ where
 {
     /// Create a new client.
     pub fn new() -> Result<Self, Error> {
-        let (handle, commands) = chan::unbounded::<Command>();
+        let (commands_tx, commands_rx) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(|e, p| p.emit(e));
         let (blocks_pub, blocks) = event::broadcast(|e, p| {
             if let fsm::Event::Inventory(fsm::InventoryEvent::BlockProcessed {
@@ -255,19 +249,24 @@ where
         let (shutdown, shutdown_recv) = chan::bounded(1);
         let (listening_send, listening) = chan::bounded(1);
         let reactor = R::new(shutdown_recv, listening_send)?;
-
-        Ok(Self {
+        let handle = Handle {
+            commands: commands_tx,
             events,
-            handle,
-            commands,
-            reactor,
             blocks,
             filters,
             subscriber,
-            publisher,
-            seeds,
+            waker: reactor.waker(),
+            timeout: time::Duration::from_secs(60),
             shutdown,
             listening,
+        };
+
+        Ok(Self {
+            handle,
+            commands: commands_rx,
+            publisher,
+            reactor,
+            seeds,
         })
     }
 
@@ -423,13 +422,13 @@ where
 
     /// Start the client process, supplying the block cache. This function is meant to be run in
     /// its own thread.
-    pub fn run_with<P>(mut self, listen: Vec<net::SocketAddr>, protocol: P) -> Result<(), Error>
+    pub fn run_with<T>(mut self, listen: Vec<net::SocketAddr>, service: T) -> Result<(), Error>
     where
-        P: nakamoto_net::Service<Event = fsm::Event, Command = Command>,
+        T: nakamoto_net::Service<Event = fsm::Event, Command = Command>,
     {
-        self.reactor.run::<P, Publisher<fsm::Event>>(
+        self.reactor.run::<T, Publisher<fsm::Event>>(
             &listen,
-            protocol,
+            service,
             self.publisher,
             self.commands,
         )?;
@@ -439,17 +438,7 @@ where
 
     /// Create a new handle to communicate with the client.
     pub fn handle(&self) -> Handle<R::Waker> {
-        Handle {
-            events: self.events.clone(),
-            waker: self.reactor.waker(),
-            commands: self.handle.clone(),
-            timeout: time::Duration::from_secs(60),
-            blocks: self.blocks.clone(),
-            filters: self.filters.clone(),
-            subscriber: self.subscriber.clone(),
-            shutdown: self.shutdown.clone(),
-            listening: self.listening.clone(),
-        }
+        self.handle.clone()
     }
 }
 
