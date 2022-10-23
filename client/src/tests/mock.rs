@@ -28,8 +28,8 @@ use nakamoto_p2p::fsm::Peer;
 use nakamoto_p2p::fsm::StateMachine;
 
 use crate::client::{chan, Event, Loading};
+use crate::event::Mapper;
 use crate::handle::{self, Handle};
-use crate::spv;
 
 pub struct Client {
     // Used by tests.
@@ -101,7 +101,7 @@ impl Default for Client {
         let (blocks, blocks_) = chan::unbounded();
         let (filters, filters_) = chan::unbounded();
         let (commands_, commands) = chan::unbounded();
-        let mut mapper = spv::Mapper::new();
+        let mut mapper = Mapper::default();
         let (subscriber, subscriber_) = event::broadcast(move |e, p| mapper.process(e, p));
         let loading = event::Emitter::default();
         let network = Network::default();

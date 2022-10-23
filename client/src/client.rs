@@ -36,12 +36,11 @@ pub use nakamoto_net::{Reactor, Waker};
 pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
 
 pub use crate::error::Error;
-pub use crate::event::{Event, Loading};
+pub use crate::event::{Event, Loading, Mapper};
 pub use crate::handle;
 pub use crate::service::Service;
 
 use crate::peer;
-use crate::spv;
 
 /// Client configuration.
 #[derive(Debug, Clone)]
@@ -217,8 +216,8 @@ where
             }
         });
         let (publisher, subscriber) = event::broadcast({
-            let mut spv = spv::Mapper::new();
-            move |e, p| spv.process(e, p)
+            let mut mapper = Mapper::default();
+            move |e, p| mapper.process(e, p)
         });
 
         let publisher = Publisher::default()
