@@ -85,7 +85,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
     /// Subscribe to client events.
-    fn subscribe(&self) -> chan::Receiver<Event>;
+    fn events(&self) -> chan::Receiver<Event>;
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Rescan the blockchain for matching scripts.

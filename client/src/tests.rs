@@ -161,8 +161,8 @@ fn test_multiple_handle_events() {
 
     let alice = client.handle();
     let bob = alice.clone();
-    let alice_events = alice.subscribe();
-    let bob_events = bob.subscribe();
+    let alice_events = alice.events();
+    let bob_events = bob.events();
 
     thread::spawn(|| {
         let local_time = time::SystemTime::now().into();

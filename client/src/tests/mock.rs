@@ -178,7 +178,7 @@ impl Handle for TestHandle {
         self.filters.clone()
     }
 
-    fn subscribe(&self) -> chan::Receiver<Event> {
+    fn events(&self) -> chan::Receiver<Event> {
         self.subscriber.subscribe()
     }
 

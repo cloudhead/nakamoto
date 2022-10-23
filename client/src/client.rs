@@ -568,7 +568,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         self.filters.subscribe()
     }
 
-    fn subscribe(&self) -> chan::Receiver<Event> {
+    fn events(&self) -> chan::Receiver<Event> {
         self.subscriber.subscribe()
     }
 

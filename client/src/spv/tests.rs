@@ -66,7 +66,7 @@ fn test_ready_event() {
     let network = Network::Regtest;
     let mut client = mock::Client::new(network);
     let handle = client.handle();
-    let events = handle.subscribe();
+    let events = handle.events();
     let time = LocalTime::now();
 
     client.protocol.initialize(time);
@@ -82,7 +82,7 @@ fn test_peer_connected_disconnected() {
     let handle = client.handle();
     let remote = ([44, 44, 44, 44], 8333).into();
     let local_addr = ([0, 0, 0, 0], 16333).into();
-    let events = handle.subscribe();
+    let events = handle.events();
 
     client
         .protocol
@@ -114,7 +114,7 @@ fn test_peer_connection_failed() {
     let mut client = mock::Client::new(network);
     let handle = client.handle();
     let remote = ([44, 44, 44, 44], 8333).into();
-    let events = handle.subscribe();
+    let events = handle.events();
 
     client.protocol.command(Command::Connect(remote));
     client.protocol.attempted(&remote);
@@ -148,7 +148,7 @@ fn test_peer_height_updated() {
     let remote = ([44, 44, 44, 44], 8333).into();
     let local_time = LocalTime::now();
     let local_addr = ([0, 0, 0, 0], 16333).into();
-    let events = handle.subscribe();
+    let events = handle.events();
 
     let version = |height: Height| -> NetworkMessage {
         NetworkMessage::Version(VersionMessage {
@@ -204,7 +204,7 @@ fn test_peer_negotiated() {
     let remote = ([44, 44, 44, 44], 8333).into();
     let local_time = LocalTime::now();
     let local_addr = ([0, 0, 0, 0], 16333).into();
-    let events = handle.subscribe();
+    let events = handle.events();
 
     client
         .protocol
@@ -258,7 +258,7 @@ fn prop_client_side_filtering(birth: Height, height: Height, seed: u64) -> TestR
         birth,
         height
     );
-    let subscriber = client.subscribe();
+    let subscriber = client.events();
 
     mock.subscriber
         .broadcast(fsm::Event::Chain(fsm::ChainEvent::Synced(
