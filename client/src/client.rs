@@ -29,18 +29,20 @@ use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::{Source, Store as _};
 use nakamoto_p2p::fsm;
 
-pub use nakamoto_common::network::{Network, Services};
+pub use nakamoto_common::network;
+pub use nakamoto_common::network::Network;
 pub use nakamoto_common::p2p::Domain;
 pub use nakamoto_net::event;
-pub use nakamoto_net::{Reactor, Waker};
 pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
 
 pub use crate::error::Error;
-pub use crate::event::{Event, Loading, Mapper};
+pub use crate::event::{Event, Loading};
 pub use crate::handle;
 pub use crate::service::Service;
 
+use crate::event::Mapper;
 use crate::peer;
+use nakamoto_net::{Reactor, Waker};
 
 /// Client configuration.
 #[derive(Debug, Clone)]
@@ -123,7 +125,7 @@ impl Default for Config {
 }
 
 /// The client's event publisher.
-pub struct Publisher<E> {
+struct Publisher<E> {
     publishers: Vec<Box<dyn nakamoto_net::Publisher<E>>>,
 }
 
@@ -186,10 +188,7 @@ pub struct Client<R: Reactor> {
     reactor: R,
 }
 
-impl<R: Reactor> Client<R>
-where
-    Publisher<fsm::Event>: event::Publisher<fsm::Event>,
-{
+impl<R: Reactor> Client<R> {
     /// Create a new client.
     pub fn new() -> Result<Self, Error> {
         let (commands_tx, commands_rx) = chan::unbounded::<Command>();
@@ -712,4 +711,9 @@ impl<W: Waker> handle::Handle for Handle<W> {
 
         Ok(())
     }
+}
+
+/// Client traits re-exports.
+pub mod traits {
+    pub use crate::handle::Handle;
 }

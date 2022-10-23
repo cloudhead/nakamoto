@@ -314,7 +314,7 @@ impl fmt::Display for TxStatus {
 
 /// Event mapper for client events.
 /// Consumes raw state machine events and emits [`Event`].
-pub struct Mapper {
+pub(crate) struct Mapper {
     /// Best height known.
     tip: Height,
     /// The height up to which we've processed filters and matching blocks.

@@ -14,8 +14,9 @@
 //! ```no_run
 //! use std::{net, thread};
 //!
-//! use nakamoto::client::{Client, Config, Error, Network, Services};
-//! use nakamoto::client::handle::Handle as _;
+//! use nakamoto::client::{Client, Config, Error};
+//! use nakamoto::client::network::{Network, Services};
+//! use nakamoto::client::traits::Handle as _;
 //!
 //! /// The network reactor we're going to use.
 //! type Reactor = nakamoto::net::poll::Reactor<net::TcpStream>;
