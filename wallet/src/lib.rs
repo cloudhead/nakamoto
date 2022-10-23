@@ -10,7 +10,7 @@ use std::{io, net, thread};
 use termion::raw::IntoRawMode;
 
 use nakamoto_client::handle::Handle;
-use nakamoto_client::Network;
+use nakamoto_client::{chan, Network};
 use nakamoto_client::{Client, Config, Limits};
 use nakamoto_common::bitcoin::util::bip32::DerivationPath;
 use nakamoto_common::block::Height;
@@ -46,7 +46,7 @@ pub fn run(
     let client = Client::<Reactor>::new()?;
     let handle = client.handle();
     let client_recv = handle.subscribe();
-    let loading_recv = handle.loading();
+    let (loading_send, loading_recv) = chan::unbounded();
 
     log::info!("Opening wallet file `{}`..", wallet.display());
 
@@ -64,7 +64,7 @@ pub fn run(
     // Start the signal handler thread.
     let t2 = thread::spawn(|| input::signals(signals_tx));
     // Start the network client in the background.
-    let t3 = thread::spawn(|| client.run(cfg));
+    let t3 = thread::spawn(|| client.load(cfg, loading_send)?.run());
 
     log::info!("Switching to alternative screen..");
 

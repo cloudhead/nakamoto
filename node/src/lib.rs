@@ -6,7 +6,7 @@ use std::path::PathBuf;
 
 pub use nakamoto_client::client::{self, Client, Config, Network};
 pub use nakamoto_client::error::Error;
-pub use nakamoto_client::Domain;
+pub use nakamoto_client::{Domain, LoadingHandler};
 
 pub mod logger;
 

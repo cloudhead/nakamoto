@@ -67,7 +67,6 @@ impl Client {
         TestHandle {
             tip: (0, self.network.genesis()),
             network: self.network,
-            loading: self.loading.subscriber(),
             events: self.events_.clone(),
             blocks: self.blocks_.clone(),
             filters: self.filters_.clone(),
@@ -150,7 +149,6 @@ pub struct TestHandle {
     events: chan::Receiver<fsm::Event>,
     blocks: chan::Receiver<(Block, Height)>,
     filters: chan::Receiver<(BlockFilter, BlockHash, Height)>,
-    loading: event::Subscriber<Loading>,
     subscriber: event::Subscriber<Event>,
     commands: chan::Sender<Command>,
 }
@@ -190,10 +188,6 @@ impl Handle for TestHandle {
 
     fn subscribe(&self) -> chan::Receiver<Event> {
         self.subscriber.subscribe()
-    }
-
-    fn loading(&self) -> chan::Receiver<Loading> {
-        self.loading.subscribe()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {

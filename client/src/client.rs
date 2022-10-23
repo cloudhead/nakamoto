@@ -15,6 +15,7 @@ pub use crossbeam_channel as chan;
 use nakamoto_chain::block::{store, Block};
 use nakamoto_chain::filter;
 use nakamoto_chain::filter::cache::FilterCache;
+use nakamoto_chain::filter::cache::StoredHeader;
 use nakamoto_chain::{block::cache::BlockCache, filter::BlockFilter};
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
@@ -29,12 +30,11 @@ use nakamoto_common::p2p::peer::{Source, Store as _};
 
 pub use nakamoto_common::network::{Network, Services};
 pub use nakamoto_common::p2p::Domain;
-
-use nakamoto_p2p::fsm;
-
 pub use nakamoto_net::event;
 pub use nakamoto_net::{Reactor, Waker};
 pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
+
+use nakamoto_p2p::fsm;
 
 pub use crate::error::Error;
 pub use crate::event::{Event, Loading};
@@ -64,6 +64,37 @@ pub struct Config {
     pub services: ServiceFlags,
     /// Configured limits.
     pub limits: Limits,
+}
+
+/// Configuration for loading event handling.
+#[derive(Default)]
+pub enum LoadingHandler {
+    /// Ignore events.
+    #[default]
+    Ignore,
+    /// Send events to given channel.
+    Channel(chan::Sender<Loading>),
+}
+
+impl From<chan::Sender<Loading>> for LoadingHandler {
+    fn from(c: chan::Sender<Loading>) -> Self {
+        Self::Channel(c)
+    }
+}
+
+impl LoadingHandler {
+    fn send(&self, event: Loading) -> ControlFlow<()> {
+        match self {
+            Self::Ignore => ControlFlow::Continue(()),
+            Self::Channel(channel) => {
+                if channel.send(event).is_ok() {
+                    ControlFlow::Continue(())
+                } else {
+                    ControlFlow::Break(())
+                }
+            }
+        }
+    }
 }
 
 impl Config {
@@ -139,6 +170,31 @@ where
     }
 }
 
+/// Runs a pre-loaded client.
+pub struct ClientRunner<R> {
+    service: Service<
+        BlockCache<store::File<BlockHeader>>,
+        FilterCache<store::File<StoredHeader>>,
+        peer::Cache,
+        RefClock<AdjustedTime<net::SocketAddr>>,
+    >,
+    listen: Vec<net::SocketAddr>,
+    publisher: Publisher<fsm::Event>,
+    commands: chan::Receiver<Command>,
+
+    reactor: R,
+}
+
+impl<R: Reactor> ClientRunner<R> {
+    /// Run a pre-loaded client.
+    pub fn run(mut self) -> Result<(), Error> {
+        self.reactor
+            .run(&self.listen, self.service, self.publisher, self.commands)?;
+
+        Ok(())
+    }
+}
+
 /// A light-client process.
 pub struct Client<R: Reactor> {
     handle: chan::Sender<Command>,
@@ -146,7 +202,6 @@ pub struct Client<R: Reactor> {
     events: event::Subscriber<fsm::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    loading: event::Emitter<Loading>,
     subscriber: event::Subscriber<Event>,
     shutdown: chan::Sender<()>,
     listening: chan::Receiver<net::SocketAddr>,
@@ -197,14 +252,12 @@ where
             .register(publisher);
 
         let seeds = Vec::new();
-        let loading = event::Emitter::default();
         let (shutdown, shutdown_recv) = chan::bounded(1);
         let (listening_send, listening) = chan::bounded(1);
         let reactor = R::new(shutdown_recv, listening_send)?;
 
         Ok(Self {
             events,
-            loading,
             handle,
             commands,
             reactor,
@@ -228,7 +281,17 @@ where
     }
 
     /// Start the client process. This function is meant to be run in its own thread.
-    pub fn run(mut self, config: Config) -> Result<(), Error> {
+    pub fn run(self, config: Config) -> Result<(), Error> {
+        self.load(config, LoadingHandler::Ignore)?.run()
+    }
+
+    /// Load the client data from disk.
+    pub fn load(
+        self,
+        config: Config,
+        loading: impl Into<LoadingHandler>,
+    ) -> Result<ClientRunner<R>, Error> {
+        let loading = loading.into();
         let home = config.root.join(".nakamoto");
         let network = config.network;
         let dir = home.join(network.as_str());
@@ -270,10 +333,8 @@ where
 
         log::info!(target: "client", "Loading block headers from store..");
 
-        let cache = BlockCache::new(store, params, &checkpoints)?.load_with(|height| {
-            self.loading.emit(Loading::BlockHeaderLoaded { height });
-            ControlFlow::Continue(())
-        })?;
+        let cache = BlockCache::new(store, params, &checkpoints)?
+            .load_with(|height| loading.send(Loading::BlockHeaderLoaded { height }))?;
 
         log::info!(target: "client", "Initializing block filters..");
 
@@ -301,18 +362,13 @@ where
         log::info!(target: "client", "Loading filter headers from store..");
 
         let filters = FilterCache::load_with(cfheaders_store, |height| {
-            self.loading.emit(Loading::FilterHeaderLoaded { height });
-            ControlFlow::Continue(())
+            loading.send(Loading::FilterHeaderLoaded { height })
         })?;
         log::info!(target: "client", "Verifying filter headers..");
 
         filters.verify_with(network, |height| {
-            self.loading.emit(Loading::FilterHeaderVerified { height });
-            ControlFlow::Continue(())
+            loading.send(Loading::FilterHeaderVerified { height })
         })?; // Verify store integrity.
-
-        // Loading is done, close all channels.
-        self.loading.close();
 
         log::info!(target: "client", "Loading peer addresses..");
 
@@ -356,14 +412,13 @@ where
             log::info!(target: "client", "{} seeds added to address book", peers.len());
         }
 
-        self.reactor.run(
-            &listen,
-            Service::new(cache, filters, peers, RefClock::from(clock), rng, config),
-            self.publisher,
-            self.commands,
-        )?;
-
-        Ok(())
+        Ok(ClientRunner {
+            listen,
+            commands: self.commands,
+            publisher: self.publisher,
+            reactor: self.reactor,
+            service: Service::new(cache, filters, peers, RefClock::from(clock), rng, config),
+        })
     }
 
     /// Start the client process, supplying the block cache. This function is meant to be run in
@@ -389,7 +444,6 @@ where
             waker: self.reactor.waker(),
             commands: self.handle.clone(),
             timeout: time::Duration::from_secs(60),
-            loading: self.loading.subscriber(),
             blocks: self.blocks.clone(),
             filters: self.filters.clone(),
             subscriber: self.subscriber.clone(),
@@ -405,7 +459,6 @@ pub struct Handle<W: Waker> {
     events: event::Subscriber<fsm::Event>,
     blocks: event::Subscriber<(Block, Height)>,
     filters: event::Subscriber<(BlockFilter, BlockHash, Height)>,
-    loading: event::Subscriber<Loading>,
     subscriber: event::Subscriber<Event>,
     waker: W,
     timeout: time::Duration,
@@ -421,7 +474,6 @@ impl<W: Waker> Clone for Handle<W> {
             events: self.events.clone(),
             filters: self.filters.clone(),
             subscriber: self.subscriber.clone(),
-            loading: self.loading.clone(),
             timeout: self.timeout,
             waker: self.waker.clone(),
             shutdown: self.shutdown.clone(),
@@ -529,10 +581,6 @@ impl<W: Waker> handle::Handle for Handle<W> {
 
     fn subscribe(&self) -> chan::Receiver<Event> {
         self.subscriber.subscribe()
-    }
-
-    fn loading(&self) -> chan::Receiver<Loading> {
-        self.loading.subscribe()
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {
