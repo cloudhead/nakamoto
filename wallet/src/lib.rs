@@ -1,4 +1,5 @@
 //! A TUI Bitcoin wallet.
+#![allow(clippy::too_many_arguments)]
 pub mod error;
 pub mod input;
 pub mod logger;
@@ -9,9 +10,10 @@ use std::{io, net, thread};
 
 use termion::raw::IntoRawMode;
 
+use nakamoto_client::chan;
 use nakamoto_client::handle::Handle;
-use nakamoto_client::{chan, Network};
-use nakamoto_client::{Client, Config, Limits};
+use nakamoto_client::Network;
+use nakamoto_client::{Client, Config};
 use nakamoto_common::bitcoin::util::bip32::DerivationPath;
 use nakamoto_common::block::Height;
 
@@ -27,18 +29,15 @@ type Reactor = nakamoto_net_poll::Reactor<net::TcpStream>;
 pub fn run(
     wallet: &Path,
     birth: Height,
-    connect: net::SocketAddr,
     hd_path: DerivationPath,
+    network: Network,
+    connect: Vec<net::SocketAddr>,
+    offline: bool,
 ) -> Result<(), Error> {
-    let network = Network::Mainnet;
     let cfg = Config {
         network,
+        connect,
         listen: vec![], // Don't listen for incoming connections.
-        connect: vec![connect],
-        limits: Limits {
-            max_outbound_peers: 1,
-            ..Limits::default()
-        },
         ..Config::default()
     };
 
@@ -64,7 +63,13 @@ pub fn run(
     // Start the signal handler thread.
     let t2 = thread::spawn(|| input::signals(signals_tx));
     // Start the network client in the background.
-    let t3 = thread::spawn(|| client.load(cfg, loading_send)?.run());
+    let t3 = thread::spawn(move || {
+        if offline {
+            Ok(())
+        } else {
+            client.load(cfg, loading_send)?.run()
+        }
+    });
 
     log::info!("Switching to alternative screen..");
 
@@ -81,6 +86,7 @@ pub fn run(
         signals_rx,
         loading_recv,
         client_recv,
+        offline,
         term,
     )?;
 

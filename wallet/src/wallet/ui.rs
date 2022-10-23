@@ -1,3 +1,5 @@
+mod table;
+
 use std::ops::ControlFlow;
 use std::{fmt, io, time};
 
@@ -11,6 +13,7 @@ use nakamoto_common::bitcoin::Address;
 use nakamoto_common::block::Height;
 
 use crate::wallet::db;
+use table::Table;
 
 /// Redraw flags. Sets what needs redrawing.
 type Redraw = u8;
@@ -25,6 +28,10 @@ const REDRAW_MAIN: Redraw = 0b0010;
 const REDRAW_FOOTER: Redraw = 0b0100;
 /// Redraw everything.
 const REDRAW_ALL: Redraw = REDRAW_MAIN | REDRAW_HEADER | REDRAW_FOOTER;
+/// Row number at which header area starts (1-indexed).
+const HEADER_ROW: u16 = 1;
+/// Row number at which main area starts (1-indexed).
+const MAIN_ROW: u16 = 3;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -39,7 +46,10 @@ pub struct Balance(u64);
 
 impl std::fmt::Display for Balance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:.4} BTC", self.0 as f64 / 100000000.0)
+        let number = self.0 as f64 / 100000000.0;
+        let formatted = format!("{:.4} BTC", number);
+
+        f.pad(&formatted)
     }
 }
 
@@ -139,6 +149,11 @@ impl Ui {
         Ok(())
     }
 
+    pub fn offline(&mut self, offline: bool) {
+        self.status = Status::Ready { height: 0, offline };
+        self.redraw |= REDRAW_HEADER;
+    }
+
     pub fn reset<W: io::Write>(&mut self, term: &mut W) -> io::Result<()> {
         self.size = termion::terminal_size()?.into();
 
@@ -156,7 +171,7 @@ impl Ui {
         write!(
             term,
             "{}{}{}",
-            termion::cursor::Goto(1, 2),
+            termion::cursor::Goto(1, HEADER_ROW + 1),
             termion::color::Fg(termion::color::Red),
             "▔".repeat(width as usize)
         )
@@ -167,9 +182,9 @@ impl Ui {
         self.redraw |= REDRAW_HEADER;
     }
 
-    pub fn handle_ready(&mut self, height: Height) {
+    pub fn handle_ready(&mut self, height: Height, offline: bool) {
         self.tip = height;
-        self.status = Status::Ready { height };
+        self.status = Status::Ready { height, offline };
         self.redraw |= REDRAW_HEADER;
     }
 
@@ -241,7 +256,7 @@ impl Ui {
 
 #[derive(Debug)]
 enum Status {
-    Ready { height: Height },
+    Ready { height: Height, offline: bool },
     LoadingBlockHeaders { height: Height },
     LoadingFilterHeaders { height: Height },
     Scanning { height: Height, tip: Height },
@@ -257,8 +272,12 @@ impl fmt::Display for Status {
         }
 
         match self {
-            Self::Ready { height } => {
-                write!(f, "Block height is {}..", height)
+            Self::Ready { height, offline } => {
+                if *offline {
+                    write!(f, "Ready (offline)")
+                } else {
+                    write!(f, "Ready (height {})", height)
+                }
             }
             Self::LoadingBlockHeaders { height } => {
                 write!(f, "Loading block header {}..", height)
@@ -336,7 +355,14 @@ pub fn refresh<D: db::Read, W: io::Write>(ui: &mut Ui, db: &D, term: &mut W) -> 
         draw_header(ui, term)?;
     }
     if ui.redraw | REDRAW_MAIN == ui.redraw {
-        draw_main(db, term)?;
+        write!(term, "{}{}", cursor::Goto(1, MAIN_ROW), clear::AfterCursor)?;
+        ui.redraw |= REDRAW_FOOTER;
+
+        match ui.tab {
+            Tab::Utxos => draw_utxo_tab(db, term)?,
+            Tab::Addresses => draw_addresses_tab(ui, db, term)?,
+            Tab::History => draw_history_tab(db, term)?,
+        }
     }
     if ui.redraw | REDRAW_FOOTER == ui.redraw {
         draw_footer(ui, term)?;
@@ -361,7 +387,12 @@ pub fn refresh<D: db::Read, W: io::Write>(ui: &mut Ui, db: &D, term: &mut W) -> 
 pub fn draw_header<W: io::Write>(ui: &Ui, term: &mut W) -> io::Result<()> {
     let balance = ui.align(&ui.balance).right();
 
-    write!(term, "{}{}", cursor::Goto(1, 1), clear::CurrentLine)?;
+    write!(
+        term,
+        "{}{}",
+        cursor::Goto(1, HEADER_ROW),
+        clear::CurrentLine
+    )?;
     write!(
         term,
         "{}{}{}",
@@ -381,7 +412,7 @@ pub fn draw_header<W: io::Write>(ui: &Ui, term: &mut W) -> io::Result<()> {
 
     let mut tabs = Vec::new();
 
-    write!(term, "{}", cursor::Goto(1, 1))?;
+    write!(term, "{}", cursor::Goto(1, HEADER_ROW))?;
 
     for tab in [Tab::Utxos, Tab::History, Tab::Addresses] {
         if ui.tab == tab {
@@ -406,7 +437,7 @@ pub fn draw_header<W: io::Write>(ui: &Ui, term: &mut W) -> io::Result<()> {
     Ok(())
 }
 
-pub fn draw_main<D: db::Read, W: io::Write>(db: &D, term: &mut W) -> Result<(), Error> {
+pub fn draw_utxo_tab<D: db::Read, W: io::Write>(db: &D, term: &mut W) -> Result<(), Error> {
     let utxos = db.utxos()?;
 
     for (i, (outpoint, txout)) in utxos.iter().enumerate() {
@@ -414,8 +445,9 @@ pub fn draw_main<D: db::Read, W: io::Write>(db: &D, term: &mut W) -> Result<(), 
 
         write!(
             term,
-            "{}{}{}{:.7} {}{} {}{:-10}",
-            cursor::Goto(1, 3 + i as u16),
+            "{}{}{}{}{:.7} {}{} {}{:>13}",
+            cursor::Goto(1, MAIN_ROW + i as u16),
+            clear::CurrentLine,
             color::Fg(color::Reset),
             style::Faint,
             outpoint.txid,
@@ -425,6 +457,30 @@ pub fn draw_main<D: db::Read, W: io::Write>(db: &D, term: &mut W) -> Result<(), 
             Balance(txout.value),
         )?;
     }
+    Ok(())
+}
+
+pub fn draw_addresses_tab<D: db::Read, W: io::Write>(
+    ui: &Ui,
+    db: &D,
+    term: &mut W,
+) -> Result<(), Error> {
+    let addresses = db.addresses()?;
+    let mut table = Table::default();
+
+    for address in addresses.iter() {
+        table.push([
+            address.index.to_string(),
+            address.address.to_string(),
+            Balance(address.received).to_string(),
+        ]);
+    }
+    table.render(ui.size.x as usize, MAIN_ROW, term)?;
+
+    Ok(())
+}
+
+pub fn draw_history_tab<D: db::Read, W: io::Write>(_db: &D, _term: &mut W) -> Result<(), Error> {
     Ok(())
 }
 
@@ -441,4 +497,15 @@ pub fn draw_footer<W: io::Write>(ui: &Ui, term: &mut W) -> io::Result<()> {
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_balance_fmt() {
+        let output = Balance(14912334245).to_string();
+        assert_eq!(output, "149.1233 BTC");
+    }
 }

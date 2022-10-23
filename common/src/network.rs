@@ -1,4 +1,5 @@
 //! Bitcoin peer network. Eg. *Mainnet*.
+use std::str::FromStr;
 
 use bitcoin::blockdata::block::{Block, BlockHeader};
 use bitcoin::consensus::params::Params;
@@ -50,6 +51,20 @@ pub enum Network {
 impl Default for Network {
     fn default() -> Self {
         Self::Mainnet
+    }
+}
+
+impl FromStr for Network {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "mainnet" | "bitcoin" => Ok(Self::Mainnet),
+            "testnet" => Ok(Self::Testnet),
+            "regtest" => Ok(Self::Regtest),
+            "signet" => Ok(Self::Signet),
+            _ => Err(format!("invalid network specified {:?}", s)),
+        }
     }
 }
 

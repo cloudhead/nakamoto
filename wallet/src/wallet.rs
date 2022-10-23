@@ -89,6 +89,7 @@ impl<H: Handle> Wallet<H> {
         signals: chan::Receiver<Signal>,
         loading: chan::Receiver<client::Loading>,
         events: chan::Receiver<client::Event>,
+        offline: bool,
         mut term: W,
     ) -> Result<(), Error> {
         let addresses = self.db.addresses()?;
@@ -99,13 +100,20 @@ impl<H: Handle> Wallet<H> {
                 Ok(addrs) => {
                     for (ix, addr) in addrs {
                         self.db.add_address(&addr, ix, None)?;
+                        self.watch.insert(addr);
                     }
                 }
                 Err(err) => {
                     log::warn!("Failed to request addresses from hardware device: {err}");
                 }
             }
+        } else {
+            for addr in addresses {
+                self.watch.insert(addr.address);
+            }
         }
+
+        // TODO: Don't rescan if watch list is empty.
 
         // Convert our address list into scripts.
         let watch: Vec<_> = self.watch.iter().map(|a| a.script_pubkey()).collect();
@@ -115,38 +123,43 @@ impl<H: Handle> Wallet<H> {
         self.ui.reset(&mut term)?;
         self.ui.decorations(&mut term)?;
         self.ui.set_balance(balance);
+        self.ui.offline(offline);
 
-        // Start a re-scan from the birht height, which keeps scanning as new blocks arrive.
-        self.client.rescan(birth.., watch.iter().cloned())?;
+        if offline {
+            ui::refresh(&mut self.ui, &self.db, &mut term)?;
+        } else {
+            // Start a re-scan from the birht height, which keeps scanning as new blocks arrive.
+            self.client.rescan(birth.., watch.iter().cloned())?;
 
-        // Loading...
-        loop {
-            chan::select! {
-                recv(inputs) -> input => {
-                    let input = input?;
+            // Loading...
+            loop {
+                chan::select! {
+                    recv(inputs) -> input => {
+                        let input = input?;
 
-                    if let Break(()) = self.ui.handle_input_event(input)? {
-                        return Ok(());
-                    }
-                }
-                recv(signals) -> signal => {
-                    let signal = signal?;
-
-                    if let Break(()) = self.handle_signal(signal, &mut term)? {
-                        return Ok(());
-                    }
-                }
-                recv(loading) -> event => {
-                    if let Ok(event) = event {
-                        if let Break(()) = self.ui.handle_loading_event(event)? {
+                        if let Break(()) = self.ui.handle_input_event(input)? {
                             return Ok(());
                         }
-                    } else {
-                        break;
+                    }
+                    recv(signals) -> signal => {
+                        let signal = signal?;
+
+                        if let Break(()) = self.handle_signal(signal, &mut term)? {
+                            return Ok(());
+                        }
+                    }
+                    recv(loading) -> event => {
+                        if let Ok(event) = event {
+                            if let Break(()) = self.ui.handle_loading_event(event)? {
+                                return Ok(());
+                            }
+                        } else {
+                            break;
+                        }
                     }
                 }
+                ui::refresh(&mut self.ui, &self.db, &mut term)?;
             }
-            ui::refresh(&mut self.ui, &self.db, &mut term)?;
         }
 
         // Running...
@@ -169,7 +182,7 @@ impl<H: Handle> Wallet<H> {
                 recv(events) -> event => {
                     let event = event?;
 
-                    if let Break(()) = self.handle_client_event(event, &watch)? {
+                    if let Break(()) = self.handle_client_event(event, &watch, offline, &mut term)? {
                         break;
                     }
                 }
@@ -208,16 +221,18 @@ impl<H: Handle> Wallet<H> {
         Ok(Continue(()))
     }
 
-    fn handle_client_event(
+    fn handle_client_event<W: io::Write>(
         &mut self,
         event: client::Event,
         watch: &[Script],
+        offline: bool,
+        term: &mut W,
     ) -> Result<ControlFlow<()>, Error> {
         log::debug!("Received event: {}", event);
 
         match event {
             client::Event::Ready { tip, .. } => {
-                self.ui.handle_ready(tip);
+                self.ui.handle_ready(tip, offline);
             }
             client::Event::PeerHeightUpdated { height } => {
                 self.ui.handle_peer_height(height);
@@ -235,6 +250,7 @@ impl<H: Handle> Wallet<H> {
                 }
                 let balance = self.balance()?;
                 self.ui.set_balance(balance);
+                self.ui.redraw(&self.db, term)?;
 
                 log::info!(
                     "Processed block at height #{} (balance = {})",
