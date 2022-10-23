@@ -105,21 +105,6 @@ impl Config {
             ..Self::default()
         }
     }
-
-    /// Add seeds to connect to.
-    pub fn seed<T: net::ToSocketAddrs + std::fmt::Debug>(&mut self, seeds: &[T]) -> io::Result<()> {
-        let connect = seeds
-            .iter()
-            .flat_map(|seed| match seed.to_socket_addrs() {
-                Ok(addrs) => addrs.map(Ok).collect(),
-                Err(err) => vec![Err(err)],
-            })
-            .collect::<io::Result<Vec<_>>>()?;
-
-        self.connect.extend(connect);
-
-        Ok(())
-    }
 }
 
 impl Default for Config {
@@ -198,7 +183,6 @@ impl<R: Reactor> ClientRunner<R> {
 /// A light-client process.
 pub struct Client<R: Reactor> {
     handle: Handle<R::Waker>,
-    seeds: Vec<net::SocketAddr>,
     commands: chan::Receiver<Command>,
     publisher: Publisher<fsm::Event>,
 
@@ -245,7 +229,6 @@ where
             .register(filters_pub)
             .register(publisher);
 
-        let seeds = Vec::new();
         let (shutdown, shutdown_recv) = chan::bounded(1);
         let (listening_send, listening) = chan::bounded(1);
         let reactor = <R as Reactor>::new(shutdown_recv, listening_send)?;
@@ -266,17 +249,7 @@ where
             commands: commands_rx,
             publisher,
             reactor,
-            seeds,
         })
-    }
-
-    /// Seed the client's address book with peer addresses.
-    pub fn seed<S: net::ToSocketAddrs>(&mut self, seeds: Vec<S>) -> Result<(), Error> {
-        for seed in seeds.into_iter() {
-            let addrs = seed.to_socket_addrs()?;
-            self.seeds.extend(addrs);
-        }
-        Ok(())
     }
 
     /// Start the client process. This function is meant to be run in its own thread.
