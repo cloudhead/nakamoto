@@ -57,8 +57,8 @@ fn network(
                 let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
                 let rng = fastrand::Rng::new();
 
-                node.run_with(
-                    vec![([0, 0, 0, 0], 0).into()],
+                node.run_service(
+                    &[([0, 0, 0, 0], 0).into()],
                     Service::new(cache, filters, peers, clock, rng, cfg),
                 )
                 .unwrap();
@@ -170,8 +170,8 @@ fn test_multiple_handle_events() {
         let rng = fastrand::Rng::new();
 
         client
-            .run_with(
-                vec![([0, 0, 0, 0], 0).into()],
+            .run_service(
+                &[([0, 0, 0, 0], 0).into()],
                 Service::new(cache, filters, peers, clock, rng, cfg),
             )
             .unwrap();
@@ -215,7 +215,7 @@ fn test_handle_shutdown() {
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
 
-        client.run_with(vec![], Service::new(cache, filters, peers, clock, rng, cfg))
+        client.run_service(&[], Service::new(cache, filters, peers, clock, rng, cfg))
     });
 
     handle.shutdown().unwrap();
@@ -251,8 +251,8 @@ fn test_query_headers() {
         let clock = AdjustedTime::<net::SocketAddr>::new(local_time);
         let rng = fastrand::Rng::new();
 
-        client.run_with(
-            vec![],
+        client.run_service(
+            &[],
             Service::new(cache, filters, HashMap::new(), clock, rng, cfg),
         )
     });

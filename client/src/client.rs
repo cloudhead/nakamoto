@@ -166,7 +166,6 @@ pub struct ClientRunner<R> {
     listen: Vec<net::SocketAddr>,
     commands: chan::Receiver<Command>,
     publisher: Publisher<fsm::Event>,
-
     reactor: R,
 }
 
@@ -185,7 +184,6 @@ pub struct Client<R: Reactor> {
     handle: Handle<R::Waker>,
     commands: chan::Receiver<Command>,
     publisher: Publisher<fsm::Event>,
-
     reactor: R,
 }
 
@@ -252,12 +250,8 @@ where
         })
     }
 
-    /// Start the client process. This function is meant to be run in its own thread.
-    pub fn run(self, config: Config) -> Result<(), Error> {
-        self.load(config, LoadingHandler::Ignore)?.run()
-    }
-
-    /// Load the client data from disk.
+    /// Load the client configuration. Takes a loading handler that can optionally receive
+    /// loading events.
     pub fn load(
         self,
         config: Config,
@@ -393,14 +387,19 @@ where
         })
     }
 
-    /// Start the client process, supplying the block cache. This function is meant to be run in
-    /// its own thread.
-    pub fn run_with<T>(mut self, listen: Vec<net::SocketAddr>, service: T) -> Result<(), Error>
+    /// Start the client process. This function is meant to be run in its own thread.
+    pub fn run(self, config: Config) -> Result<(), Error> {
+        self.load(config, LoadingHandler::Ignore)?.run()
+    }
+
+    /// Start the client process, supplying the service manually.
+    /// This function is meant to be run in its own thread.
+    pub fn run_service<T>(mut self, listen: &[net::SocketAddr], service: T) -> Result<(), Error>
     where
         T: nakamoto_net::Service<Event = fsm::Event, Command = Command>,
     {
         self.reactor.run::<T, Publisher<fsm::Event>>(
-            &listen,
+            listen,
             service,
             self.publisher,
             self.commands,
