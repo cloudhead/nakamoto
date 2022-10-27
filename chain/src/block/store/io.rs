@@ -1,8 +1,8 @@
 //! Persistent storage backend for blocks.
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, Read, Seek, Write};
 use std::iter;
-use std::marker::PhantomData;
 use std::mem;
 use std::path::Path;
 
@@ -36,13 +36,72 @@ fn get<H: Decodable, S: Seek + Read>(mut stream: S, ix: u64) -> Result<H, Error>
     H::consensus_decode(&mut buf.as_slice()).map_err(Error::from)
 }
 
+/// Reads from a file in an I/O optmized way.
+#[derive(Debug)]
+struct FileReader<H> {
+    file: fs::File,
+    queue: VecDeque<H>,
+    index: u64,
+}
+
+impl<H: Decodable> FileReader<H> {
+    const BATCH_SIZE: usize = 16;
+
+    fn new(file: fs::File) -> Self {
+        Self {
+            file,
+            queue: VecDeque::new(),
+            index: 0,
+        }
+    }
+
+    fn next(&mut self) -> Result<Option<H>, Error> {
+        let size = std::mem::size_of::<H>();
+
+        if self.queue.is_empty() {
+            let mut buf = vec![0; size * Self::BATCH_SIZE];
+            let from = self.file.seek(io::SeekFrom::Start(self.index))?;
+
+            match self.file.read_exact(&mut buf) {
+                Ok(()) => {}
+                Err(err) if err.kind() == io::ErrorKind::UnexpectedEof => {
+                    self.file.seek(io::SeekFrom::Start(from))?;
+                    let n = self.file.read_to_end(&mut buf)?;
+                    buf.truncate(n);
+                }
+                Err(err) => return Err(err.into()),
+            }
+            self.index += buf.len() as u64;
+
+            let items = buf.len() / size;
+            let mut cursor = io::Cursor::new(buf);
+            let mut item = vec![0; size];
+
+            for _ in 0..items {
+                cursor.read_exact(&mut item)?;
+
+                let item = H::consensus_decode(&mut item.as_slice())?;
+                self.queue.push_back(item);
+            }
+        }
+        Ok(self.queue.pop_front())
+    }
+}
+
 /// An iterator over block headers in a file.
 #[derive(Debug)]
 pub struct Iter<H> {
     height: Height,
-    file: fs::File,
+    file: FileReader<H>,
+}
 
-    _phantom: PhantomData<H>,
+impl<H: Decodable> Iter<H> {
+    fn new(file: fs::File) -> Self {
+        Self {
+            file: FileReader::new(file),
+            height: 1,
+        }
+    }
 }
 
 impl<H: Decodable> Iterator for Iter<H> {
@@ -53,17 +112,18 @@ impl<H: Decodable> Iterator for Iter<H> {
 
         assert!(height > 0);
 
-        match get(&mut self.file, height - 1) {
+        match self.file.next() {
             // If we hit this branch, it's because we're trying to read passed the end
             // of the file, which means there are no further headers remaining.
             Err(Error::Io(err)) if err.kind() == io::ErrorKind::UnexpectedEof => None,
             // If another kind of error occurs, we want to yield it to the caller, so
             // that it can be propagated.
             Err(err) => Some(Err(err)),
-            Ok(header) => {
+            Ok(Some(header)) => {
                 self.height = height + 1;
                 Some(Ok((height, header)))
             }
+            Ok(None) => None,
         }
     }
 }
@@ -142,11 +202,7 @@ impl<H: 'static + Copy + Encodable + Decodable> Store for File<H> {
     fn iter(&self) -> Box<dyn Iterator<Item = Result<(Height, H), Error>>> {
         // Clone so this function doesn't have to take a `&mut self`.
         match self.file.try_clone() {
-            Ok(file) => Box::new(iter::once(Ok((0, self.genesis))).chain(Iter {
-                height: 1,
-                file,
-                _phantom: PhantomData,
-            })),
+            Ok(file) => Box::new(iter::once(Ok((0, self.genesis))).chain(Iter::new(file))),
             Err(err) => Box::new(iter::once(Err(Error::Io(err)))),
         }
     }
