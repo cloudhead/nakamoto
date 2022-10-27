@@ -33,8 +33,13 @@ use nakamoto_common::nonempty::NonEmpty;
 #[derive(Debug, Clone, Copy)]
 struct CachedBlock {
     pub height: Height,
-    pub hash: BlockHash,
     pub header: BlockHeader,
+}
+
+impl CachedBlock {
+    fn hash(&self) -> BlockHash {
+        self.header.block_hash()
+    }
 }
 
 impl std::ops::Deref for CachedBlock {
@@ -57,7 +62,6 @@ struct Candidate {
     tip: BlockHash,
     headers: Vec<BlockHeader>,
     fork_height: Height,
-    fork_hash: BlockHash,
     fork_header: BlockHeader,
 }
 
@@ -88,14 +92,13 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         let chain = NonEmpty::from((
             CachedBlock {
                 height: 0,
-                hash: genesis.block_hash(),
                 header: genesis,
             },
             Vec::with_capacity(length - 1),
         ));
         let mut headers = HashMap::with_capacity(length);
         // Insert genesis in the headers map, but skip it during iteration.
-        headers.insert(chain.head.hash, 0);
+        headers.insert(chain.head.hash(), 0);
 
         Ok(Self {
             chain,
@@ -130,14 +133,19 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     ) -> Result<Self, Error> {
         for result in self.store.iter().skip(1) {
             let (height, header) = result?;
-            let hash = header.block_hash();
 
-            self.extend_chain(height, hash, header);
+            self.chain.push(CachedBlock { height, header });
 
             if progress(height).is_break() {
                 return Err(Error::Interrupted);
             }
         }
+
+        // Build header index.
+        for cb in self.chain.tail.iter() {
+            self.headers.insert(cb.prev_blockhash, cb.height - 1);
+        }
+        self.headers.insert(self.chain.last().hash(), self.height());
 
         let length = self.store.len()?;
         assert_eq!(length, self.chain.len());
@@ -198,7 +206,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     ) -> Result<ImportResult, Error> {
         let hash = header.block_hash();
         let tip = self.chain.last();
-        let best = tip.hash;
+        let best = tip.hash();
 
         if self.headers.contains_key(&hash) || self.orphans.contains_key(&hash) {
             return Err(Error::DuplicateBlock(hash));
@@ -262,7 +270,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         }
 
         let mut best_branch = None;
-        let mut best_hash = tip.hash;
+        let mut best_hash = tip.hash();
         let mut best_work = Uint256::zero();
 
         for branch in candidates.iter() {
@@ -383,7 +391,6 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
                 tip,
                 fork_height,
                 fork_header: *fork_header,
-                fork_hash: cursor,
                 headers: headers.into(),
             });
         }
@@ -394,7 +401,6 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     fn validate_branch(&self, candidate: &Candidate, clock: &impl Clock) -> Result<(), Error> {
         let mut tip = CachedBlock {
             height: candidate.fork_height,
-            hash: candidate.fork_hash,
             header: candidate.fork_header,
         };
 
@@ -403,7 +409,6 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
             tip = CachedBlock {
                 height: tip.height + 1,
-                hash: header.block_hash(),
                 header: *header,
             };
         }
@@ -417,7 +422,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         header: &BlockHeader,
         clock: &impl Clock,
     ) -> Result<(), Error> {
-        assert_eq!(tip.hash, header.prev_blockhash);
+        assert_eq!(tip.hash(), header.prev_blockhash);
 
         let compact_target = if self.params.allow_min_difficulty_blocks
             && (tip.height + 1) % self.params.difficulty_adjustment_interval() != 0
@@ -491,8 +496,8 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         for (block, height) in self.chain.tail.drain(height as usize..).zip(height + 1..) {
             stale.push((height, block.header));
 
-            self.headers.remove(&block.hash);
-            self.orphans.insert(block.hash, block.header);
+            self.headers.remove(&block.hash());
+            self.orphans.insert(block.hash(), block.header);
         }
         self.store.rollback(height)?;
 
@@ -517,15 +522,11 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
     /// Extend the active chain with a block.
     fn extend_chain(&mut self, height: Height, hash: BlockHash, header: BlockHeader) {
-        assert_eq!(header.prev_blockhash, self.chain.last().hash);
+        assert_eq!(header.prev_blockhash, self.chain.last().hash());
 
         self.headers.insert(hash, height);
         self.orphans.remove(&hash);
-        self.chain.push(CachedBlock {
-            height,
-            hash,
-            header,
-        });
+        self.chain.push(CachedBlock { height, header });
     }
 
     /// Get the blocks starting from the given height.
@@ -545,7 +546,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         let mut reverted = BTreeMap::new();
         let mut connected = BTreeMap::new();
         let mut best_height = self.height();
-        let mut best_hash = self.chain.last().hash;
+        let mut best_hash = self.chain.last().hash();
         let mut best_header = self.chain.last().header;
 
         for (i, header) in chain.enumerate() {
@@ -600,7 +601,7 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
         let tip = self.chain.last();
         let hash = header.block_hash();
 
-        if header.prev_blockhash == tip.hash {
+        if header.prev_blockhash == tip.hash() {
             let height = tip.height + 1;
 
             self.validate(tip, &header, clock)?;
@@ -658,7 +659,7 @@ impl<S: Store<Header = BlockHeader>> BlockReader for BlockCache<S> {
 
     /// Get the best block hash and header.
     fn tip(&self) -> (BlockHash, BlockHeader) {
-        (self.chain.last().hash, self.chain.last().header)
+        (self.chain.last().hash(), self.chain.last().header)
     }
 
     /// Get the genesis block header.
@@ -679,7 +680,7 @@ impl<S: Store<Header = BlockHeader>> BlockReader for BlockCache<S> {
         Box::new(
             self.chain
                 .iter()
-                .map(|block| (block.height, block.hash))
+                .map(|block| (block.height, block.hash()))
                 .skip(range.start as usize)
                 .take((range.end - range.start) as usize),
         )
@@ -781,7 +782,7 @@ impl<S: Store<Header = BlockHeader>> BlockReader for BlockCache<S> {
                 break;
             }
             if let Some(blk) = self.chain.get(height as usize) {
-                hashes.push(blk.hash);
+                hashes.push(blk.hash());
             }
         }
         hashes
