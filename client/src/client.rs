@@ -57,6 +57,10 @@ pub struct Config {
     pub listen: Vec<net::SocketAddr>,
     /// Client home path, where runtime data is stored, eg. block headers and filters.
     pub root: PathBuf,
+    /// Verify on-disk data at load time.
+    /// This can be set to `true` for additional checks, if for example data integrity
+    /// of the file system is not guaranteed, or the file system is untrusted.
+    pub verify: bool,
     /// User agent string.
     pub user_agent: &'static str,
     /// Client hooks.
@@ -116,6 +120,7 @@ impl Default for Config {
             domains: Domain::all(),
             listen: vec![([0, 0, 0, 0], 0).into()],
             root: PathBuf::from(env::var("HOME").unwrap_or_default()),
+            verify: false,
             user_agent: fsm::USER_AGENT,
             hooks: Hooks::default(),
             limits: Limits::default(),
@@ -328,11 +333,16 @@ impl<R: Reactor> Client<R> {
         let filters = FilterCache::load_with(cfheaders_store, |height| {
             loading.send(Loading::FilterHeaderLoaded { height })
         })?;
-        log::info!(target: "client", "Verifying filter headers..");
 
-        filters.verify_with(network, |height| {
-            loading.send(Loading::FilterHeaderVerified { height })
-        })?; // Verify store integrity.
+        if config.verify {
+            log::info!(target: "client", "Verifying filter headers..");
+
+            filters.verify_with(network, |height| {
+                loading.send(Loading::FilterHeaderVerified { height })
+            })?; // Verify store integrity.
+        } else {
+            log::info!(target: "client", "Skipping filter header verification (verify = false)")
+        }
 
         log::info!(target: "client", "Loading peer addresses..");
 
