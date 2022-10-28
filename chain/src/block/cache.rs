@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::ControlFlow;
 
+use nakamoto_common as common;
 use nakamoto_common::bitcoin;
 use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
 use nakamoto_common::bitcoin::consensus::params::Params;
@@ -138,6 +139,18 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
             if progress(height).is_break() {
                 return Err(Error::Interrupted);
+            }
+        }
+
+        // Make sure that the store was properly configured. If we loaded a store that doesn't
+        // match the provided genesis, we return an error here.
+        if let Some(header) = self.chain.tail.first() {
+            let genesis = self.store.genesis().block_hash();
+            if genesis != header.prev_blockhash {
+                return Err(Error::GenesisMismatch);
+            }
+            if common::network::Network::from(self.params.network).genesis_hash() != genesis {
+                return Err(Error::GenesisMismatch);
             }
         }
 

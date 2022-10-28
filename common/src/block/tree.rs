@@ -48,6 +48,10 @@ pub enum Error {
     #[error("block import aborted at height {2}: {0} ({1} block(s) imported)")]
     BlockImportAborted(Box<Self>, usize, Height),
 
+    /// Mismatched genesis.
+    #[error("stored genesis header doesn't match network genesis")]
+    GenesisMismatch,
+
     /// A storage error occured.
     #[error("storage error: {0}")]
     Store(#[from] store::Error),
