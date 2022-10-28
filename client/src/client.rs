@@ -65,6 +65,9 @@ pub struct Config {
     pub services: ServiceFlags,
     /// Configured limits.
     pub limits: Limits,
+    /// Skip verifying filter headers. This is useful when debugging or when we know
+    /// that integrity is guaranteed.
+    pub skip_verify_filter_headers: bool,
 }
 
 /// Configuration for loading event handling.
@@ -120,6 +123,7 @@ impl Default for Config {
             hooks: Hooks::default(),
             limits: Limits::default(),
             services: ServiceFlags::NONE,
+            skip_verify_filter_headers: false,
         }
     }
 }
@@ -328,11 +332,16 @@ impl<R: Reactor> Client<R> {
         let filters = FilterCache::load_with(cfheaders_store, |height| {
             loading.send(Loading::FilterHeaderLoaded { height })
         })?;
-        log::info!(target: "client", "Verifying filter headers..");
 
-        filters.verify_with(network, |height| {
-            loading.send(Loading::FilterHeaderVerified { height })
-        })?; // Verify store integrity.
+        if !config.skip_verify_filter_headers {
+            log::info!(target: "client", "Verifying filter headers..");
+
+            filters.verify_with(network, |height| {
+                loading.send(Loading::FilterHeaderVerified { height })
+            })?; // Verify store integrity.
+        } else {
+            log::info!(target: "client", "Skipping filter header verification..")
+        }
 
         log::info!(target: "client", "Loading peer addresses..");
 
