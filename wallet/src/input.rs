@@ -42,7 +42,7 @@ pub fn run(channel: chan::Sender<Event>, exit: chan::Receiver<()>) -> Result<(),
 pub fn signals(channel: chan::Sender<Signal>) -> Result<(), Error> {
     use signal_hook::consts::signal::*;
 
-    let mut signals = signal_hook::iterator::Signals::new(&[SIGWINCH, SIGINT])?;
+    let mut signals = signal_hook::iterator::Signals::new([SIGWINCH, SIGINT])?;
     for signal in signals.forever() {
         match signal {
             SIGWINCH => channel.send(Signal::WindowResized)?,
