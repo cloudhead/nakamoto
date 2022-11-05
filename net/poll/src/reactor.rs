@@ -249,7 +249,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
                                 debug_assert!(!commands.is_empty());
 
                                 for cmd in commands.try_iter() {
-                                    service.command(cmd);
+                                    service.command_received(cmd);
                                 }
                             }
                         }
@@ -370,7 +370,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                     if count > 0 {
                         trace!("{}: Read {} bytes", socket_addr, count);
 
-                        service.received(&addr, Cow::Borrowed(&buffer[..count]));
+                        service.message_received(&addr, Cow::Borrowed(&buffer[..count]));
                     } else {
                         trace!("{}: Read 0 bytes", socket_addr);
                         // If we get zero bytes read as a return value, it means the peer has

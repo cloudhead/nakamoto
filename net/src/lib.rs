@@ -108,7 +108,7 @@ pub trait Service<Id: PeerId = net::SocketAddr>: StateMachine<Id, Message = [u8]
     type Command;
 
     /// An external command has been received.
-    fn command(&mut self, cmd: Self::Command);
+    fn command_received(&mut self, cmd: Self::Command);
 }
 
 /// A service state-machine.
@@ -132,7 +132,7 @@ pub trait StateMachine<Id: PeerId = net::SocketAddr>:
         // figures of children and girls and voices childish and girlish in the air." -JJ
     }
     /// Received message from a peer.
-    fn received(&mut self, addr: &Id, message: Cow<Self::Message>);
+    fn message_received(&mut self, addr: &Id, message: Cow<Self::Message>);
     /// Connection attempt underway.
     ///
     /// This is only encountered when an outgoing connection attempt is made,

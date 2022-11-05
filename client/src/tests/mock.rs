@@ -78,7 +78,7 @@ impl Client {
             payload,
         };
 
-        self.protocol.received(remote, Cow::Owned(msg));
+        self.protocol.message_received(remote, Cow::Owned(msg));
     }
 
     pub fn step(&mut self) -> Vec<fsm::Io> {

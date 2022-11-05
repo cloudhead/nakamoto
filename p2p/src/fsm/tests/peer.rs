@@ -235,7 +235,7 @@ impl Peer<Protocol> {
     }
 
     pub fn received(&mut self, remote: &net::SocketAddr, payload: NetworkMessage) {
-        self.protocol.received(
+        self.protocol.message_received(
             remote,
             Cow::Owned(RawNetworkMessage {
                 magic: self.protocol.network.magic(),
@@ -245,7 +245,7 @@ impl Peer<Protocol> {
     }
 
     pub fn received_raw(&mut self, remote: &net::SocketAddr, raw: RawNetworkMessage) {
-        self.protocol.received(remote, Cow::Owned(raw));
+        self.protocol.message_received(remote, Cow::Owned(raw));
     }
 
     pub fn drain(&mut self) {

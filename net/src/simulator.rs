@@ -396,7 +396,7 @@ where
                     }
                     Input::Wake => p.timer_expired(),
                     Input::Received(addr, msg) => {
-                        p.received(&addr, Cow::Owned(msg));
+                        p.message_received(&addr, Cow::Owned(msg));
                     }
                 }
                 for o in p.by_ref() {

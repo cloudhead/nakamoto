@@ -65,7 +65,7 @@ where
 {
     type Command = p2p::Command;
 
-    fn command(&mut self, cmd: Self::Command) {
+    fn command_received(&mut self, cmd: Self::Command) {
         // TODO: Commands shouldn't be handled by the inner state machine.
         self.machine.command(cmd)
     }
@@ -94,13 +94,13 @@ where
         self.machine.timer_expired();
     }
 
-    fn received(&mut self, addr: &net::SocketAddr, bytes: Cow<[u8]>) {
+    fn message_received(&mut self, addr: &net::SocketAddr, bytes: Cow<[u8]>) {
         if let Some(inbox) = self.inboxes.get_mut(addr) {
             inbox.input(bytes.borrow());
 
             loop {
                 match inbox.decode_next() {
-                    Ok(Some(msg)) => self.machine.received(addr, Cow::Owned(msg)),
+                    Ok(Some(msg)) => self.machine.message_received(addr, Cow::Owned(msg)),
                     Ok(None) => break,
 
                     Err(err) => {

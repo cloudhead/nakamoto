@@ -777,7 +777,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         });
     }
 
-    fn received(&mut self, addr: &net::SocketAddr, msg: Cow<RawNetworkMessage>) {
+    fn message_received(&mut self, addr: &net::SocketAddr, msg: Cow<RawNetworkMessage>) {
         let now = self.clock.local_time();
         let cmd = msg.cmd();
         let addr = *addr;
