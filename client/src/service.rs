@@ -90,8 +90,8 @@ where
         self.machine.tick(local_time);
     }
 
-    fn wake(&mut self) {
-        self.machine.wake();
+    fn timer_expired(&mut self) {
+        self.machine.timer_expired();
     }
 
     fn received(&mut self, addr: &net::SocketAddr, bytes: Cow<[u8]>) {
@@ -154,7 +154,7 @@ impl<T, F, P, C> Iterator for Service<T, F, P, C> {
             Some(Io::Event(e)) => Some(Io::Event(e)),
             Some(Io::Connect(a)) => Some(Io::Connect(a)),
             Some(Io::Disconnect(a, r)) => Some(Io::Disconnect(a, r)),
-            Some(Io::Wakeup(d)) => Some(Io::Wakeup(d)),
+            Some(Io::SetTimer(d)) => Some(Io::SetTimer(d)),
 
             None => None,
         }

@@ -394,7 +394,7 @@ where
                             p.disconnected(&addr, reason);
                         }
                     }
-                    Input::Wake => p.wake(),
+                    Input::Wake => p.timer_expired(),
                     Input::Received(addr, msg) => {
                         p.received(&addr, Cow::Owned(msg));
                     }
@@ -571,7 +571,7 @@ where
                     },
                 );
             }
-            Io::Wakeup(duration) => {
+            Io::SetTimer(duration) => {
                 let time = self.time + duration;
 
                 if !matches!(

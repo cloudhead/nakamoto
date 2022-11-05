@@ -32,7 +32,7 @@ use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::collections::{AddressBook, HashMap};
 
 use super::fees::{FeeEstimate, FeeEstimator};
-use super::output::{Wakeup, Wire};
+use super::output::{SetTimer, Wire};
 use super::{Height, PeerId, Socket};
 
 /// Time between re-broadcasts of inventories.
@@ -201,7 +201,7 @@ pub struct InventoryManager<U, C> {
     clock: C,
 }
 
-impl<U: Wire<Event> + Wakeup, C: Clock> InventoryManager<U, C> {
+impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
     /// Create a new inventory manager.
     pub fn new(rng: fastrand::Rng, upstream: U, clock: C) -> Self {
         Self {
@@ -287,7 +287,7 @@ impl<U: Wire<Event> + Wakeup, C: Clock> InventoryManager<U, C> {
         let now = self.clock.local_time();
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
-            self.upstream.wakeup(IDLE_TIMEOUT);
+            self.upstream.set_timer(IDLE_TIMEOUT);
         }
 
         {
@@ -334,7 +334,7 @@ impl<U: Wire<Event> + Wakeup, C: Clock> InventoryManager<U, C> {
                     }
                 }
                 self.upstream.inv(*addr, invs);
-                self.upstream.wakeup(self.timeout);
+                self.upstream.set_timer(self.timeout);
             }
         }
 
@@ -358,7 +358,7 @@ impl<U: Wire<Event> + Wakeup, C: Clock> InventoryManager<U, C> {
 
                 self.upstream
                     .get_data(*addr, vec![Inventory::Block(*block_hash)]);
-                self.upstream.wakeup(REQUEST_TIMEOUT);
+                self.upstream.set_timer(REQUEST_TIMEOUT);
 
                 *last_request = Some(now);
             } else {
@@ -551,7 +551,7 @@ impl<U: Wire<Event> + Wakeup, C: Clock> InventoryManager<U, C> {
 
     fn schedule_tick(&mut self) {
         self.last_tick = None; // Disable rate-limiting for the next tick.
-        self.upstream.wakeup(LocalDuration::from_secs(1));
+        self.upstream.set_timer(LocalDuration::from_secs(1));
     }
 }
 

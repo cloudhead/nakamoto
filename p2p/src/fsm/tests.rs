@@ -180,7 +180,7 @@ fn test_inv_getheaders() {
         .find(|o| matches!(o, NetworkMessage::GetHeaders(_)))
         .expect("a `getheaders` message should be returned");
     peer.outputs()
-        .find(|o| matches!(o, Io::Wakeup(_)))
+        .find(|o| matches!(o, Io::SetTimer(_)))
         .expect("a timer should be returned");
 }
 
@@ -355,7 +355,7 @@ fn test_handshake_version_timeout() {
         }
         peer.protocol.connected(remote, &peer.addr, *link);
         peer.outputs()
-            .find(|o| matches!(o, Io::Wakeup(_)))
+            .find(|o| matches!(o, Io::SetTimer(_)))
             .expect("a timer should be returned");
 
         peer.elapse(peermgr::HANDSHAKE_TIMEOUT);
@@ -388,7 +388,7 @@ fn test_handshake_verack_timeout() {
             NetworkMessage::Version(remote.version(peer.addr, 0)),
         );
         peer.outputs()
-            .find(|o| matches!(o, Io::Wakeup(_)))
+            .find(|o| matches!(o, Io::SetTimer(_)))
             .expect("a timer should be returned");
 
         peer.elapse(LocalDuration::from_secs(60));

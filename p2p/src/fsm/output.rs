@@ -50,10 +50,10 @@ pub trait Disconnect {
     fn disconnect(&self, addr: net::SocketAddr, reason: super::DisconnectReason);
 }
 
-/// The ability to be woken up in the future.
-pub trait Wakeup {
+/// The ability to set a timer.
+pub trait SetTimer {
     /// Ask to be woken up in a predefined amount of time.
-    fn wakeup(&self, duration: LocalDuration) -> &Self;
+    fn set_timer(&self, duration: LocalDuration) -> &Self;
 }
 
 /// Bitcoin wire protocol.
@@ -226,9 +226,9 @@ impl Disconnect for Outbox {
     }
 }
 
-impl Wakeup for Outbox {
-    fn wakeup(&self, duration: LocalDuration) -> &Self {
-        self.push(Io::Wakeup(duration));
+impl SetTimer for Outbox {
+    fn set_timer(&self, duration: LocalDuration) -> &Self {
+        self.push(Io::SetTimer(duration));
         self
     }
 }
@@ -236,7 +236,7 @@ impl Wakeup for Outbox {
 impl Connect for Outbox {
     fn connect(&self, addr: net::SocketAddr, timeout: LocalDuration) {
         self.push(Io::Connect(addr));
-        self.push(Io::Wakeup(timeout));
+        self.push(Io::SetTimer(timeout));
     }
 }
 
@@ -316,7 +316,7 @@ impl<E: Into<Event> + std::fmt::Display> Wire<E> for Outbox {
                 stop_hash,
             }),
         );
-        self.wakeup(timeout);
+        self.set_timer(timeout);
     }
 
     fn cfheaders(&mut self, addr: PeerId, headers: CFHeaders) {
@@ -338,7 +338,7 @@ impl<E: Into<Event> + std::fmt::Display> Wire<E> for Outbox {
                 stop_hash,
             }),
         );
-        self.wakeup(timeout);
+        self.set_timer(timeout);
     }
 
     fn cfilter(&mut self, addr: PeerId, cfilter: CFilter) {
@@ -421,8 +421,8 @@ impl Disconnect for () {
 
 #[cfg(test)]
 #[allow(unused_variables)]
-impl Wakeup for () {
-    fn wakeup(&self, duration: LocalDuration) -> &Self {
+impl SetTimer for () {
+    fn set_timer(&self, duration: LocalDuration) -> &Self {
         &()
     }
 }

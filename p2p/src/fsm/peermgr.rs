@@ -33,7 +33,7 @@ use nakamoto_net as network;
 use crate::fsm::addrmgr;
 use crate::fsm::DisconnectReason;
 
-use super::output::{Connect, Disconnect, Wakeup, Wire};
+use super::output::{Connect, Disconnect, SetTimer, Wire};
 use super::{Hooks, Link, PeerId, Socket, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
@@ -251,7 +251,7 @@ pub struct PeerManager<U, C> {
     clock: C,
 }
 
-impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C> {
+impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, C> {
     /// Create a new peer manager.
     pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, upstream: U, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
@@ -283,7 +283,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
                 );
             }
         }
-        self.upstream.wakeup(IDLE_TIMEOUT);
+        self.upstream.set_timer(IDLE_TIMEOUT);
         self.maintain_connections(addrs);
     }
 
@@ -296,7 +296,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
         *retry_at = Some(local_time + delay);
         *attempts += 1;
 
-        self.upstream.wakeup(delay);
+        self.upstream.set_timer(delay);
     }
 
     /// Maintain persistent peer connections.
@@ -376,7 +376,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
             }
         }
         // Set a timeout for receiving the `version` message.
-        self.upstream.wakeup(HANDSHAKE_TIMEOUT);
+        self.upstream.set_timer(HANDSHAKE_TIMEOUT);
         self.upstream.event(Event::Connected(addr, link));
     }
 
@@ -540,14 +540,14 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
                         .wtxid_relay(conn.socket.addr)
                         .verack(conn.socket.addr)
                         .send_headers(conn.socket.addr)
-                        .wakeup(HANDSHAKE_TIMEOUT);
+                        .set_timer(HANDSHAKE_TIMEOUT);
                 }
                 Link::Outbound => {
                     self.upstream
                         .wtxid_relay(conn.socket.addr)
                         .verack(conn.socket.addr)
                         .send_headers(conn.socket.addr)
-                        .wakeup(HANDSHAKE_TIMEOUT);
+                        .set_timer(HANDSHAKE_TIMEOUT);
                 }
             }
             let conn = conn.clone();
@@ -659,7 +659,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.maintain_connections(addrs);
-            self.upstream.wakeup(IDLE_TIMEOUT);
+            self.upstream.set_timer(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
         self.maintain_persistent();
@@ -706,7 +706,7 @@ impl<U: Wire<Event> + Wakeup + Connect + Disconnect, C: Clock> PeerManager<U, C>
 }
 
 /// Connection management functions.
-impl<U: Connect + Disconnect + Wakeup + Wire<Event>, C: Clock> PeerManager<U, C> {
+impl<U: Connect + Disconnect + SetTimer + Wire<Event>, C: Clock> PeerManager<U, C> {
     /// Called when a peer is being connected to.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr) {
         // Since all "attempts" are made from this module, we expect that when a peer is

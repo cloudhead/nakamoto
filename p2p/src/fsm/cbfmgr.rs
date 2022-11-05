@@ -21,7 +21,7 @@ use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::source;
 
 use super::filter_cache::FilterCache;
-use super::output::{Disconnect, Wakeup, Wire};
+use super::output::{Disconnect, SetTimer, Wire};
 use super::{DisconnectReason, Link, PeerId, Socket};
 
 use rescan::Rescan;
@@ -305,7 +305,7 @@ pub struct FilterManager<F, U, C> {
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
 }
 
-impl<F: Filters, U: Wire<Event> + Wakeup + Disconnect, C: Clock> FilterManager<F, U, C> {
+impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager<F, U, C> {
     /// Create a new filter manager.
     pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U, clock: C) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -896,7 +896,7 @@ impl<F: Filters, U: Wire<Event> + Wakeup + Disconnect, C: Clock> FilterManager<F
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.sync(tree);
             self.last_idle = Some(now);
-            self.upstream.wakeup(IDLE_TIMEOUT);
+            self.upstream.set_timer(IDLE_TIMEOUT);
         }
     }
 
@@ -994,7 +994,7 @@ impl<F: Filters, U: Wire<Event> + Wakeup + Disconnect, C: Clock> FilterManager<F
 
     fn schedule_wake(&mut self) {
         self.last_idle = None; // Disable rate-limiting for the next tick.
-        self.upstream.wakeup(LocalDuration::from_secs(1));
+        self.upstream.set_timer(LocalDuration::from_secs(1));
     }
 }
 

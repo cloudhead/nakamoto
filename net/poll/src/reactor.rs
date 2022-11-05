@@ -262,7 +262,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
 
                     if !timeouts.is_empty() {
                         timeouts.clear();
-                        service.wake();
+                        service.timer_expired();
                     }
                 }
                 Err(err) => return Err(err.into()),
@@ -336,7 +336,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         self.unregister_peer(addr, reason.into(), service);
                     }
                 }
-                Io::Wakeup(timeout) => {
+                Io::SetTimer(timeout) => {
                     self.timeouts.register((), local_time + timeout);
                 }
                 Io::Event(event) => {

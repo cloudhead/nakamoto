@@ -13,7 +13,7 @@ use nakamoto_common::collections::HashMap;
 use crate::fsm::PeerId;
 
 use super::{
-    output::{Disconnect, Wakeup, Wire},
+    output::{Disconnect, SetTimer, Wire},
     DisconnectReason,
 };
 
@@ -75,7 +75,7 @@ pub struct PingManager<U, C> {
     clock: C,
 }
 
-impl<U: Wire<Event> + Wakeup + Disconnect, C: Clock> PingManager<U, C> {
+impl<U: Wire<Event> + SetTimer + Disconnect, C: Clock> PingManager<U, C> {
     /// Create a new ping manager.
     pub fn new(ping_timeout: LocalDuration, rng: fastrand::Rng, upstream: U, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
@@ -137,8 +137,8 @@ impl<U: Wire<Event> + Wakeup + Disconnect, C: Clock> PingManager<U, C> {
 
                         self.upstream
                             .ping(peer.address, nonce)
-                            .wakeup(self.ping_timeout)
-                            .wakeup(PING_INTERVAL);
+                            .set_timer(self.ping_timeout)
+                            .set_timer(PING_INTERVAL);
 
                         peer.state = State::AwaitingPong { nonce, since: now };
                     }

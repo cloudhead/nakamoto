@@ -996,7 +996,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         self.clock.set(local_time);
     }
 
-    fn wake(&mut self) {
+    fn timer_expired(&mut self) {
         trace!("Received wake");
 
         self.invmgr.received_wake(&self.tree);

@@ -13,7 +13,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
-use super::output::{Disconnect, Wakeup, Wire};
+use super::output::{Disconnect, SetTimer, Wire};
 use super::{DisconnectReason, Link, Locators, PeerId, Socket};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
@@ -189,7 +189,7 @@ struct GetHeaders {
     on_timeout: OnTimeout,
 }
 
-impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
+impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
     /// Create a new sync manager.
     pub fn new(config: Config, rng: fastrand::Rng, upstream: U, clock: C) -> Self {
         let peers = AddressBook::new(rng.clone());
@@ -230,7 +230,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
                 self.sample_peers(tree);
             }
             self.last_idle = Some(now);
-            self.upstream.wakeup(IDLE_TIMEOUT);
+            self.upstream.set_timer(IDLE_TIMEOUT);
         }
     }
 
@@ -435,7 +435,7 @@ impl<U: Wakeup + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
 
             self.inflight.insert(addr, req.clone());
             self.upstream.get_headers(addr, req.locators);
-            self.upstream.wakeup(timeout);
+            self.upstream.set_timer(timeout);
         }
     }
 

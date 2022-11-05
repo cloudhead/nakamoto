@@ -46,7 +46,7 @@ pub enum Io<M, E, D, Id: PeerId = net::SocketAddr> {
     /// Disconnect from a peer.
     Disconnect(Id, D),
     /// Ask for a wakeup in a specified amount of time.
-    Wakeup(LocalDuration),
+    SetTimer(LocalDuration),
     /// Emit an event.
     Event(E),
 }
@@ -149,8 +149,8 @@ pub trait StateMachine<Id: PeerId = net::SocketAddr>:
     /// "a regular short, sharp sound, especially that made by a clock or watch, typically
     /// every second."
     fn tick(&mut self, local_time: LocalTime);
-    /// Used to advance the state machine after some timer rings.
-    fn wake(&mut self);
+    /// A timer set with [`Io::SetTimer`] has expired.
+    fn timer_expired(&mut self);
 }
 
 /// Used by certain types of reactors to wake the event loop.
