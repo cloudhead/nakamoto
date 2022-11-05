@@ -85,11 +85,11 @@ impl Read for Db {
             .next();
 
         if let Some(Ok(row)) = row {
-            let address = row.get::<String, _>(0);
+            let address = row.get::<String, _>("address");
             let script_pubkey = Address::from_str(&address)
                 .map_err(|_| Error::Decoding("address"))?
                 .script_pubkey();
-            let value = row.get::<i64, _>(1) as u64;
+            let value = row.get::<i64, _>("value") as u64;
 
             return Ok(Some((
                 *outpoint,
@@ -171,11 +171,13 @@ impl Write for Db {
     fn remove_utxo(&self, prev_out: &OutPoint) -> Result<Option<(OutPoint, TxOut)>, Error> {
         // TODO: Should execute this in a transaction.
         let utxo = self.utxo(prev_out)?;
-        self.raw
-            .prepare("DELETE FROM utxos WHERE txid = ? AND vout = ?")?
-            .bind(1, prev_out.txid.to_string().as_str())?
-            .bind(2, prev_out.vout as i64)?
-            .next()?;
+        let mut stmt = self
+            .raw
+            .prepare("DELETE FROM utxos WHERE txid = ? AND vout = ?")?;
+
+        stmt.bind(1, prev_out.txid.to_string().as_str())?;
+        stmt.bind(2, prev_out.vout as i64)?;
+        stmt.next()?;
 
         Ok(utxo)
     }

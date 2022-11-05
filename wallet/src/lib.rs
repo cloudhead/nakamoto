@@ -9,6 +9,7 @@ use std::path::Path;
 use std::{io, net, thread};
 
 use termion::raw::IntoRawMode;
+use termion::screen::IntoAlternateScreen;
 
 use nakamoto_client::chan;
 use nakamoto_client::handle::Handle;
@@ -74,9 +75,8 @@ pub fn run(
     log::info!("Switching to alternative screen..");
 
     let stdout = io::stdout().into_raw_mode()?;
-    let term = termion::screen::AlternateScreen::from(termion::cursor::HideCursor::from(
-        termion::input::MouseTerminal::from(stdout),
-    ));
+    let term = termion::cursor::HideCursor::from(termion::input::MouseTerminal::from(stdout))
+        .into_alternate_screen()?;
 
     // Run the main wallet loop. This will block until the wallet exits.
     log::info!("Running main wallet loop..");
