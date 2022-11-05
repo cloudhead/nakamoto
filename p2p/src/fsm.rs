@@ -159,7 +159,7 @@ impl DisconnectReason {
     }
 }
 
-impl From<DisconnectReason> for nakamoto_net::DisconnectReason<DisconnectReason> {
+impl From<DisconnectReason> for nakamoto_net::Disconnect<DisconnectReason> {
     fn from(reason: DisconnectReason) -> Self {
         Self::StateMachine(reason)
     }
@@ -979,7 +979,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
     fn disconnected(
         &mut self,
         addr: &net::SocketAddr,
-        reason: nakamoto_net::DisconnectReason<DisconnectReason>,
+        reason: nakamoto_net::Disconnect<DisconnectReason>,
     ) {
         self.cbfmgr.peer_disconnected(addr);
         self.syncmgr.peer_disconnected(addr);

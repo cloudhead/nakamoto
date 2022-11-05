@@ -7,7 +7,7 @@ use std::sync::Arc;
 use nakamoto_chain::BlockTree;
 use nakamoto_common::bitcoin::consensus::Encodable;
 use nakamoto_common::block::time::{AdjustedClock, LocalTime};
-use nakamoto_net::{DisconnectReason, Io, Link, StateMachine};
+use nakamoto_net::{Disconnect, Io, Link, StateMachine};
 use nakamoto_p2p as p2p;
 
 use crate::client::Config;
@@ -127,11 +127,7 @@ where
         self.machine.connected(addr, local_addr, link)
     }
 
-    fn disconnected(
-        &mut self,
-        addr: &net::SocketAddr,
-        reason: DisconnectReason<Self::DisconnectReason>,
-    ) {
+    fn disconnected(&mut self, addr: &net::SocketAddr, reason: Disconnect<Self::DisconnectReason>) {
         self.inboxes.remove(addr);
         self.machine.disconnected(addr, reason)
     }

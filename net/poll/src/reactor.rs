@@ -4,7 +4,7 @@ use crossbeam_channel as chan;
 use nakamoto_net::error::Error;
 use nakamoto_net::event::Publisher;
 use nakamoto_net::time::{LocalDuration, LocalTime};
-use nakamoto_net::{DisconnectReason, Io, PeerId};
+use nakamoto_net::{Disconnect, Io, PeerId};
 use nakamoto_net::{Link, Service};
 
 use log::*;
@@ -83,7 +83,7 @@ impl<R: Write + Read + AsRawFd, Id: PeerId> Reactor<R, Id> {
     fn unregister_peer<S>(
         &mut self,
         addr: Id,
-        reason: DisconnectReason<S::DisconnectReason>,
+        reason: Disconnect<S::DisconnectReason>,
         service: &mut S,
     ) where
         S: Service<Id>,
@@ -132,7 +132,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
     ) -> Result<(), Error>
     where
         S: Service<Id>,
-        S::DisconnectReason: Into<DisconnectReason<S::DisconnectReason>>,
+        S::DisconnectReason: Into<Disconnect<S::DisconnectReason>>,
         E: Publisher<S::Event>,
     {
         let listener = if listen_addrs.is_empty() {
@@ -285,7 +285,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
     where
         S: Service<Id>,
         E: Publisher<S::Event>,
-        S::DisconnectReason: Into<DisconnectReason<S::DisconnectReason>>,
+        S::DisconnectReason: Into<Disconnect<S::DisconnectReason>>,
     {
         // Note that there may be messages destined for a peer that has since been
         // disconnected.
@@ -319,7 +319,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         Err(err) => {
                             error!(target: "net", "{}: Dial error: {}", socket_addr, err.to_string());
 
-                            service.disconnected(&addr, DisconnectReason::DialError(Arc::new(err)));
+                            service.disconnected(&addr, Disconnect::DialError(Arc::new(err)));
                         }
                     }
                 }
@@ -378,7 +378,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                         socket.disconnect().ok();
                         self.unregister_peer(
                             addr,
-                            DisconnectReason::ConnectionError(Arc::new(io::Error::from(
+                            Disconnect::ConnectionError(Arc::new(io::Error::from(
                                 io::ErrorKind::ConnectionReset,
                             ))),
                             service,
@@ -394,11 +394,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                     trace!("{}: Read error: {}", socket_addr, err.to_string());
 
                     socket.disconnect().ok();
-                    self.unregister_peer(
-                        addr,
-                        DisconnectReason::ConnectionError(Arc::new(err)),
-                        service,
-                    );
+                    self.unregister_peer(addr, Disconnect::ConnectionError(Arc::new(err)), service);
                 }
             }
         }
@@ -446,11 +442,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                 error!(target: "net", "{}: Write error: {}", socket_addr, err.to_string());
 
                 socket.disconnect().ok();
-                self.unregister_peer(
-                    addr,
-                    DisconnectReason::ConnectionError(Arc::new(err)),
-                    service,
-                );
+                self.unregister_peer(addr, Disconnect::ConnectionError(Arc::new(err)), service);
             }
         }
         Ok(())

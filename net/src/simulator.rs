@@ -1,7 +1,7 @@
 //! A simple P2P network simulator. Acts as the _reactor_, but without doing any I/O.
 #![allow(clippy::collapsible_if)]
 
-use crate::{DisconnectReason, Io, Link, LocalDuration, LocalTime};
+use crate::{Disconnect, Io, Link, LocalDuration, LocalTime};
 use log::*;
 
 use std::borrow::Cow;
@@ -53,7 +53,7 @@ pub enum Input<M, D> {
         link: Link,
     },
     /// Disconnected from peer.
-    Disconnected(net::SocketAddr, DisconnectReason<D>),
+    Disconnected(net::SocketAddr, Disconnect<D>),
     /// Received a message from a remote peer.
     Received(net::SocketAddr, M),
     /// Used to advance the state machine after some wall time has passed.
@@ -193,7 +193,7 @@ where
 impl<T> Simulation<T>
 where
     T: StateMachine + 'static,
-    T::DisconnectReason: Clone + Into<DisconnectReason<T::DisconnectReason>>,
+    T::DisconnectReason: Clone + Into<Disconnect<T::DisconnectReason>>,
 
     <T::Message as ToOwned>::Owned: fmt::Debug + Clone,
 {
@@ -496,7 +496,7 @@ where
                                 remote,
                                 input: Input::Disconnected(
                                     remote,
-                                    DisconnectReason::ConnectionError(
+                                    Disconnect::ConnectionError(
                                         io::Error::from(io::ErrorKind::UnexpectedEof).into(),
                                     ),
                                 ),
@@ -564,7 +564,7 @@ where
                         remote: local_addr,
                         input: Input::Disconnected(
                             local_addr,
-                            DisconnectReason::ConnectionError(
+                            Disconnect::ConnectionError(
                                 io::Error::from(io::ErrorKind::ConnectionReset).into(),
                             ),
                         ),

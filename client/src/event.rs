@@ -8,7 +8,7 @@ use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height};
 use nakamoto_net::event::Emitter;
-use nakamoto_net::DisconnectReason;
+use nakamoto_net::Disconnect;
 use nakamoto_p2p::fsm;
 use nakamoto_p2p::fsm::fees::FeeEstimate;
 use nakamoto_p2p::fsm::{Link, PeerId};
@@ -77,7 +77,7 @@ pub enum Event {
         /// Peer address.
         addr: PeerId,
         /// Reason for disconnection.
-        reason: DisconnectReason<fsm::DisconnectReason>,
+        reason: Disconnect<fsm::DisconnectReason>,
     },
     /// Connection was never established and timed out or failed.
     PeerConnectionFailed {
@@ -589,7 +589,7 @@ mod test {
 
     use nakamoto_common::block::time::Clock as _;
     use nakamoto_common::network::Network;
-    use nakamoto_net::{DisconnectReason, Link, LocalTime, StateMachine as _};
+    use nakamoto_net::{Disconnect, Link, LocalTime, StateMachine as _};
     use nakamoto_test::assert_matches;
     use nakamoto_test::block::gen;
 
@@ -636,13 +636,13 @@ mod test {
 
         client.protocol.disconnected(
             &remote,
-            DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
+            Disconnect::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
         );
         client.step();
 
         assert_matches!(
             events.try_recv(),
-            Ok(Event::PeerDisconnected { addr, reason: DisconnectReason::ConnectionError(_) })
+            Ok(Event::PeerDisconnected { addr, reason: Disconnect::ConnectionError(_) })
             if addr == remote
         );
     }
@@ -663,7 +663,7 @@ mod test {
 
         client.protocol.disconnected(
             &remote,
-            DisconnectReason::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
+            Disconnect::ConnectionError(io::Error::from(io::ErrorKind::UnexpectedEof).into()),
         );
         client.step();
 

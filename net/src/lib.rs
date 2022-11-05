@@ -51,9 +51,9 @@ pub enum Io<M, E, D, Id: PeerId = net::SocketAddr> {
     Event(E),
 }
 
-/// Disconnect reason.
+/// Disconnection event which includes the reason.
 #[derive(Debug, Clone)]
-pub enum DisconnectReason<T> {
+pub enum Disconnect<T> {
     /// Error while dialing the remote. This error occures before a connection is
     /// even established. Errors of this kind are usually not transient.
     DialError(Arc<std::io::Error>),
@@ -64,7 +64,7 @@ pub enum DisconnectReason<T> {
     StateMachine(T),
 }
 
-impl<T> DisconnectReason<T> {
+impl<T> Disconnect<T> {
     pub fn is_dial_err(&self) -> bool {
         matches!(self, Self::DialError(_))
     }
@@ -74,7 +74,7 @@ impl<T> DisconnectReason<T> {
     }
 }
 
-impl<T: fmt::Display> fmt::Display for DisconnectReason<T> {
+impl<T: fmt::Display> fmt::Display for Disconnect<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::DialError(err) => write!(f, "{}", err),
@@ -120,9 +120,7 @@ pub trait StateMachine<Id: PeerId = net::SocketAddr>:
     /// Events emitted by the state machine.
     type Event: fmt::Debug;
     /// Reason a peer was disconnected.
-    type DisconnectReason: fmt::Debug
-        + fmt::Display
-        + Into<DisconnectReason<Self::DisconnectReason>>;
+    type DisconnectReason: fmt::Debug + fmt::Display + Into<Disconnect<Self::DisconnectReason>>;
 
     /// Initialize the state machine. Called once before any event is sent to the state machine.
     fn initialize(&mut self, _time: LocalTime) {
@@ -143,7 +141,7 @@ pub trait StateMachine<Id: PeerId = net::SocketAddr>:
     /// New connection with a peer.
     fn connected(&mut self, addr: Id, local_addr: &net::SocketAddr, link: Link);
     /// Disconnected from peer.
-    fn disconnected(&mut self, addr: &Id, reason: DisconnectReason<Self::DisconnectReason>);
+    fn disconnected(&mut self, addr: &Id, reason: Disconnect<Self::DisconnectReason>);
     /// Used to update the state machine's internal clock.
     ///
     /// "a regular short, sharp sound, especially that made by a clock or watch, typically
@@ -184,7 +182,7 @@ pub trait Reactor<Id: PeerId = net::SocketAddr> {
     ) -> Result<(), error::Error>
     where
         S: Service<Id>,
-        S::DisconnectReason: Into<DisconnectReason<S::DisconnectReason>>,
+        S::DisconnectReason: Into<Disconnect<S::DisconnectReason>>,
         E: Publisher<S::Event>;
 
     /// Return a new waker.

@@ -88,7 +88,7 @@ pub enum Event {
     /// has successfully completed.
     Connected(PeerId, Link),
     /// A peer has been disconnected.
-    Disconnected(PeerId, network::DisconnectReason<DisconnectReason>),
+    Disconnected(PeerId, network::Disconnect<DisconnectReason>),
 }
 
 impl std::fmt::Display for Event {
@@ -385,7 +385,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
         &mut self,
         addr: &net::SocketAddr,
         addrs: &mut A,
-        reason: network::DisconnectReason<DisconnectReason>,
+        reason: network::Disconnect<DisconnectReason>,
     ) {
         let local_time = self.clock.local_time();
 
@@ -397,7 +397,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
         } else if self.is_connecting(addr) {
             // If we haven't yet established a connection, the disconnect reason
             // should always be a `ConnectionError`.
-            if let network::DisconnectReason::ConnectionError(err) = reason {
+            if let network::Disconnect::ConnectionError(err) = reason {
                 self.upstream.event(Event::ConnectionFailed(*addr, err));
             }
         }
@@ -1154,7 +1154,7 @@ mod tests {
         let remote2 = ([124, 43, 110, 2], 8333).into();
         let remote3 = ([124, 43, 110, 3], 8333).into();
         let remote4 = ([124, 43, 110, 4], 8333).into();
-        let reason: network::DisconnectReason<DisconnectReason> =
+        let reason: network::Disconnect<DisconnectReason> =
             DisconnectReason::PeerTimeout("timeout").into();
 
         let mut addrs = VecDeque::new();

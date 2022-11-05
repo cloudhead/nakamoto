@@ -497,7 +497,7 @@ fn test_connection_error() {
     // Make sure we can handle a disconnection before an established connection.
     peer.disconnected(
         &remote.addr,
-        nakamoto_net::DisconnectReason::ConnectionError(
+        nakamoto_net::Disconnect::ConnectionError(
             io::Error::from(io::ErrorKind::UnexpectedEof).into(),
         ),
     );

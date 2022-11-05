@@ -13,7 +13,7 @@ use nakamoto_common::block::BlockTime;
 use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::p2p::peer::{AddressSource, KnownAddress, Source, Store};
 use nakamoto_common::p2p::Domain;
-use nakamoto_net::DisconnectReason;
+use nakamoto_net::Disconnect;
 
 use super::output::{SetTimer, Wire};
 use super::Link;
@@ -259,7 +259,7 @@ impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressManager<P, U, C> {
     pub fn peer_disconnected(
         &mut self,
         addr: &net::SocketAddr,
-        reason: DisconnectReason<super::DisconnectReason>,
+        reason: Disconnect<super::DisconnectReason>,
     ) {
         if self.connected.remove(&addr.ip()) {
             // Disconnected peers cannot be used as a source for new addresses.
@@ -269,7 +269,7 @@ impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressManager<P, U, C> {
             // connect to this peer again, then remove the peer from the address book.
             // Otherwise, we leave it in the address buckets so that it can be chosen
             // in the future.
-            if let DisconnectReason::StateMachine(r) = reason {
+            if let Disconnect::StateMachine(r) = reason {
                 if !r.is_transient() {
                     self.ban(&addr.ip());
                 }
