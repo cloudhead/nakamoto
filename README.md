@@ -15,9 +15,7 @@ to it via a foreign function interface (FFI).
 ---
 
     [dependencies]
-    nakamoto = "0.3.0"
-
-Requires `rustc 1.53` or greater.
+    nakamoto = "0.4.0"
 
 ## Design
 

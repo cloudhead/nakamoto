@@ -323,7 +323,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "nakamoto-chain",
  "nakamoto-client",
@@ -338,7 +338,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-chain"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "fastrand",
  "log",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-client"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -372,7 +372,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-common"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "bitcoin",
  "bitcoin_hashes",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-net"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -397,7 +397,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-net-poll"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -413,7 +413,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-node"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "argh",
  "atty",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-p2p"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "crossbeam-channel",
  "fastrand",
@@ -445,7 +445,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-test"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "colored",
@@ -458,7 +458,7 @@ dependencies = [
 
 [[package]]
 name = "nakamoto-wallet"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "argh",
  "chrono",

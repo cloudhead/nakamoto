@@ -5,12 +5,12 @@ homepage = "https://cloudhead.io/nakamoto/"
 documentation = "https://docs.rs/nakamoto-common"
 repository = "https://github.com/cloudhead/nakamoto"
 license = "MIT"
-version = "0.3.0"
+version = "0.4.0"
 authors = ["Alexis Sellier <self@cloudhead.io>"]
 edition = "2021"
 
 [dependencies]
-nakamoto-net = { version = "0.3.0", path = "../net" }
+nakamoto-net = { version = "0.4.0", path = "../net" }
 bitcoin = "0.29.2"
 bitcoin_hashes = "0.11.0"
 thiserror = "1.0"
