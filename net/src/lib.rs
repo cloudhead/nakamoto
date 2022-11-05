@@ -104,22 +104,33 @@ where
 ///
 /// Network protocols must implement this trait to be drivable by the reactor.
 pub trait Service<Id: PeerId = net::SocketAddr>: StateMachine<Id, Message = [u8]> {
-    /// User commands handled by service.
+    /// Commands handled by the service. These commands should originate from an
+    /// external "user" thread. They are passed through the reactor via a channel
+    /// given to [`Reactor::run`]. The reactor calls [`Service::command_received`]
+    /// on the service for each command received.
     type Command;
 
     /// An external command has been received.
     fn command_received(&mut self, cmd: Self::Command);
 }
 
-/// A service state-machine.
+/// A service state-machine to implement a network protocol's logic.
+///
+/// This trait defines an API for connecting specific protocol domain logic to a
+/// [`Reactor`]. It is parametrized by a peer id, which is shared between the reactor
+/// and state machine.
+///
+/// The state machine emits [`Io`] instructions to the reactor via its [`Iterator`] trait.
 pub trait StateMachine<Id: PeerId = net::SocketAddr>:
     Iterator<Item = Io<<Self::Message as ToOwned>::Owned, Self::Event, Self::DisconnectReason, Id>>
 {
     /// Message type sent between peers.
     type Message: fmt::Debug + ToOwned + ?Sized;
     /// Events emitted by the state machine.
+    /// These are forwarded by the reactor to the user thread.
     type Event: fmt::Debug;
-    /// Reason a peer was disconnected.
+    /// Reason a peer was disconnected, in case the peer was disconnected by the internal
+    /// state-machine logic.
     type DisconnectReason: fmt::Debug + fmt::Display + Into<Disconnect<Self::DisconnectReason>>;
 
     /// Initialize the state machine. Called once before any event is sent to the state machine.
@@ -129,7 +140,7 @@ pub trait StateMachine<Id: PeerId = net::SocketAddr>:
         // and the sea-harvest of shells and tangle and veiled grey sunlight and gayclad lightclad
         // figures of children and girls and voices childish and girlish in the air." -JJ
     }
-    /// Received message from a peer.
+    /// Called by the reactor upon receiving a message from a remote peer.
     fn message_received(&mut self, addr: &Id, message: Cow<Self::Message>);
     /// Connection attempt underway.
     ///
@@ -140,8 +151,11 @@ pub trait StateMachine<Id: PeerId = net::SocketAddr>:
     fn attempted(&mut self, addr: &Id);
     /// New connection with a peer.
     fn connected(&mut self, addr: Id, local_addr: &net::SocketAddr, link: Link);
-    /// Disconnected from peer.
+    /// Called whenever a remote peer was disconnected, either because of a
+    /// network-related event or due to a local instruction from this state machine,
+    /// using [`Io::Disconnect`].
     fn disconnected(&mut self, addr: &Id, reason: Disconnect<Self::DisconnectReason>);
+    /// Called by the reactor every time the event loop gets data from the network, or times out.
     /// Used to update the state machine's internal clock.
     ///
     /// "a regular short, sharp sound, especially that made by a clock or watch, typically
@@ -151,7 +165,8 @@ pub trait StateMachine<Id: PeerId = net::SocketAddr>:
     fn timer_expired(&mut self);
 }
 
-/// Used by certain types of reactors to wake the event loop.
+/// Used by certain types of reactors to wake the event loop, for example when a
+/// [`Service::Command`] is ready to be processed by the service.
 pub trait Waker: Send + Sync + Clone {
     /// Wake up! Call this after sending a command to make sure the command is processed
     /// in a timely fashion.
@@ -173,6 +188,13 @@ pub trait Reactor<Id: PeerId = net::SocketAddr> {
         Self: Sized;
 
     /// Run the given service with the reactor.
+    ///
+    /// Takes:
+    ///
+    /// * The addresses to listen for connections on.
+    /// * The [`Service`] to run.
+    /// * The [`StateMachine::Event`] publisher to use when the service emits events.
+    /// * The [`Service::Command`] channel on which commands will be received.
     fn run<S, E>(
         &mut self,
         listen_addrs: &[net::SocketAddr],
@@ -186,5 +208,8 @@ pub trait Reactor<Id: PeerId = net::SocketAddr> {
         E: Publisher<S::Event>;
 
     /// Return a new waker.
+    ///
+    /// The reactor can provide multiple wakers such that multiple user threads may wake
+    /// the event loop.
     fn waker(&self) -> Self::Waker;
 }
