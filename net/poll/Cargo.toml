@@ -11,10 +11,10 @@ license = "MIT"
 [dependencies]
 nakamoto-net = { version = "0.3.0", path = ".." }
 crossbeam-channel = { version = "0.5.6" }
-popol = "0.5"
-socket2 = "0.4"
-libc = "0.2.71"
-log = "0.4"
+popol = { version = "2" }
+socket2 = { version = "0.4" }
+libc = { version = "0.2" }
+log = { version = "0.4" }
 
 [dev-dependencies]
 lazy_static = "1.4"

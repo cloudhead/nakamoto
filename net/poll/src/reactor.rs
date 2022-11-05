@@ -158,7 +158,7 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
         self.process(&mut service, &mut publisher, local_time);
 
         // I/O readiness events populated by `popol::Sources::wait_timeout`.
-        let mut events = popol::Events::new();
+        let mut events = Vec::with_capacity(32);
         // Timeouts populated by `TimeoutManager::wake`.
         let mut timeouts = Vec::with_capacity(32);
 
@@ -182,31 +182,31 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
             service.tick(local_time);
 
             match result {
-                Ok(()) => {
-                    trace!("Woke up with {} source(s) ready", events.len());
+                Ok(n) => {
+                    trace!("Woke up with {n} source(s) ready");
 
-                    for (source, ev) in events.iter() {
-                        match source {
+                    for ev in events.drain(..) {
+                        match &ev.key {
                             Source::Peer(addr) => {
                                 let socket_addr = addr.to_socket_addr();
-                                if ev.errored || ev.hangup {
+                                if ev.is_error() || ev.is_hangup() {
                                     // Let the subsequent read fail.
                                     trace!("{}: Socket error triggered: {:?}", socket_addr, ev);
                                 }
-                                if ev.invalid {
+                                if ev.is_invalid() {
                                     // File descriptor was closed and is invalid.
                                     // Nb. This shouldn't happen. It means the source wasn't
                                     // properly unregistered, or there is a duplicate source.
                                     error!(target: "net", "{}: Socket is invalid, removing", socket_addr);
 
-                                    self.sources.unregister(source);
+                                    self.sources.unregister(&ev.key);
                                     continue;
                                 }
 
-                                if ev.writable {
-                                    self.handle_writable(addr.clone(), source, &mut service)?;
+                                if ev.is_writable() {
+                                    self.handle_writable(addr.clone(), &ev.key, &mut service)?;
                                 }
-                                if ev.readable {
+                                if ev.is_readable() {
                                     self.handle_readable(addr.clone(), &mut service);
                                 }
                             }
