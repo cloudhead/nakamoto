@@ -75,6 +75,8 @@ pub struct BlockCache<S: Store> {
     orphans: HashMap<BlockHash, BlockHeader>,
     checkpoints: BTreeMap<Height, BlockHash>,
     params: Params,
+    /// Total cumulative work on the active chain.
+    chainwork: Uint256,
     store: S,
 }
 
@@ -89,7 +91,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         let length = store.len()?;
         let orphans = HashMap::new();
         let checkpoints = checkpoints.iter().cloned().collect();
-
+        let chainwork = genesis.work();
         let chain = NonEmpty::from((
             CachedBlock {
                 height: 0,
@@ -107,6 +109,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             orphans,
             params,
             checkpoints,
+            chainwork,
             store,
         })
     }
@@ -136,6 +139,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             let (height, header) = result?;
 
             self.chain.push(CachedBlock { height, header });
+            self.chainwork = self.chainwork + header.work();
 
             if progress(height).is_break() {
                 return Err(Error::Interrupted);
@@ -509,6 +513,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         for (block, height) in self.chain.tail.drain(height as usize..).zip(height + 1..) {
             stale.push((height, block.header));
 
+            self.chainwork = self.chainwork - block.work();
             self.headers.remove(&block.hash());
             self.orphans.insert(block.hash(), block.header);
         }
@@ -540,6 +545,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         self.headers.insert(hash, height);
         self.orphans.remove(&hash);
         self.chain.push(CachedBlock { height, header });
+        self.chainwork = self.chainwork + header.work();
     }
 
     /// Get the blocks starting from the given height.
@@ -673,6 +679,11 @@ impl<S: Store<Header = BlockHeader>> BlockReader for BlockCache<S> {
     /// Get the best block hash and header.
     fn tip(&self) -> (BlockHash, BlockHeader) {
         (self.chain.last().hash(), self.chain.last().header)
+    }
+
+    /// Get the "chainwork", ie. the total accumulated proof-of-work of the active chain.
+    fn chain_work(&self) -> Uint256 {
+        self.chainwork
     }
 
     /// Get the genesis block header.

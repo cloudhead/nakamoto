@@ -56,6 +56,7 @@ use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, In
 use nakamoto_common::bitcoin::network::message_filter::GetCFilters;
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 use nakamoto_common::bitcoin::network::Address;
+use nakamoto_common::bitcoin::util::uint::Uint256;
 use nakamoto_common::bitcoin::Script;
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::AdjustedClock;
@@ -235,7 +236,7 @@ pub enum Command {
     /// Get connected peers.
     GetPeers(ServiceFlags, chan::Sender<Vec<Peer>>),
     /// Get the tip of the active chain.
-    GetTip(chan::Sender<(Height, BlockHeader)>),
+    GetTip(chan::Sender<(Height, BlockHeader, Uint256)>),
     /// Get a block from the active chain.
     GetBlock(BlockHash),
     /// Get block filters.
@@ -715,8 +716,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             Command::GetTip(reply) => {
                 let (_, header) = self.tree.tip();
                 let height = self.tree.height();
+                let chainwork = self.tree.chain_work();
 
-                reply.send((height, header)).ok();
+                reply.send((height, header, chainwork)).ok();
             }
             Command::GetFilters(range, reply) => {
                 let result = self.cbfmgr.get_cfilters(range, &self.tree);

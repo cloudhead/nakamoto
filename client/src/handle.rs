@@ -8,6 +8,7 @@ use thiserror::Error;
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::Address;
+use nakamoto_common::bitcoin::util::uint::Uint256;
 use nakamoto_common::bitcoin::Script;
 
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
@@ -63,8 +64,9 @@ impl<T> From<chan::SendError<T>> for Error {
 
 /// A handle for communicating with a node process.
 pub trait Handle: Sized + Send + Sync + Clone {
-    /// Get the tip of the chain.
-    fn get_tip(&self) -> Result<(Height, BlockHeader), Error>;
+    /// Get the tip of the chain. Returns the height of the active chain, the header, and
+    /// the total accumulated work of the chain.
+    fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), Error>;
     /// Get a full block from the network.
     fn get_block(&self, hash: &BlockHash) -> Result<(), Error>;
     /// Get compact filters from the network.

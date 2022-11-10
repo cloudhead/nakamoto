@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, HashMap, VecDeque};
 
 use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
 use nakamoto_common::bitcoin::hash_types::BlockHash;
+use nakamoto_common::bitcoin::util::uint::Uint256;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
@@ -180,6 +181,15 @@ impl BlockReader for Cache {
             }
         }
         None
+    }
+
+    fn chain_work(&self) -> Uint256 {
+        let mut work = Uint256::default();
+
+        for block in self.chain.iter() {
+            work = work + block.work();
+        }
+        work
     }
 
     fn find_branch(&self, _to: &BlockHash) -> Option<(Height, NonEmpty<BlockHeader>)> {

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use bitcoin::blockdata::block::BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
+use bitcoin::util::uint::Uint256;
 
 use thiserror::Error;
 
@@ -143,6 +144,8 @@ pub trait BlockReader {
     fn chain<'a>(&'a self) -> Box<dyn Iterator<Item = BlockHeader> + 'a> {
         Box::new(self.iter().map(|(_, h)| h))
     }
+    /// Get the "chainwork", ie. the total accumulated proof-of-work of the active chain.
+    fn chain_work(&self) -> Uint256;
     /// Iterate over the longest chain, starting from genesis, including heights.
     fn iter<'a>(&'a self) -> Box<dyn DoubleEndedIterator<Item = (Height, BlockHeader)> + 'a>;
     /// Iterate over a range of blocks.

@@ -9,6 +9,7 @@ use nakamoto_chain::filter::BlockFilter;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_common::bitcoin::network::Address;
+use nakamoto_common::bitcoin::util::uint::Uint256;
 use nakamoto_common::block::filter::FilterHeader;
 use nakamoto_common::block::store::Genesis as _;
 use nakamoto_common::block::time::{AdjustedTime, LocalTime};
@@ -63,7 +64,7 @@ impl Client {
 
     pub fn handle(&self) -> TestHandle {
         TestHandle {
-            tip: (0, self.network.genesis()),
+            tip: (0, self.network.genesis(), self.network.genesis().work()),
             network: self.network,
             blocks: self.blocks_.clone(),
             filters: self.filters_.clone(),
@@ -135,7 +136,7 @@ impl Default for Client {
 
 #[derive(Clone)]
 pub struct TestHandle {
-    pub tip: (Height, BlockHeader),
+    pub tip: (Height, BlockHeader, Uint256),
 
     #[allow(dead_code)]
     network: Network,
@@ -146,7 +147,7 @@ pub struct TestHandle {
 }
 
 impl Handle for TestHandle {
-    fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
+    fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), handle::Error> {
         Ok(self.tip)
     }
 

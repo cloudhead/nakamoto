@@ -787,7 +787,7 @@ mod test {
         let mut mock = mock::Client::new(network);
         let mut client = mock.handle();
 
-        client.tip = (height, chain[height as usize].header);
+        client.tip = (height, chain[height as usize].header, Default::default());
 
         let mut spent = 0;
         let (watch, heights, balance) = gen::watchlist_rng(birth, chain.iter(), &mut rng);

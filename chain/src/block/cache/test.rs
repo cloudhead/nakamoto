@@ -92,6 +92,10 @@ impl BlockReader for HeightCache {
         self.headers.get(&height)
     }
 
+    fn chain_work(&self) -> Uint256 {
+        unimplemented!()
+    }
+
     fn find_branch(&self, _to: &BlockHash) -> Option<(Height, NonEmpty<BlockHeader>)> {
         unimplemented!()
     }
@@ -1420,6 +1424,8 @@ fn test_cache_import_unordered() {
 
         model.import_blocks(headers.iter().cloned(), &ctx).unwrap();
         assert_eq!(model.tip().0, d6.hash);
+
+        assert_eq!(cache.chain_work(), model.chain_work());
 
         let actual = cache.chain().map(|h| h.block_hash()).collect::<Vec<_>>();
         assert_eq!(actual, expected);

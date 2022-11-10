@@ -21,6 +21,7 @@ use nakamoto_chain::{block::cache::BlockCache, filter::BlockFilter};
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::Address;
+use nakamoto_common::bitcoin::util::uint::Uint256;
 use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::{AdjustedTime, RefClock};
 use nakamoto_common::block::tree::{self, BlockReader, ImportResult};
@@ -491,8 +492,8 @@ impl<W: Waker> Handle<W> {
 }
 
 impl<W: Waker> handle::Handle for Handle<W> {
-    fn get_tip(&self) -> Result<(Height, BlockHeader), handle::Error> {
-        let (transmit, receive) = chan::bounded::<(Height, BlockHeader)>(1);
+    fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), handle::Error> {
+        let (transmit, receive) = chan::bounded::<(Height, BlockHeader, Uint256)>(1);
         self.command(Command::GetTip(transmit))?;
 
         Ok(receive.recv()?)
