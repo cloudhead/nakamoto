@@ -233,14 +233,16 @@ impl From<(&peermgr::PeerInfo, &peermgr::Connection)> for Peer {
 pub enum Command {
     /// Get block header at height.
     GetBlockByHeight(Height, chan::Sender<Option<BlockHeader>>),
+    /// Get block header with a given hash.
+    GetBlockByHash(BlockHash, chan::Sender<Option<(Height, BlockHeader)>>),
     /// Get connected peers.
     GetPeers(ServiceFlags, chan::Sender<Vec<Peer>>),
     /// Get the tip of the active chain.
     GetTip(chan::Sender<(Height, BlockHeader, Uint256)>),
     /// Get a block from the active chain.
-    GetBlock(BlockHash),
+    RequestBlock(BlockHash),
     /// Get block filters.
-    GetFilters(
+    RequestFilters(
         RangeInclusive<Height>,
         chan::Sender<Result<(), GetFiltersError>>,
     ),
@@ -285,11 +287,12 @@ pub enum Command {
 impl fmt::Debug for Command {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::GetBlockByHash(hash, _) => write!(f, "GetBlockByHash({})", hash),
             Self::GetBlockByHeight(height, _) => write!(f, "GetBlockByHeight({})", height),
             Self::GetPeers(flags, _) => write!(f, "GetPeers({})", flags),
             Self::GetTip(_) => write!(f, "GetTip"),
-            Self::GetBlock(hash) => write!(f, "GetBlock({})", hash),
-            Self::GetFilters(range, _) => write!(f, "GetFilters({:?})", range),
+            Self::RequestBlock(hash) => write!(f, "GetBlock({})", hash),
+            Self::RequestFilters(range, _) => write!(f, "GetFilters({:?})", range),
             Self::Rescan { from, to, watch } => {
                 write!(f, "Rescan({:?}, {:?}, {:?})", from, to, watch)
             }
@@ -662,8 +665,13 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             Command::QueryTree(query) => {
                 query(&self.tree);
             }
+            Command::GetBlockByHash(hash, reply) => {
+                let header = self.tree.get_block(&hash).map(|(k, v)| (k, *v));
+
+                reply.send(header).ok();
+            }
             Command::GetBlockByHeight(height, reply) => {
-                let header = self.tree.get_block_by_height(height).map(|h| h.to_owned());
+                let header = self.tree.get_block_by_height(height).copied();
 
                 reply.send(header).ok();
             }
@@ -720,11 +728,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
 
                 reply.send((height, header, chainwork)).ok();
             }
-            Command::GetFilters(range, reply) => {
+            Command::RequestFilters(range, reply) => {
                 let result = self.cbfmgr.get_cfilters(range, &self.tree);
                 reply.send(result).ok();
             }
-            Command::GetBlock(hash) => {
+            Command::RequestBlock(hash) => {
                 self.invmgr.get_block(hash);
             }
             Command::SubmitTransaction(tx, reply) => {

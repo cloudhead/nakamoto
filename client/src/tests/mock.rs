@@ -151,15 +151,23 @@ impl Handle for TestHandle {
         Ok(self.tip)
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
-        self.command(Command::GetBlock(*hash))?;
+    fn get_block(&self, _hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, handle::Error> {
+        unimplemented!()
+    }
+
+    fn get_block_by_height(&self, _height: Height) -> Result<Option<BlockHeader>, handle::Error> {
+        unimplemented!()
+    }
+
+    fn request_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
+        self.command(Command::RequestBlock(*hash))?;
 
         Ok(())
     }
 
-    fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), handle::Error> {
+    fn request_filters(&self, range: RangeInclusive<Height>) -> Result<(), handle::Error> {
         let (transmit, receive) = chan::bounded(1);
-        self.command(Command::GetFilters(range, transmit))?;
+        self.command(Command::RequestFilters(range, transmit))?;
 
         receive.recv()?.map_err(handle::Error::GetFilters)
     }

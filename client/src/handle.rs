@@ -64,14 +64,14 @@ impl<T> From<chan::SendError<T>> for Error {
 
 /// A handle for communicating with a node process.
 pub trait Handle: Sized + Send + Sync + Clone {
-    /// Get the tip of the chain. Returns the height of the active chain, the header, and
-    /// the total accumulated work of the chain.
+    /// Get the tip of the active chain. Returns the height of the chain, the header,
+    /// and the total accumulated work.
     fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), Error>;
-    /// Get a full block from the network.
-    fn get_block(&self, hash: &BlockHash) -> Result<(), Error>;
-    /// Get compact filters from the network.
-    fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), Error>;
-    /// Query the block tree using the given function. To return results from
+    /// Get a block header from the block header cache.
+    fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, Error>;
+    /// Get a block header by height, from the block header cache.
+    fn get_block_by_height(&self, height: Height) -> Result<Option<BlockHeader>, Error>;
+    /// Query the local block tree using the given function. To return results from
     /// the query function, a [channel](`crate::chan`) may be used.
     fn query_tree(
         &self,
@@ -82,12 +82,21 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// See [BlockReader::find_branch](`nakamoto_common::block::tree::BlockReader::find_branch`).
     fn find_branch(&self, to: &BlockHash)
         -> Result<Option<(Height, NonEmpty<BlockHeader>)>, Error>;
+
+    /// Request a full block from the network. The block will be sent over the channel created
+    /// by [`Handle::blocks`] once received.
+    fn request_block(&self, hash: &BlockHash) -> Result<(), Error>;
+    /// Request compact filters from the network. The filters will be sent over the channel created
+    /// by [`Handle::filters`] as they are received.
+    fn request_filters(&self, range: RangeInclusive<Height>) -> Result<(), Error>;
+
     /// Subscribe to blocks received.
     fn blocks(&self) -> chan::Receiver<(Block, Height)>;
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
     /// Subscribe to client events.
     fn events(&self) -> chan::Receiver<Event>;
+
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;
     /// Rescan the blockchain for matching scripts.

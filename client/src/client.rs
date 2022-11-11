@@ -471,17 +471,6 @@ impl<W: Waker> Handle<W> {
         Ok(recvr.recv()?)
     }
 
-    /// Get block by height.
-    pub fn get_block_by_height(
-        &self,
-        height: Height,
-    ) -> Result<Option<BlockHeader>, handle::Error> {
-        let (sender, recvr) = chan::bounded(1);
-        self._command(Command::GetBlockByHeight(height, sender))?;
-
-        Ok(recvr.recv()?)
-    }
-
     /// Send a command to the command channel, and wake up the event loop.
     fn _command(&self, cmd: Command) -> Result<(), handle::Error> {
         self.commands.send(cmd)?;
@@ -494,9 +483,23 @@ impl<W: Waker> Handle<W> {
 impl<W: Waker> handle::Handle for Handle<W> {
     fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), handle::Error> {
         let (transmit, receive) = chan::bounded::<(Height, BlockHeader, Uint256)>(1);
-        self.command(Command::GetTip(transmit))?;
+        self._command(Command::GetTip(transmit))?;
 
         Ok(receive.recv()?)
+    }
+
+    fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, handle::Error> {
+        let (transmit, receive) = chan::bounded(1);
+        self._command(Command::GetBlockByHash(*hash, transmit))?;
+
+        Ok(receive.recv()?)
+    }
+
+    fn get_block_by_height(&self, height: Height) -> Result<Option<BlockHeader>, handle::Error> {
+        let (sender, recvr) = chan::bounded(1);
+        self._command(Command::GetBlockByHeight(height, sender))?;
+
+        Ok(recvr.recv()?)
     }
 
     fn query_tree(
@@ -524,19 +527,19 @@ impl<W: Waker> handle::Handle for Handle<W> {
         Ok(receive.recv()?)
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
-        self.command(Command::GetBlock(*hash))?;
+    fn request_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
+        self.command(Command::RequestBlock(*hash))?;
 
         Ok(())
     }
 
-    fn get_filters(&self, range: RangeInclusive<Height>) -> Result<(), handle::Error> {
+    fn request_filters(&self, range: RangeInclusive<Height>) -> Result<(), handle::Error> {
         assert!(
             !range.is_empty(),
-            "client::Handle::get_filters: range cannot be empty"
+            "client::Handle::request_filters: range cannot be empty"
         );
         let (transmit, receive) = chan::bounded(1);
-        self.command(Command::GetFilters(range, transmit))?;
+        self.command(Command::RequestFilters(range, transmit))?;
 
         receive.recv()?.map_err(handle::Error::GetFilters)
     }
