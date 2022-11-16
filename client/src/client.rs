@@ -488,7 +488,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         Ok(receive.recv()?)
     }
 
-    fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, handle::Error> {
+    fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader, Uint256)>, handle::Error> {
         let (transmit, receive) = chan::bounded(1);
         self._command(Command::GetBlockByHash(*hash, transmit))?;
 

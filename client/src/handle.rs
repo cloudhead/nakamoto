@@ -68,7 +68,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// and the total accumulated work.
     fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), Error>;
     /// Get a block header from the block header cache.
-    fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, Error>;
+    fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader, Uint256)>, Error>;
     /// Get a block header by height, from the block header cache.
     fn get_block_by_height(&self, height: Height) -> Result<Option<BlockHeader>, Error>;
     /// Query the local block tree using the given function. To return results from

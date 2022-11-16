@@ -234,7 +234,7 @@ pub enum Command {
     /// Get block header at height.
     GetBlockByHeight(Height, chan::Sender<Option<BlockHeader>>),
     /// Get block header with a given hash.
-    GetBlockByHash(BlockHash, chan::Sender<Option<(Height, BlockHeader)>>),
+    GetBlockByHash(BlockHash, chan::Sender<Option<(Height, BlockHeader, Uint256)>>),
     /// Get connected peers.
     GetPeers(ServiceFlags, chan::Sender<Vec<Peer>>),
     /// Get the tip of the active chain.
@@ -666,7 +666,14 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
                 query(&self.tree);
             }
             Command::GetBlockByHash(hash, reply) => {
-                let header = self.tree.get_block(&hash).map(|(k, v)| (k, *v));
+                let tip_height = self.tree.height();
+                let mut chainwork = self.tree.chain_work();
+                let header = self.tree.get_block(&hash).map(|(k, v)| {
+                    for (height, _) in self.tree.range(k..tip_height) {
+                        chainwork = chainwork - self.tree.get_block_by_height(height).expect("block in range to exist").work();
+                    }
+                    (k, *v, chainwork)
+                });
 
                 reply.send(header).ok();
             }
