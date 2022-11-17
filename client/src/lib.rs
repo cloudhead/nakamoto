@@ -10,6 +10,7 @@ mod service;
 
 pub use client::*;
 pub mod handle;
+pub mod model;
 
 #[cfg(test)]
 mod tests;

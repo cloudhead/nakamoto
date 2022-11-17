@@ -8,7 +8,6 @@ use thiserror::Error;
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::Address;
-use nakamoto_common::bitcoin::util::uint::Uint256;
 use nakamoto_common::bitcoin::Script;
 
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
@@ -20,6 +19,7 @@ use nakamoto_p2p::fsm::Link;
 use nakamoto_p2p::fsm::{self, Command, CommandError, GetFiltersError, Peer};
 
 use crate::client::Event;
+use crate::model::Tip;
 
 /// An error resulting from a handle method.
 #[derive(Error, Debug)]
@@ -66,7 +66,7 @@ impl<T> From<chan::SendError<T>> for Error {
 pub trait Handle: Sized + Send + Sync + Clone {
     /// Get the tip of the active chain. Returns the height of the chain, the header,
     /// and the total accumulated work.
-    fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), Error>;
+    fn get_tip(&self) -> Result<Tip, Error>;
     /// Get a block header from the block header cache.
     fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, Error>;
     /// Get a block header by height, from the block header cache.

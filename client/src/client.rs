@@ -39,6 +39,7 @@ pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
 pub use crate::error::Error;
 pub use crate::event::{Event, Loading};
 pub use crate::handle;
+use crate::model::Tip;
 pub use crate::service::Service;
 
 use crate::event::Mapper;
@@ -481,11 +482,11 @@ impl<W: Waker> Handle<W> {
 }
 
 impl<W: Waker> handle::Handle for Handle<W> {
-    fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), handle::Error> {
+    fn get_tip(&self) -> Result<Tip, handle::Error> {
         let (transmit, receive) = chan::bounded::<(Height, BlockHeader, Uint256)>(1);
         self._command(Command::GetTip(transmit))?;
 
-        Ok(receive.recv()?)
+        Ok(receive.recv()?.into())
     }
 
     fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, handle::Error> {

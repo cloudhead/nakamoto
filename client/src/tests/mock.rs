@@ -31,6 +31,7 @@ use nakamoto_p2p::fsm::StateMachine;
 use crate::client::{chan, Event, Loading};
 use crate::event::Mapper;
 use crate::handle::{self, Handle};
+use crate::model::Tip;
 
 pub struct Client {
     // Used by tests.
@@ -147,8 +148,8 @@ pub struct TestHandle {
 }
 
 impl Handle for TestHandle {
-    fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), handle::Error> {
-        Ok(self.tip)
+    fn get_tip(&self) -> Result<Tip, handle::Error> {
+        Ok(self.tip.into())
     }
 
     fn get_block(&self, _hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, handle::Error> {
