@@ -39,6 +39,14 @@ default = [
   "nakamoto-net",
   "nakamoto-net-poll"
 ]
+polling = [
+  "nakamoto-client",
+  "nakamoto-chain",
+  "nakamoto-p2p",
+  "nakamoto-common",
+  "nakamoto-net",
+  "nakamoto-net-polling"
+]
 
 [dependencies]
 nakamoto-common = { version = "0.4.0", path = "./common", optional = true }
@@ -50,3 +58,4 @@ nakamoto-test = { version = "0.4.0", path = "./test", optional = true }
 nakamoto-wallet = { version = "0.4.0", path = "./wallet", optional = true }
 nakamoto-net = { version = "0.4.0", path = "./net", optional = true }
 nakamoto-net-poll = { version = "0.4.0", path = "./net/poll", optional = true }
+nakamoto-net-polling = { version = "0.4.0", path = "./net/polling", optional = true }

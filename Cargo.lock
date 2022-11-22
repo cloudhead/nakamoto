@@ -330,6 +330,7 @@ dependencies = [
  "nakamoto-common",
  "nakamoto-net",
  "nakamoto-net-poll",
+ "nakamoto-net-polling",
  "nakamoto-node",
  "nakamoto-p2p",
  "nakamoto-test",
@@ -406,6 +407,22 @@ dependencies = [
  "log",
  "nakamoto-net",
  "popol",
+ "quickcheck",
+ "quickcheck_macros",
+ "socket2",
+]
+
+[[package]]
+name = "nakamoto-net-polling"
+version = "0.4.0"
+dependencies = [
+ "crossbeam-channel",
+ "fastrand",
+ "lazy_static",
+ "libc",
+ "log",
+ "nakamoto-net",
+ "polling",
  "quickcheck",
  "quickcheck_macros",
  "socket2",
@@ -520,6 +537,20 @@ name = "pkg-config"
 version = "0.3.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ac9a59f73473f1b8d852421e59e64809f025994837ef743615c6d0c5b305160"
+
+[[package]]
+name = "polling"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab4609a838d88b73d8238967b60dd115cc08d38e2bbaf51ee1e4b695f89122e2"
+dependencies = [
+ "autocfg",
+ "cfg-if",
+ "libc",
+ "log",
+ "wepoll-ffi",
+ "winapi",
+]
 
 [[package]]
 name = "popol"
@@ -809,6 +840,15 @@ name = "wasi"
 version = "0.11.0+wasi-snapshot-preview1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c8d87e72b64a3b4db28d11ce29237c246188f4f51057d65a7eab63b7987e423"
+
+[[package]]
+name = "wepoll-ffi"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d743fdedc5c64377b5fc2bc036b01c7fd642205a0d96356034ae3404d49eb7fb"
+dependencies = [
+ "cc",
+]
 
 [[package]]
 name = "winapi"

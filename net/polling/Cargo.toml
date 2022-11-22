@@ -1,0 +1,23 @@
+[package]
+name = "nakamoto-net-polling"
+description = "Polling-based networking for nakamoto"
+homepage = "https://cloudhead.io/nakamoto/"
+repository = "https://github.com/cloudhead/nakamoto"
+version = "0.4.0"
+authors = ["Alexis Sellier <alexis@cloudhead.io>"]
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+nakamoto-net = { version = "0.4.0", path = ".." }
+crossbeam-channel = { version = "0.5.6" }
+polling = { version = "2.4.0" }
+socket2 = { version = "0.4" }
+libc = { version = "0.2" }
+log = { version = "0.4" }
+
+[dev-dependencies]
+lazy_static = "1.4"
+fastrand = "1.3.5"
+quickcheck = { version = "1", default-features = false }
+quickcheck_macros = "1"
