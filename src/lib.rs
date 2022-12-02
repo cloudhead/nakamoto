@@ -26,11 +26,11 @@
 //!     let cfg = Config::new(Network::Testnet);
 //!
 //!     // Create a client using the above network reactor.
-//!     let client = Client::<Reactor>::new()?;
+//!     let client = Client::<Reactor>::new(cfg)?;
 //!     let handle = client.handle();
 //!
 //!     // Run the client on a different thread, to not block the main thread.
-//!     thread::spawn(|| client.run(cfg).unwrap());
+//!     thread::spawn(|| client.run().unwrap());
 //!
 //!     // Wait for the client to be connected to a peer.
 //!     handle.wait_for_peers(1, Services::default())?;

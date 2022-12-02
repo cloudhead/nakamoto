@@ -7,6 +7,7 @@ use std::{fmt, io, net};
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height};
+use nakamoto_common::network::Network;
 use nakamoto_net::event::Emitter;
 use nakamoto_net::Disconnect;
 use nakamoto_p2p::fsm;
@@ -178,6 +179,8 @@ pub enum Event {
     Synced {
         /// Height up to which we are synced.
         height: Height,
+        /// Block hash up to which we are synced.
+        hash: BlockHash,
         /// Tip of our block header chain.
         tip: Height,
     },
@@ -321,28 +324,28 @@ pub(crate) struct Mapper {
     sync_height: Height,
     /// The height up to which we've processed filters.
     /// This is usually going to be greater than `sync_height`.
-    filter_height: Height,
+    filter_tip: (Height, BlockHash),
     /// The height up to which we've processed matching blocks.
     /// This is always going to be lesser or equal to `filter_height`.
-    block_height: Height,
+    block_tip: (Height, BlockHash),
     /// Filter heights that have been matched, and for which we are awaiting a block to process.
     pending: HashSet<Height>,
 }
 
-impl Default for Mapper {
+impl Mapper {
     /// Create a new client event mapper.
-    fn default() -> Self {
+    pub fn new(network: Network) -> Self {
         let tip = 0;
         let sync_height = 0;
-        let filter_height = 0;
-        let block_height = 0;
+        let filter_tip = (0, network.genesis_hash());
+        let block_tip = (0, network.genesis_hash());
         let pending = HashSet::new();
 
         Self {
             tip,
             sync_height,
-            filter_height,
-            block_height,
+            filter_tip,
+            block_tip,
             pending,
         }
     }
@@ -439,12 +442,8 @@ impl Mapper {
                     status: TxStatus::Acknowledged { peer },
                 });
             }
-            fsm::Event::Filter(fsm::FilterEvent::RescanStarted { start, .. }) => {
+            fsm::Event::Filter(fsm::FilterEvent::RescanStarted { .. }) => {
                 self.pending.clear();
-
-                self.filter_height = start;
-                self.sync_height = start;
-                self.block_height = start;
             }
             fsm::Event::Filter(fsm::FilterEvent::FilterProcessed {
                 block,
@@ -458,20 +457,20 @@ impl Mapper {
             _ => {}
         }
         assert!(
-            self.block_height <= self.filter_height,
+            self.block_tip <= self.filter_tip,
             "Filters are processed before blocks"
         );
         assert!(
-            self.sync_height <= self.filter_height,
+            self.sync_height <= self.filter_tip.0,
             "Filters are processed before we are done"
         );
 
         // If we have no blocks left to process, we are synced to the height of the last
         // processed filter. Otherwise, we're synced up to the last processed block.
-        let height = if self.pending.is_empty() {
-            self.filter_height.max(self.block_height)
+        let (height, hash) = if self.pending.is_empty() {
+            self.filter_tip.max(self.block_tip)
         } else {
-            self.block_height
+            self.block_tip
         };
 
         // Ensure we only broadcast sync events when the sync height has changed.
@@ -482,6 +481,7 @@ impl Mapper {
 
             emitter.emit(Event::Synced {
                 height,
+                hash,
                 tip: self.tip,
             });
         }
@@ -504,9 +504,9 @@ impl Mapper {
         }
 
         log::debug!("Received block {} at height {}", hash, height);
-        debug_assert!(height >= self.block_height);
+        debug_assert!(height >= self.block_tip.0);
 
-        self.block_height = height;
+        self.block_tip = (height, block.block_hash());
 
         emitter.emit(Event::BlockMatched {
             height,
@@ -526,13 +526,13 @@ impl Mapper {
         valid: bool,
         emitter: &Emitter<Event>,
     ) {
-        debug_assert!(height >= self.filter_height);
+        debug_assert!(height >= self.filter_tip.0);
 
         if matched {
             log::debug!("Filter matched for block #{}", height);
             self.pending.insert(height);
         }
-        self.filter_height = height;
+        self.filter_tip = (height, block);
 
         emitter.emit(Event::FilterProcessed {
             height,
@@ -845,6 +845,7 @@ mod test {
                 Event::Synced {
                     height: sync_height,
                     tip,
+                    ..
                 } => {
                     assert_eq!(height, tip);
 

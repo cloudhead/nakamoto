@@ -43,7 +43,7 @@ pub fn run(
     };
 
     // Create a new client using `Reactor` for networking.
-    let client = Client::<Reactor>::new()?;
+    let client = Client::<Reactor>::new(cfg)?;
     let handle = client.handle();
     let client_recv = handle.events();
     let (loading_send, loading_recv) = chan::unbounded();
@@ -68,7 +68,7 @@ pub fn run(
         if offline {
             Ok(())
         } else {
-            client.load(cfg, loading_send)?.run()
+            client.load(loading_send)?.run()
         }
     });
 

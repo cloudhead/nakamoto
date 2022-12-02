@@ -259,7 +259,7 @@ impl<H: Handle> Wallet<H> {
                 );
             }
             // TODO: This should be called `Scanned`.
-            client::Event::Synced { height, tip } => {
+            client::Event::Synced { height, tip, .. } => {
                 self.ui.handle_synced(height, tip);
             }
             _ => {}

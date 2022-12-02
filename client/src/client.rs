@@ -189,6 +189,7 @@ impl<R: Reactor> ClientRunner<R> {
 /// A light-client process.
 pub struct Client<R: Reactor> {
     handle: Handle<R::Waker>,
+    config: Config,
     commands: chan::Receiver<Command>,
     publisher: Publisher<fsm::Event>,
     reactor: R,
@@ -196,7 +197,7 @@ pub struct Client<R: Reactor> {
 
 impl<R: Reactor> Client<R> {
     /// Create a new client.
-    pub fn new() -> Result<Self, Error> {
+    pub fn new(config: Config) -> Result<Self, Error> {
         let (commands_tx, commands_rx) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(|e, p| p.emit(e));
         let (blocks_pub, blocks) = event::broadcast(|e, p| {
@@ -221,7 +222,7 @@ impl<R: Reactor> Client<R> {
             }
         });
         let (publisher, subscriber) = event::broadcast({
-            let mut mapper = Mapper::default();
+            let mut mapper = Mapper::new(config.network);
             move |e, p| mapper.process(e, p)
         });
 
@@ -247,6 +248,7 @@ impl<R: Reactor> Client<R> {
         };
 
         Ok(Self {
+            config,
             handle,
             commands: commands_rx,
             publisher,
@@ -256,11 +258,8 @@ impl<R: Reactor> Client<R> {
 
     /// Load the client configuration. Takes a loading handler that can optionally receive
     /// loading events.
-    pub fn load(
-        self,
-        config: Config,
-        loading: impl Into<LoadingHandler>,
-    ) -> Result<ClientRunner<R>, Error> {
+    pub fn load(self, loading: impl Into<LoadingHandler>) -> Result<ClientRunner<R>, Error> {
+        let config = self.config;
         let loading = loading.into();
         let home = config.root.join(".nakamoto");
         let network = config.network;
@@ -397,8 +396,8 @@ impl<R: Reactor> Client<R> {
     }
 
     /// Start the client process. This function is meant to be run in its own thread.
-    pub fn run(self, config: Config) -> Result<(), Error> {
-        self.load(config, LoadingHandler::Ignore)?.run()
+    pub fn run(self) -> Result<(), Error> {
+        self.load(LoadingHandler::Ignore)?.run()
     }
 
     /// Start the client process, supplying the service manually.
