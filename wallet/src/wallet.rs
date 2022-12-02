@@ -3,10 +3,11 @@ pub mod hw;
 pub mod ui;
 
 use std::collections::HashSet;
-use std::io;
 use std::ops::ControlFlow;
 use std::ops::ControlFlow::*;
+use std::{io, net};
 
+use client::Link;
 use crossbeam_channel as chan;
 use termion::event::Event;
 
@@ -33,6 +34,7 @@ pub struct Wallet<H> {
     ui: Ui,
     hw: Hw,
     network: client::Network,
+    peers: HashSet<net::SocketAddr>,
     watch: HashSet<Address>,
 }
 
@@ -45,6 +47,7 @@ impl<H: Handle> Wallet<H> {
             hw,
             network,
             watch: HashSet::new(),
+            peers: HashSet::new(),
             ui: Ui::default(),
         }
     }
@@ -119,7 +122,11 @@ impl<H: Handle> Wallet<H> {
         let watch: Vec<_> = self.watch.iter().map(|a| a.script_pubkey()).collect();
         let balance = self.db.balance()?;
 
-        self.ui.message = format!("Scanning from block height {}", birth);
+        self.ui.message = if offline {
+            String::from("Offline")
+        } else {
+            String::from("Loading...")
+        };
         self.ui.reset(&mut term)?;
         self.ui.decorations(&mut term)?;
         self.ui.set_balance(balance);
@@ -157,6 +164,7 @@ impl<H: Handle> Wallet<H> {
                 }
                 ui::refresh(&mut self.ui, &self.db, &mut term)?;
             }
+            self.ui.set_message("Ready");
         }
 
         // Running...
@@ -255,6 +263,23 @@ impl<H: Handle> Wallet<H> {
 
                 // Start a re-scan from the birht height, which keeps scanning as new blocks arrive.
                 self.client.rescan(start.., watch.iter().cloned())?;
+                self.ui
+                    .set_message(format!("Scanning from block height {}", start));
+            }
+            client::Event::PeerNegotiated {
+                addr,
+                link: Link::Outbound,
+                ..
+            } => {
+                self.peers.insert(addr);
+                self.ui
+                    .set_message(format!("Connected to {} peer(s)", self.peers.len()));
+            }
+            client::Event::PeerDisconnected { addr, .. } => {
+                if self.peers.remove(&addr) {
+                    self.ui
+                        .set_message(format!("Connected to {} peer(s)", self.peers.len()));
+                }
             }
             client::Event::PeerHeightUpdated { height } => {
                 self.ui.handle_peer_height(height);
