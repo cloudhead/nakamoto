@@ -177,6 +177,11 @@ impl Ui {
         )
     }
 
+    pub fn set_message(&mut self, message: impl Into<String>) {
+        self.message = message.into();
+        self.redraw |= REDRAW_FOOTER;
+    }
+
     pub fn set_balance(&mut self, balance: u64) {
         self.balance = Balance(balance);
         self.redraw |= REDRAW_HEADER;
@@ -489,8 +494,9 @@ pub fn draw_footer<W: io::Write>(ui: &Ui, term: &mut W) -> io::Result<()> {
 
     write!(
         term,
-        "{}{}{}{}",
+        "{}{}{}{}{}",
         cursor::Goto(1, height - 1),
+        clear::CurrentLine,
         color::Bg(color::Reset),
         color::Fg(color::Blue),
         ui.message,
