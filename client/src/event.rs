@@ -469,13 +469,15 @@ impl Mapper {
         // If we have no blocks left to process, we are synced to the height of the last
         // processed filter. Otherwise, we're synced up to the last processed block.
         let height = if self.pending.is_empty() {
-            self.filter_height
+            self.filter_height.max(self.block_height)
         } else {
             self.block_height
         };
 
         // Ensure we only broadcast sync events when the sync height has changed.
         if height > self.sync_height {
+            debug_assert!(height == self.sync_height + 1);
+
             self.sync_height = height;
 
             emitter.emit(Event::Synced {
