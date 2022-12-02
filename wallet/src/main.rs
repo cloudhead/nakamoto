@@ -50,7 +50,7 @@ fn main() {
     let level = if opts.debug {
         log::Level::Debug
     } else {
-        log::Level::Error
+        log::Level::Info
     };
     logger::init(level).expect("initializing logger for the first time");
 
