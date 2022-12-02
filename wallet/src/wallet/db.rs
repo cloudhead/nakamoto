@@ -7,6 +7,7 @@ use nakamoto_common::bitcoin::Address;
 use nakamoto_common::bitcoin::OutPoint;
 use nakamoto_common::bitcoin::TxOut;
 use nakamoto_common::bitcoin::Txid;
+use nakamoto_common::block::{BlockHash, Height};
 
 use sqlite as sql;
 
@@ -36,6 +37,8 @@ pub trait Read {
     fn utxos(&self) -> Result<Vec<(OutPoint, TxOut)>, Error>;
     /// Get all addresses.
     fn addresses(&self) -> Result<Vec<AddressRecord>, Error>;
+    /// Get sync state.
+    fn sync_state(&self) -> Result<Option<(Height, BlockHash)>, Error>;
 }
 
 /// Write to the database.
@@ -51,6 +54,8 @@ pub trait Write {
         index: usize,
         label: Option<&str>,
     ) -> Result<bool, Error>;
+    /// Save height up to which we're synced.
+    fn synced_to(&self, height: Height, hash: BlockHash) -> Result<bool, Error>;
 }
 
 /// Wallet database.
@@ -145,6 +150,28 @@ impl Read for Db {
         }
         Ok(addrs)
     }
+
+    fn sync_state(&self) -> Result<Option<(Height, BlockHash)>, Error> {
+        let row = self
+            .raw
+            .prepare(
+                "SELECT `height`, `hash`
+                 FROM sync
+                 LIMIT 1",
+            )?
+            .into_cursor()
+            .next();
+
+        let Some(Ok(row)) = row else {
+            return Ok(None);
+        };
+
+        let height = row.get::<i64, _>("height") as Height;
+        let hash = row.get::<String, _>("hash");
+        let hash = BlockHash::from_str(&hash).unwrap();
+
+        Ok(Some((height, hash)))
+    }
 }
 
 impl Write for Db {
@@ -202,6 +229,25 @@ impl Write for Db {
                 label
                     .map(|s| sql::Value::String(s.to_owned()))
                     .unwrap_or(sql::Value::Null),
+            ])?
+            .next();
+
+        Ok(self.raw.change_count() > 0)
+    }
+
+    fn synced_to(&self, height: Height, hash: BlockHash) -> Result<bool, Error> {
+        self.raw
+            .prepare(
+                "INSERT INTO sync (`network`, `height`, `hash`)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT DO UPDATE
+                 SET height = ?2, hash = ?3",
+            )?
+            .into_cursor()
+            .bind(&[
+                sql::Value::String(String::from("bitcoin")),
+                sql::Value::Integer(height as i64),
+                sql::Value::String(hash.to_string()),
             ])?
             .next();
 

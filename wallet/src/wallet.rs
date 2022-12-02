@@ -128,9 +128,6 @@ impl<H: Handle> Wallet<H> {
         if offline {
             ui::refresh(&mut self.ui, &self.db, &mut term)?;
         } else {
-            // Start a re-scan from the birht height, which keeps scanning as new blocks arrive.
-            self.client.rescan(birth.., watch.iter().cloned())?;
-
             // Loading...
             loop {
                 chan::select! {
@@ -182,7 +179,9 @@ impl<H: Handle> Wallet<H> {
                 recv(events) -> event => {
                     let event = event?;
 
-                    if let Break(()) = self.handle_client_event(event, &watch, offline, &mut term)? {
+                    if let Break(()) = self.handle_client_event(
+                        event, &watch, offline, birth, &mut term
+                    )? {
                         break;
                     }
                 }
@@ -226,6 +225,7 @@ impl<H: Handle> Wallet<H> {
         event: client::Event,
         watch: &[Script],
         offline: bool,
+        birth: Height,
         term: &mut W,
     ) -> Result<ControlFlow<()>, Error> {
         log::debug!("Received event: {}", event);
@@ -233,6 +233,28 @@ impl<H: Handle> Wallet<H> {
         match event {
             client::Event::Ready { tip, .. } => {
                 self.ui.handle_ready(tip, offline);
+
+                let start = if let Some((sync_height, sync_hash)) = self.db.sync_state()? {
+                    log::info!("Previous sync state found with height {sync_height}..");
+
+                    if let Some(header) = self.client.get_block_by_height(sync_height)? {
+                        if header.block_hash() == sync_hash {
+                            sync_height
+                        } else {
+                            log::warn!("Previous sync tip {sync_hash} at height {sync_height} is no longer on the active chain");
+                            birth
+                        }
+                    } else {
+                        log::warn!("Previous sync height {sync_height} was not found, reverting to current tip");
+                        tip
+                    }
+                } else {
+                    log::info!("No previous sync state, starting from birth ({birth})");
+                    birth
+                };
+
+                // Start a re-scan from the birht height, which keeps scanning as new blocks arrive.
+                self.client.rescan(start.., watch.iter().cloned())?;
             }
             client::Event::PeerHeightUpdated { height } => {
                 self.ui.handle_peer_height(height);
@@ -259,8 +281,11 @@ impl<H: Handle> Wallet<H> {
                 );
             }
             // TODO: This should be called `Scanned`.
-            client::Event::Synced { height, tip, .. } => {
+            client::Event::Synced { height, hash, tip } => {
                 self.ui.handle_synced(height, tip);
+                self.db.synced_to(height, hash)?;
+
+                log::info!("Synced up to height {height}");
             }
             _ => {}
         }
