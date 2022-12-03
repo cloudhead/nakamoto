@@ -1,5 +1,6 @@
 //! State machine events.
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
+use nakamoto_common::bitcoin::BlockHash;
 
 use crate::fsm::{self, Height, LocalTime, PeerId};
 
@@ -12,6 +13,8 @@ pub enum Event {
     Ready {
         /// Block header height.
         height: Height,
+        /// Block header hash.
+        hash: BlockHash,
         /// Filter header height.
         filter_height: Height,
         /// Local time.

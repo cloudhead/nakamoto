@@ -61,6 +61,8 @@ pub enum Event {
     Ready {
         /// The tip of the block header chain.
         tip: Height,
+        /// The hash of the tip.
+        hash: BlockHash,
         /// The tip of the filter header chain.
         filter_tip: Height,
     },
@@ -357,11 +359,13 @@ impl Mapper {
         match event {
             fsm::Event::Ready {
                 height,
+                hash,
                 filter_height,
                 ..
             } => {
                 emitter.emit(Event::Ready {
                     tip: height,
+                    hash,
                     filter_tip: filter_height,
                 });
             }
