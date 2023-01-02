@@ -91,7 +91,7 @@ impl<H: Handle> Wallet<H> {
         inputs: chan::Receiver<Event>,
         signals: chan::Receiver<Signal>,
         loading: chan::Receiver<client::Loading>,
-        events: chan::Receiver<client::Event>,
+        events: client::Events,
         offline: bool,
         mut term: W,
     ) -> Result<(), Error> {

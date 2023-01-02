@@ -1,21 +1,21 @@
 //! Node handles are created from nodes by users of the library, to communicate with the underlying
 //! protocol instance.
 use std::net;
-use std::ops::{RangeBounds, RangeInclusive};
+use std::ops::{Deref, RangeBounds, RangeInclusive};
 
 use crossbeam_channel as chan;
 use thiserror::Error;
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin::util::uint::Uint256;
 use nakamoto_common::bitcoin::Script;
-
-use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::{BlockReader, ImportResult};
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_net::event;
 use nakamoto_p2p::fsm::Link;
 use nakamoto_p2p::fsm::{self, Command, CommandError, GetFiltersError, Peer};
 
@@ -62,6 +62,41 @@ impl<T> From<chan::SendError<T>> for Error {
     }
 }
 
+/// [`Event`] receiver.
+#[derive(Debug, Clone)]
+pub struct Events {
+    receiver: chan::Receiver<Event>,
+}
+
+impl Events {
+    /// Wait for the readiness event.
+    pub fn wait_for_ready(&self) -> Result<(Height, BlockHash), Error> {
+        event::wait(
+            &self.receiver,
+            |event| match event {
+                Event::Ready { tip, hash, .. } => Some((tip, hash)),
+                _ => None,
+            },
+            std::time::Duration::MAX,
+        )
+        .map_err(Error::from)
+    }
+}
+
+impl From<chan::Receiver<Event>> for Events {
+    fn from(receiver: chan::Receiver<Event>) -> Self {
+        Self { receiver }
+    }
+}
+
+impl Deref for Events {
+    type Target = chan::Receiver<Event>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.receiver
+    }
+}
+
 /// A handle for communicating with a node process.
 pub trait Handle: Sized + Send + Sync + Clone {
     /// Get the tip of the active chain. Returns the height of the chain, the header,
@@ -95,7 +130,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Subscribe to compact filters received.
     fn filters(&self) -> chan::Receiver<(BlockFilter, BlockHash, Height)>;
     /// Subscribe to client events.
-    fn events(&self) -> chan::Receiver<Event>;
+    fn events(&self) -> Events;
 
     /// Send a command to the client.
     fn command(&self, cmd: Command) -> Result<(), Error>;

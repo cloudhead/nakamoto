@@ -39,6 +39,7 @@ pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
 pub use crate::error::Error;
 pub use crate::event::{Event, Loading};
 pub use crate::handle;
+pub use crate::handle::Events;
 pub use crate::service::Service;
 
 use crate::event::Mapper;
@@ -551,8 +552,8 @@ impl<W: Waker> handle::Handle for Handle<W> {
         self.filters.subscribe()
     }
 
-    fn events(&self) -> chan::Receiver<Event> {
-        self.subscriber.subscribe()
+    fn events(&self) -> handle::Events {
+        handle::Events::from(self.subscriber.subscribe())
     }
 
     fn command(&self, cmd: Command) -> Result<(), handle::Error> {
