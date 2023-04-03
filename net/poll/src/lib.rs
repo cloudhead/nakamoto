@@ -37,10 +37,6 @@ pub use reactor::{Reactor, Waker};
 #[cfg(test)]
 mod fallible;
 
-#[cfg(test)]
-#[macro_use]
-extern crate lazy_static;
-
 /// Makes a function randomly fail with the given error.
 #[macro_export]
 macro_rules! fallible {

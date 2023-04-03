@@ -1,8 +1,6 @@
 use std::sync::Mutex;
 
-lazy_static! {
-    pub(super) static ref FALLIBLE: Mutex<Option<f64>> = Mutex::new(None);
-}
+pub(super) static FALLIBLE: Mutex<Option<f64>> = Mutex::new(None);
 
 pub(crate) struct FailGuard {}
 

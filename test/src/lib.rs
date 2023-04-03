@@ -5,39 +5,35 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use once_cell::sync::Lazy;
+
 use nakamoto_common::bitcoin;
 use nakamoto_common::bitcoin::blockdata::constants;
 use nakamoto_common::bitcoin::consensus::encode::Decodable;
-
-use lazy_static::*;
 
 use nakamoto_common::block::BlockHeader;
 use nakamoto_common::nonempty::NonEmpty;
 
 pub use fastrand;
 
-lazy_static! {
-    pub static ref BITCOIN_HEADERS: NonEmpty<BlockHeader> = {
-        let genesis = constants::genesis_block(bitcoin::Network::Bitcoin).header;
-        let mut f = File::open(&*self::headers::PATH).unwrap();
-        let mut buf = [0; 80];
-        let mut headers = NonEmpty::new(genesis);
+pub static BITCOIN_HEADERS: Lazy<NonEmpty<BlockHeader>> = Lazy::new(|| {
+    let genesis = constants::genesis_block(bitcoin::Network::Bitcoin).header;
+    let mut f = File::open(&*self::headers::PATH).unwrap();
+    let mut buf = [0; 80];
+    let mut headers = NonEmpty::new(genesis);
 
-        while f.read_exact(&mut buf).is_ok() {
-            let header = BlockHeader::consensus_decode(&mut buf.as_slice()).unwrap();
-            headers.push(header);
-        }
-        headers
-    };
-}
+    while f.read_exact(&mut buf).is_ok() {
+        let header = BlockHeader::consensus_decode(&mut buf.as_slice()).unwrap();
+        headers.push(header);
+    }
+    headers
+});
 
 pub mod headers {
     use super::*;
 
-    lazy_static! {
-        pub static ref PATH: PathBuf =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("data/headers.bin");
-    }
+    pub static PATH: Lazy<PathBuf> =
+        Lazy::new(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("data/headers.bin"));
 }
 
 pub mod logger {
