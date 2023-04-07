@@ -22,6 +22,7 @@ use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin::util::uint::Uint256;
+use nakamoto_common::bitcoin::Txid;
 use nakamoto_common::block::store::{Genesis as _, Store as _};
 use nakamoto_common::block::time::{AdjustedTime, RefClock};
 use nakamoto_common::block::tree::{self, BlockReader, ImportResult};
@@ -641,6 +642,12 @@ impl<W: Waker> handle::Handle for Handle<W> {
         self.command(Command::SubmitTransaction(tx, transmit))?;
 
         receive.recv()?.map_err(handle::Error::Command)
+    }
+
+    fn get_submitted_transaction(&self, txid: &Txid) -> Result<Option<Transaction>, handle::Error> {
+        let (transmit, receive) = chan::bounded::<Option<Transaction>>(1);
+        self.command(Command::GetSubmittedTransaction(txid.to_owned(), transmit))?;
+        Ok(receive.recv()?)
     }
 
     fn wait<F, T>(&self, f: F) -> Result<T, handle::Error>

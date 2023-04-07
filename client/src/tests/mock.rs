@@ -10,6 +10,7 @@ use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin::util::uint::Uint256;
+use nakamoto_common::bitcoin::Txid;
 use nakamoto_common::block::filter::FilterHeader;
 use nakamoto_common::block::store::Genesis as _;
 use nakamoto_common::block::time::{AdjustedTime, LocalTime};
@@ -156,6 +157,13 @@ impl Handle for TestHandle {
     }
 
     fn get_block_by_height(&self, _height: Height) -> Result<Option<BlockHeader>, handle::Error> {
+        unimplemented!()
+    }
+
+    fn get_submitted_transaction(
+        &self,
+        _txid: &Txid,
+    ) -> Result<Option<Transaction>, handle::Error> {
         unimplemented!()
     }
 

@@ -282,6 +282,11 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
         }
     }
 
+    /// Lookup a submitted transaction in the local mempool.
+    pub fn get_submitted_tx(&mut self, txid: &Txid) -> Option<Transaction> {
+        self.mempool.values().find(|tx| tx.txid() == *txid).cloned()
+    }
+
     /// Called when we receive a tick.
     pub fn received_wake<T: BlockReader>(&mut self, tree: &T) {
         let now = self.clock.local_time();

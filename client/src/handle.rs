@@ -9,7 +9,7 @@ use thiserror::Error;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::Address;
 use nakamoto_common::bitcoin::util::uint::Uint256;
-use nakamoto_common::bitcoin::Script;
+use nakamoto_common::bitcoin::{Script, Txid};
 
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::block::filter::BlockFilter;
@@ -151,6 +151,8 @@ pub trait Handle: Sized + Send + Sync + Clone {
     ///
     /// Returns the peer(s) the transaction was announced to, or an error if no peers were found.
     fn submit_transaction(&self, tx: Transaction) -> Result<NonEmpty<net::SocketAddr>, Error>;
+    /// Return a transaction that was propagated by the client.
+    fn get_submitted_transaction(&self, txid: &Txid) -> Result<Option<Transaction>, Error>;
     /// Import block headers into the node.
     /// This may cause the node to broadcast header or inventory messages to its peers.
     fn import_headers(
