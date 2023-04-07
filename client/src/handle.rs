@@ -16,6 +16,7 @@ use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::{BlockReader, ImportResult};
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
+use nakamoto_p2p::fsm::fees::FeeEstimate;
 use nakamoto_p2p::fsm::Link;
 use nakamoto_p2p::fsm::{self, Command, CommandError, GetFiltersError, Peer};
 
@@ -172,4 +173,6 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn wait_for_height(&self, h: Height) -> Result<BlockHash, Error>;
     /// Shutdown the node process.
     fn shutdown(self) -> Result<(), Error>;
+    /// Get if exist the fee estimation at the requested height
+    fn estimate_feerate(&self, block: Height) -> Result<Option<FeeEstimate>, Error>;
 }

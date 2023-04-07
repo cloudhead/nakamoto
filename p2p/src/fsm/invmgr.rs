@@ -95,6 +95,13 @@ pub enum Event {
         /// Peer who timed out.
         peer: PeerId,
     },
+    /// Fee Estimation by block height
+    FeeEstimation {
+        /// the block height where the fee estimation was requested
+        block: Height,
+        /// the fee estimated
+        fee: Option<FeeEstimate>,
+    },
 }
 
 impl std::fmt::Display for Event {
@@ -128,6 +135,9 @@ impl std::fmt::Display for Event {
                 write!(fmt, "Transaction {} was reverted", transaction.txid(),)
             }
             Event::TimedOut { peer } => write!(fmt, "Peer {} timed out", peer),
+            Event::FeeEstimation { block, fee } => {
+                write!(fmt, "Fee Estimation {:?} for block at height {block}", fee)
+            }
         }
     }
 }
@@ -187,6 +197,9 @@ pub struct InventoryManager<U, C> {
 
     /// Transaction fee estimator.
     estimator: FeeEstimator,
+    /// Used to track the fee by block, in case the client
+    /// will ask for a fee estimation
+    fees_by_block: BTreeMap<Height, FeeEstimate>,
 
     /// Transaction mempool. Stores unconfirmed transactions sent to the network.
     pub mempool: BTreeMap<Wtxid, Transaction>,
@@ -208,6 +221,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
             peers: AddressBook::new(rng.clone()),
             mempool: BTreeMap::new(),
             estimator: FeeEstimator::default(),
+            fees_by_block: BTreeMap::new(),
             confirmed: HashMap::with_hasher(rng.clone().into()),
             remaining: HashMap::with_hasher(rng.clone().into()),
             received: HashMap::with_hasher(rng.clone().into()),
@@ -268,6 +282,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
     /// Called when a block is reverted.
     pub fn block_reverted(&mut self, height: Height) -> Vec<Transaction> {
         self.estimator.rollback(height - 1);
+        self.fees_by_block.remove(&height);
 
         if let Some(transactions) = self.confirmed.remove(&height) {
             for tx in transactions.iter().cloned() {
@@ -509,7 +524,9 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
             }
             // Process block through fee estimator.
             let fees = self.estimator.process(block.clone(), height);
-
+            if let Some(val) = &fees {
+                self.fees_by_block.insert(height, val.clone());
+            }
             self.upstream.event(Event::BlockProcessed {
                 block,
                 height,
@@ -517,6 +534,14 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
             });
         }
         confirmed
+    }
+
+    pub fn get_fee_estimation(&self, block: Height) {
+        let estimted_fee = self.fees_by_block.get(&block);
+        self.upstream.event(Event::FeeEstimation {
+            block,
+            fee: estimted_fee.cloned(),
+        });
     }
 
     /// Announce inventories to all matching peers. Retries if necessary.

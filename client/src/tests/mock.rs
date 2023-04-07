@@ -159,6 +159,13 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
+    fn estimate_feerate(
+        &self,
+        _block: Height,
+    ) -> Result<Option<fsm::fees::FeeEstimate>, handle::Error> {
+        unimplemented!()
+    }
+
     fn request_block(&self, hash: &BlockHash) -> Result<(), handle::Error> {
         self.command(Command::RequestBlock(*hash))?;
 

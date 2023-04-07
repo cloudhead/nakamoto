@@ -282,6 +282,10 @@ pub enum Command {
         Transaction,
         chan::Sender<Result<NonEmpty<PeerId>, CommandError>>,
     ),
+    /// estimate fee by a given height
+    // FIXME: this is not true, this is giving the fee that we know
+    // for a block height, so we should make a better estimation?
+    EstimateFee(Height),
 }
 
 impl fmt::Debug for Command {
@@ -307,6 +311,7 @@ impl fmt::Debug for Command {
             Self::ImportHeaders(_headers, _) => write!(f, "ImportHeaders(..)"),
             Self::ImportAddresses(addrs) => write!(f, "ImportAddresses({:?})", addrs),
             Self::SubmitTransaction(tx, _) => write!(f, "SubmitTransaction({:?})", tx),
+            Self::EstimateFee(block) => write!(f, "EstimateFee({block})"),
         }
     }
 }
@@ -761,6 +766,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             }
             Command::Watch { watch } => {
                 self.cbfmgr.watch(watch);
+            }
+            Command::EstimateFee(block) => {
+                self.invmgr.get_fee_estimation(block);
             }
         }
     }

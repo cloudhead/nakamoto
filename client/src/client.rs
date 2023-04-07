@@ -34,6 +34,8 @@ pub use nakamoto_common::network;
 pub use nakamoto_common::network::Network;
 pub use nakamoto_common::p2p::Domain;
 pub use nakamoto_net::event;
+use nakamoto_p2p::fsm::fees::FeeEstimate;
+pub use nakamoto_p2p::fsm::fees::FeeRate;
 pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
 
 pub use crate::error::Error;
@@ -500,6 +502,19 @@ impl<W: Waker> handle::Handle for Handle<W> {
         self._command(Command::GetBlockByHeight(height, sender))?;
 
         Ok(recvr.recv()?)
+    }
+
+    fn estimate_feerate(&self, block: Height) -> Result<Option<FeeEstimate>, handle::Error> {
+        self.command(Command::EstimateFee(block))?;
+        self.wait(|event| {
+            if let fsm::Event::Inventory(fsm::InventoryEvent::FeeEstimation { block, fee }) = event
+            {
+                log::debug!("fee estimated for block height {block} is {:?}", fee);
+                Some(fee)
+            } else {
+                None
+            }
+        })
     }
 
     fn query_tree(
