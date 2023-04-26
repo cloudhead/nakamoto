@@ -137,7 +137,6 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
     ) -> Result<Self, Error> {
         for result in self.store.iter().skip(1) {
             let (height, header) = result?;
-
             self.chain.push(CachedBlock { height, header });
             self.chainwork = self.chainwork + header.work();
 
@@ -158,10 +157,31 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             }
         }
 
-        // Build header index.
-        for cb in self.chain.tail.iter() {
+        // Build the header index starting from the first element,
+        // since we've already added the genesis block to the headers.
+        //
+        // We keep track of the current height added so that we
+        // can rollback in case the storage has been populated.
+        let mut height = 0;
+        for cb in self.chain.tail.iter().skip(1) {
+            if self.headers.contains_key(&cb.prev_blockhash) {
+                // SAFETY: It is safe to do this here because we check before!
+                let prev_found = self.headers.get(&cb.prev_blockhash).unwrap().to_owned();
+                log::warn!("Current block {} was already found while tracking the header at height `{prev_found}`", cb.block_hash());
+                log::warn!("Truncating the store to the last sane height known `{height}`");
+                self.store.rollback(height)?;
+                self.store.sync()?;
+                // We truncate with `height - 1` because the genesis block
+                // is not counted in the chain structure.
+                self.chain.truncate((height - 1) as usize);
+                break;
+            }
             self.headers.insert(cb.prev_blockhash, cb.height - 1);
+            height = cb.height - 1;
         }
+        // In the case of a dirty store, we should override the same item.
+        // Therefore, there is no need to remove this call
+        // if we exit early from the previous for loop.
         self.headers.insert(self.chain.last().hash(), self.height());
 
         let length = self.store.len()?;
