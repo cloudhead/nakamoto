@@ -1,13 +1,13 @@
 //! Bitcoin peer network. Eg. *Mainnet*.
 use std::str::FromStr;
 
-use bitcoin::blockdata::block::{Block, BlockHeader};
+use bitcoin::blockdata::block::{Block, Header};
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::hashes::hex::FromHex;
 use bitcoin::network::constants::ServiceFlags;
 
-use bitcoin_hashes::sha256d;
+use bitcoin::hashes::sha256d;
 
 use crate::block::Height;
 
@@ -86,6 +86,7 @@ impl From<bitcoin::Network> for Network {
             bitcoin::Network::Testnet => Self::Testnet,
             bitcoin::Network::Signet => Self::Signet,
             bitcoin::Network::Regtest => Self::Regtest,
+            _ => unreachable!(),
         }
     }
 }
@@ -114,7 +115,7 @@ impl Network {
         .iter()
         .cloned()
         .map(|(height, hash)| {
-            let hash = BlockHash::from_hex(hash).unwrap();
+            let hash = BlockHash::from_str(hash).unwrap();
             (height, hash)
         });
 
@@ -169,7 +170,7 @@ impl Network {
     ///
     /// assert_eq!(network.genesis_hash(), genesis.block_hash());
     /// ```
-    pub fn genesis(&self) -> BlockHeader {
+    pub fn genesis(&self) -> Header {
         self.genesis_block().header
     }
 
@@ -183,7 +184,7 @@ impl Network {
     /// Get the hash of the genesis block of this network.
     pub fn genesis_hash(&self) -> BlockHash {
         use crate::block::genesis;
-        use bitcoin_hashes::Hash;
+        use bitcoin::hashes::Hash;
 
         let hash = match self {
             Self::Mainnet => genesis::MAINNET,
@@ -191,7 +192,7 @@ impl Network {
             Self::Regtest => genesis::REGTEST,
             Self::Signet => genesis::SIGNET,
         };
-        BlockHash::from_hash(
+        BlockHash::from_raw_hash(
             sha256d::Hash::from_slice(hash)
                 .expect("the genesis hash has the right number of bytes"),
         )
@@ -204,6 +205,6 @@ impl Network {
 
     /// Get the network magic number for this network.
     pub fn magic(&self) -> u32 {
-        bitcoin::Network::from(*self).magic()
+        u32::from_le_bytes(bitcoin::Network::from(*self).magic().to_bytes())
     }
 }

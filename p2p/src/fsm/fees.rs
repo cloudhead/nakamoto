@@ -170,7 +170,7 @@ impl FeeEstimator {
 
         let fee = received - sent;
         let weight = tx.weight();
-        let rate = fee as f64 / (weight as f64 / WITNESS_SCALE_FACTOR as f64);
+        let rate = fee as f64 / (weight.to_wu() as f64 / WITNESS_SCALE_FACTOR as f64);
 
         Some(rate.round() as FeeRate)
     }

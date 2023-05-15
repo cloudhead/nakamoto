@@ -6,6 +6,7 @@
 //! with specific capabilities, eg. peer disconnection, message sending etc. to
 //! communicate with the network.
 use log::*;
+use nakamoto_common::bitcoin::network::Magic;
 use std::cell::{Ref, RefCell};
 use std::collections::VecDeque;
 use std::net;
@@ -192,7 +193,7 @@ impl Outbox {
         self.push(Io::Write(
             addr,
             RawNetworkMessage {
-                magic: self.network.magic(),
+                magic: Magic::from_bytes(self.network.magic().to_be_bytes()),
                 payload,
             },
         ));

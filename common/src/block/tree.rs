@@ -2,10 +2,10 @@
 #![warn(missing_docs)]
 use std::collections::BTreeMap;
 
-use bitcoin::blockdata::block::BlockHeader;
+use bitcoin::block::Header as BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
-use bitcoin::util::uint::Uint256;
+use bitcoin::CompactTarget;
 
 use thiserror::Error;
 
@@ -102,7 +102,8 @@ pub struct Branch<'a, H: Header>(pub &'a [H]);
 impl<'a, H: Header> Branch<'a, H> {
     /// Compute the total proof-of-work carried by this branch.
     pub fn work(&self) -> Work {
-        let mut work = Work::default();
+        // FIXME: this should be by network
+        let mut work = Work::MAINNET_MIN;
         for header in self.0.iter() {
             work = work + header.work();
         }
@@ -145,7 +146,7 @@ pub trait BlockReader {
         Box::new(self.iter().map(|(_, h)| h))
     }
     /// Get the "chainwork", ie. the total accumulated proof-of-work of the active chain.
-    fn chain_work(&self) -> Uint256;
+    fn chain_work(&self) -> Work;
     /// Iterate over the longest chain, starting from genesis, including heights.
     fn iter<'a>(&'a self) -> Box<dyn DoubleEndedIterator<Item = (Height, BlockHeader)> + 'a>;
     /// Iterate over a range of blocks.
@@ -206,7 +207,7 @@ pub trait BlockReader {
         // Only adjust on set intervals. Otherwise return current target.
         // Since the height is 0-indexed, we add `1` to check it against the interval.
         if (last_height + 1) % params.difficulty_adjustment_interval() != 0 {
-            return BlockHeader::compact_target_from_u256(&last_target);
+            return last_target.to_compact_lossy().to_consensus();
         }
 
         let last_adjustment_height =
@@ -217,7 +218,7 @@ pub trait BlockReader {
         let last_adjustment_time = last_adjustment_block.time;
 
         if params.no_pow_retargeting {
-            return last_adjustment_block.bits;
+            return last_adjustment_block.bits.to_consensus();
         }
 
         let actual_timespan = last_time - last_adjustment_time;
@@ -229,16 +230,21 @@ pub trait BlockReader {
             adjusted_timespan = params.pow_target_timespan as BlockTime * 4;
         }
 
-        let mut target = last_target;
+        // FIXME: from now till the end it is a mess!
+        let mut target = last_target.to_compact_lossy().to_consensus();
 
-        target = target.mul_u32(adjusted_timespan);
-        target = target / Target::from_u64(params.pow_target_timespan).unwrap();
+        target = target * adjusted_timespan;
+        target = target / (params.pow_target_timespan as u32);
 
         // Ensure a difficulty floor.
-        if target > params.pow_limit {
-            target = params.pow_limit;
+        if Target::from(CompactTarget::from_consensus(target)).to_work() > params.pow_limit {
+            target = params
+                .pow_limit
+                .to_target()
+                .to_compact_lossy()
+                .to_consensus();
         }
 
-        BlockHeader::compact_target_from_u256(&target)
+        target
     }
 }

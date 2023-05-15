@@ -3,7 +3,7 @@ use std::collections::BTreeSet;
 use std::ops::RangeInclusive;
 use std::rc::Rc;
 
-use nakamoto_common::bitcoin::util::bip158;
+use nakamoto_common::bitcoin::{bip158, ScriptBuf};
 use nakamoto_common::bitcoin::{Script, Txid};
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::BlockReader;
@@ -27,9 +27,9 @@ pub struct Rescan {
     /// Filter cache.
     pub cache: FilterCache<Rc<BlockFilter>>,
     /// Addresses and outpoints to watch for.
-    pub watch: HashSet<Script>,
+    pub watch: HashSet<ScriptBuf>,
     /// Transactions to watch for.
-    pub transactions: HashMap<Txid, HashSet<Script>>,
+    pub transactions: HashMap<Txid, HashSet<ScriptBuf>>,
 
     /// Filters requested and remaining to download.
     requested: BTreeSet<Height>,
@@ -53,7 +53,7 @@ impl Rescan {
         &mut self,
         start: Height,
         end: Option<Height>,
-        watch: impl IntoIterator<Item = Script>,
+        watch: impl IntoIterator<Item = ScriptBuf>,
     ) {
         self.active = true;
         self.start = start;

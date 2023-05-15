@@ -11,15 +11,14 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::ControlFlow;
 
+use common::block::Target;
 use nakamoto_common as common;
 use nakamoto_common::bitcoin;
-use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::blockdata::block::Header as BlockHeader;
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::hash_types::BlockHash;
 use nakamoto_common::bitcoin::network::constants::Network;
-use nakamoto_common::bitcoin::util::BitArray;
 
-use nakamoto_common::bitcoin::util::uint::Uint256;
 use nakamoto_common::block::tree::{self, BlockReader, BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::{
     self,
@@ -76,7 +75,7 @@ pub struct BlockCache<S: Store> {
     checkpoints: BTreeMap<Height, BlockHash>,
     params: Params,
     /// Total cumulative work on the active chain.
-    chainwork: Uint256,
+    chainwork: Work,
     store: S,
 }
 
@@ -240,17 +239,17 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         //
         // We do this because it's cheap to verify and prevents flooding attacks.
         let target = header.target();
-        match header.validate_pow(&target) {
+        match header.validate_pow(target) {
             Ok(_) => {
-                let limit = self.params.pow_limit;
+                let limit = self.params.pow_limit.to_target();
                 if target > limit {
                     return Err(Error::InvalidBlockTarget(target, limit));
                 }
             }
-            Err(bitcoin::util::Error::BlockBadProofOfWork) => {
+            Err(bitcoin::error::Error::BlockBadProofOfWork) => {
                 return Err(Error::InvalidBlockPoW);
             }
-            Err(bitcoin::util::Error::BlockBadTarget) => unreachable! {
+            Err(bitcoin::error::Error::BlockBadTarget) => unreachable! {
                 // The only way to get a 'bad target' error is to pass a different target
                 // than the one specified in the header.
             },
@@ -288,7 +287,9 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
         let mut best_branch = None;
         let mut best_hash = tip.hash();
-        let mut best_work = Uint256::zero();
+        // FIXME: this need to be a Work by network? or the min is equal for
+        // every network?
+        let mut best_work = Work::MAINNET_MIN;
 
         for branch in candidates.iter() {
             // Total work included in this branch.
@@ -455,11 +456,11 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
         let target = BlockHeader::u256_from_compact_target(compact_target);
 
-        match header.validate_pow(&target) {
-            Err(bitcoin::util::Error::BlockBadProofOfWork) => {
+        match header.validate_pow(target) {
+            Err(bitcoin::error::Error::BlockBadProofOfWork) => {
                 return Err(Error::InvalidBlockPoW);
             }
-            Err(bitcoin::util::Error::BlockBadTarget) => {
+            Err(bitcoin::error::Error::BlockBadTarget) => {
                 return Err(Error::InvalidBlockTarget(header.target(), target));
             }
             Err(_) => unreachable!(),
@@ -497,10 +498,10 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         let pow_limit_bits = block::pow_limit_bits(&params.network);
 
         for (height, header) in self.iter().rev() {
-            if header.bits != pow_limit_bits
+            if header.bits.to_consensus() != pow_limit_bits
                 || height % self.params.difficulty_adjustment_interval() == 0
             {
-                return header.bits;
+                return header.bits.to_consensus();
             }
         }
         pow_limit_bits
@@ -682,7 +683,7 @@ impl<S: Store<Header = BlockHeader>> BlockReader for BlockCache<S> {
     }
 
     /// Get the "chainwork", ie. the total accumulated proof-of-work of the active chain.
-    fn chain_work(&self) -> Uint256 {
+    fn chain_work(&self) -> Work {
         self.chainwork
     }
 

@@ -7,14 +7,13 @@ use nakamoto_common::bitcoin_hashes::Hash;
 use nakamoto_common::block::filter::{self, BlockFilter, FilterHash, FilterHeader, Filters};
 use nakamoto_common::block::iter::Iter;
 use nakamoto_common::block::tree::{BlockReader, BlockTree, Branch, Error, ImportResult};
-use nakamoto_common::block::Height;
+use nakamoto_common::block::{Height, Work};
 use nakamoto_common::nonempty::NonEmpty;
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
-use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::blockdata::block::Header as BlockHeader;
 use nakamoto_common::bitcoin::hash_types::BlockHash;
-use nakamoto_common::bitcoin::util::uint::Uint256;
 
 #[derive(Debug, Clone)]
 pub struct Cache {
@@ -183,8 +182,8 @@ impl BlockReader for Cache {
         None
     }
 
-    fn chain_work(&self) -> Uint256 {
-        let mut work = Uint256::default();
+    fn chain_work(&self) -> Work {
+        let mut work = Work::REGTEST_MIN;
 
         for block in self.chain.iter() {
             work = work + block.work();

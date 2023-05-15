@@ -7,7 +7,8 @@ pub mod network;
 pub mod p2p;
 
 pub use bitcoin;
-pub use bitcoin_hashes;
+// re-aliasing to bitcoin_hashes for retro-compatibility
+pub use bitcoin::hashes as bitcoin_hashes;
 pub use nakamoto_net as net;
 pub use nonempty;
 
