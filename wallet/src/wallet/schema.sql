@@ -16,3 +16,9 @@ CREATE TABLE IF NOT EXISTS "addresses" (
   "received"    integer          NOT NULL DEFAULT 0,
   "used"        integer          NOT NULL DEFAULT false
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS "sync" (
+  "network"     text             NOT NULL UNIQUE,
+  "height"      integer          NOT NULL UNIQUE,
+  "hash"        text             NOT NULL UNIQUE
+) STRICT;

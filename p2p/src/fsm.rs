@@ -773,6 +773,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         self.cbfmgr.initialize(&self.tree);
         self.outbox.event(Event::Ready {
             height: self.tree.height(),
+            hash: self.tree.tip().0,
             filter_height: self.cbfmgr.filters.height(),
             time,
         });

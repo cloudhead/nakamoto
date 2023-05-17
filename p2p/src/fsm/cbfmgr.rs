@@ -173,7 +173,7 @@ impl std::fmt::Display for Event {
             } => {
                 write!(
                     fmt,
-                    "Filter processed at height {} (match = {}, valid = {})",
+                    "Filter {} processed (match = {}, valid = {})",
                     height, matched, valid
                 )
             }
@@ -415,7 +415,8 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
             }
 
             log::debug!(
-                "[spv] Rollback from {} to {}, start = {}, height = {}",
+                target: "spv",
+                "Rollback from {} to {}, start = {}, height = {}",
                 current,
                 self.rescan.current,
                 start,
@@ -536,7 +537,8 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
             let timeout = self.config.request_timeout;
 
             log::debug!(
-                "Requested filter(s) in range {} to {} from {} (stop = {})",
+                target: "spv",
+                "Requesting filter(s) in range {} to {} from {} (stop = {})",
                 range.start(),
                 range.end(),
                 peer,
@@ -563,7 +565,8 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
         let stop_hash = msg.stop_hash;
 
         log::debug!(
-            "[spv] Received {} filter header(s) from {}",
+            target: "spv",
+            "Received {} filter header(s) from {}",
             msg.filter_hashes.len(),
             from
         );

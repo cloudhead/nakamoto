@@ -39,5 +39,5 @@ pub fn run(
         cfg.limits.max_outbound_peers = connect.len();
     }
 
-    Client::<Reactor>::new()?.run(cfg)
+    Client::<Reactor>::new(cfg)?.run()
 }

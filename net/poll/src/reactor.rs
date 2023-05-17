@@ -305,7 +305,7 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
 
                     match self::dial(&socket_addr) {
                         Ok(stream) => {
-                            trace!("{:#?}", stream);
+                            trace!("Stream established with {}", socket_addr);
 
                             self.register_peer(addr.clone(), stream, Link::Outbound);
                             self.connecting.insert(addr.clone());
@@ -340,8 +340,6 @@ impl<Id: PeerId> Reactor<net::TcpStream, Id> {
                     self.timeouts.register((), local_time + timeout);
                 }
                 Io::Event(event) => {
-                    trace!("Event: {:?}", event);
-
                     publisher.publish(event);
                 }
             }
