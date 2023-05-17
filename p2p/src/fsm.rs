@@ -34,14 +34,12 @@ pub use peermgr::Event as PeerEvent;
 pub use pingmgr::Event as PingEvent;
 pub use syncmgr::Event as ChainEvent;
 
-use crate::stream;
-
 pub use event::Event;
 pub use nakamoto_net::Link;
 pub use output::Io;
 
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::fmt::{self, Debug};
 use std::net;
 use std::ops::{Bound, RangeInclusive};
@@ -79,9 +77,6 @@ pub const PROTOCOL_VERSION: u32 = 70016;
 pub const MIN_PROTOCOL_VERSION: u32 = 70012;
 /// User agent included in `version` messages.
 pub const USER_AGENT: &str = "/nakamoto:0.3.0/";
-
-/// Starting size of peer inbox buffer.
-const INBOX_BUFFER_SIZE: usize = 1024 * 64;
 
 /// Block locators. Consists of starting hashes and a stop hash.
 type Locators = (Vec<BlockHash>, BlockHash);
@@ -364,8 +359,6 @@ pub struct StateMachine<T, F, P, C> {
     tree: T,
     /// Bitcoin network we're connecting to.
     network: network::Network,
-    /// Peer message inboxes.
-    inbox: HashMap<PeerId, stream::Decoder>,
     /// Peer address manager.
     addrmgr: AddressManager<P, Outbox, C>,
     /// Blockchain synchronization manager.
@@ -520,7 +513,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
         } = config;
 
         let outbox = Outbox::new(network, protocol_version);
-        let inbox = HashMap::new();
         let syncmgr = SyncManager::new(
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
@@ -578,7 +570,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             tree,
             network,
             clock,
-            inbox,
             addrmgr,
             syncmgr,
             pingmgr,
@@ -982,8 +973,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         self.addrmgr.record_local_address(*local_addr);
         self.addrmgr.peer_connected(&addr);
         self.peermgr.peer_connected(addr, *local_addr, link, height);
-        self.inbox
-            .insert(addr, stream::Decoder::new(INBOX_BUFFER_SIZE));
     }
 
     fn disconnected(
