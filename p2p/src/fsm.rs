@@ -53,7 +53,7 @@ use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, In
 use nakamoto_common::bitcoin::network::message_filter::GetCFilters;
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 use nakamoto_common::bitcoin::network::{Address, Magic};
-use nakamoto_common::bitcoin::{ScriptBuf, Txid};
+use nakamoto_common::bitcoin::{ScriptBuf, Txid, CompactTarget};
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::AdjustedClock;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};

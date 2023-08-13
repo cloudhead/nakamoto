@@ -232,13 +232,13 @@ pub mod gen {
         let delta = rng.u32(target_spacing - 60..target_spacing + 60);
 
         let time = prev_header.time + delta;
-        let bits = BlockHeader::compact_target_from_u256(&prev_header.target());
+        let bits = &prev_header.target().to_compact_lossy();
 
         let mut header = BlockHeader {
             version: Version::ONE,
             time,
             nonce: rng.u32(..),
-            bits,
+            bits: *bits,
             merkle_root,
             prev_blockhash: prev_header.block_hash(),
         };

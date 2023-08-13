@@ -1,7 +1,8 @@
-use std::{ops::Range, str::FromStr};
+use std::ops::Range;
 
-use bitcoin::{util::bip32::DerivationPath, Address};
+use bitcoin::{bip32::DerivationPath, Address};
 use nakamoto_common::bitcoin;
+use nakamoto_common::bitcoin::address::NetworkUnchecked;
 
 pub use coldcard::protocol::AddressFormat;
 
@@ -14,7 +15,7 @@ pub enum Error {
     #[error("failed to open hardware device")]
     Open,
     #[error("failed to decode address from device")]
-    Address(#[from] bitcoin::util::address::Error),
+    Address(#[from] bitcoin::address::Error),
     #[error("derivation path error")]
     DerivationPath(coldcard::protocol::derivation_path::Error),
     #[error("device error: {0}")]
@@ -73,7 +74,8 @@ impl Hw {
                 .map_err(Error::DerivationPath)?;
             // TODO: This should be made to return `Address` type.
             let addr = device.address(child, format)?;
-            let addr = Address::from_str(addr.as_str())?;
+            let addr: Address<NetworkUnchecked> = addr.as_str().parse()?;
+            let addr = addr.assume_checked();
 
             log::debug!("Loaded address {addr} from device");
 

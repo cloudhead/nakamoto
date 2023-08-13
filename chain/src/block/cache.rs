@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::ControlFlow;
 
+use common::bitcoin::CompactTarget;
 use common::block::Target;
 use nakamoto_common as common;
 use nakamoto_common::bitcoin;
@@ -454,7 +455,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             self.next_difficulty_target(tip.height, tip.time, tip.target(), &self.params)
         };
 
-        let target = BlockHeader::u256_from_compact_target(compact_target);
+        let target = Target::from_compact(CompactTarget::from_consensus(compact_target));
 
         match header.validate_pow(target) {
             Err(bitcoin::error::Error::BlockBadProofOfWork) => {

@@ -12,7 +12,7 @@ use termion::event::Event;
 
 use nakamoto_client as client;
 use nakamoto_client::handle::Handle;
-use nakamoto_common::bitcoin::Address;
+use nakamoto_common::bitcoin::{Address, ScriptBuf};
 use nakamoto_common::bitcoin::{OutPoint, Script, Transaction, TxOut};
 use nakamoto_common::block::Height;
 
@@ -55,7 +55,7 @@ impl<H: Handle> Wallet<H> {
     }
 
     /// Apply a transaction to the wallet's UTXO set.
-    pub fn apply(&mut self, tx: &Transaction, scripts: &[Script]) {
+    pub fn apply(&mut self, tx: &Transaction, scripts: &[ScriptBuf]) {
         // Look for outputs.
         for (vout, output) in tx.output.iter().enumerate() {
             // Received coin. Mark the address as *used*, and update the balance for that
@@ -224,7 +224,7 @@ impl<H: Handle> Wallet<H> {
     fn handle_client_event<W: io::Write>(
         &mut self,
         event: client::Event,
-        watch: &[Script],
+        watch: &[ScriptBuf],
         offline: bool,
         term: &mut W,
     ) -> Result<ControlFlow<()>, Error> {
