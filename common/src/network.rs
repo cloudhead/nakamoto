@@ -5,6 +5,7 @@ use bitcoin::blockdata::block::{Block, Header};
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::hashes::hex::FromHex;
+use bitcoin::network::Magic;
 use bitcoin::network::constants::ServiceFlags;
 
 use bitcoin::hashes::sha256d;
@@ -204,7 +205,7 @@ impl Network {
     }
 
     /// Get the network magic number for this network.
-    pub fn magic(&self) -> u32 {
-        u32::from_le_bytes(bitcoin::Network::from(*self).magic().to_bytes())
+    pub fn magic(&self) -> Magic {
+        bitcoin::Network::from(*self).magic()
     }
 }

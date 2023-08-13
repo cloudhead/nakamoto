@@ -230,14 +230,13 @@ pub trait BlockReader {
             adjusted_timespan = params.pow_target_timespan as BlockTime * 4;
         }
 
-        // FIXME: from now till the end it is a mess!
         let mut target = last_target.to_compact_lossy().to_consensus();
 
         target = target * adjusted_timespan;
         target = target / (params.pow_target_timespan as u32);
 
         // Ensure a difficulty floor.
-        if Target::from(CompactTarget::from_consensus(target)).to_work() > params.pow_limit {
+        if CompactTarget::from_consensus(target) > params.pow_limit.to_target().to_compact_lossy() {
             target = params
                 .pow_limit
                 .to_target()

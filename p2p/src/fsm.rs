@@ -789,7 +789,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         let addr = *addr;
         let msg = msg.into_owned();
 
-        if msg.magic != Magic::from_bytes(self.network.magic().to_be_bytes()) {
+        if msg.magic != self.network.magic() {
             return self.disconnect(
                 addr,
                 DisconnectReason::PeerMagic(u32::from_be_bytes(msg.magic.to_bytes())),

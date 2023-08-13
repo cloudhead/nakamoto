@@ -1,9 +1,10 @@
 use super::BlockCache;
 
+use nakamoto_common::bitcoin::block::Version;
 use nakamoto_common::bitcoin_hashes::Hash;
 use nakamoto_common::block::time::{AdjustedTime, Clock, LocalTime};
 use nakamoto_common::block::tree::{BlockReader, BlockTree, Error, ImportResult};
-use nakamoto_common::block::{BlockTime, Height, Target};
+use nakamoto_common::block::{BlockTime, Height, Target, Work};
 use nakamoto_common::nonempty::NonEmpty;
 
 use nakamoto_test::assert_matches;
@@ -15,30 +16,24 @@ use crate::block::store::{self, Store};
 use std::collections::{BTreeMap, VecDeque};
 use std::iter;
 use std::net;
+use std::str::FromStr;
 use std::sync::{Arc, RwLock};
 
 use quickcheck::{Arbitrary, Gen};
 use quickcheck_macros::quickcheck;
 
-use nakamoto_common::bitcoin;
-use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
+use nakamoto_common::bitcoin::{self, CompactTarget};
+use nakamoto_common::bitcoin::blockdata::block::Header as BlockHeader;
 use nakamoto_common::bitcoin::blockdata::constants;
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::hash_types::{BlockHash, TxMerkleNode};
 use nakamoto_common::bitcoin_hashes::hex::FromHex;
 
-use nakamoto_common::bitcoin::util::uint::Uint256;
-
 /// Sun, 12 Jul 2020 15:03:05 +0000.
 const LOCAL_TIME: LocalTime = LocalTime::from_secs(1594566185);
 
 /// Lowest possible difficulty.
-const TARGET: Uint256 = Uint256([
-    0xffffffffffffffffu64,
-    0xffffffffffffffffu64,
-    0xffffffffffffffffu64,
-    0x7fffffffffffffffu64,
-]);
+const TARGET: Target = Target::ZERO;
 /// Target block time (1 minute).
 const TARGET_SPACING: BlockTime = 60 * 10;
 /// Target time span (1 hour).
@@ -92,7 +87,7 @@ impl BlockReader for HeightCache {
         self.headers.get(&height)
     }
 
-    fn chain_work(&self) -> Uint256 {
+    fn chain_work(&self) -> Work {
         unimplemented!()
     }
 
@@ -183,7 +178,7 @@ mod arbitrary {
                     height,
                     header.block_hash(),
                     header.time,
-                    header.bits,
+                    header.bits.to_consensus(),
                     header.nonce
                 )?;
             }
@@ -259,7 +254,7 @@ mod arbitrary {
                     header.block_hash(),
                     header.prev_blockhash,
                     header.time,
-                    header.bits,
+                    header.bits.to_consensus(),
                 )?;
             }
             Ok(())
@@ -276,10 +271,10 @@ fn arbitrary_header(
     let delta = u32::arbitrary(g) % (TARGET_SPACING * 2) + TARGET_SPACING / 2;
 
     let time = prev_time + delta;
-    let bits = BlockHeader::compact_target_from_u256(target);
+    let bits = target.to_compact_lossy();
 
     let mut header = BlockHeader {
-        version: 1,
+        version: Version::from_consensus(1),
         time,
         nonce: 0,
         bits,
@@ -369,14 +364,15 @@ fn prop_invalid_block_target(import: BlockImport) -> bool {
     assert!(cache.clone().import_block(header, &ctx).is_ok());
 
     let header = BlockHeader {
-        bits: genesis.bits - 1,
+        bits: CompactTarget::from_consensus(genesis.bits.to_consensus() - 1),
         ..header
     };
 
+    let result = CompactTarget::from_consensus(genesis.bits.to_consensus() - 1);
     matches! {
         cache.import_block(header, &ctx).err(),
         Some(Error::InvalidBlockTarget(actual, expected))
-            if actual == BlockHeader::u256_from_compact_target(genesis.bits - 1)
+            if actual == Target::from_compact(result)
                 && expected == genesis.target()
     }
 }
@@ -390,18 +386,13 @@ fn test_invalid_orphan_block_target() {
     let params = Params::new(network);
 
     // A lower difficulty target than expected.
-    let invalid_bits: Uint256 = Uint256([
-        0xffffffffffffffffu64,
-        0xffffffffffffffffu64,
-        0xffffffffffffffffu64,
-        0x9fffffffffffffffu64,
-    ]);
+    let invalid_bits = Target::ZERO;
 
     let mut cache = BlockCache::from(store, params.clone(), &[]).unwrap();
 
     // Some arbitrary previous block we don't have.
     let prev_blockhash =
-        BlockHash::from_hex("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+        BlockHash::from_str("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
     // A valid header.
@@ -422,7 +413,7 @@ fn test_invalid_orphan_block_target() {
 
     // An invalid header.
     let mut header = BlockHeader {
-        bits: BlockHeader::compact_target_from_u256(&invalid_bits),
+        bits: invalid_bits.to_compact_lossy(),
         ..header
     };
     block::solve(&mut header);
@@ -431,12 +422,11 @@ fn test_invalid_orphan_block_target() {
     match cache.import_block(header, &clock).unwrap_err() {
         Error::InvalidBlockTarget(actual, expected) => {
             assert_eq!(
-                BlockHeader::compact_target_from_u256(&actual),
-                BlockHeader::compact_target_from_u256(&invalid_bits)
-            );
+                actual.to_compact_lossy(),
+                invalid_bits.to_compact_lossy());
             assert_eq!(
-                BlockHeader::compact_target_from_u256(&expected),
-                BlockHeader::compact_target_from_u256(&params.pow_limit)
+                expected.to_compact_lossy(),
+                params.pow_limit.to_target().to_compact_lossy(),
             );
         }
         err => panic!("wrong error returned: {:?}", err),
@@ -455,7 +445,7 @@ fn test_invalid_orphan_block_pow() {
 
     // Some arbitrary previous block we don't have.
     let prev_blockhash =
-        BlockHash::from_hex("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+        BlockHash::from_str("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
     // An invalid header.
@@ -484,7 +474,7 @@ fn prop_invalid_block_pow(import: BlockImport) -> bool {
     let mut header = header;
 
     // Find an *invalid* nonce.
-    while header.validate_pow(&header.target()).is_ok() {
+    while header.validate_pow(header.target()).is_ok() {
         header.nonce += 1;
     }
 
@@ -509,7 +499,7 @@ fn test_bitcoin_difficulty() {
         let target = cache.next_difficulty_target(
             height - 1,
             prev_time,
-            BlockHeader::u256_from_compact_target(prev_bits),
+            Target::from_compact(CompactTarget::from_consensus(prev_bits)),
             &params,
         );
 
@@ -520,9 +510,9 @@ fn test_bitcoin_difficulty() {
         cache.import(
             height,
             BlockHeader {
-                version: 1,
+                version: Version::from_consensus(1),
                 time,
-                bits,
+                bits: CompactTarget::from_consensus(bits),
                 merkle_root: TxMerkleNode::all_zeros(),
                 prev_blockhash: BlockHash::all_zeros(),
                 nonce: 0,
@@ -617,10 +607,10 @@ impl Tree {
     fn next(&self, g: &mut fastrand::Rng) -> Tree {
         let nonce = g.u32(..);
         let mut header = BlockHeader {
-            version: 1,
+            version: Version::from_consensus(1),
             prev_blockhash: self.hash,
             merkle_root: TxMerkleNode::all_zeros(),
-            bits: BlockHeader::compact_target_from_u256(&TARGET),
+            bits: TARGET.to_compact_lossy(),
             time: self.time + TARGET_SPACING,
             nonce,
         };
@@ -640,15 +630,15 @@ impl Tree {
     fn next_invalid(&self, g: &mut fastrand::Rng) -> Tree {
         let nonce = g.u32(..);
         let mut header = BlockHeader {
-            version: 1,
+            version: Version::from_consensus(1),
             prev_blockhash: self.hash,
             merkle_root: TxMerkleNode::all_zeros(),
-            bits: BlockHeader::compact_target_from_u256(&TARGET),
+            bits: TARGET.to_compact_lossy(),
             time: self.time + TARGET_SPACING,
             nonce,
         };
         let target = header.target();
-        while header.validate_pow(&target).is_ok() {
+        while header.validate_pow(target).is_ok() {
             header.nonce += 1;
         }
 
@@ -1012,36 +1002,36 @@ fn test_cache_import_back_and_forth() {
 fn test_cache_import_equal_difficulty_blocks() {
     let mut headers = vec![
         BlockHeader {
-            version: 1,
-            prev_blockhash: BlockHash::from_hex(
+            version: Version::from_consensus(1),
+            prev_blockhash: BlockHash::from_str(
                 "0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206",
             )
             .unwrap(),
             merkle_root: TxMerkleNode::all_zeros(),
             time: 1296688662,
-            bits: 545259519,
+            bits: CompactTarget::from_consensus(545259519),
             nonce: 3705677718,
         },
         BlockHeader {
-            version: 1,
-            prev_blockhash: BlockHash::from_hex(
+            version: Version::from_consensus(1),
+            prev_blockhash: BlockHash::from_str(
                 "40e6856aba3aa0bab2ba97b5612dc22a485c3a583dc98a9f1cd1706dd858f623",
             )
             .unwrap(),
             merkle_root: TxMerkleNode::all_zeros(),
             time: 1296688722,
-            bits: 545259519,
+            bits: CompactTarget::from_consensus(545259519),
             nonce: 3581550584,
         },
         BlockHeader {
-            version: 1,
-            prev_blockhash: BlockHash::from_hex(
+            version: Version::from_consensus(1),
+            prev_blockhash: BlockHash::from_str(
                 "40e6856aba3aa0bab2ba97b5612dc22a485c3a583dc98a9f1cd1706dd858f623",
             )
             .unwrap(),
             merkle_root: TxMerkleNode::all_zeros(),
             time: 1296688722,
-            bits: 545259519,
+            bits: CompactTarget::from_consensus(545259519),
             nonce: 3850925874,
         },
     ];
@@ -1060,7 +1050,7 @@ fn test_cache_import_equal_difficulty_blocks() {
     assert_eq!(real.tip(), model.tip());
 
     let expected =
-        BlockHash::from_hex("79cdea612df7f65b541da8ff45913f472eb0bf9376e1b9e3cd2c6ce78f261954")
+        BlockHash::from_str("79cdea612df7f65b541da8ff45913f472eb0bf9376e1b9e3cd2c6ce78f261954")
             .unwrap();
 
     assert_eq!(real.tip().0, expected);
@@ -1462,7 +1452,7 @@ fn test_cache_locate_headers() {
     );
 
     let unknown =
-        BlockHash::from_hex("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+        BlockHash::from_str("0f9188f13cb7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
     assert_eq!(

@@ -193,7 +193,7 @@ impl Outbox {
         self.push(Io::Write(
             addr,
             RawNetworkMessage {
-                magic: Magic::from_bytes(self.network.magic().to_be_bytes()),
+                magic: self.network.magic(),
                 payload,
             },
         ));

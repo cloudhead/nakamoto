@@ -11,7 +11,7 @@ use thiserror::Error;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
 
-use nakamoto_common::bitcoin::{Script, ScriptBuf, Transaction, Txid};
+use nakamoto_common::bitcoin::{ScriptBuf, Transaction, Txid};
 
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
@@ -1026,6 +1026,7 @@ impl Iterator for HeightIterator {
 mod tests {
     use std::iter;
     use std::ops::RangeBounds;
+    use std::str::FromStr;
 
     use nakamoto_common::bitcoin;
     use nakamoto_common::bitcoin_hashes;
@@ -1033,7 +1034,7 @@ mod tests {
     use bitcoin::consensus::Params;
     use bitcoin::network::message::NetworkMessage;
     use bitcoin::network::message_filter::GetCFilters;
-    use bitcoin::BlockHeader;
+    use bitcoin::block::Header as BlockHeader;
     use bitcoin_hashes::hex::FromHex;
 
     use nakamoto_chain::store::Genesis;
@@ -1232,17 +1233,17 @@ mod tests {
         {
             let msg = CFHeaders {
                 filter_type: 0,
-                stop_hash: BlockHash::from_hex(
+                stop_hash: BlockHash::from_str(
                     "00000000b3322c8c3ef7d2cf6da009a776e6a99ee65ec5a32f3f345712238473",
                 )
                 .unwrap(),
-                previous_filter_header: FilterHeader::from_hex(
+                previous_filter_header: FilterHeader::from_str(
                     "02c2392180d0ce2b5b6f8b08d39a11ffe831c673311a3ecf77b97fc3f0303c9f",
                 )
                 .unwrap(),
                 filter_hashes: FILTER_HASHES
                     .iter()
-                    .map(|h| FilterHash::from_hex(h).unwrap())
+                    .map(|h| FilterHash::from_str(h).unwrap())
                     .collect(),
             };
             cbfmgr.inflight.insert(msg.stop_hash, (1, *peer, time));
