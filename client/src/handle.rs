@@ -8,7 +8,7 @@ use thiserror::Error;
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::Address;
-use nakamoto_common::bitcoin::{Script, Txid, ScriptBuf};
+use nakamoto_common::bitcoin::{Script, ScriptBuf, Txid};
 
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::block::filter::BlockFilter;

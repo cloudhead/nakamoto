@@ -22,11 +22,11 @@ use std::sync::{Arc, RwLock};
 use quickcheck::{Arbitrary, Gen};
 use quickcheck_macros::quickcheck;
 
-use nakamoto_common::bitcoin::{self, CompactTarget};
 use nakamoto_common::bitcoin::blockdata::block::Header as BlockHeader;
 use nakamoto_common::bitcoin::blockdata::constants;
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::hash_types::{BlockHash, TxMerkleNode};
+use nakamoto_common::bitcoin::{self, CompactTarget};
 use nakamoto_common::bitcoin_hashes::hex::FromHex;
 
 /// Sun, 12 Jul 2020 15:03:05 +0000.
@@ -421,9 +421,7 @@ fn test_invalid_orphan_block_target() {
     // Even though the header can't be connected to the main chain, we still get an error.
     match cache.import_block(header, &clock).unwrap_err() {
         Error::InvalidBlockTarget(actual, expected) => {
-            assert_eq!(
-                actual.to_compact_lossy(),
-                invalid_bits.to_compact_lossy());
+            assert_eq!(actual.to_compact_lossy(), invalid_bits.to_compact_lossy());
             assert_eq!(
                 expected.to_compact_lossy(),
                 params.pow_limit.to_target().to_compact_lossy(),

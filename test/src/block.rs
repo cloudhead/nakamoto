@@ -60,14 +60,15 @@ pub mod gen {
     use std::collections::HashMap;
 
     use bitcoin::bip158;
-    use bitcoin::blockdata::script::Script;
     use bitcoin::blockdata::transaction::{OutPoint, TxIn, TxOut};
     use bitcoin::consensus::Decodable;
-    use bitcoin::hash_types::{PubkeyHash, TxMerkleNode, Txid};
+    use bitcoin::hash_types::{TxMerkleNode, Txid};
 
     use nakamoto_common::bitcoin::absolute::LockTime;
     use nakamoto_common::bitcoin::block::Version;
-    use nakamoto_common::bitcoin::{self, merkle_tree, ScriptBuf, Sequence, Witness};
+    use nakamoto_common::bitcoin::{
+        self, merkle_tree, Amount, PubkeyHash, ScriptBuf, Sequence, Witness,
+    };
     use nakamoto_common::bitcoin_hashes::{hash160, Hash as _};
     use nakamoto_common::block::filter::{BlockFilter, FilterHash, FilterHeader};
     use nakamoto_common::block::BlockHeader;
@@ -107,7 +108,7 @@ pub mod gen {
         }
 
         Transaction {
-            version: 1,
+            version: bitcoin::transaction::Version(1),
             lock_time: LockTime::ZERO,
             input,
             output,
@@ -138,7 +139,7 @@ pub mod gen {
             let v = rng.u64(1..=allowance);
 
             output.push(TxOut {
-                value: v,
+                value: Amount(v),
                 script_pubkey,
             });
 
@@ -150,7 +151,7 @@ pub mod gen {
         assert!(output.iter().map(|o| o.value).sum::<u64>() <= value);
 
         Transaction {
-            version: 1,
+            version: bitcoin::transaction::Version(1),
             lock_time: LockTime::ZERO,
             input: vec![input],
             output,
@@ -188,7 +189,7 @@ pub mod gen {
             witness: Witness::new(),
         };
         Transaction {
-            version: 1,
+            version: bitcoin::transaction::Version(1),
             lock_time: LockTime::ZERO,
             input: vec![input],
             output,

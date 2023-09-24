@@ -1,7 +1,7 @@
 use sqlite as sql;
 
-use nakamoto_common::bitcoin::Address;
 use nakamoto_common::bitcoin::address::NetworkUnchecked;
+use nakamoto_common::bitcoin::Address;
 
 use super::Error;
 
@@ -73,10 +73,10 @@ impl<'a> TryFrom<&'a sql::Row> for AddressRecord {
 
     fn try_from(row: &'a sql::Row) -> Result<Self, Self::Error> {
         let addr: Address<NetworkUnchecked> = row
-                .get::<String, _>(0)
-                .as_str()
-                .parse()
-                .map_err(|_| Error::Decoding("address"))?;
+            .get::<String, _>(0)
+            .as_str()
+            .parse()
+            .map_err(|_| Error::Decoding("address"))?;
         Ok(Self {
             address: addr.assume_checked(),
             index: row.get::<i64, _>(1) as usize,

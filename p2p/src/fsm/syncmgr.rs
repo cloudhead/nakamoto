@@ -2,8 +2,8 @@
 //! Manages header synchronization with peers.
 //!
 use nakamoto_common::bitcoin::consensus::params::Params;
-use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
+use nakamoto_common::bitcoin::p2p::message_blockdata::Inventory;
+use nakamoto_common::bitcoin::p2p::ServiceFlags;
 
 use nakamoto_common::bitcoin_hashes::Hash;
 use nakamoto_common::block::store;

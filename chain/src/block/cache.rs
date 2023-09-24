@@ -11,6 +11,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::ControlFlow;
 
+use common::bitcoin::block::ValidationError;
 use common::bitcoin::CompactTarget;
 use common::block::Target;
 use nakamoto_common as common;
@@ -18,7 +19,7 @@ use nakamoto_common::bitcoin;
 use nakamoto_common::bitcoin::blockdata::block::Header as BlockHeader;
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::hash_types::BlockHash;
-use nakamoto_common::bitcoin::network::constants::Network;
+use nakamoto_common::bitcoin::network::Network;
 
 use nakamoto_common::block::tree::{self, BlockReader, BlockTree, Branch, Error, ImportResult};
 use nakamoto_common::block::{
@@ -247,13 +248,9 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
                     return Err(Error::InvalidBlockTarget(target, limit));
                 }
             }
-            Err(bitcoin::error::Error::BlockBadProofOfWork) => {
+            Err(ValidationError::BadProofOfWork) => {
                 return Err(Error::InvalidBlockPoW);
             }
-            Err(bitcoin::error::Error::BlockBadTarget) => unreachable! {
-                // The only way to get a 'bad target' error is to pass a different target
-                // than the one specified in the header.
-            },
             Err(_) => unreachable! {
                 // We've handled all possible errors above.
             },
@@ -458,11 +455,8 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
         let target = Target::from_compact(CompactTarget::from_consensus(compact_target));
 
         match header.validate_pow(target) {
-            Err(bitcoin::error::Error::BlockBadProofOfWork) => {
+            Err(ValidationError::BadProofOfWork) => {
                 return Err(Error::InvalidBlockPoW);
-            }
-            Err(bitcoin::error::Error::BlockBadTarget) => {
-                return Err(Error::InvalidBlockTarget(header.target(), target));
             }
             Err(_) => unreachable!(),
             Ok(_) => {}

@@ -11,8 +11,8 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use log::*;
-use nakamoto_common::bitcoin::network::Magic;
 use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
+use nakamoto_common::bitcoin::network::Magic;
 
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{

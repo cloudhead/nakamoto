@@ -7,6 +7,7 @@ use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
 use bitcoin::CompactTarget;
 
+use bitcoin::pow::calculate_next_work_required;
 use thiserror::Error;
 
 use crate::block::store;
@@ -204,46 +205,15 @@ pub trait BlockReader {
         last_target: Target,
         params: &Params,
     ) -> Bits {
-        // Only adjust on set intervals. Otherwise return current target.
-        // Since the height is 0-indexed, we add `1` to check it against the interval.
-        if (last_height + 1) % params.difficulty_adjustment_interval() != 0 {
-            return last_target.to_compact_lossy().to_consensus();
-        }
-
-        let last_adjustment_height =
-            last_height.saturating_sub(params.difficulty_adjustment_interval() - 1);
-        let last_adjustment_block = self
-            .get_block_by_height(last_adjustment_height)
-            .unwrap_or_else(|| self.genesis());
-        let last_adjustment_time = last_adjustment_block.time;
-
-        if params.no_pow_retargeting {
-            return last_adjustment_block.bits.to_consensus();
-        }
-
-        let actual_timespan = last_time - last_adjustment_time;
-        let mut adjusted_timespan = actual_timespan;
-
-        if actual_timespan < params.pow_target_timespan as BlockTime / 4 {
-            adjusted_timespan = params.pow_target_timespan as BlockTime / 4;
-        } else if actual_timespan > params.pow_target_timespan as BlockTime * 4 {
-            adjusted_timespan = params.pow_target_timespan as BlockTime * 4;
-        }
-
-        let mut target = last_target.to_compact_lossy().to_consensus();
-
-        target = target * adjusted_timespan;
-        target = target / (params.pow_target_timespan as u32);
-
-        // Ensure a difficulty floor.
-        if CompactTarget::from_consensus(target) > params.pow_limit.to_target().to_compact_lossy() {
-            target = params
-                .pow_limit
-                .to_target()
-                .to_compact_lossy()
-                .to_consensus();
-        }
-
-        target
+        // FIXME: improve the API usage and change the nakamoto height
+        calculate_next_work_required(
+            bitcoin::absolute::Height::from_consensus(last_height as u32).unwrap(),
+            last_time,
+            last_target,
+            params.difficulty_adjustment_interval(),
+            params.pow_target_timespan,
+            params.no_pow_retargeting,
+            |_| todo!(),
+        )
     }
 }

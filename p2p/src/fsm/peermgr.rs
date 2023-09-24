@@ -17,16 +17,13 @@
 use std::net;
 use std::sync::Arc;
 
-use nakamoto_common::bitcoin::network::address::Address;
-use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-use nakamoto_common::bitcoin::network::message_network::VersionMessage;
-
-use nakamoto_common::p2p::peer::{AddressSource, Source};
-use nakamoto_common::p2p::Domain;
-
+use nakamoto_common::bitcoin::p2p::message_network::VersionMessage;
+use nakamoto_common::bitcoin::p2p::{Address, ServiceFlags};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::Height;
 use nakamoto_common::collections::{HashMap, HashSet};
+use nakamoto_common::p2p::peer::{AddressSource, Source};
+use nakamoto_common::p2p::Domain;
 use nakamoto_common::source;
 use nakamoto_net as network;
 

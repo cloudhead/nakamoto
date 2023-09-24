@@ -8,12 +8,11 @@ use std::ops::{Bound, RangeInclusive};
 
 use thiserror::Error;
 
-use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
-
+use nakamoto_common::bitcoin::p2p::message_filter::{CFHeaders, CFilter, GetCFHeaders};
+use nakamoto_common::bitcoin::p2p::ServiceFlags;
 use nakamoto_common::bitcoin::{ScriptBuf, Transaction, Txid};
-
-use nakamoto_common::block::filter::{self, BlockFilter, Filters};
+use nakamoto_common::block::filter;
+use nakamoto_common::block::filter::{BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::block::{BlockHash, Height};
@@ -1031,10 +1030,10 @@ mod tests {
     use nakamoto_common::bitcoin;
     use nakamoto_common::bitcoin_hashes;
 
+    use bitcoin::block::Header as BlockHeader;
     use bitcoin::consensus::Params;
     use bitcoin::network::message::NetworkMessage;
     use bitcoin::network::message_filter::GetCFilters;
-    use bitcoin::block::Header as BlockHeader;
     use bitcoin_hashes::hex::FromHex;
 
     use nakamoto_chain::store::Genesis;

@@ -47,13 +47,12 @@ use std::sync::Arc;
 
 use nakamoto_common::bitcoin::consensus::encode;
 use nakamoto_common::bitcoin::consensus::params::Params;
-use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
-use nakamoto_common::bitcoin::network::message_filter::GetCFilters;
-use nakamoto_common::bitcoin::network::message_network::VersionMessage;
-use nakamoto_common::bitcoin::network::{Address, Magic};
-use nakamoto_common::bitcoin::{ScriptBuf, Txid, CompactTarget};
+use nakamoto_common::bitcoin::p2p::message::{NetworkMessage, RawNetworkMessage};
+use nakamoto_common::bitcoin::p2p::message_blockdata::{GetHeadersMessage, Inventory};
+use nakamoto_common::bitcoin::p2p::message_filter::GetCFilters;
+use nakamoto_common::bitcoin::p2p::message_network::VersionMessage;
+use nakamoto_common::bitcoin::p2p::{Address, ServiceFlags};
+use nakamoto_common::bitcoin::{ScriptBuf, Txid};
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::AdjustedClock;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
@@ -789,10 +788,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         let addr = *addr;
         let msg = msg.into_owned();
 
-        if msg.magic != self.network.magic() {
+        if *msg.magic() != self.network.magic() {
             return self.disconnect(
                 addr,
-                DisconnectReason::PeerMagic(u32::from_be_bytes(msg.magic.to_bytes())),
+                DisconnectReason::PeerMagic(u32::from_be_bytes(msg.magic().to_bytes())),
             );
         }
 
@@ -803,7 +802,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
 
         debug!(target: "p2p", "Received {:?} from {}", cmd, addr);
 
-        if let Err(err) = (self.hooks.on_message)(addr, &msg.payload, &self.outbox) {
+        if let Err(err) = (self.hooks.on_message)(addr, &msg.payload(), &self.outbox) {
             debug!(
                 target: "p2p",
                 "Message {:?} from {} dropped by user hook: {}",
@@ -812,7 +811,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
             return;
         }
 
-        match msg.payload {
+        match msg.payload() {
             NetworkMessage::Version(msg) => {
                 let height = self.tree.height();
 

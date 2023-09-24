@@ -4,9 +4,7 @@ use std::str::FromStr;
 use bitcoin::blockdata::block::{Block, Header};
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
-use bitcoin::hashes::hex::FromHex;
-use bitcoin::network::Magic;
-use bitcoin::network::constants::ServiceFlags;
+use bitcoin::p2p::{Magic, ServiceFlags};
 
 use bitcoin::hashes::sha256d;
 

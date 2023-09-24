@@ -89,7 +89,8 @@ impl Read for Db {
             let address = row.get::<String, _>("address");
             let script_pubkey = Address::from_str(&address)
                 .map_err(|_| Error::Decoding("address"))?
-                .payload.script_pubkey();
+                .payload
+                .script_pubkey();
             let value = row.get::<i64, _>("value") as u64;
 
             return Ok(Some((

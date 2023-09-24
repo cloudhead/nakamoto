@@ -252,9 +252,9 @@ impl<H: 'static + Copy + Encodable + Decodable> Store for File<H> {
 mod test {
     use std::{io, iter};
 
-    use nakamoto_common::bitcoin::CompactTarget;
     use nakamoto_common::bitcoin::string::FromHexStr;
-    use nakamoto_common::bitcoin::{hash_types::TxMerkleNode, block::Version};
+    use nakamoto_common::bitcoin::CompactTarget;
+    use nakamoto_common::bitcoin::{block::Version, hash_types::TxMerkleNode};
     use nakamoto_common::bitcoin_hashes::Hash;
     use nakamoto_common::block::BlockHash;
 
