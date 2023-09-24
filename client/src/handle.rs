@@ -8,13 +8,12 @@ use thiserror::Error;
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::Address;
-use nakamoto_common::bitcoin::util::uint::Uint256;
-use nakamoto_common::bitcoin::{Script, Txid};
+use nakamoto_common::bitcoin::{Script, ScriptBuf, Txid};
 
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::{BlockReader, ImportResult};
-use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
+use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction, Work};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::fsm::Link;
 use nakamoto_p2p::fsm::{self, Command, CommandError, GetFiltersError, Peer};
@@ -66,7 +65,7 @@ impl<T> From<chan::SendError<T>> for Error {
 pub trait Handle: Sized + Send + Sync + Clone {
     /// Get the tip of the active chain. Returns the height of the chain, the header,
     /// and the total accumulated work.
-    fn get_tip(&self) -> Result<(Height, BlockHeader, Uint256), Error>;
+    fn get_tip(&self) -> Result<(Height, BlockHeader, Work), Error>;
     /// Get a block header from the block header cache.
     fn get_block(&self, hash: &BlockHash) -> Result<Option<(Height, BlockHeader)>, Error>;
     /// Get a block header by height, from the block header cache.
@@ -106,7 +105,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     fn rescan(
         &self,
         range: impl RangeBounds<Height>,
-        watch: impl Iterator<Item = Script>,
+        watch: impl Iterator<Item = ScriptBuf>,
     ) -> Result<(), Error> {
         // TODO: Handle invalid/empty ranges.
 
@@ -126,7 +125,7 @@ pub trait Handle: Sized + Send + Sync + Clone {
     /// Note that this won't trigger a rescan of any existing blocks. To avoid
     /// missing matching blocks, always watch scripts before sharing their
     /// corresponding address.
-    fn watch(&self, watch: impl Iterator<Item = Script>) -> Result<(), Error> {
+    fn watch(&self, watch: impl Iterator<Item = ScriptBuf>) -> Result<(), Error> {
         self.command(Command::Watch {
             watch: watch.collect(),
         })?;

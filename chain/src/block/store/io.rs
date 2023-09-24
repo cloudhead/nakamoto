@@ -252,7 +252,9 @@ impl<H: 'static + Copy + Encodable + Decodable> Store for File<H> {
 mod test {
     use std::{io, iter};
 
-    use nakamoto_common::bitcoin::TxMerkleNode;
+    use nakamoto_common::bitcoin::string::FromHexStr;
+    use nakamoto_common::bitcoin::CompactTarget;
+    use nakamoto_common::bitcoin::{block::Version, hash_types::TxMerkleNode};
     use nakamoto_common::bitcoin_hashes::Hash;
     use nakamoto_common::block::BlockHash;
 
@@ -264,10 +266,10 @@ mod test {
     fn store(path: &str) -> File<BlockHeader> {
         let tmp = tempfile::tempdir().unwrap();
         let genesis = BlockHeader {
-            version: 1,
+            version: Version::from_consensus(1),
             prev_blockhash: BlockHash::all_zeros(),
             merkle_root: TxMerkleNode::all_zeros(),
-            bits: 0x2ffffff,
+            bits: CompactTarget::from_consensus(0x2ffffff),
             time: 39123818,
             nonce: 0,
         };
@@ -280,10 +282,10 @@ mod test {
         let mut store = store("headers.db");
 
         let header = BlockHeader {
-            version: 1,
+            version: Version::from_consensus(1),
             prev_blockhash: store.genesis.block_hash(),
             merkle_root: TxMerkleNode::all_zeros(),
-            bits: 0x2ffffff,
+            bits: CompactTarget::from_consensus(0x2ffffff),
             time: 1842918273,
             nonce: 312143,
         };
@@ -313,10 +315,10 @@ mod test {
 
         let count = 32;
         let header = BlockHeader {
-            version: 1,
+            version: Version::from_consensus(1),
             prev_blockhash: store.genesis().block_hash(),
             merkle_root: TxMerkleNode::all_zeros(),
-            bits: 0x2ffffff,
+            bits: CompactTarget::from_consensus(0x2ffffff),
             time: 1842918273,
             nonce: 0,
         };
@@ -377,10 +379,10 @@ mod test {
 
         let count = 32;
         let header = BlockHeader {
-            version: 1,
+            version: Version::from_consensus(1),
             prev_blockhash: store.genesis().block_hash(),
             merkle_root: TxMerkleNode::all_zeros(),
-            bits: 0x2ffffff,
+            bits: CompactTarget::from_consensus(0x2ffffff),
             time: 1842918273,
             nonce: 0,
         };
@@ -409,18 +411,18 @@ mod test {
 
         let headers = &[
             BlockHeader {
-                version: 1,
+                version: Version::from_consensus(1),
                 prev_blockhash: store.genesis().block_hash(),
                 merkle_root: TxMerkleNode::all_zeros(),
-                bits: 0x2ffffff,
+                bits: CompactTarget::from_consensus(0x2ffffff),
                 time: 1842918273,
                 nonce: 312143,
             },
             BlockHeader {
-                version: 1,
+                version: Version::from_consensus(1),
                 prev_blockhash: BlockHash::all_zeros(),
                 merkle_root: TxMerkleNode::all_zeros(),
-                bits: 0x1ffffff,
+                bits: CompactTarget::from_consensus(0x1ffffff),
                 time: 1842918920,
                 nonce: 913716378,
             },

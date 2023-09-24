@@ -1,11 +1,14 @@
 //! Block header storage.
 #![allow(clippy::len_without_is_empty)]
+use std::borrow::Borrow;
+
 use crate::block::Height;
 
-use bitcoin::blockdata::block::BlockHeader;
+use bitcoin::bip158::BlockFilter;
+use bitcoin::block::Header;
 use bitcoin::consensus::encode;
 use bitcoin::hash_types::FilterHash;
-use bitcoin::util::bip158::BlockFilter;
+use bitcoin::{OutPoint, Script, ScriptBuf};
 use thiserror::Error;
 
 use crate::network::Network;
@@ -35,7 +38,7 @@ pub trait Genesis {
 }
 
 /// Genesis implementation for `bitcoin`'s header.
-impl Genesis for BlockHeader {
+impl Genesis for Header {
     fn genesis(network: Network) -> Self {
         network.genesis()
     }
@@ -47,9 +50,12 @@ impl Genesis for FilterHash {
         use bitcoin::hashes::Hash;
 
         let genesis = network.genesis_block();
-        let filter = BlockFilter::new_script_filter(&genesis, |_| {
-            panic!("{}: genesis block should have no inputs", source!())
-        })
+        let filter = BlockFilter::new_script_filter(
+            &genesis,
+            |_| -> Result<ScriptBuf, bitcoin::bip158::Error> {
+                panic!("{}: genesis block should have no inputs", source!())
+            },
+        )
         .unwrap();
 
         FilterHash::hash(&filter.content)
@@ -61,7 +67,7 @@ impl Genesis for BlockFilter {
     fn genesis(network: Network) -> Self {
         let genesis = network.genesis_block();
 
-        BlockFilter::new_script_filter(&genesis, |_| {
+        BlockFilter::new_script_filter(&genesis, |_| -> Result<ScriptBuf, bitcoin::bip158::Error> {
             panic!("{}: genesis block should have no inputs", source!())
         })
         .unwrap()

@@ -7,10 +7,12 @@ use std::io;
 use std::iter;
 use std::net;
 use std::ops::Bound;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use log::*;
 use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
+use nakamoto_common::bitcoin::network::Magic;
 
 use super::{addrmgr, cbfmgr, invmgr, peermgr, pingmgr, syncmgr};
 use super::{
@@ -170,7 +172,7 @@ fn test_inv_getheaders() {
 
     // Some hash for a nonexistent block.
     let hash =
-        BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+        BlockHash::from_str("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
     peer.connect_addr(&remote, Link::Outbound);
@@ -195,7 +197,7 @@ fn test_bad_magic() {
     peer.received_raw(
         &remote,
         RawNetworkMessage {
-            magic: 999,
+            magic: Magic::BITCOIN,
             payload: NetworkMessage::Ping(1),
         },
     );
@@ -266,7 +268,7 @@ fn test_getheaders_retry() {
 
     // Some hash for a nonexistent block.
     let hash =
-        BlockHash::from_hex("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
+        BlockHash::from_str("0000000000b7b2c71f2a345e3a4fc328bf5bbb436012afca590b1a11466e2206")
             .unwrap();
 
     let mut alice = Peer::genesis("alice", [49, 40, 43, 40], network, vec![], rng);

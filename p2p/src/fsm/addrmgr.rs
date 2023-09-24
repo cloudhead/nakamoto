@@ -4,9 +4,7 @@
 #![warn(missing_docs)]
 use std::net;
 
-use nakamoto_common::bitcoin::network::address::Address;
-use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-
+use nakamoto_common::bitcoin::p2p::{Address, ServiceFlags};
 use nakamoto_common::block::time::Clock;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::BlockTime;

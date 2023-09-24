@@ -44,7 +44,13 @@ impl Decoder {
 #[cfg(test)]
 mod test {
     use super::*;
-    use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
+    use nakamoto_common::{
+        bitcoin::network::{
+            message::{NetworkMessage, RawNetworkMessage},
+            Magic,
+        },
+        block::Work,
+    };
     use quickcheck_macros::quickcheck;
 
     const MSG_VERACK: [u8; 24] = [
@@ -82,14 +88,14 @@ mod test {
         assert_eq!(
             msgs[0],
             RawNetworkMessage {
-                magic: 3652501241,
+                magic: Magic::REGTEST,
                 payload: NetworkMessage::Verack
             }
         );
         assert_eq!(
             msgs[1],
             RawNetworkMessage {
-                magic: 3652501241,
+                magic: Magic::REGTEST,
                 payload: NetworkMessage::Ping(100),
             }
         );

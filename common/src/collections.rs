@@ -1,5 +1,5 @@
 //! Collections used in `nakamoto`.
-use bitcoin_hashes::siphash24::Hash;
+use bitcoin::hashes::siphash24::Hash;
 use std::ops::{Deref, DerefMut};
 
 use crate::nonempty::NonEmpty;

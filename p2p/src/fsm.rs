@@ -45,22 +45,19 @@ use std::net;
 use std::ops::{Bound, RangeInclusive};
 use std::sync::Arc;
 
-use nakamoto_common::bitcoin::blockdata::block::BlockHeader;
 use nakamoto_common::bitcoin::consensus::encode;
 use nakamoto_common::bitcoin::consensus::params::Params;
-use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
-use nakamoto_common::bitcoin::network::message_filter::GetCFilters;
-use nakamoto_common::bitcoin::network::message_network::VersionMessage;
-use nakamoto_common::bitcoin::network::Address;
-use nakamoto_common::bitcoin::util::uint::Uint256;
-use nakamoto_common::bitcoin::{Script, Txid};
+use nakamoto_common::bitcoin::p2p::message::{NetworkMessage, RawNetworkMessage};
+use nakamoto_common::bitcoin::p2p::message_blockdata::{GetHeadersMessage, Inventory};
+use nakamoto_common::bitcoin::p2p::message_filter::GetCFilters;
+use nakamoto_common::bitcoin::p2p::message_network::VersionMessage;
+use nakamoto_common::bitcoin::p2p::{Address, ServiceFlags};
+use nakamoto_common::bitcoin::{ScriptBuf, Txid};
 use nakamoto_common::block::filter::Filters;
 use nakamoto_common::block::time::AdjustedClock;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{self, BlockReader, BlockTree, ImportResult};
-use nakamoto_common::block::{BlockHash, Height};
+use nakamoto_common::block::{BlockHash, BlockHeader, Height, Work};
 use nakamoto_common::block::{BlockTime, Transaction};
 use nakamoto_common::network;
 use nakamoto_common::nonempty::NonEmpty;
@@ -233,7 +230,7 @@ pub enum Command {
     /// Get connected peers.
     GetPeers(ServiceFlags, chan::Sender<Vec<Peer>>),
     /// Get the tip of the active chain.
-    GetTip(chan::Sender<(Height, BlockHeader, Uint256)>),
+    GetTip(chan::Sender<(Height, BlockHeader, Work)>),
     /// Get a block from the active chain.
     RequestBlock(BlockHash),
     /// Get block filters.
@@ -248,12 +245,12 @@ pub enum Command {
         /// Stop scanning at this height. If unbounded, don't stop scanning.
         to: Bound<Height>,
         /// Scripts to match on.
-        watch: Vec<Script>,
+        watch: Vec<ScriptBuf>,
     },
     /// Update the watchlist with the provided scripts.
     Watch {
         /// Scripts to watch.
-        watch: Vec<Script>,
+        watch: Vec<ScriptBuf>,
     },
     /// Broadcast to peers matching the predicate.
     Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
@@ -791,8 +788,11 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         let addr = *addr;
         let msg = msg.into_owned();
 
-        if msg.magic != self.network.magic() {
-            return self.disconnect(addr, DisconnectReason::PeerMagic(msg.magic));
+        if *msg.magic() != self.network.magic() {
+            return self.disconnect(
+                addr,
+                DisconnectReason::PeerMagic(u32::from_be_bytes(msg.magic().to_bytes())),
+            );
         }
 
         if !self.peermgr.is_connected(&addr) {
@@ -802,7 +802,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
 
         debug!(target: "p2p", "Received {:?} from {}", cmd, addr);
 
-        if let Err(err) = (self.hooks.on_message)(addr, &msg.payload, &self.outbox) {
+        if let Err(err) = (self.hooks.on_message)(addr, &msg.payload(), &self.outbox) {
             debug!(
                 target: "p2p",
                 "Message {:?} from {} dropped by user hook: {}",
@@ -811,7 +811,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
             return;
         }
 
-        match msg.payload {
+        match msg.payload() {
             NetworkMessage::Version(msg) => {
                 let height = self.tree.height();
 

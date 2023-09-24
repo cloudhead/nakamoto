@@ -15,7 +15,7 @@ use nakamoto_client::chan;
 use nakamoto_client::handle::Handle;
 use nakamoto_client::Network;
 use nakamoto_client::{Client, Config};
-use nakamoto_common::bitcoin::util::bip32::DerivationPath;
+use nakamoto_common::bitcoin::bip32::DerivationPath;
 use nakamoto_common::block::Height;
 
 use crate::error::Error;

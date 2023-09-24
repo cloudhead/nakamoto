@@ -21,7 +21,8 @@
 //!
 use std::collections::BTreeMap;
 
-use nakamoto_common::bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
+use nakamoto_common::bitcoin::p2p::message_blockdata::Inventory;
+use nakamoto_common::bitcoin::p2p::ServiceFlags;
 use nakamoto_common::bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
 
 // TODO: Timeout should be configurable

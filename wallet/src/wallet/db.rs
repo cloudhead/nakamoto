@@ -8,6 +8,7 @@ use nakamoto_common::bitcoin::OutPoint;
 use nakamoto_common::bitcoin::TxOut;
 use nakamoto_common::bitcoin::Txid;
 
+use nakamoto_common::bitcoin::address::NetworkUnchecked;
 use sqlite as sql;
 
 pub use types::*;
@@ -88,6 +89,7 @@ impl Read for Db {
             let address = row.get::<String, _>("address");
             let script_pubkey = Address::from_str(&address)
                 .map_err(|_| Error::Decoding("address"))?
+                .payload
                 .script_pubkey();
             let value = row.get::<i64, _>("value") as u64;
 
@@ -114,7 +116,7 @@ impl Read for Db {
                 row.try_into()?;
             let txid = txid.parse().map_err(|_| Error::Decoding("txid"))?;
             let address = address
-                .parse::<Address>()
+                .parse::<Address<NetworkUnchecked>>()
                 .map_err(|_| Error::Decoding("address"))?;
 
             utxos.push((
@@ -123,7 +125,7 @@ impl Read for Db {
                     vout: vout as u32,
                 },
                 TxOut {
-                    script_pubkey: address.script_pubkey(),
+                    script_pubkey: address.payload.script_pubkey(),
                     value: *value,
                 },
             ));

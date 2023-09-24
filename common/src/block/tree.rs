@@ -2,11 +2,12 @@
 #![warn(missing_docs)]
 use std::collections::BTreeMap;
 
-use bitcoin::blockdata::block::BlockHeader;
+use bitcoin::block::Header as BlockHeader;
 use bitcoin::consensus::params::Params;
 use bitcoin::hash_types::BlockHash;
-use bitcoin::util::uint::Uint256;
+use bitcoin::CompactTarget;
 
+use bitcoin::pow::calculate_next_work_required;
 use thiserror::Error;
 
 use crate::block::store;
@@ -102,7 +103,8 @@ pub struct Branch<'a, H: Header>(pub &'a [H]);
 impl<'a, H: Header> Branch<'a, H> {
     /// Compute the total proof-of-work carried by this branch.
     pub fn work(&self) -> Work {
-        let mut work = Work::default();
+        // FIXME: this should be by network
+        let mut work = Work::MAINNET_MIN;
         for header in self.0.iter() {
             work = work + header.work();
         }
@@ -145,7 +147,7 @@ pub trait BlockReader {
         Box::new(self.iter().map(|(_, h)| h))
     }
     /// Get the "chainwork", ie. the total accumulated proof-of-work of the active chain.
-    fn chain_work(&self) -> Uint256;
+    fn chain_work(&self) -> Work;
     /// Iterate over the longest chain, starting from genesis, including heights.
     fn iter<'a>(&'a self) -> Box<dyn DoubleEndedIterator<Item = (Height, BlockHeader)> + 'a>;
     /// Iterate over a range of blocks.
@@ -203,42 +205,15 @@ pub trait BlockReader {
         last_target: Target,
         params: &Params,
     ) -> Bits {
-        // Only adjust on set intervals. Otherwise return current target.
-        // Since the height is 0-indexed, we add `1` to check it against the interval.
-        if (last_height + 1) % params.difficulty_adjustment_interval() != 0 {
-            return BlockHeader::compact_target_from_u256(&last_target);
-        }
-
-        let last_adjustment_height =
-            last_height.saturating_sub(params.difficulty_adjustment_interval() - 1);
-        let last_adjustment_block = self
-            .get_block_by_height(last_adjustment_height)
-            .unwrap_or_else(|| self.genesis());
-        let last_adjustment_time = last_adjustment_block.time;
-
-        if params.no_pow_retargeting {
-            return last_adjustment_block.bits;
-        }
-
-        let actual_timespan = last_time - last_adjustment_time;
-        let mut adjusted_timespan = actual_timespan;
-
-        if actual_timespan < params.pow_target_timespan as BlockTime / 4 {
-            adjusted_timespan = params.pow_target_timespan as BlockTime / 4;
-        } else if actual_timespan > params.pow_target_timespan as BlockTime * 4 {
-            adjusted_timespan = params.pow_target_timespan as BlockTime * 4;
-        }
-
-        let mut target = last_target;
-
-        target = target.mul_u32(adjusted_timespan);
-        target = target / Target::from_u64(params.pow_target_timespan).unwrap();
-
-        // Ensure a difficulty floor.
-        if target > params.pow_limit {
-            target = params.pow_limit;
-        }
-
-        BlockHeader::compact_target_from_u256(&target)
+        // FIXME: improve the API usage and change the nakamoto height
+        calculate_next_work_required(
+            bitcoin::absolute::Height::from_consensus(last_height as u32).unwrap(),
+            last_time,
+            last_target,
+            params.difficulty_adjustment_interval(),
+            params.pow_target_timespan,
+            params.no_pow_retargeting,
+            |_| todo!(),
+        )
     }
 }

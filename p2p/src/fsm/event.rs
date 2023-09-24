@@ -1,7 +1,8 @@
 //! State machine events.
-use nakamoto_common::bitcoin::network::message::NetworkMessage;
 
 use crate::fsm::{self, Height, LocalTime, PeerId};
+
+use nakamoto_common::bitcoin::p2p::message::NetworkMessage;
 
 /// A peer-to-peer event.
 #[derive(Debug, Clone)]
