@@ -344,7 +344,7 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
             // Peer misbehaving, got empty message or too many addresses.
             return;
         }
-        self.insert(addrs.into_iter(), Source::Peer(peer));
+        self.insert(addrs, Source::Peer(peer));
     }
 
     /// Add addresses to the address manager. The input matches that of the `addr` message

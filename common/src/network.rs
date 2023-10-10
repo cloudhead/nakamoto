@@ -12,9 +12,10 @@ use bitcoin_hashes::sha256d;
 use crate::block::Height;
 
 /// Peer services supported by nakamoto.
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub enum Services {
     /// Peers with compact filter support.
+    #[default]
     All,
     /// Peers with only block support.
     Chain,
@@ -26,12 +27,6 @@ impl From<Services> for ServiceFlags {
             Services::All => Self::COMPACT_FILTERS | Self::NETWORK,
             Services::Chain => Self::NETWORK,
         }
-    }
-}
-
-impl Default for Services {
-    fn default() -> Self {
-        Services::All
     }
 }
 

@@ -286,11 +286,7 @@ mod tests {
         for op in operations.into_iter() {
             op.apply(&mut cache, &mut rng);
 
-            let size = cache
-                .cache
-                .iter()
-                .map(|(_, f)| f.content.len())
-                .sum::<usize>();
+            let size = cache.cache.values().map(|f| f.content.len()).sum::<usize>();
 
             assert!(cache.size <= cache.capacity);
             assert!(size == cache.size);
