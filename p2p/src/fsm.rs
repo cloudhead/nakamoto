@@ -36,7 +36,6 @@ pub use syncmgr::Event as ChainEvent;
 
 pub use event::Event;
 pub use nakamoto_net::Link;
-pub use output::Io;
 
 use std::borrow::Cow;
 use std::collections::HashSet;
@@ -80,6 +79,9 @@ pub const USER_AGENT: &str = "/nakamoto:0.3.0/";
 
 /// Block locators. Consists of starting hashes and a stop hash.
 type Locators = (Vec<BlockHash>, BlockHash);
+
+/// Output of a state transition.
+pub type Io = nakamoto_net::Io<RawNetworkMessage, Event, DisconnectReason>;
 
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
@@ -363,17 +365,17 @@ pub struct StateMachine<T, F, P, C> {
     /// Bitcoin network we're connecting to.
     network: network::Network,
     /// Peer address manager.
-    addrmgr: AddressManager<P, Outbox, C>,
+    addrmgr: AddressManager<P, C>,
     /// Blockchain synchronization manager.
-    syncmgr: SyncManager<Outbox, C>,
+    syncmgr: SyncManager<C>,
     /// Ping manager.
-    pingmgr: PingManager<Outbox, C>,
+    pingmgr: PingManager<C>,
     /// CBF (Compact Block Filter) manager.
-    cbfmgr: FilterManager<F, Outbox, C>,
+    cbfmgr: FilterManager<F, C>,
     /// Peer manager.
-    peermgr: PeerManager<Outbox, C>,
+    peermgr: PeerManager<C>,
     /// Inventory manager.
-    invmgr: InventoryManager<Outbox, C>,
+    invmgr: InventoryManager<C>,
     /// Network-adjusted clock.
     clock: C,
     /// Last time a "tick" was triggered.
@@ -515,7 +517,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             limits,
         } = config;
 
-        let outbox = Outbox::new(network, protocol_version);
+        let outbox = Outbox::new(protocol_version);
         let syncmgr = SyncManager::new(
             syncmgr::Config {
                 max_message_headers: syncmgr::MAX_MESSAGE_HEADERS,
@@ -523,10 +525,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
                 params,
             },
             rng.clone(),
-            outbox.clone(),
             clock.clone(),
         );
-        let pingmgr = PingManager::new(ping_timeout, rng.clone(), outbox.clone(), clock.clone());
+        let pingmgr = PingManager::new(ping_timeout, rng.clone(), clock.clone());
         let cbfmgr = FilterManager::new(
             cbfmgr::Config {
                 filter_cache_size: limits.filter_cache_size,
@@ -534,7 +535,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             },
             rng.clone(),
             filters,
-            outbox.clone(),
             clock.clone(),
         );
         let peermgr = PeerManager::new(
@@ -554,7 +554,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             },
             rng.clone(),
             hooks.clone(),
-            outbox.clone(),
             clock.clone(),
         );
         let addrmgr = AddressManager::new(
@@ -564,10 +563,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             },
             rng.clone(),
             peers,
-            outbox.clone(),
             clock.clone(),
         );
-        let invmgr = InventoryManager::new(rng.clone(), outbox.clone(), clock.clone());
+        let invmgr = InventoryManager::new(rng.clone(), clock.clone());
 
         Self {
             tree,
@@ -596,7 +594,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
     }
 
     /// Create a draining iterator over the protocol outputs.
-    pub fn drain(&mut self) -> Box<dyn Iterator<Item = output::Io> + '_> {
+    pub fn drain(&mut self) -> Box<dyn Iterator<Item = Io> + '_> {
         Box::new(std::iter::from_fn(|| self.next()))
     }
 
@@ -643,10 +641,30 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
 }
 
 impl<T, F, P, C> Iterator for StateMachine<T, F, P, C> {
-    type Item = output::Io;
+    type Item = Io;
 
-    fn next(&mut self) -> Option<output::Io> {
-        self.outbox.next()
+    fn next(&mut self) -> Option<Io> {
+        self.outbox
+            .next()
+            .or_else(|| self.peermgr.next())
+            .or_else(|| self.syncmgr.next())
+            .or_else(|| self.invmgr.next())
+            .or_else(|| self.pingmgr.next())
+            .or_else(|| self.addrmgr.next())
+            .or_else(|| self.cbfmgr.next())
+            .map(|io| match io {
+                output::Io::Write(addr, payload) => Io::Write(
+                    addr,
+                    RawNetworkMessage {
+                        magic: self.network.magic(),
+                        payload,
+                    },
+                ),
+                output::Io::Connect(addr) => Io::Connect(addr),
+                output::Io::Disconnect(addr, reason) => Io::Disconnect(addr, reason),
+                output::Io::SetTimer(t) => Io::SetTimer(t),
+                output::Io::Event(e) => Io::Event(e),
+            })
     }
 }
 

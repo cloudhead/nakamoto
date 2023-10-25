@@ -33,7 +33,7 @@ use nakamoto_net as network;
 use crate::fsm::addrmgr;
 use crate::fsm::DisconnectReason;
 
-use super::output::{Connect, Disconnect, SetTimer, Wire};
+use super::output::{Io, Outbox};
 use super::{Hooks, Link, PeerId, Socket, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
@@ -235,7 +235,7 @@ impl PeerInfo {
 
 /// Manages peer connections and handshake.
 #[derive(Debug)]
-pub struct PeerManager<U, C> {
+pub struct PeerManager<C> {
     /// Peer manager configuration.
     pub config: Config,
 
@@ -245,15 +245,23 @@ pub struct PeerManager<U, C> {
     peers: HashMap<net::SocketAddr, Peer>,
     /// Peers that have been disconnected and a retry attempt is scheduled.
     disconnected: HashMap<net::SocketAddr, (Option<LocalTime>, usize)>,
-    upstream: U,
+    outbox: Outbox,
     rng: fastrand::Rng,
     hooks: Hooks,
     clock: C,
 }
 
-impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, C> {
+impl<C> Iterator for PeerManager<C> {
+    type Item = Io;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.outbox.next()
+    }
+}
+
+impl<C: Clock> PeerManager<C> {
     /// Create a new peer manager.
-    pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, upstream: U, clock: C) -> Self {
+    pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
         let disconnected = HashMap::with_hasher(rng.clone().into());
 
@@ -262,7 +270,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
             last_idle: None,
             peers,
             disconnected,
-            upstream,
+            outbox: Outbox::default(),
             rng,
             hooks,
             clock,
@@ -283,7 +291,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
                 );
             }
         }
-        self.upstream.set_timer(IDLE_TIMEOUT);
+        self.outbox.set_timer(IDLE_TIMEOUT);
         self.maintain_connections(addrs);
     }
 
@@ -296,7 +304,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
         *retry_at = Some(local_time + delay);
         *attempts += 1;
 
-        self.upstream.set_timer(delay);
+        self.outbox.set_timer(delay);
     }
 
     /// Maintain persistent peer connections.
@@ -369,15 +377,15 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
             }
             Link::Outbound => {
                 let nonce = self.rng.u64(..);
-                self.upstream.version(
+                self.outbox.version(
                     addr,
                     self.version(addr, local_addr, nonce, height, local_time),
                 );
             }
         }
         // Set a timeout for receiving the `version` message.
-        self.upstream.set_timer(HANDSHAKE_TIMEOUT);
-        self.upstream.event(Event::Connected(addr, link));
+        self.outbox.set_timer(HANDSHAKE_TIMEOUT);
+        self.outbox.event(Event::Connected(addr, link));
     }
 
     /// Called when a peer disconnected.
@@ -393,12 +401,12 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
         debug_assert!(!self.is_disconnected(addr));
 
         if self.is_disconnecting(addr) || self.is_connected(addr) {
-            self.upstream.event(Event::Disconnected(*addr, reason));
+            self.outbox.event(Event::Disconnected(*addr, reason));
         } else if self.is_connecting(addr) {
             // If we haven't yet established a connection, the disconnect reason
             // should always be a `ConnectionError`.
             if let network::Disconnect::ConnectionError(err) = reason {
-                self.upstream.event(Event::ConnectionFailed(*addr, err));
+                self.outbox.event(Event::ConnectionFailed(*addr, err));
             }
         }
         self.peers.remove(addr);
@@ -454,7 +462,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
         let now = self.clock.local_time();
 
         if let Some(Peer::Connected { conn, .. }) = self.peers.get(addr) {
-            self.upstream.event(Event::VersionReceived {
+            self.outbox.event(Event::VersionReceived {
                 addr: *addr,
                 msg: msg.clone(),
             });
@@ -532,7 +540,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
 
             match conn.link {
                 Link::Inbound => {
-                    self.upstream
+                    self.outbox
                         .version(
                             conn.socket.addr,
                             self.version(conn.socket.addr, conn.local_addr, nonce, height, now),
@@ -543,7 +551,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
                         .set_timer(HANDSHAKE_TIMEOUT);
                 }
                 Link::Outbound => {
-                    self.upstream
+                    self.outbox
                         .wtxid_relay(conn.socket.addr)
                         .verack(conn.socket.addr)
                         .send_headers(conn.socket.addr)
@@ -588,7 +596,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
         }) = self.peers.get_mut(addr)
         {
             if let HandshakeState::ReceivedVersion { .. } = peer.state {
-                self.upstream.event(Event::Negotiated {
+                self.outbox.event(Event::Negotiated {
                     addr: *addr,
                     link: conn.link,
                     services: peer.services,
@@ -659,7 +667,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.maintain_connections(addrs);
-            self.upstream.set_timer(IDLE_TIMEOUT);
+            self.outbox.set_timer(IDLE_TIMEOUT);
             self.last_idle = Some(local_time);
         }
         self.maintain_persistent();
@@ -706,7 +714,7 @@ impl<U: Wire<Event> + SetTimer + Connect + Disconnect, C: Clock> PeerManager<U, 
 }
 
 /// Connection management functions.
-impl<U: Connect + Disconnect + SetTimer + Wire<Event>, C: Clock> PeerManager<U, C> {
+impl<C: Clock> PeerManager<C> {
     /// Called when a peer is being connected to.
     pub fn peer_attempted(&mut self, addr: &net::SocketAddr) {
         // Since all "attempts" are made from this module, we expect that when a peer is
@@ -798,7 +806,7 @@ impl<U: Connect + Disconnect + SetTimer + Wire<Event>, C: Clock> PeerManager<U, 
             return false;
         }
         self.peers.insert(*addr, Peer::Connecting { time });
-        self.upstream.connect(*addr, CONNECTION_TIMEOUT);
+        self.outbox.connect(*addr, CONNECTION_TIMEOUT);
 
         true
     }
@@ -812,7 +820,7 @@ impl<U: Connect + Disconnect + SetTimer + Wire<Event>, C: Clock> PeerManager<U, 
 
     /// Disconnect a peer (internal).
     fn _disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
-        self.upstream.disconnect(addr, reason);
+        self.outbox.disconnect(addr, reason);
         self.peers.insert(addr, Peer::Disconnecting);
     }
 
@@ -897,7 +905,7 @@ impl<U: Connect + Disconnect + SetTimer + Wire<Event>, C: Clock> PeerManager<U, 
 
                     if self.connect(&sockaddr) {
                         connecting.insert(sockaddr);
-                        self.upstream
+                        self.outbox
                             .event(Event::Connecting(sockaddr, source, addr.services));
                     }
                 }
@@ -968,7 +976,7 @@ mod tests {
             persistent: vec![remote],
             ..util::config()
         };
-        let mut peermgr = PeerManager::new(cfg, rng, Hooks::default(), (), time.clone());
+        let mut peermgr = PeerManager::new(cfg, rng, Hooks::default(), time.clone());
 
         peermgr.initialize(&mut addrs);
         assert_eq!(peermgr.connecting().next(), Some(&remote));
@@ -1016,7 +1024,7 @@ mod tests {
         let time = LocalTime::now();
 
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), (), time);
+        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), time);
 
         let height = 144;
         let local = ([99, 99, 99, 99], 9999).into();
@@ -1051,7 +1059,7 @@ mod tests {
         let time = LocalTime::now();
 
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), (), time);
+        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), time);
 
         let height = 144;
         let local = ([99, 99, 99, 99], 9999).into();
@@ -1079,7 +1087,7 @@ mod tests {
         let remote = ([124, 43, 110, 1], 8333).into();
 
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(util::config(), rng, Hooks::default(), (), time.clone());
+        let mut peermgr = PeerManager::new(util::config(), rng, Hooks::default(), time.clone());
 
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
@@ -1108,7 +1116,7 @@ mod tests {
         let rng = fastrand::Rng::with_seed(1);
         let time = LocalTime::now();
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), (), time);
+        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), time);
 
         let height = 144;
         let local = ([99, 99, 99, 99], 9999).into();
@@ -1158,7 +1166,7 @@ mod tests {
             DisconnectReason::PeerTimeout("timeout").into();
 
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(util::config(), rng, Hooks::default(), (), time);
+        let mut peermgr = PeerManager::new(util::config(), rng, Hooks::default(), time);
 
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote1);
@@ -1265,8 +1273,7 @@ mod tests {
             let (connecting, connected, required, preferred) = case;
 
             let mut addrs = VecDeque::new();
-            let mut peermgr =
-                PeerManager::new(cfg.clone(), rng.clone(), Hooks::default(), (), time);
+            let mut peermgr = PeerManager::new(cfg.clone(), rng.clone(), Hooks::default(), time);
 
             peermgr.initialize(&mut addrs);
 

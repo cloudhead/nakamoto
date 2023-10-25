@@ -37,7 +37,7 @@ impl Link {
 }
 
 /// Output of a state transition of the state machine.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Io<M, E, D, Id: PeerId = net::SocketAddr> {
     /// There are some bytes ready to be sent to a peer.
     Write(Id, M),

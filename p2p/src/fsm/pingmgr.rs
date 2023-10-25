@@ -13,7 +13,7 @@ use nakamoto_common::collections::HashMap;
 use crate::fsm::PeerId;
 
 use super::{
-    output::{Disconnect, SetTimer, Wire},
+    output::{Io, Outbox},
     DisconnectReason,
 };
 
@@ -66,25 +66,34 @@ impl Peer {
 
 /// Detects dead peer connections.
 #[derive(Debug)]
-pub struct PingManager<U, C> {
+pub struct PingManager<C> {
     peers: HashMap<PeerId, Peer>,
     ping_timeout: LocalDuration,
     /// Random number generator.
     rng: fastrand::Rng,
-    upstream: U,
+    outbox: Outbox,
     clock: C,
 }
 
-impl<U: Wire<Event> + SetTimer + Disconnect, C: Clock> PingManager<U, C> {
+impl<C> Iterator for PingManager<C> {
+    type Item = Io;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.outbox.next()
+    }
+}
+
+impl<C: Clock> PingManager<C> {
     /// Create a new ping manager.
-    pub fn new(ping_timeout: LocalDuration, rng: fastrand::Rng, upstream: U, clock: C) -> Self {
+    pub fn new(ping_timeout: LocalDuration, rng: fastrand::Rng, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
+        let outbox = Outbox::default();
 
         Self {
             peers,
             ping_timeout,
             rng,
-            upstream,
+            outbox,
             clock,
         }
     }
@@ -94,7 +103,7 @@ impl<U: Wire<Event> + SetTimer + Disconnect, C: Clock> PingManager<U, C> {
         let nonce = self.rng.u64(..);
         let now = self.clock.local_time();
 
-        self.upstream.ping(address, nonce);
+        self.outbox.ping(address, nonce);
         self.peers.insert(
             address,
             Peer {
@@ -125,7 +134,7 @@ impl<U: Wire<Event> + SetTimer + Disconnect, C: Clock> PingManager<U, C> {
                     // time has passed, we consider this peer dead, and disconnect
                     // from them.
                     if now - since >= self.ping_timeout {
-                        self.upstream
+                        self.outbox
                             .disconnect(peer.address, DisconnectReason::PeerTimeout("ping"));
                     }
                 }
@@ -135,7 +144,7 @@ impl<U: Wire<Event> + SetTimer + Disconnect, C: Clock> PingManager<U, C> {
                     if now - since >= PING_INTERVAL {
                         let nonce = self.rng.u64(..);
 
-                        self.upstream
+                        self.outbox
                             .ping(peer.address, nonce)
                             .set_timer(self.ping_timeout)
                             .set_timer(PING_INTERVAL);
@@ -150,7 +159,7 @@ impl<U: Wire<Event> + SetTimer + Disconnect, C: Clock> PingManager<U, C> {
     /// Called when a `ping` is received.
     pub fn received_ping(&mut self, addr: PeerId, nonce: u64) -> bool {
         if self.peers.contains_key(&addr) {
-            self.upstream.pong(addr, nonce);
+            self.outbox.pong(addr, nonce);
 
             return true;
         }

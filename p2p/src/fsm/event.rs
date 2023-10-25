@@ -33,6 +33,22 @@ pub enum Event {
     Ping(fsm::PingEvent),
 }
 
+impl std::fmt::Display for Event {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Initializing => write!(f, "Initializing"),
+            Self::Ready { .. } => write!(f, "Ready"),
+            Self::Received(addr, msg) => write!(f, "Received `{}` from {addr}", msg.cmd()),
+            Self::Address(e) => write!(f, "{e}"),
+            Self::Chain(e) => write!(f, "{e}"),
+            Self::Peer(e) => write!(f, "{e}"),
+            Self::Filter(e) => write!(f, "{e}"),
+            Self::Inventory(e) => write!(f, "{e}"),
+            Self::Ping(e) => write!(f, "{e}"),
+        }
+    }
+}
+
 impl From<fsm::ChainEvent> for Event {
     fn from(e: fsm::ChainEvent) -> Self {
         Self::Chain(e)

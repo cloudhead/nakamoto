@@ -224,7 +224,11 @@ impl Peer<Protocol> {
         &mut self,
         addr: &net::SocketAddr,
     ) -> impl Iterator<Item = NetworkMessage> + '_ {
-        p2p::fsm::output::test::messages_from(&mut self.protocol.outbox, addr)
+        p2p::fsm::output::test::raw::messages_from(&mut self.protocol, addr)
+    }
+
+    pub fn writes(&mut self) -> impl Iterator<Item = (net::SocketAddr, NetworkMessage)> + '_ {
+        p2p::fsm::output::test::raw::messages(&mut self.protocol)
     }
 
     pub fn events(&mut self) -> impl Iterator<Item = Event> + '_ {

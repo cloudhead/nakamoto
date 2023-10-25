@@ -21,7 +21,7 @@ use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::source;
 
 use super::filter_cache::FilterCache;
-use super::output::{Disconnect, SetTimer, Wire};
+use super::output::{Io, Outbox};
 use super::{DisconnectReason, Link, PeerId, Socket};
 
 use rescan::Rescan;
@@ -237,12 +237,6 @@ impl std::fmt::Display for Event {
     }
 }
 
-/// The ability to emit CBF related events.
-pub trait Events {
-    /// Emit an CBF-related event.
-    fn event(&self, event: Event);
-}
-
 /// An error from attempting to get compact filters.
 #[derive(Error, Debug)]
 pub enum GetFiltersError {
@@ -286,7 +280,7 @@ struct Peer {
 
 /// A compact block filter manager.
 #[derive(Debug)]
-pub struct FilterManager<F, U, C> {
+pub struct FilterManager<F, C> {
     /// Rescan state.
     pub rescan: Rescan,
     /// Filter header chain.
@@ -294,7 +288,7 @@ pub struct FilterManager<F, U, C> {
 
     config: Config,
     peers: AddressBook<PeerId, Peer>,
-    upstream: U,
+    outbox: Outbox,
     clock: C,
     /// Last time we idled.
     last_idle: Option<LocalTime>,
@@ -305,9 +299,17 @@ pub struct FilterManager<F, U, C> {
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
 }
 
-impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager<F, U, C> {
+impl<F, C> Iterator for FilterManager<F, C> {
+    type Item = Io;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.outbox.next()
+    }
+}
+
+impl<F: Filters, C: Clock> FilterManager<F, C> {
     /// Create a new filter manager.
-    pub fn new(config: Config, rng: fastrand::Rng, filters: F, upstream: U, clock: C) -> Self {
+    pub fn new(config: Config, rng: fastrand::Rng, filters: F, clock: C) -> Self {
         let peers = AddressBook::new(rng.clone());
         let rescan = Rescan::new(config.filter_cache_size);
 
@@ -315,7 +317,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
             config,
             peers,
             rescan,
-            upstream,
+            outbox: Outbox::default(),
             clock,
             filters,
             inflight: HashMap::with_hasher(rng.into()),
@@ -350,10 +352,10 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
                     // a persistent peer.
                     if a != *addr && !peer.persistent {
                         self.peers.remove(addr);
-                        self.upstream
+                        self.outbox
                             .disconnect(*addr, DisconnectReason::PeerTimeout("getcfheaders"));
                     }
-                    self.upstream
+                    self.outbox
                         .get_cfheaders(a, start_height, stop_hash, timeout);
 
                     *addr = a;
@@ -466,7 +468,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
             watch,
         );
 
-        self.upstream.event(Event::RescanStarted {
+        self.outbox.event(Event::RescanStarted {
             start: self.rescan.start,
             end: self.rescan.end,
         });
@@ -499,7 +501,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
         // hits from `get_cfilters`. Hence, process the filter queue.
         let (matches, events, _) = self.rescan.process();
         for event in events {
-            self.upstream.event(event);
+            self.outbox.event(event);
         }
         matches
     }
@@ -543,7 +545,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
                 stop_hash
             );
 
-            self.upstream
+            self.outbox
                 .get_cfilters(*peer, *range.start(), stop_hash, timeout);
         }
 
@@ -656,7 +658,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
         self.filters
             .import_headers(headers)
             .map(|height| {
-                self.upstream.event(Event::FilterHeadersImported {
+                self.outbox.event(Event::FilterHeadersImported {
                     count,
                     height,
                     block_hash: stop_hash,
@@ -666,7 +668,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
                 assert!(height <= tree.height());
 
                 if height == tree.height() {
-                    self.upstream.event(Event::Synced(height));
+                    self.outbox.event(Event::Synced(height));
                 } else {
                     self.sync(tree);
                 }
@@ -709,7 +711,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
                 "FilterManager::received_getcfheaders: all headers up to the tip must exist",
             );
 
-            self.upstream.cfheaders(
+            self.outbox.cfheaders(
                 from,
                 CFHeaders {
                     filter_type: msg.filter_type,
@@ -783,7 +785,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
             });
         }
 
-        self.upstream.event(Event::FilterReceived {
+        self.outbox.event(Event::FilterReceived {
             from,
             block_hash,
             height,
@@ -793,7 +795,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
         if self.rescan.received(height, filter, block_hash) {
             let (matches, events, processed) = self.rescan.process();
             for event in events {
-                self.upstream.event(event);
+                self.outbox.event(event);
             }
             // If we processed some filters, update the time to further delay requesting new
             // filters.
@@ -859,7 +861,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
         }
 
         if filter_height < block_height {
-            self.upstream.event(Event::OutOfSync {
+            self.outbox.event(Event::OutOfSync {
                 filter_height,
                 block_height,
             });
@@ -871,7 +873,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
             if let Some((peer, start_height, stop_hash)) =
                 self.send_getcfheaders(start_height..=stop_height, tree)
             {
-                self.upstream.event(Event::Syncing {
+                self.outbox.event(Event::Syncing {
                     peer,
                     start_height,
                     stop_height,
@@ -896,7 +898,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
         if now - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.sync(tree);
             self.last_idle = Some(now);
-            self.upstream.set_timer(IDLE_TIMEOUT);
+            self.outbox.set_timer(IDLE_TIMEOUT);
         }
     }
 
@@ -949,7 +951,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
             let time = self.clock.local_time();
             let timeout = self.config.request_timeout;
 
-            self.upstream
+            self.outbox
                 .get_cfheaders(*peer, start_height, stop_hash, timeout);
             self.inflight
                 .insert(stop_hash, (start_height, *peer, time + timeout));
@@ -958,7 +960,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
         } else {
             // TODO: Emit 'NotConnected' instead, and make sure we retry later, or when a
             // peer connects.
-            self.upstream.event(Event::RequestCanceled {
+            self.outbox.event(Event::RequestCanceled {
                 reason: "no peers with required services",
             });
         }
@@ -994,7 +996,7 @@ impl<F: Filters, U: Wire<Event> + SetTimer + Disconnect, C: Clock> FilterManager
 
     fn schedule_wake(&mut self) {
         self.last_idle = None; // Disable rate-limiting for the next tick.
-        self.upstream.set_timer(LocalDuration::from_secs(1));
+        self.outbox.set_timer(LocalDuration::from_secs(1));
     }
 }
 
@@ -1054,8 +1056,7 @@ mod tests {
     use nakamoto_test::BITCOIN_HEADERS;
 
     use crate::fsm;
-    use crate::fsm::output::{self, Outbox};
-    use crate::fsm::PROTOCOL_VERSION;
+    use crate::fsm::output;
 
     use super::*;
 
@@ -1068,7 +1069,7 @@ mod tests {
             filter_cache_size: usize,
             clock: C,
         ) -> (
-            FilterManager<FilterCache<store::Memory<StoredHeader>>, Outbox, C>,
+            FilterManager<FilterCache<store::Memory<StoredHeader>>, C>,
             BlockCache<store::Memory<BlockHeader>>,
             NonEmpty<bitcoin::Block>,
         ) {
@@ -1089,17 +1090,12 @@ mod tests {
             cache.import_headers(cfheaders).unwrap();
             cache.verify(network).unwrap();
 
-            let upstream = Outbox::new(network, PROTOCOL_VERSION);
             let config = Config {
                 filter_cache_size,
                 ..Config::default()
             };
 
-            (
-                FilterManager::new(config, rng, cache, upstream, clock),
-                tree,
-                chain,
-            )
+            (FilterManager::new(config, rng, cache, clock), tree, chain)
         }
 
         pub fn cfilters<'a>(
@@ -1166,9 +1162,9 @@ mod tests {
             data.windows(2).all(|w| w[0] <= w[1])
         }
 
-        pub fn events(outputs: impl Iterator<Item = fsm::Io>) -> impl Iterator<Item = Event> {
+        pub fn events(outputs: impl Iterator<Item = output::Io>) -> impl Iterator<Item = Event> {
             outputs.filter_map(|o| match o {
-                fsm::Io::Event(fsm::Event::Filter(e)) => Some(e),
+                output::Io::Event(fsm::Event::Filter(e)) => Some(e),
                 _ => None,
             })
         }
@@ -1223,9 +1219,8 @@ mod tests {
         let mut cbfmgr = {
             let rng = fastrand::Rng::new();
             let cache = FilterCache::load(store::memory::Memory::genesis(network)).unwrap();
-            let upstream = Outbox::new(network, PROTOCOL_VERSION);
 
-            FilterManager::new(Config::default(), rng, cache, upstream, clock)
+            FilterManager::new(Config::default(), rng, cache, clock)
         };
 
         // Import the headers.
@@ -1307,7 +1302,7 @@ mod tests {
             false,
             &tree,
         );
-        output::test::messages_from(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.outbox, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(_)))
             .unwrap();
     }
@@ -1369,7 +1364,7 @@ mod tests {
             false,
             &tree,
         );
-        output::test::messages_from(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.outbox, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFHeaders(_)))
             .unwrap();
 
@@ -1399,7 +1394,7 @@ mod tests {
             start_height: birth as u32,
             stop_hash: tip,
         };
-        output::test::messages_from(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.outbox, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(msg) if msg == &expected))
             .expect("Rescanning should trigger filters to be fetched");
     }
@@ -1444,7 +1439,7 @@ mod tests {
         assert!(cbfmgr.last_processed.is_none());
         assert_eq!(cbfmgr.rescan.current, birth);
 
-        output::test::messages_from(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.outbox, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(_)))
             .expect("`getcfilters` sent");
 
@@ -1478,7 +1473,7 @@ mod tests {
             start_height: current as u32,
             stop_hash,
         };
-        output::test::messages_from(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.outbox, &remote)
             .find(|m| matches!(m, NetworkMessage::GetCFilters(msg) if msg == &expected))
             .expect("`getcfilters` sent");
 
@@ -1503,8 +1498,7 @@ mod tests {
         let mut cbfmgr = {
             let cache = FilterCache::load(store::memory::Memory::genesis(network)).unwrap();
             let rng = fastrand::Rng::new();
-            let upstream = Outbox::new(network, PROTOCOL_VERSION);
-            FilterManager::new(Config::default(), rng, cache, upstream, time)
+            FilterManager::new(Config::default(), rng, cache, time)
         };
 
         let chain = gen::blockchain(network.genesis_block(), header_height, &mut rng);
@@ -1531,8 +1525,9 @@ mod tests {
         );
 
         let tip = chain.last();
-        let mut msgs = output::test::messages_from(&mut cbfmgr.upstream, &remote);
-        let mut events = util::events(cbfmgr.upstream.drain());
+        let outputs = cbfmgr.outbox.drain().collect::<Vec<_>>();
+        let mut msgs = output::test::messages_from(outputs.iter().cloned(), &remote);
+        let mut events = util::events(outputs.iter().cloned());
 
         events
             .find(|e| {
@@ -1617,7 +1612,7 @@ mod tests {
         assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
         // 4. Make sure there's nothing in the outbox.
-        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.outbox.drain().for_each(drop);
 
         // 5. Trigger a rescan for the new range 7 to 9
         let matched = cbfmgr.rescan(
@@ -1637,7 +1632,7 @@ mod tests {
         );
         // TODO: Test that there are no other requests.
         assert_matches!(
-            output::test::messages_from(&mut cbfmgr.upstream, &remote).next().unwrap(),
+            output::test::messages_from(&mut cbfmgr.outbox, &remote).next().unwrap(),
             NetworkMessage::GetCFilters(GetCFilters {
                 start_height,
                 stop_hash,
@@ -1695,7 +1690,7 @@ mod tests {
         let (tip, _) = tree.tip();
 
         // 4. Make sure there's nothing in the outbox.
-        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.outbox.drain().for_each(drop);
 
         // 5. Trigger a rescan for the new range 6 to 8.
         // Nothing should be matched yet, since we don't have filter #6.
@@ -1711,7 +1706,7 @@ mod tests {
         let missing = &chain[expected_request as usize];
 
         assert_matches!(
-            output::test::messages_from(&mut cbfmgr.upstream, &remote).next().unwrap(),
+            output::test::messages_from(&mut cbfmgr.outbox, &remote).next().unwrap(),
             NetworkMessage::GetCFilters(GetCFilters {
                 start_height,
                 stop_hash,
@@ -1719,14 +1714,14 @@ mod tests {
             }) if start_height as Height == expected_request && stop_hash == missing.block_hash(),
             "expected {} and {}", expected_request, tip
         );
-        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.outbox.drain().for_each(drop);
 
         // 7. Receive #6.
         let msg = util::cfilters(iter::once(missing)).next().unwrap();
         cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
 
         // 8. Expect that 6 to 8 are processed and 7 and 8 come from the cache.
-        let mut events = util::events(cbfmgr.upstream.drain())
+        let mut events = util::events(cbfmgr.outbox.drain())
             .filter(|e| matches!(e, Event::FilterProcessed { .. }));
 
         assert_matches!(
@@ -1823,7 +1818,7 @@ mod tests {
         assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
         // 4. Make sure there's nothing in the outbox.
-        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.outbox.drain().for_each(drop);
 
         // 5. Trigger a rescan for the new range 7 to 9
         let matched = cbfmgr.rescan(
@@ -1834,7 +1829,7 @@ mod tests {
         );
         assert_eq!(matched, vec![]);
 
-        let mut msgs = output::test::messages_from(&mut cbfmgr.upstream, &remote);
+        let mut msgs = output::test::messages_from(&mut cbfmgr.outbox, &remote);
 
         // TODO: Test that there are no other requests.
         for expected in expected_requests {
@@ -1896,14 +1891,14 @@ mod tests {
             cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
         // Drain the message queue so we can check what is coming from the next rescan.
-        cbfmgr.upstream.drain().for_each(drop);
+        cbfmgr.outbox.drain().for_each(drop);
 
         // 2. Request range 5 to 9.
         let matched = cbfmgr.rescan(Bound::Included(5), Bound::Included(9), watch, &tree);
         assert!(matched.is_empty());
 
         // 3. Check for requests only on the heights not in the cache.
-        let mut msgs = output::test::messages_from(&mut cbfmgr.upstream, &remote);
+        let mut msgs = output::test::messages_from(&mut cbfmgr.outbox, &remote);
         for height in [5, 7, 9] {
             assert_matches!(
                 msgs.next(),
@@ -1913,13 +1908,14 @@ mod tests {
                 })) if start_height == height
             );
         }
+        drop(msgs);
 
         // 4. Receive some of the missing filters.
         for msg in util::cfilters([&chain[5], &chain[7], &chain[9]].into_iter()) {
             cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
 
-        let mut events = util::events(cbfmgr.upstream.drain())
+        let mut events = util::events(cbfmgr.outbox.drain())
             .filter(|e| matches!(e, Event::FilterProcessed { .. }));
 
         // 5. Check for processed filters, some from the network and some from the cache.
@@ -2071,7 +2067,7 @@ mod tests {
                 cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
             }
             assert_eq!(cbfmgr.rescan.current, sync_height + 1);
-            cbfmgr.upstream.drain().for_each(drop);
+            cbfmgr.outbox.drain().for_each(drop);
 
             // ... Create a fork ...
 
@@ -2118,7 +2114,7 @@ mod tests {
 
             // Check that filter headers are requested.
             assert_matches!(
-                output::test::messages_from(&mut cbfmgr.upstream, &remote).next().unwrap(),
+                output::test::messages_from(&mut cbfmgr.outbox, &remote).next().unwrap(),
                 NetworkMessage::GetCFHeaders(GetCFHeaders {
                     start_height,
                     stop_hash,
@@ -2137,7 +2133,7 @@ mod tests {
             // Check that corresponding filters are requested within the scope of the
             // current rescan.
             assert_matches!(
-                output::test::messages_from(&mut cbfmgr.upstream, &remote).next().unwrap(),
+                output::test::messages_from(&mut cbfmgr.outbox, &remote).next().unwrap(),
                 NetworkMessage::GetCFilters(GetCFilters {
                     start_height,
                     stop_hash,
@@ -2183,25 +2179,25 @@ mod tests {
         );
         cbfmgr.rescan(Bound::Included(birth), Bound::Unbounded, watch, &tree);
 
-        let mut msgs = output::test::messages_from(&mut cbfmgr.upstream, &remote);
-        let mut events = util::events(cbfmgr.upstream.drain());
+        let msgs = output::test::messages_from(&mut cbfmgr.outbox, &remote).collect::<Vec<_>>();
 
-        msgs.find(|m| {
-            matches!(
-                m,
-                NetworkMessage::GetCFHeaders(GetCFHeaders {
-                    start_height,
-                    stop_hash,
-                    ..
-                }) if *start_height == 1 && stop_hash == &tip
-            )
-        })
-        .unwrap();
+        msgs.iter()
+            .find(|m| {
+                matches!(
+                    m,
+                    NetworkMessage::GetCFHeaders(GetCFHeaders {
+                        start_height,
+                        stop_hash,
+                        ..
+                    }) if *start_height == 1 && stop_hash == &tip
+                )
+            })
+            .unwrap();
 
         // If the birth height is `0`, we already have the header and can thus request
         // the filter.
         if birth == 0 {
-            msgs.find(|m| {
+            msgs.iter().find(|m| {
                 matches!(
                     m,
                     NetworkMessage::GetCFilters(GetCFilters {
@@ -2221,7 +2217,7 @@ mod tests {
 
         assert_eq!(height, best, "The new height is the best height");
 
-        output::test::messages_from(&mut cbfmgr.upstream, &remote)
+        output::test::messages_from(&mut cbfmgr.outbox, &remote)
             .find(|m| {
                 // If the birth height is `0`, we've already requested the filter, so start at `1`.
                 let start = if birth == 0 { 1 } else { birth };
@@ -2237,7 +2233,7 @@ mod tests {
             })
             .unwrap();
 
-        events
+        util::events(cbfmgr.outbox.drain())
             .find(|e| matches!(e, Event::Synced(height) if height == &best))
             .unwrap();
 
@@ -2257,7 +2253,7 @@ mod tests {
                     .into_iter()
                     .filter_map(|(_, h)| tree.get_block(&h).map(|(height, _)| height)),
             );
-            events
+            util::events(cbfmgr.outbox.drain())
                 .find(|e| matches!(e, Event::FilterReceived { height, .. } if height == &h))
                 .unwrap();
         }

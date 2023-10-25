@@ -13,7 +13,7 @@ use nakamoto_common::block::{BlockHash, BlockHeader, Height};
 use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
-use super::output::{Disconnect, SetTimer, Wire};
+use super::output::{Io, Outbox};
 use super::{DisconnectReason, Link, Locators, PeerId, Socket};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
@@ -72,7 +72,7 @@ pub struct Config {
 
 /// The sync manager state.
 #[derive(Debug)]
-pub struct SyncManager<U, C> {
+pub struct SyncManager<C> {
     /// Sync manager configuration.
     pub config: Config,
 
@@ -86,10 +86,18 @@ pub struct SyncManager<U, C> {
     last_idle: Option<LocalTime>,
     /// In-flight requests to peers.
     inflight: HashMap<PeerId, GetHeaders>,
-    /// Upstream protocol channel.
-    upstream: U,
+    /// State-machine output.
+    outbox: Outbox,
     /// Clock.
     clock: C,
+}
+
+impl<C> Iterator for SyncManager<C> {
+    type Item = Io;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.outbox.next()
+    }
 }
 
 /// An event emitted by the sync manager.
@@ -189,14 +197,15 @@ struct GetHeaders {
     on_timeout: OnTimeout,
 }
 
-impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
+impl<C: Clock> SyncManager<C> {
     /// Create a new sync manager.
-    pub fn new(config: Config, rng: fastrand::Rng, upstream: U, clock: C) -> Self {
+    pub fn new(config: Config, rng: fastrand::Rng, clock: C) -> Self {
         let peers = AddressBook::new(rng.clone());
         let last_tip_update = None;
         let last_peer_sample = None;
         let last_idle = None;
         let inflight = HashMap::with_hasher(rng.into());
+        let outbox = Outbox::default();
 
         Self {
             peers,
@@ -205,7 +214,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
             last_peer_sample,
             last_idle,
             inflight,
-            upstream,
+            outbox,
             clock,
         }
     }
@@ -217,7 +226,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
         let height = tree.height();
 
         self.idle(tree);
-        self.upstream.event(Event::Synced(hash, height));
+        self.outbox.event(Event::Synced(hash, height));
     }
 
     /// Called periodically.
@@ -230,7 +239,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
                 self.sample_peers(tree);
             }
             self.last_idle = Some(now);
-            self.upstream.set_timer(IDLE_TIMEOUT);
+            self.outbox.set_timer(IDLE_TIMEOUT);
         }
     }
 
@@ -249,7 +258,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
         }
 
         if height > self.best_height().unwrap_or_else(|| tree.height()) {
-            self.upstream.event(Event::PeerHeightUpdated { height });
+            self.outbox.event(Event::PeerHeightUpdated { height });
         }
 
         self.register(socket, height, preferred, link);
@@ -278,7 +287,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
         if headers.is_empty() {
             return;
         }
-        self.upstream.headers(*addr, headers);
+        self.outbox.headers(*addr, headers);
     }
 
     /// Import blocks into our block tree.
@@ -298,15 +307,14 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
                 );
 
                 for (height, header) in reverted {
-                    self.upstream
+                    self.outbox
                         .event(Event::BlockDisconnected { height, header });
                 }
                 for (height, header) in connected {
-                    self.upstream
-                        .event(Event::BlockConnected { height, header });
+                    self.outbox.event(Event::BlockConnected { height, header });
                 }
 
-                self.upstream.event(Event::Synced(tip, height));
+                self.outbox.event(Event::Synced(tip, height));
                 self.broadcast_tip(&tip, tree);
 
                 Ok(result)
@@ -337,7 +345,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
             log::debug!("Received more than maximum headers allowed from {}", from);
 
             self.record_misbehavior(from);
-            self.upstream
+            self.outbox
                 .disconnect(*from, DisconnectReason::PeerMisbehaving("too many headers"));
 
             return Ok(ImportResult::TipUnchanged);
@@ -434,8 +442,8 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
             };
 
             self.inflight.insert(addr, req.clone());
-            self.upstream.get_headers(addr, req.locators);
-            self.upstream.set_timer(timeout);
+            self.outbox.get_headers(addr, req.locators);
+            self.outbox.set_timer(timeout);
         }
     }
 
@@ -467,7 +475,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
                 // hash provided should be the highest."
 
                 if !tree.is_known(hash) {
-                    self.upstream.event(Event::BlockDiscovered(addr, *hash));
+                    self.outbox.event(Event::BlockDiscovered(addr, *hash));
                     best_block = Some(hash);
                 }
             }
@@ -508,7 +516,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
                     // It's likely that the peer just didn't have the requested header.
                 }
                 OnTimeout::Retry(0) | OnTimeout::Disconnect => {
-                    self.upstream
+                    self.outbox
                         .disconnect(peer, DisconnectReason::PeerTimeout("getheaders"));
                     sync = true;
                 }
@@ -558,7 +566,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
                 log::debug!("{}: Received invalid headers: {}", from, err);
 
                 self.record_misbehavior(from);
-                self.upstream
+                self.outbox
                     .disconnect(*from, DisconnectReason::PeerMisbehaving("invalid headers"));
 
                 Ok(())
@@ -577,7 +585,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
     }
 
     fn record_misbehavior(&mut self, peer: &PeerId) {
-        self.upstream.event(Event::PeerMisbehaved(*peer));
+        self.outbox.event(Event::PeerMisbehaved(*peer));
     }
 
     /// Check whether our current tip is stale.
@@ -665,9 +673,9 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
     }
 
     /// Check whether or not we are in sync with the network.
-    fn is_synced<T: BlockReader>(&self, tree: &T) -> bool {
+    fn is_synced<T: BlockReader>(&mut self, tree: &T) -> bool {
         if let Some(last_update) = self.stale_tip(tree) {
-            self.upstream.event(Event::StaleTip(last_update));
+            self.outbox.event(Event::StaleTip(last_update));
 
             return false;
         }
@@ -700,7 +708,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
 
             // TODO: This event can fire multiple times if `sync` is called while we're already
             // in sync.
-            self.upstream.event(Event::Synced(tip, height));
+            self.outbox.event(Event::Synced(tip, height));
 
             return false;
         }
@@ -721,7 +729,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
 
             if best > current {
                 self.request(addr, locators, timeout, OnTimeout::Ignore);
-                self.upstream.event(Event::Syncing { current, best });
+                self.outbox.event(Event::Syncing { current, best });
 
                 return true;
             }
@@ -736,7 +744,7 @@ impl<U: SetTimer + Disconnect + Wire<Event>, C: Clock> SyncManager<U, C> {
             for (addr, peer) in &*self.peers {
                 // TODO: Don't broadcast to peer that is currently syncing?
                 if peer.link == Link::Inbound && height > peer.height {
-                    self.upstream.headers(*addr, vec![*best]);
+                    self.outbox.headers(*addr, vec![*best]);
                 }
             }
         }

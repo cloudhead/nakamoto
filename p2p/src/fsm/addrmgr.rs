@@ -15,7 +15,7 @@ use nakamoto_common::p2p::peer::{AddressSource, KnownAddress, Source, Store};
 use nakamoto_common::p2p::Domain;
 use nakamoto_net::Disconnect;
 
-use super::output::{SetTimer, Wire};
+use super::output::{Io, Outbox};
 use super::Link;
 
 /// Time to wait until a request times out.
@@ -85,7 +85,7 @@ where
     }
 }
 
-impl<P: Store, U, C> AddressManager<P, U, C> {
+impl<P: Store, C> AddressManager<P, C> {
     /// Check whether we have unused addresses.
     pub fn is_exhausted(&self) -> bool {
         let time = self
@@ -128,7 +128,7 @@ impl Default for Config {
 
 /// Manages peer network addresses.
 #[derive(Debug)]
-pub struct AddressManager<P, U, C> {
+pub struct AddressManager<P, C> {
     /// Peer address store.
     peers: P,
     bans: HashSet<net::IpAddr>,
@@ -141,12 +141,20 @@ pub struct AddressManager<P, U, C> {
     /// The last time we idled.
     last_idle: Option<LocalTime>,
     cfg: Config,
-    upstream: U,
+    outbox: Outbox,
     rng: fastrand::Rng,
     clock: C,
 }
 
-impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressManager<P, U, C> {
+impl<P, C> Iterator for AddressManager<P, C> {
+    type Item = Io;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.outbox.next()
+    }
+}
+
+impl<P: Store, C: Clock> AddressManager<P, C> {
     /// Initialize the address manager.
     pub fn initialize(&mut self) {
         self.idle();
@@ -160,7 +168,7 @@ impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressManager<P, U, C> {
     /// Get addresses from peers.
     pub fn get_addresses(&mut self) {
         for peer in &self.sources {
-            self.upstream.get_addr(*peer);
+            self.outbox.get_addr(*peer);
         }
     }
 
@@ -181,7 +189,7 @@ impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressManager<P, U, C> {
                 ka.addr.clone(),
             ));
         }
-        self.upstream.addr(*from, addrs);
+        self.outbox.addr(*from, addrs);
     }
 
     /// Called when a tick is received.
@@ -192,11 +200,11 @@ impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressManager<P, U, C> {
         if local_time - self.last_request.unwrap_or_default() >= REQUEST_TIMEOUT
             && self.is_exhausted()
         {
-            self.upstream.event(Event::AddressBookExhausted);
+            self.outbox.event(Event::AddressBookExhausted);
 
             self.get_addresses();
             self.last_request = Some(local_time);
-            self.upstream.set_timer(REQUEST_TIMEOUT);
+            self.outbox.set_timer(REQUEST_TIMEOUT);
         }
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
@@ -246,7 +254,7 @@ impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressManager<P, U, C> {
         if let Some(ka) = self.peers.get_mut(&addr.ip()) {
             // Only ask for addresses when connecting for the first time.
             if ka.last_success.is_none() {
-                self.upstream.get_addr(*addr);
+                self.outbox.get_addr(*addr);
             }
             // Keep track of when the last successful handshake was.
             ka.last_success = Some(time);
@@ -284,17 +292,17 @@ impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressManager<P, U, C> {
     fn idle(&mut self) {
         // If it's been a while, save addresses to store.
         if let Err(err) = self.peers.flush() {
-            self.upstream
+            self.outbox
                 .event(Event::Error(format!("flush to disk failed: {}", err)));
         }
         self.last_idle = Some(self.clock.local_time());
-        self.upstream.set_timer(IDLE_TIMEOUT);
+        self.outbox.set_timer(IDLE_TIMEOUT);
     }
 }
 
-impl<P: Store, U: Wire<Event>, C: Clock> AddressManager<P, U, C> {
+impl<P: Store, C: Clock> AddressManager<P, C> {
     /// Create a new, empty address manager.
-    pub fn new(cfg: Config, rng: fastrand::Rng, peers: P, upstream: U, clock: C) -> Self {
+    pub fn new(cfg: Config, rng: fastrand::Rng, peers: P, clock: C) -> Self {
         let ips = peers.iter().map(|(ip, _)| *ip).collect::<Vec<_>>();
         let mut addrmgr = Self {
             cfg,
@@ -306,7 +314,7 @@ impl<P: Store, U: Wire<Event>, C: Clock> AddressManager<P, U, C> {
             local_addrs: HashSet::with_hasher(rng.clone().into()),
             last_request: None,
             last_idle: None,
-            upstream,
+            outbox: Outbox::default(),
             rng,
             clock,
         };
@@ -342,7 +350,7 @@ impl<P: Store, U: Wire<Event>, C: Clock> AddressManager<P, U, C> {
         }
         let source = Source::Peer(peer);
 
-        self.upstream.event(Event::AddressesReceived {
+        self.outbox.event(Event::AddressesReceived {
             count: addrs.len(),
             source,
         });
@@ -573,7 +581,7 @@ impl<P: Store, U: Wire<Event>, C: Clock> AddressManager<P, U, C> {
     }
 }
 
-impl<P: Store, U: Wire<Event> + SetTimer, C: Clock> AddressSource for AddressManager<P, U, C> {
+impl<P: Store, C: Clock> AddressSource for AddressManager<P, C> {
     fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
         AddressManager::sample(self, services)
     }
@@ -666,7 +674,6 @@ mod tests {
     use std::iter;
 
     use nakamoto_common::block::time::RefClock;
-    use nakamoto_common::network::Network;
     use quickcheck::TestResult;
     use quickcheck_macros::quickcheck;
 
@@ -676,7 +683,6 @@ mod tests {
             Config::default(),
             fastrand::Rng::new(),
             HashMap::new(),
-            (),
             LocalTime::now(),
         );
 
@@ -690,7 +696,6 @@ mod tests {
             Config::default(),
             fastrand::Rng::new(),
             HashMap::new(),
-            (),
             time,
         );
         let source = Source::Dns;
@@ -769,7 +774,6 @@ mod tests {
             Config::default(),
             fastrand::Rng::new(),
             HashMap::new(),
-            (),
             time,
         );
         let source = Source::Dns;
@@ -844,7 +848,6 @@ mod tests {
             Config::default(),
             fastrand::Rng::new(),
             HashMap::new(),
-            (),
             time,
         );
         let source = Source::Dns;
@@ -884,17 +887,12 @@ mod tests {
             return TestResult::discard();
         }
 
-        let mut addrmgr = {
-            let upstream = crate::fsm::output::Outbox::new(Network::Mainnet, 0);
-
-            AddressManager::new(
-                Config::default(),
-                fastrand::Rng::with_seed(seed),
-                HashMap::new(),
-                upstream,
-                clock,
-            )
-        };
+        let mut addrmgr = AddressManager::new(
+            Config::default(),
+            fastrand::Rng::with_seed(seed),
+            HashMap::new(),
+            clock,
+        );
         let time = LocalTime::now();
         let services = ServiceFlags::NETWORK;
         let mut addrs = vec![];
@@ -938,7 +936,6 @@ mod tests {
             Config::default(),
             fastrand::Rng::new(),
             HashMap::new(),
-            (),
             time,
         );
         addrmgr.initialize();
@@ -1002,7 +999,7 @@ mod tests {
 
         let cfg = Config::default();
         let time = LocalTime::now();
-        let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), (), time);
+        let mut addrmgr = AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), time);
 
         addrmgr.initialize();
         addrmgr.insert(
@@ -1057,7 +1054,7 @@ mod tests {
         let cfg = Config::default();
         let clock = RefClock::from(LocalTime::now());
         let mut addrmgr =
-            AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), (), clock.clone());
+            AddressManager::new(cfg, fastrand::Rng::new(), HashMap::new(), clock.clone());
 
         addrmgr.initialize();
 

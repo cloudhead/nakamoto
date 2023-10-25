@@ -32,7 +32,7 @@ use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::collections::{AddressBook, HashMap};
 
 use super::fees::{FeeEstimate, FeeEstimator};
-use super::output::{SetTimer, Wire};
+use super::output::{Io, Outbox};
 use super::{Height, PeerId, Socket};
 
 /// Time between re-broadcasts of inventories.
@@ -176,7 +176,7 @@ impl Peer {
 
 /// Inventory manager state.
 #[derive(Debug)]
-pub struct InventoryManager<U, C> {
+pub struct InventoryManager<C> {
     /// Peer map.
     peers: AddressBook<PeerId, Peer>,
     /// Timeout used for retrying broadcasts.
@@ -197,13 +197,21 @@ pub struct InventoryManager<U, C> {
 
     last_tick: Option<LocalTime>,
     rng: fastrand::Rng,
-    upstream: U,
+    outbox: Outbox,
     clock: C,
 }
 
-impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
+impl<C> Iterator for InventoryManager<C> {
+    type Item = Io;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.outbox.next()
+    }
+}
+
+impl<C: Clock> InventoryManager<C> {
     /// Create a new inventory manager.
-    pub fn new(rng: fastrand::Rng, upstream: U, clock: C) -> Self {
+    pub fn new(rng: fastrand::Rng, clock: C) -> Self {
         Self {
             peers: AddressBook::new(rng.clone()),
             mempool: BTreeMap::new(),
@@ -214,7 +222,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
             timeout: REBROADCAST_TIMEOUT,
             last_tick: None,
             rng,
-            upstream,
+            outbox: Outbox::default(),
             clock,
         }
     }
@@ -274,7 +282,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
                 self.announce(tx);
             }
             for transaction in transactions.iter().cloned() {
-                self.upstream.event(Event::Reverted { transaction });
+                self.outbox.event(Event::Reverted { transaction });
             }
             transactions
         } else {
@@ -292,7 +300,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
         let now = self.clock.local_time();
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
-            self.upstream.set_timer(IDLE_TIMEOUT);
+            self.outbox.set_timer(IDLE_TIMEOUT);
         }
 
         {
@@ -338,14 +346,14 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
                         invs.push(Inventory::Transaction(self.mempool[wtxid].txid()));
                     }
                 }
-                self.upstream.inv(*addr, invs);
-                self.upstream.set_timer(self.timeout);
+                self.outbox.inv(*addr, invs);
+                self.outbox.set_timer(self.timeout);
             }
         }
 
         for addr in disconnect {
             self.peers.remove(&addr);
-            self.upstream.event(Event::TimedOut { peer: addr });
+            self.outbox.event(Event::TimedOut { peer: addr });
         }
 
         // Handle block request queue.
@@ -361,9 +369,9 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
             {
                 log::debug!("Requesting block {} from {}", block_hash, addr);
 
-                self.upstream
+                self.outbox
                     .get_data(*addr, vec![Inventory::Block(*block_hash)]);
-                self.upstream.set_timer(REQUEST_TIMEOUT);
+                self.outbox.set_timer(REQUEST_TIMEOUT);
 
                 *last_request = Some(now);
             } else {
@@ -386,7 +394,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
                     if let Some(tx) = self.mempool.values().find(|tx| tx.txid() == *txid) {
                         let wtxid = tx.wtxid();
                         debug_assert!(self.mempool.contains_key(&wtxid));
-                        self.upstream.tx(addr, tx.clone());
+                        self.outbox.tx(addr, tx.clone());
 
                         // Since we received a `getdata` from the peer, it means it received our
                         // inventory broadcast and we no longer need to send it.
@@ -398,7 +406,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
                                 if peer.outbox.is_empty() {
                                     log::debug!("Peer {} transaction outbox is empty", &addr);
                                 }
-                                self.upstream.event(Event::Acknowledged {
+                                self.outbox.event(Event::Acknowledged {
                                     peer: addr,
                                     txid: *txid,
                                 });
@@ -408,7 +416,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
                 }
                 Inventory::WTx(wtxid) => {
                     if let Some(tx) = self.mempool.get(wtxid) {
-                        self.upstream.tx(addr, tx.clone());
+                        self.outbox.tx(addr, tx.clone());
                     }
 
                     // Since we received a `getdata` from the peer, it means it received our
@@ -421,8 +429,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
                             if peer.outbox.is_empty() {
                                 log::debug!("Peer {} transaction outbox is empty", &addr);
                             }
-                            self.upstream
-                                .event(Event::Acknowledged { peer: addr, txid });
+                            self.outbox.event(Event::Acknowledged { peer: addr, txid });
                         }
                     }
                 }
@@ -467,7 +474,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
 
         // Add to processing queue. Blocks are processed in-order only.
         self.received.insert(height, block);
-        self.upstream.event(Event::BlockReceived { from, height });
+        self.outbox.event(Event::BlockReceived { from, height });
 
         // If there are still blocks remaining to download, don't process any of the
         // received queue yet.
@@ -505,7 +512,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
                         .or_default()
                         .push(transaction.clone());
 
-                    self.upstream.event(Event::Confirmed {
+                    self.outbox.event(Event::Confirmed {
                         transaction,
                         block: hash,
                         height,
@@ -515,7 +522,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
             // Process block through fee estimator.
             let fees = self.estimator.process(block.clone(), height);
 
-            self.upstream.event(Event::BlockProcessed {
+            self.outbox.event(Event::BlockProcessed {
                 block,
                 height,
                 fees,
@@ -556,7 +563,7 @@ impl<U: Wire<Event> + SetTimer, C: Clock> InventoryManager<U, C> {
 
     fn schedule_tick(&mut self) {
         self.last_tick = None; // Disable rate-limiting for the next tick.
-        self.upstream.set_timer(LocalDuration::from_secs(1));
+        self.outbox.set_timer(LocalDuration::from_secs(1));
     }
 }
 
@@ -568,8 +575,7 @@ mod tests {
 
     use crate::fsm;
     use crate::fsm::network::Network;
-    use crate::fsm::output::{self, Outbox};
-    use crate::fsm::{Io, PROTOCOL_VERSION};
+    use crate::fsm::output;
 
     use nakamoto_common::bitcoin::network::message::NetworkMessage;
     use nakamoto_common::block::time::RefClock;
@@ -580,9 +586,9 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::{assert_matches, logger};
 
-    fn events(outputs: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
+    fn events(outputs: impl Iterator<Item = output::Io>) -> impl Iterator<Item = Event> {
         outputs.filter_map(|o| match o {
-            Io::Event(fsm::Event::Inventory(e)) => Some(e),
+            output::Io::Event(fsm::Event::Inventory(e)) => Some(e),
             _ => None,
         })
     }
@@ -593,7 +599,6 @@ mod tests {
 
         let network = Network::Regtest;
 
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let mut rng = fastrand::Rng::new();
         let clock = RefClock::from(LocalTime::now());
 
@@ -606,7 +611,7 @@ mod tests {
         let inv = vec![Inventory::Block(hash)];
         let block = chain.iter().find(|b| b.block_hash() == hash).unwrap();
 
-        let mut invmgr = InventoryManager::new(rng.clone(), upstream.clone(), clock.clone());
+        let mut invmgr = InventoryManager::new(rng.clone(), clock.clone());
 
         invmgr.peer_negotiated(
             Socket::new(([66, 66, 66, 66], 8333)),
@@ -643,34 +648,36 @@ mod tests {
             invmgr.received_wake(&tree);
             assert!(!invmgr.remaining.is_empty());
 
-            if let Some((addr, _)) = output::test::messages(&mut upstream)
-                .find(|(_, m)| matches!(m, NetworkMessage::GetData(i) if i == &inv))
-            {
-                assert!(
-                    clock.local_time() - last_request >= REQUEST_TIMEOUT,
-                    "Requests are never made within the request timeout"
-                );
-                last_request = clock.local_time();
-
-                requested.insert(addr);
-                if requested.len() < invmgr.peers.len() {
-                    // We're not done until we've requested all peers.
+            let Some((addr, _)) = output::test::messages(&mut invmgr)
+                .find(|(_, m)| matches!(m, NetworkMessage::GetData(i) if i == &inv)) else {
                     continue;
-                }
-                invmgr.received_block(&addr, block.clone(), &tree);
+                };
 
-                assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
-                events(upstream.drain())
-                    .find(|e| matches!(e, Event::BlockReceived { .. }))
-                    .expect("An event is emitted when a block is received");
+            assert!(
+                clock.local_time() - last_request >= REQUEST_TIMEOUT,
+                "Requests are never made within the request timeout"
+            );
+            last_request = clock.local_time();
 
-                break;
+            requested.insert(addr);
+            if requested.len() < invmgr.peers.len() {
+                // We're not done until we've requested all peers.
+                continue;
             }
+            invmgr.received_block(&addr, block.clone(), &tree);
+
+            assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
+            events(invmgr.outbox.drain())
+                .find(|e| matches!(e, Event::BlockReceived { .. }))
+                .expect("An event is emitted when a block is received");
+
+            break;
         }
         clock.elapse(REQUEST_TIMEOUT);
         invmgr.received_wake(&tree);
         assert_eq!(
-            upstream
+            invmgr
+                .outbox
                 .drain()
                 .filter(|o| matches!(o, Io::Write(_, _)))
                 .count(),
@@ -682,7 +689,6 @@ mod tests {
     #[test]
     fn test_rebroadcast_timeout() {
         let network = Network::Mainnet;
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let mut rng = fastrand::Rng::with_seed(1);
@@ -690,28 +696,28 @@ mod tests {
         let clock = RefClock::from(LocalTime::now());
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream.clone(), clock.clone());
+        let mut invmgr = InventoryManager::new(rng, clock.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx);
         invmgr.received_wake(&tree);
 
         assert_eq!(
-            output::test::messages_from(&mut upstream, &remote)
+            output::test::messages_from(&mut invmgr, &remote)
                 .filter(|m| matches!(m, NetworkMessage::Inv(_)))
                 .count(),
             1
         );
-        upstream.drain().for_each(drop);
+        invmgr.outbox.drain().for_each(drop);
 
         invmgr.received_wake(&tree);
-        assert_eq!(upstream.drain().count(), 0, "Timeout hasn't lapsed");
+        assert_eq!(invmgr.outbox.drain().count(), 0, "Timeout hasn't lapsed");
 
         clock.elapse(REBROADCAST_TIMEOUT);
 
         invmgr.received_wake(&tree);
         assert_eq!(
-            output::test::messages_from(&mut upstream, &remote)
+            output::test::messages_from(&mut invmgr.outbox, &remote)
                 .filter(|m| matches!(m, NetworkMessage::Inv(_)))
                 .count(),
             1,
@@ -722,7 +728,6 @@ mod tests {
     #[test]
     fn test_max_attemps() {
         let network = Network::Mainnet;
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
@@ -731,7 +736,7 @@ mod tests {
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream.clone(), clock.clone());
+        let mut invmgr = InventoryManager::new(rng, clock.clone());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
@@ -739,7 +744,7 @@ mod tests {
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
             invmgr.received_wake(&tree);
-            output::test::messages_from(&mut upstream, &remote)
+            output::test::messages_from(&mut invmgr.outbox, &remote)
                 .find(|m| matches!(m, NetworkMessage::Inv(_),))
                 .expect("Inventory is announced");
 
@@ -748,7 +753,7 @@ mod tests {
 
         // The next time we time out, we disconnect the peer.
         invmgr.received_wake(&tree);
-        events(upstream.drain())
+        events(invmgr.outbox.drain())
             .find(|e| matches!(e, Event::TimedOut { peer } if peer == &remote))
             .expect("Peer times out");
 
@@ -775,11 +780,10 @@ mod tests {
         let fork_block1 = gen::block_with(&tip, vec![tx.clone()], &mut rng);
         let fork_block2 = gen::block(&fork_block1.header, &mut rng);
 
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let time = LocalTime::now();
 
         let mut tree = model::Cache::from(headers);
-        let mut invmgr = InventoryManager::new(rng, upstream.clone(), time);
+        let mut invmgr = InventoryManager::new(rng, time);
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
@@ -788,9 +792,7 @@ mod tests {
 
         assert!(!invmgr.contains(&tx.wtxid()));
 
-        let mut events = events(upstream.drain());
-
-        events
+        events(invmgr.outbox.drain())
             .find(|e| {
                 matches! {
                     e, Event::Confirmed { transaction, .. }
@@ -808,7 +810,7 @@ mod tests {
         invmgr.block_reverted(height);
         assert!(invmgr.contains(&tx.wtxid()));
 
-        events
+        events(invmgr.outbox.drain())
             .find(|e| {
                 matches! {
                     e, Event::Reverted { transaction }
@@ -820,7 +822,7 @@ mod tests {
         invmgr.get_block(fork_block1.block_hash());
         invmgr.received_block(&remote, fork_block1.clone(), &tree);
 
-        events
+        events(invmgr.outbox.drain())
             .find(|e| {
                 matches! {
                     e, Event::Confirmed { transaction, block: b, .. }
@@ -833,7 +835,6 @@ mod tests {
     #[test]
     fn test_wtx_inv() {
         let network = Network::Mainnet;
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
         let tree = model::Cache::from(NonEmpty::new(network.genesis()));
 
         let mut rng = fastrand::Rng::with_seed(1);
@@ -843,13 +844,13 @@ mod tests {
         let remote2: net::SocketAddr = ([88, 88, 88, 89], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream.clone(), time);
+        let mut invmgr = InventoryManager::new(rng, time);
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx);
 
         invmgr.received_wake(&tree);
-        let invs = output::test::messages_from(&mut upstream, &remote)
+        let invs = output::test::messages_from(&mut invmgr.outbox, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Inv(invs) = m {
                     Some(invs)
@@ -863,7 +864,7 @@ mod tests {
 
         invmgr.peer_negotiated(remote2.into(), ServiceFlags::NETWORK, true, false);
         invmgr.received_wake(&tree);
-        let invs = output::test::messages_from(&mut upstream, &remote2)
+        let invs = output::test::messages_from(&mut invmgr.outbox, &remote2)
             .filter_map(|m| match m {
                 NetworkMessage::Inv(invs) => Some(invs),
                 _ => None,
@@ -875,21 +876,17 @@ mod tests {
 
     #[test]
     fn test_wtx_getdata() {
-        let network = Network::Mainnet;
-        let mut upstream = Outbox::new(network, PROTOCOL_VERSION);
-
         let mut rng = fastrand::Rng::with_seed(1);
-
         let remote: net::SocketAddr = ([88, 88, 88, 88], 8333).into();
         let tx = gen::transaction(&mut rng);
 
-        let mut invmgr = InventoryManager::new(rng, upstream.clone(), LocalTime::now());
+        let mut invmgr = InventoryManager::new(rng, LocalTime::now());
 
         invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx.clone());
 
         invmgr.received_getdata(remote, &[Inventory::Transaction(tx.txid())]);
-        let tr = output::test::messages_from(&mut upstream, &remote)
+        let tr = output::test::messages_from(&mut invmgr.outbox, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)
@@ -902,7 +899,7 @@ mod tests {
         assert_eq!(tr.txid(), tx.txid());
 
         invmgr.received_getdata(remote, &[Inventory::WTx(tx.wtxid())]);
-        let tr = output::test::messages_from(&mut upstream, &remote)
+        let tr = output::test::messages_from(&mut invmgr.outbox, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Tx(tr) = m {
                     Some(tr)
