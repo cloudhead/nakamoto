@@ -572,13 +572,6 @@ impl<W: Waker> handle::Handle for Handle<W> {
         Ok(receive.recv()?)
     }
 
-    fn query(&self, msg: NetworkMessage) -> Result<Option<net::SocketAddr>, handle::Error> {
-        let (transmit, receive) = chan::bounded::<Option<net::SocketAddr>>(1);
-        self.command(Command::Query(msg, transmit))?;
-
-        Ok(receive.recv()?)
-    }
-
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, handle::Error> {
         let events = self.events.subscribe();
         self.command(Command::Connect(addr))?;

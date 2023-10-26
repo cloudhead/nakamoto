@@ -259,8 +259,6 @@ pub enum Command {
     },
     /// Broadcast to peers matching the predicate.
     Broadcast(NetworkMessage, fn(Peer) -> bool, chan::Sender<Vec<PeerId>>),
-    /// Send a message to a random peer.
-    Query(NetworkMessage, chan::Sender<Option<net::SocketAddr>>),
     /// Query the block tree.
     QueryTree(Arc<dyn Fn(&dyn BlockReader) + Send + Sync>),
     /// Connect to a peer.
@@ -299,7 +297,6 @@ impl fmt::Debug for Command {
                 write!(f, "Watch({:?})", watch)
             }
             Self::Broadcast(msg, _, _) => write!(f, "Broadcast({})", msg.cmd()),
-            Self::Query(msg, _) => write!(f, "Query({})", msg.cmd()),
             Self::QueryTree(_) => write!(f, "QueryTree"),
             Self::Connect(addr) => write!(f, "Connect({})", addr),
             Self::Disconnect(addr) => write!(f, "Disconnect({})", addr),
@@ -381,8 +378,6 @@ pub struct StateMachine<T, F, P, C> {
     /// Last time a "tick" was triggered.
     #[allow(dead_code)]
     last_tick: LocalTime,
-    /// Random number generator.
-    rng: fastrand::Rng,
     /// Outbound I/O. Used to communicate protocol events with a reactor.
     outbox: Outbox,
     /// State machine event hooks.
@@ -565,7 +560,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             peers,
             clock.clone(),
         );
-        let invmgr = InventoryManager::new(rng.clone(), clock.clone());
+        let invmgr = InventoryManager::new(rng, clock.clone());
 
         Self {
             tree,
@@ -578,7 +573,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             peermgr,
             invmgr,
             last_tick: LocalTime::default(),
-            rng,
             outbox,
             hooks,
         }
@@ -612,31 +606,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             }
         }
         peers
-    }
-
-    /// Send a message to a random outbound peer. Returns the peer id.
-    fn query<Q>(&mut self, msg: NetworkMessage, f: Q) -> Option<PeerId>
-    where
-        Q: Fn(&Peer) -> bool,
-    {
-        let peers = self
-            .peermgr
-            .negotiated(Link::Outbound)
-            .map(Peer::from)
-            .filter(f)
-            .collect::<Vec<_>>();
-
-        match peers.len() {
-            n if n > 0 => {
-                let r = self.rng.usize(..n);
-                let p = peers.get(r).unwrap();
-
-                self.outbox.message(p.addr, msg);
-
-                Some(p.addr)
-            }
-            _ => None,
-        }
     }
 }
 
@@ -704,9 +673,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
             }
             Command::Disconnect(addr) => {
                 self.disconnect(addr, DisconnectReason::Command);
-            }
-            Command::Query(msg, reply) => {
-                reply.send(self.query(msg, |_| true)).ok();
             }
             Command::Broadcast(msg, predicate, reply) => {
                 let peers = self.broadcast(msg, |p| predicate(p.clone()));

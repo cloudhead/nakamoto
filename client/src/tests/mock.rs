@@ -212,10 +212,6 @@ impl Handle for TestHandle {
         unimplemented!()
     }
 
-    fn query(&self, _msg: NetworkMessage) -> Result<Option<net::SocketAddr>, handle::Error> {
-        unimplemented!()
-    }
-
     fn connect(&self, _addr: net::SocketAddr) -> Result<Link, handle::Error> {
         unimplemented!()
     }

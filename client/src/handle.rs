@@ -140,9 +140,6 @@ pub trait Handle: Sized + Send + Sync + Clone {
         msg: NetworkMessage,
         predicate: fn(Peer) -> bool,
     ) -> Result<Vec<net::SocketAddr>, Error>;
-    /// Send a message to a random *outbound* peer. Return the chosen
-    /// peer or nothing if no peer was available.
-    fn query(&self, msg: NetworkMessage) -> Result<Option<net::SocketAddr>, Error>;
     /// Connect to the designated peer address.
     fn connect(&self, addr: net::SocketAddr) -> Result<Link, Error>;
     /// Disconnect from the designated peer address.

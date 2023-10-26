@@ -260,7 +260,7 @@ impl Peer<Protocol> {
         <Self as simulator::Peer<Protocol>>::init(self);
 
         let local = self.addr;
-        let rng = self.protocol.rng.clone();
+        let rng = fastrand::Rng::default();
 
         if link.is_outbound() {
             self.protocol.peermgr.connect(&remote.addr);
