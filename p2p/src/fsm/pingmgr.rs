@@ -25,16 +25,6 @@ pub const PING_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 /// Maximum number of latencies recorded per peer.
 const MAX_RECORDED_LATENCIES: usize = 64;
 
-/// A ping-related event.
-#[derive(Clone, Debug)]
-pub enum Event {}
-
-impl std::fmt::Display for Event {
-    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        Ok(())
-    }
-}
-
 #[derive(Debug)]
 enum State {
     AwaitingPong { nonce: u64, since: LocalTime },

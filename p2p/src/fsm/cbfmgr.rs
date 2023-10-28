@@ -17,12 +17,13 @@ use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::block::{BlockHash, Height};
-use nakamoto_common::collections::{AddressBook, HashMap};
+use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
 
+use super::event::TxStatus;
 use super::filter_cache::FilterCache;
 use super::output::{Io, Outbox};
-use super::{DisconnectReason, Link, PeerId, Socket};
+use super::{BlockSource, DisconnectReason, Event, Link, PeerId, Socket};
 
 use rescan::Rescan;
 
@@ -66,175 +67,6 @@ pub enum Error {
     /// Error with the underlying filters datastore.
     #[error("filters error: {0}")]
     Filters(#[from] filter::Error),
-}
-
-/// An event originating in the CBF manager.
-#[derive(Debug, Clone)]
-pub enum Event {
-    /// Filter was received and validated.
-    FilterReceived {
-        /// Peer we received from.
-        from: PeerId,
-        /// The received filter.
-        filter: BlockFilter,
-        /// Filter height.
-        height: Height,
-        /// Hash of corresponding block.
-        block_hash: BlockHash,
-    },
-    /// Filter was processed.
-    FilterProcessed {
-        /// The corresponding block hash.
-        block: BlockHash,
-        /// The filter height.
-        height: Height,
-        /// Whether or not this filter matched something in the watchlist.
-        matched: bool,
-        /// Whether or not this filter was valid.
-        valid: bool,
-        /// Filter was cached.
-        cached: bool,
-    },
-    /// Filter headers were imported successfully.
-    FilterHeadersImported {
-        /// Number of filter headers imported.
-        count: usize,
-        /// New filter header chain height.
-        height: Height,
-        /// Block hash corresponding to the tip of the filter header chain.
-        block_hash: BlockHash,
-    },
-    /// Filter header chain is out of sync with block headers.
-    OutOfSync {
-        /// Height of filter header chain.
-        filter_height: Height,
-        /// Height of block header chain.
-        block_height: Height,
-    },
-    /// Started syncing filter headers with a peer.
-    Syncing {
-        /// The remote peer.
-        peer: PeerId,
-        /// The start height from which we're syncing.
-        start_height: Height,
-        /// The stop height to which we're syncing.
-        stop_height: Height,
-        /// The stop hash.
-        stop_hash: BlockHash,
-    },
-    /// Request canceled.
-    RequestCanceled {
-        /// Reason for cancellation.
-        reason: &'static str,
-    },
-    /// A rescan has started.
-    RescanStarted {
-        /// Start height.
-        start: Height,
-        /// End height.
-        end: Option<Height>,
-    },
-    /// An active rescan has completed.
-    RescanCompleted {
-        /// Last height processed by rescan.
-        height: Height,
-    },
-    /// Finished syncing filter headers up to the specified height.
-    Synced(Height),
-    /// A peer has timed out responding to a filter request.
-    /// TODO: Use event or remove.
-    TimedOut(PeerId),
-    /// Block header chain rollback detected.
-    /// TODO: Use event or remove.
-    RollbackDetected(Height),
-}
-
-impl std::fmt::Display for Event {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Event::TimedOut(addr) => write!(fmt, "Peer {} timed out", addr),
-            Event::FilterReceived {
-                from,
-                height,
-                block_hash,
-                ..
-            } => {
-                write!(
-                    fmt,
-                    "Filter {} received for block {} from {}",
-                    height, block_hash, from
-                )
-            }
-            Event::FilterProcessed {
-                height,
-                matched,
-                valid,
-                ..
-            } => {
-                write!(
-                    fmt,
-                    "Filter processed at height {} (match = {}, valid = {})",
-                    height, matched, valid
-                )
-            }
-            Event::FilterHeadersImported { count, height, .. } => {
-                write!(
-                    fmt,
-                    "Imported {} filter header(s) (height = {})",
-                    count, height
-                )
-            }
-            Event::Synced(height) => {
-                write!(
-                    fmt,
-                    "Filter headers synced with block headers (height = {})",
-                    height
-                )
-            }
-            Event::OutOfSync {
-                block_height,
-                filter_height,
-            } => write!(
-                fmt,
-                "Filter header chain is out of sync by {} header(s) ({} to {})",
-                block_height - filter_height,
-                filter_height,
-                block_height,
-            ),
-            Event::Syncing {
-                peer,
-                start_height,
-                stop_height,
-                stop_hash,
-            } => write!(
-                fmt,
-                "Syncing filter headers with {} from height {} to {} (block hash {})",
-                peer, start_height, stop_height, stop_hash
-            ),
-            Event::RescanStarted {
-                start,
-                end: Some(end),
-            } => {
-                write!(fmt, "Rescan started from height {} to {}", start, end)
-            }
-            Event::RescanStarted { start, end: None } => {
-                write!(fmt, "Rescan started from height {} to ..", start)
-            }
-            Event::RescanCompleted { height } => {
-                write!(fmt, "Rescan completed at height {}", height)
-            }
-            Event::RequestCanceled { reason } => {
-                write!(fmt, "Request canceled: {}", reason)
-            }
-            Event::RollbackDetected(height) => {
-                write!(
-                    fmt,
-                    "Rollback detected: discarding filters from height {}..",
-                    height
-                )
-            }
-        }
-    }
 }
 
 /// An error from attempting to get compact filters.
@@ -295,6 +127,8 @@ pub struct FilterManager<F, C> {
     /// Last time a filter was processed.
     /// We use this to figure out when to re-issue filter requests.
     last_processed: Option<LocalTime>,
+    /// Pending block requests.
+    pending_blocks: HashSet<Height>,
     /// Inflight requests.
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
 }
@@ -320,6 +154,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             outbox: Outbox::default(),
             clock,
             filters,
+            pending_blocks: HashSet::with_hasher(rng.clone().into()),
             inflight: HashMap::with_hasher(rng.into()),
             last_idle: None,
             last_processed: None,
@@ -329,6 +164,31 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     /// Initialize the manager. Should only be called once.
     pub fn initialize<T: BlockReader>(&mut self, tree: &T) {
         self.idle(tree);
+    }
+
+    /// Event received.
+    pub fn received_event(&mut self, event: &Event) {
+        match event {
+            Event::BlockProcessed { block, height, .. } => {
+                if self.pending_blocks.remove(height) {
+                    self.outbox.event(Event::BlockMatched {
+                        block: block.clone(),
+                        height: *height,
+                    });
+                }
+            }
+            Event::BlockDisconnected { height, .. } => {
+                // In case of a re-org, make sure we don't accept old blocks that were requested.
+                self.pending_blocks.remove(height);
+            }
+            Event::TxStatusChanged {
+                txid,
+                status: TxStatus::Confirmed { .. },
+            } => {
+                self.unwatch_transaction(txid);
+            }
+            _ => {}
+        }
     }
 
     /// A tick was received.
@@ -417,7 +277,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             }
 
             log::debug!(
-                "[spv] Rollback from {} to {}, start = {}, height = {}",
+                target: "p2p",
+                "Rollback from {} to {}, start = {}, height = {}",
                 current,
                 self.rescan.current,
                 start,
@@ -439,11 +300,6 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             tx.txid(),
             tx.output.iter().map(|o| o.script_pubkey.clone()).collect(),
         );
-    }
-
-    /// Remove transaction from list of transactions being watch.
-    pub fn unwatch_transaction(&mut self, txid: &Txid) -> bool {
-        self.rescan.transactions.remove(txid).is_some()
     }
 
     /// Rescan compact block filters.
@@ -468,9 +324,9 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             watch,
         );
 
-        self.outbox.event(Event::RescanStarted {
+        self.outbox.event(Event::FilterRescanStarted {
             start: self.rescan.start,
-            end: self.rescan.end,
+            stop: self.rescan.end,
         });
 
         if self.rescan.watch.is_empty() {
@@ -538,6 +394,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             let timeout = self.config.request_timeout;
 
             log::debug!(
+                target: "p2p",
                 "Requested filter(s) in range {} to {} from {} (stop = {})",
                 range.start(),
                 range.end(),
@@ -565,7 +422,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         let stop_hash = msg.stop_hash;
 
         log::debug!(
-            "[spv] Received {} filter header(s) from {}",
+            target: "p2p",
+            "Received {} filter header(s) from {}",
             msg.filter_hashes.len(),
             from
         );
@@ -658,17 +516,12 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         self.filters
             .import_headers(headers)
             .map(|height| {
-                self.outbox.event(Event::FilterHeadersImported {
-                    count,
-                    height,
-                    block_hash: stop_hash,
-                });
                 self.headers_imported(start_height, height, tree).unwrap(); // TODO
 
                 assert!(height <= tree.height());
 
                 if height == tree.height() {
-                    self.outbox.event(Event::Synced(height));
+                    self.outbox.event(Event::FilterHeadersSynced { height });
                 } else {
                     self.sync(tree);
                 }
@@ -733,80 +586,22 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     /// Handle a `cfilter` message.
     ///
     /// Returns a list of blocks that need to be fetched from the network.
-    pub fn received_cfilter<T: BlockReader>(
+    pub fn received_cfilter<T: BlockReader, B: BlockSource>(
         &mut self,
         from: &PeerId,
         msg: CFilter,
         tree: &T,
-    ) -> Result<Vec<(Height, BlockHash)>, Error> {
-        let from = *from;
-
-        if msg.filter_type != 0x0 {
-            return Err(Error::Ignored {
-                msg: "cfilter",
-                from,
-            });
-        }
-
-        let height = if let Some((height, _)) = tree.get_block(&msg.block_hash) {
-            height
-        } else {
-            // Can't handle this message, we don't have the block.
-            return Err(Error::Ignored {
-                msg: "cfilter",
-                from,
-            });
-        };
-
-        // The expected hash for this block filter.
-        let header = if let Some((_, header)) = self.filters.get_header(height) {
-            header
-        } else {
-            // Can't handle this message, we don't have the header.
-            return Err(Error::Ignored {
-                msg: "cfilter",
-                from,
-            });
-        };
-
-        // Note that in case this fails, we have a bug in our implementation, since filter
-        // headers are supposed to be downloaded in-order.
-        let prev_header = self
-            .filters
-            .get_prev_header(height)
-            .expect("FilterManager::received_cfilter: all headers up to the tip must exist");
-        let filter = BlockFilter::new(&msg.filter);
-        let block_hash = msg.block_hash;
-
-        if filter.filter_header(&prev_header) != header {
-            return Err(Error::InvalidMessage {
-                from,
-                reason: "cfilter: filter hash doesn't match header",
-            });
-        }
-
-        self.outbox.event(Event::FilterReceived {
-            from,
-            block_hash,
-            height,
-            filter: filter.clone(),
-        });
-
-        if self.rescan.received(height, filter, block_hash) {
-            let (matches, events, processed) = self.rescan.process();
-            for event in events {
-                self.outbox.event(event);
+        blocks: &mut B,
+    ) {
+        match self._received_cfilter(from, msg, tree, blocks) {
+            Ok(_) => {}
+            Err(Error::InvalidMessage { from, .. }) => {
+                self.outbox.event(Event::PeerMisbehaved { addr: from });
             }
-            // If we processed some filters, update the time to further delay requesting new
-            // filters.
-            if processed > 0 {
-                self.last_processed = Some(self.clock.local_time());
+            Err(e) => {
+                log::warn!(target: "p2p", "Error receiving filter headers: {e}");
             }
-            return Ok(matches);
-        } else {
-            // Unsolicited filter.
         }
-        Ok(Vec::default())
     }
 
     /// Called when a peer disconnected.
@@ -861,25 +656,11 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         }
 
         if filter_height < block_height {
-            self.outbox.event(Event::OutOfSync {
-                filter_height,
-                block_height,
-            });
-
             // We need to sync the filter header chain.
             let start_height = self.filters.height() + 1;
             let stop_height = tree.height();
 
-            if let Some((peer, start_height, stop_hash)) =
-                self.send_getcfheaders(start_height..=stop_height, tree)
-            {
-                self.outbox.event(Event::Syncing {
-                    peer,
-                    start_height,
-                    stop_height,
-                    stop_hash,
-                });
-            }
+            self.send_getcfheaders(start_height..=stop_height, tree);
         }
 
         if self.rescan.active {
@@ -890,6 +671,92 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     }
 
     // PRIVATE METHODS /////////////////////////////////////////////////////////
+
+    /// Remove transaction from list of transactions being watch.
+    fn unwatch_transaction(&mut self, txid: &Txid) -> bool {
+        self.rescan.transactions.remove(txid).is_some()
+    }
+
+    fn _received_cfilter<T: BlockReader, B: BlockSource>(
+        &mut self,
+        from: &PeerId,
+        msg: CFilter,
+        tree: &T,
+        blocks: &mut B,
+    ) -> Result<Vec<(Height, BlockHash)>, Error> {
+        let from = *from;
+
+        if msg.filter_type != 0x0 {
+            return Err(Error::Ignored {
+                msg: "cfilter",
+                from,
+            });
+        }
+
+        let height = if let Some((height, _)) = tree.get_block(&msg.block_hash) {
+            height
+        } else {
+            // Can't handle this message, we don't have the block.
+            return Err(Error::Ignored {
+                msg: "cfilter",
+                from,
+            });
+        };
+
+        // The expected hash for this block filter.
+        let header = if let Some((_, header)) = self.filters.get_header(height) {
+            header
+        } else {
+            // Can't handle this message, we don't have the header.
+            return Err(Error::Ignored {
+                msg: "cfilter",
+                from,
+            });
+        };
+
+        // Note that in case this fails, we have a bug in our implementation, since filter
+        // headers are supposed to be downloaded in-order.
+        let prev_header = self
+            .filters
+            .get_prev_header(height)
+            .expect("FilterManager::received_cfilter: all headers up to the tip must exist");
+        let filter = BlockFilter::new(&msg.filter);
+        let block_hash = msg.block_hash;
+
+        if filter.filter_header(&prev_header) != header {
+            return Err(Error::InvalidMessage {
+                from,
+                reason: "cfilter: filter hash doesn't match header",
+            });
+        }
+        self.outbox.event(Event::FilterReceived {
+            from,
+            block: block_hash,
+            height,
+            filter: filter.clone(),
+        });
+
+        if self.rescan.received(height, filter, block_hash) {
+            let (matches, events, processed) = self.rescan.process();
+            for event in events {
+                self.outbox.event(event);
+            }
+            // If we processed some filters, update the time to further delay requesting new
+            // filters.
+            if processed > 0 {
+                self.last_processed = Some(self.clock.local_time());
+            }
+            for (height, hash) in &matches {
+                if self.pending_blocks.insert(*height) {
+                    blocks.get_block(*hash);
+                }
+            }
+            return Ok(matches);
+        } else {
+            // Unsolicited filter.
+        }
+        Ok(Vec::default())
+    }
 
     /// Called periodically. Triggers syncing if necessary.
     fn idle<T: BlockReader>(&mut self, tree: &T) {
@@ -958,11 +825,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
 
             return Some((*peer, start_height, stop_hash));
         } else {
-            // TODO: Emit 'NotConnected' instead, and make sure we retry later, or when a
+            // TODO: Emit 'NotConnected' event, and make sure we retry later, or when a
             // peer connects.
-            self.outbox.event(Event::RequestCanceled {
-                reason: "no peers with required services",
-            });
         }
         None
     }
@@ -1055,7 +919,6 @@ mod tests {
     use nakamoto_test::block::gen;
     use nakamoto_test::BITCOIN_HEADERS;
 
-    use crate::fsm;
     use crate::fsm::output;
 
     use super::*;
@@ -1161,13 +1024,6 @@ mod tests {
         {
             data.windows(2).all(|w| w[0] <= w[1])
         }
-
-        pub fn events(outputs: impl Iterator<Item = output::Io>) -> impl Iterator<Item = Event> {
-            outputs.filter_map(|o| match o {
-                output::Io::Event(fsm::Event::Filter(e)) => Some(e),
-                _ => None,
-            })
-        }
     }
 
     const FILTER_HASHES: [&str; 15] = [
@@ -1258,7 +1114,7 @@ mod tests {
 
         // Now import the filters.
         for msg in cfilters {
-            cbfmgr.received_cfilter(peer, msg, &tree).unwrap();
+            cbfmgr._received_cfilter(peer, msg, &tree, &mut ()).unwrap();
         }
     }
 
@@ -1445,7 +1301,12 @@ mod tests {
 
         // Receive a filter, but not one that we can process immediately.
         cbfmgr
-            .received_cfilter(&remote, cfilters[birth as usize + 1].clone(), &tree)
+            ._received_cfilter(
+                &remote,
+                cfilters[birth as usize + 1].clone(),
+                &tree,
+                &mut (),
+            )
             .unwrap();
 
         assert!(cbfmgr.last_processed.is_none());
@@ -1453,7 +1314,7 @@ mod tests {
 
         // Receive a filter, that we can process immediately.
         cbfmgr
-            .received_cfilter(&remote, cfilters[birth as usize].clone(), &tree)
+            ._received_cfilter(&remote, cfilters[birth as usize].clone(), &tree, &mut ())
             .unwrap();
 
         // We should be futher along now.
@@ -1478,7 +1339,7 @@ mod tests {
             .expect("`getcfilters` sent");
 
         cbfmgr
-            .received_cfilter(&remote, cfilters[current as usize].clone(), &tree)
+            ._received_cfilter(&remote, cfilters[current as usize].clone(), &tree, &mut ())
             .unwrap();
         assert_eq!(cbfmgr.rescan.current, current + 1);
     }
@@ -1527,15 +1388,6 @@ mod tests {
         let tip = chain.last();
         let outputs = cbfmgr.outbox.drain().collect::<Vec<_>>();
         let mut msgs = output::test::messages_from(outputs.iter().cloned(), &remote);
-        let mut events = util::events(outputs.iter().cloned());
-
-        events
-            .find(|e| {
-                matches!(e, Event::Syncing { start_height, stop_hash, .. }
-                    if (*start_height as usize) == (cfheader_height + 1)
-                    && stop_hash == &tip.block_hash())
-            })
-            .expect("syncing event emitted");
 
         msgs.find(|m| {
             matches!(
@@ -1544,7 +1396,7 @@ mod tests {
                     GetCFHeaders { start_height, stop_hash, .. }
                 ) if (*start_height as usize) == (cfheader_height + 1) && stop_hash == &tip.block_hash()
             )
-        }).expect("GetCFHeaders request");
+        }).unwrap();
     }
 
     #[test]
@@ -1590,7 +1442,9 @@ mod tests {
         );
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
-            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+            cbfmgr
+                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
         assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
@@ -1682,7 +1536,9 @@ mod tests {
         );
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
-            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+            cbfmgr
+                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
         assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
@@ -1718,10 +1574,12 @@ mod tests {
 
         // 7. Receive #6.
         let msg = util::cfilters(iter::once(missing)).next().unwrap();
-        cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+        cbfmgr
+            ._received_cfilter(&remote, msg, &tree, &mut ())
+            .unwrap();
 
         // 8. Expect that 6 to 8 are processed and 7 and 8 come from the cache.
-        let mut events = util::events(cbfmgr.outbox.drain())
+        let mut events = output::test::events(cbfmgr.outbox.drain())
             .filter(|e| matches!(e, Event::FilterProcessed { .. }));
 
         assert_matches!(
@@ -1796,7 +1654,9 @@ mod tests {
         );
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
-            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+            cbfmgr
+                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
         assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
@@ -1888,7 +1748,9 @@ mod tests {
             let msg = util::cfilters(iter::once(&chain[height as usize]))
                 .next()
                 .unwrap();
-            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+            cbfmgr
+                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .unwrap();
         }
         // Drain the message queue so we can check what is coming from the next rescan.
         cbfmgr.outbox.drain().for_each(drop);
@@ -1912,10 +1774,12 @@ mod tests {
 
         // 4. Receive some of the missing filters.
         for msg in util::cfilters([&chain[5], &chain[7], &chain[9]].into_iter()) {
-            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+            cbfmgr
+                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .unwrap();
         }
 
-        let mut events = util::events(cbfmgr.outbox.drain())
+        let mut events = output::test::events(cbfmgr.outbox.drain())
             .filter(|e| matches!(e, Event::FilterProcessed { .. }));
 
         // 5. Check for processed filters, some from the network and some from the cache.
@@ -1966,7 +1830,9 @@ mod tests {
         assert!(matched.is_empty());
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
-            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
+            cbfmgr
+                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.len(), (best - birth) as usize + 1);
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
@@ -2064,7 +1930,9 @@ mod tests {
 
             // First let's catch up the client with filters up to the sync height.
             for filter in util::cfilters(chain.iter().take(sync_height as usize + 1)) {
-                cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
+                cbfmgr
+                    ._received_cfilter(&remote, filter, &tree, &mut ())
+                    .unwrap();
             }
             assert_eq!(cbfmgr.rescan.current, sync_height + 1);
             cbfmgr.outbox.drain().for_each(drop);
@@ -2233,8 +2101,8 @@ mod tests {
             })
             .unwrap();
 
-        util::events(cbfmgr.outbox.drain())
-            .find(|e| matches!(e, Event::Synced(height) if height == &best))
+        output::test::events(cbfmgr.outbox.drain())
+            .find(|e| matches!(e, Event::FilterHeadersSynced { height } if height == &best))
             .unwrap();
 
         // Create and shuffle filters so that they arrive out-of-order.
@@ -2244,18 +2112,16 @@ mod tests {
         rng.shuffle(&mut filters);
 
         let mut matches = Vec::new();
-        for (h, filter) in filters.into_iter() {
-            let h = h as Height;
-            let hashes = cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
+        for (_, filter) in filters.into_iter() {
+            let hashes = cbfmgr
+                ._received_cfilter(&remote, filter, &tree, &mut ())
+                .unwrap();
 
             matches.extend(
                 hashes
                     .into_iter()
                     .filter_map(|(_, h)| tree.get_block(&h).map(|(height, _)| height)),
             );
-            util::events(cbfmgr.outbox.drain())
-                .find(|e| matches!(e, Event::FilterReceived { height, .. } if height == &h))
-                .unwrap();
         }
 
         assert_eq!(

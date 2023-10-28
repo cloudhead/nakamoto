@@ -240,12 +240,8 @@ impl<H: Handle> Wallet<H> {
             client::Event::FilterProcessed { height, .. } => {
                 self.ui.handle_filter_processed(height);
             }
-            client::Event::BlockMatched {
-                transactions,
-                height,
-                ..
-            } => {
-                for t in &transactions {
+            client::Event::BlockMatched { block, height } => {
+                for t in &block.txdata {
                     self.apply(t, watch);
                 }
                 let balance = self.balance()?;

@@ -14,6 +14,7 @@ use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::nonempty::NonEmpty;
 
 use super::output::{Io, Outbox};
+use super::Event;
 use super::{DisconnectReason, Link, Locators, PeerId, Socket};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
@@ -100,92 +101,6 @@ impl<C> Iterator for SyncManager<C> {
     }
 }
 
-/// An event emitted by the sync manager.
-#[derive(Debug, Clone)]
-pub enum Event {
-    /// A block was added to the main chain.
-    BlockConnected {
-        /// Block height.
-        height: Height,
-        /// Block header.
-        header: BlockHeader,
-    },
-    /// A block was removed from the main chain.
-    BlockDisconnected {
-        /// Block height.
-        height: Height,
-        /// Block header.
-        header: BlockHeader,
-    },
-    /// A new block was discovered via a peer.
-    BlockDiscovered(PeerId, BlockHash),
-    /// Syncing headers.
-    Syncing {
-        /// Current block header height.
-        current: Height,
-        /// Best known block header height.
-        best: Height,
-    },
-    /// Synced up to the specified hash and height.
-    Synced(BlockHash, Height),
-    /// Potential stale tip detected on the active chain.
-    StaleTip(LocalTime),
-    /// Peer misbehaved.
-    PeerMisbehaved(PeerId),
-    /// Peer height updated.
-    PeerHeightUpdated {
-        /// Best height known.
-        height: Height,
-    },
-}
-
-impl std::fmt::Display for Event {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Event::PeerMisbehaved(addr) => {
-                write!(fmt, "{}: Peer misbehaved", addr)
-            }
-            Event::PeerHeightUpdated { height } => {
-                write!(fmt, "Peer height updated to {}", height)
-            }
-            Event::Synced(hash, height) => {
-                write!(
-                    fmt,
-                    "Headers synced up to height {} with hash {}",
-                    height, hash
-                )
-            }
-            Event::Syncing { current, best } => write!(fmt, "Syncing headers {}/{}", current, best),
-            Event::BlockConnected { height, header } => {
-                write!(
-                    fmt,
-                    "Block {} connected at height {}",
-                    header.block_hash(),
-                    height
-                )
-            }
-            Event::BlockDisconnected { height, header } => {
-                write!(
-                    fmt,
-                    "Block {} disconnected at height {}",
-                    header.block_hash(),
-                    height
-                )
-            }
-            Event::BlockDiscovered(from, hash) => {
-                write!(fmt, "{}: Discovered new block: {}", from, &hash)
-            }
-            Event::StaleTip(last_update) => {
-                write!(
-                    fmt,
-                    "Potential stale tip detected (last update was {})",
-                    last_update
-                )
-            }
-        }
-    }
-}
-
 /// A `getheaders` request sent to a peer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct GetHeaders {
@@ -221,12 +136,7 @@ impl<C: Clock> SyncManager<C> {
 
     /// Initialize the sync manager. Should only be called once.
     pub fn initialize<T: BlockReader>(&mut self, tree: &T) {
-        // TODO: `tip` should return the height.
-        let (hash, _) = tree.tip();
-        let height = tree.height();
-
         self.idle(tree);
-        self.outbox.event(Event::Synced(hash, height));
     }
 
     /// Called periodically.
@@ -314,7 +224,8 @@ impl<C: Clock> SyncManager<C> {
                     self.outbox.event(Event::BlockConnected { height, header });
                 }
 
-                self.outbox.event(Event::Synced(tip, height));
+                self.outbox
+                    .event(Event::BlockHeadersSynced { hash: tip, height });
                 self.broadcast_tip(&tip, tree);
 
                 Ok(result)
@@ -475,7 +386,6 @@ impl<C: Clock> SyncManager<C> {
                 // hash provided should be the highest."
 
                 if !tree.is_known(hash) {
-                    self.outbox.event(Event::BlockDiscovered(addr, *hash));
                     best_block = Some(hash);
                 }
             }
@@ -522,6 +432,8 @@ impl<C: Clock> SyncManager<C> {
                 }
                 OnTimeout::Retry(n) => {
                     if let Some((addr, _)) = self.peers.sample_with(|a, p| {
+                        // TODO: After the first retry, it won't be a request candidate anymore,
+                        // since it will have `last_asked` set?
                         *a != peer && self.is_request_candidate(a, p, &req.locators.0)
                     }) {
                         let addr = *addr;
@@ -584,8 +496,8 @@ impl<C: Clock> SyncManager<C> {
         }
     }
 
-    fn record_misbehavior(&mut self, peer: &PeerId) {
-        self.outbox.event(Event::PeerMisbehaved(*peer));
+    fn record_misbehavior(&mut self, addr: &PeerId) {
+        self.outbox.event(Event::PeerMisbehaved { addr: *addr });
     }
 
     /// Check whether our current tip is stale.
@@ -648,19 +560,9 @@ impl<C: Clock> SyncManager<C> {
 
         peers
             .iter()
-            .find(|(a, p)| {
-                p.preferred && p.height > height && self.is_request_candidate(a, p, locators)
-            })
-            .or_else(|| {
-                peers
-                    .iter()
-                    .find(|(a, p)| p.preferred && self.is_request_candidate(a, p, locators))
-            })
-            .or_else(|| {
-                peers
-                    .iter()
-                    .find(|(a, p)| self.is_request_candidate(a, p, locators))
-            })
+            .filter(|(a, p)| self.is_request_candidate(a, p, locators))
+            .find(|(_, p)| p.preferred && p.height > height)
+            .or_else(|| peers.iter().find(|(_, p)| p.preferred))
             .map(|(a, _)| **a)
     }
 
@@ -674,9 +576,7 @@ impl<C: Clock> SyncManager<C> {
 
     /// Check whether or not we are in sync with the network.
     fn is_synced<T: BlockReader>(&mut self, tree: &T) -> bool {
-        if let Some(last_update) = self.stale_tip(tree) {
-            self.outbox.event(Event::StaleTip(last_update));
-
+        if self.stale_tip(tree).is_some() {
             return false;
         }
         let height = tree.height();
@@ -708,7 +608,8 @@ impl<C: Clock> SyncManager<C> {
 
             // TODO: This event can fire multiple times if `sync` is called while we're already
             // in sync.
-            self.outbox.event(Event::Synced(tip, height));
+            self.outbox
+                .event(Event::BlockHeadersSynced { hash: tip, height });
 
             return false;
         }
@@ -729,8 +630,6 @@ impl<C: Clock> SyncManager<C> {
 
             if best > current {
                 self.request(addr, locators, timeout, OnTimeout::Ignore);
-                self.outbox.event(Event::Syncing { current, best });
-
                 return true;
             }
         }

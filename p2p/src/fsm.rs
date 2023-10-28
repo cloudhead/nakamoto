@@ -27,13 +27,6 @@ use peermgr::PeerManager;
 use pingmgr::PingManager;
 use syncmgr::SyncManager;
 
-pub use addrmgr::Event as AddressEvent;
-pub use cbfmgr::Event as FilterEvent;
-pub use invmgr::Event as InventoryEvent;
-pub use peermgr::Event as PeerEvent;
-pub use pingmgr::Event as PingEvent;
-pub use syncmgr::Event as ChainEvent;
-
 pub use event::Event;
 pub use nakamoto_net::Link;
 
@@ -115,6 +108,23 @@ impl From<net::SocketAddr> for Socket {
     fn from(addr: net::SocketAddr) -> Self {
         Self::new(addr)
     }
+}
+
+/// Source of blocks.
+pub trait BlockSource {
+    /// Get a block by asking peers.
+    /// The block is returned asychronously via a [`Event::BlockProcessed`] event.
+    fn get_block(&mut self, hash: BlockHash);
+}
+
+impl<C: nakamoto_common::block::time::Clock> BlockSource for InventoryManager<C> {
+    fn get_block(&mut self, hash: BlockHash) {
+        self.get_block(hash)
+    }
+}
+
+impl BlockSource for () {
+    fn get_block(&mut self, _hash: BlockHash) {}
 }
 
 /// Disconnect reason.
@@ -609,11 +619,14 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
     }
 }
 
-impl<T, F, P, C> Iterator for StateMachine<T, F, P, C> {
+impl<T, F: Filters, P, C: nakamoto_common::block::time::Clock> Iterator
+    for StateMachine<T, F, P, C>
+{
     type Item = Io;
 
     fn next(&mut self) -> Option<Io> {
-        self.outbox
+        let next = self
+            .outbox
             .next()
             .or_else(|| self.peermgr.next())
             .or_else(|| self.syncmgr.next())
@@ -633,7 +646,16 @@ impl<T, F, P, C> Iterator for StateMachine<T, F, P, C> {
                 output::Io::Disconnect(addr, reason) => Io::Disconnect(addr, reason),
                 output::Io::SetTimer(t) => Io::SetTimer(t),
                 output::Io::Event(e) => Io::Event(e),
-            })
+            });
+
+        match next {
+            Some(Io::Event(e)) => {
+                self.cbfmgr.received_event(&e);
+
+                Some(Io::Event(e))
+            }
+            other => other,
+        }
     }
 }
 
@@ -763,8 +785,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         self.peermgr.initialize(&mut self.addrmgr);
         self.cbfmgr.initialize(&self.tree);
         self.outbox.event(Event::Ready {
-            height: self.tree.height(),
-            filter_height: self.cbfmgr.filters.height(),
+            tip: self.tree.height(),
+            filter_tip: self.cbfmgr.filters.height(),
             time,
         });
     }
@@ -882,9 +904,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
                     .received_getheaders(&addr, (locator_hashes, stop_hash), &self.tree);
             }
             NetworkMessage::Block(block) => {
-                for confirmed in self.invmgr.received_block(&addr, block, &self.tree) {
-                    self.cbfmgr.unwatch_transaction(&confirmed);
-                }
+                self.invmgr.received_block(&addr, block, &self.tree);
             }
             NetworkMessage::Inv(inventory) => {
                 self.syncmgr.received_inv(addr, inventory, &self.tree);
@@ -910,17 +930,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
                 }
             }
             NetworkMessage::CFilter(msg) => {
-                match self.cbfmgr.received_cfilter(&addr, msg, &self.tree) {
-                    Ok(matches) => {
-                        for (_, hash) in matches {
-                            self.invmgr.get_block(hash);
-                        }
-                    }
-                    Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
-                        self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
-                    }
-                    Err(cbfmgr::Error::Ignored { .. } | cbfmgr::Error::Filters { .. }) => {}
-                }
+                self.cbfmgr
+                    .received_cfilter(&addr, msg, &self.tree, &mut self.invmgr);
             }
             NetworkMessage::GetCFilters(msg) => {
                 (*self.hooks.on_getcfilters)(addr, msg, &self.outbox);

@@ -6,13 +6,14 @@ use std::sync::Arc;
 
 use nakamoto_chain::BlockTree;
 use nakamoto_common::bitcoin::consensus::Encodable;
-use nakamoto_common::block::time::{AdjustedClock, LocalTime};
+use nakamoto_common::block::time::{AdjustedClock, Clock, LocalTime};
 use nakamoto_net::{Disconnect, Io, Link, StateMachine};
 use nakamoto_p2p as p2p;
 
 use crate::client::Config;
 use crate::peer;
 use nakamoto_common::block::filter;
+use nakamoto_common::block::filter::Filters;
 
 /// Client service. Wraps a state machine and handles decoding and encoding of network messages.
 pub struct Service<T, F, P, C> {
@@ -133,7 +134,7 @@ where
     }
 }
 
-impl<T, F, P, C> Iterator for Service<T, F, P, C> {
+impl<T, F: Filters, P, C: Clock> Iterator for Service<T, F, P, C> {
     type Item = Io<Vec<u8>, p2p::Event, p2p::DisconnectReason>;
 
     fn next(&mut self) -> Option<Self::Item> {

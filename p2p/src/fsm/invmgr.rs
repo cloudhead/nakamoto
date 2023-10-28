@@ -6,9 +6,9 @@
 //! When a block is reverted, the inventory manager is notified, via the
 //! [`InventoryManager::block_reverted`] function. Since confirmed transactions are held
 //! for some time in memory, the transactions that were confirmed in the reverted block
-//! can be matched and the user can be notified via a [`Event::Reverted`] event. These transactions
-//! are then placed back into the local mempool, to ensure that they get re-broadcast and
-//! eventually included in a new block.
+//! can be matched and the user can be notified via a [`Event::TxStatusChanged`] event.
+//! These transactions are then placed back into the local mempool, to ensure that they get
+//! re-broadcast and eventually included in a new block.
 //!
 //! To ensure that any new and/or conflicting block that may contain the transaction is matched,
 //! the filter manager is told to re-watch all reverted transactions. Thus, the inventory manager
@@ -31,9 +31,9 @@ use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::collections::{AddressBook, HashMap};
 
-use super::fees::{FeeEstimate, FeeEstimator};
+use super::fees::FeeEstimator;
 use super::output::{Io, Outbox};
-use super::{Height, PeerId, Socket};
+use super::{event::TxStatus, Event, Height, PeerId, Socket};
 
 /// Time between re-broadcasts of inventories.
 pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -49,88 +49,6 @@ pub const IDLE_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
 
 /// Block depth at which confirmed transactions are pruned and no longer reverted after a re-org.
 pub const TRANSACTION_PRUNE_DEPTH: Height = 12;
-
-/// An event emitted by the inventory manager.
-#[derive(Debug, Clone)]
-pub enum Event {
-    /// Block received.
-    BlockReceived {
-        /// Sender.
-        from: PeerId,
-        /// Block height.
-        height: Height,
-    },
-    /// Block processed.
-    BlockProcessed {
-        /// Block.
-        block: Block, // TODO: Just the block hash?
-        /// Block height.
-        height: Height,
-        /// Block tx fee estimate.
-        fees: Option<FeeEstimate>,
-    },
-    /// A peer acknowledged one of our transaction inventories.
-    Acknowledged {
-        /// The acknowledged transaction ID.
-        txid: Txid,
-        /// The acknowledging peer.
-        peer: PeerId,
-    },
-    /// A transaction was confirmed.
-    Confirmed {
-        /// The confirmed transaction.
-        transaction: Transaction, // TODO: Just the txid?
-        /// The height at which it was confirmed.
-        height: Height,
-        /// The block in which it was confirmed.
-        block: BlockHash,
-    },
-    /// A transaction was reverted.
-    Reverted {
-        /// The reverted transaction.
-        transaction: Transaction, // TODO: Just the txid?
-    },
-    /// A request timed out.
-    TimedOut {
-        /// Peer who timed out.
-        peer: PeerId,
-    },
-}
-
-impl std::fmt::Display for Event {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Event::BlockReceived { from, height, .. } => {
-                write!(fmt, "{}: Received block #{}", from, height)
-            }
-            Event::BlockProcessed { height, .. } => {
-                write!(fmt, "Processed block #{}", height)
-            }
-            Event::Acknowledged { txid, peer } => {
-                write!(
-                    fmt,
-                    "Transaction {} was acknowledged by peer {}",
-                    txid, peer
-                )
-            }
-            Event::Confirmed {
-                transaction,
-                height,
-                block,
-            } => write!(
-                fmt,
-                "Transaction {} was included in block #{} ({})",
-                transaction.txid(),
-                height,
-                block,
-            ),
-            Event::Reverted { transaction, .. } => {
-                write!(fmt, "Transaction {} was reverted", transaction.txid(),)
-            }
-            Event::TimedOut { peer } => write!(fmt, "Peer {} timed out", peer),
-        }
-    }
-}
 
 /// Inventory manager peer.
 #[derive(Debug)]
@@ -281,8 +199,11 @@ impl<C: Clock> InventoryManager<C> {
             for tx in transactions.iter().cloned() {
                 self.announce(tx);
             }
-            for transaction in transactions.iter().cloned() {
-                self.outbox.event(Event::Reverted { transaction });
+            for transaction in transactions.iter() {
+                self.outbox.event(Event::TxStatusChanged {
+                    txid: transaction.txid(),
+                    status: TxStatus::Reverted,
+                });
             }
             transactions
         } else {
@@ -353,7 +274,7 @@ impl<C: Clock> InventoryManager<C> {
 
         for addr in disconnect {
             self.peers.remove(&addr);
-            self.outbox.event(Event::TimedOut { peer: addr });
+            self.outbox.event(Event::PeerTimedOut { addr });
         }
 
         // Handle block request queue.
@@ -367,7 +288,7 @@ impl<C: Clock> InventoryManager<C> {
                 .peers
                 .sample_with(|_, p| p.services.has(ServiceFlags::NETWORK))
             {
-                log::debug!("Requesting block {} from {}", block_hash, addr);
+                log::debug!(target: "p2p", "Requesting block {} from {}", block_hash, addr);
 
                 self.outbox
                     .get_data(*addr, vec![Inventory::Block(*block_hash)]);
@@ -376,6 +297,7 @@ impl<C: Clock> InventoryManager<C> {
                 *last_request = Some(now);
             } else {
                 log::debug!(
+                    target: "p2p",
                     "No peers with required services to request block {} from",
                     block_hash
                 );
@@ -404,11 +326,11 @@ impl<C: Clock> InventoryManager<C> {
                                 peer.reset();
 
                                 if peer.outbox.is_empty() {
-                                    log::debug!("Peer {} transaction outbox is empty", &addr);
+                                    log::debug!(target: "p2p", "Peer {} transaction outbox is empty", &addr);
                                 }
-                                self.outbox.event(Event::Acknowledged {
-                                    peer: addr,
+                                self.outbox.event(Event::TxStatusChanged {
                                     txid: *txid,
+                                    status: TxStatus::Acknowledged { peer: addr },
                                 });
                             }
                         }
@@ -427,9 +349,12 @@ impl<C: Clock> InventoryManager<C> {
                             peer.reset();
 
                             if peer.outbox.is_empty() {
-                                log::debug!("Peer {} transaction outbox is empty", &addr);
+                                log::debug!(target: "p2p", "Peer {} transaction outbox is empty", &addr);
                             }
-                            self.outbox.event(Event::Acknowledged { peer: addr, txid });
+                            self.outbox.event(Event::TxStatusChanged {
+                                txid,
+                                status: TxStatus::Acknowledged { peer: addr },
+                            });
                         }
                     }
                 }
@@ -444,12 +369,11 @@ impl<C: Clock> InventoryManager<C> {
     /// Note that the confirmed transactions don't necessarily pertain to this block.
     pub fn received_block<T: BlockReader>(
         &mut self,
-        from: &PeerId,
+        _from: &PeerId,
         block: Block,
         tree: &T,
     ) -> Vec<Txid> {
         let hash = block.block_hash();
-        let from = *from;
 
         if self.remaining.remove(&hash).is_none() {
             // Nb. The remote isn't necessarily sending an unsolicited block here.
@@ -474,7 +398,6 @@ impl<C: Clock> InventoryManager<C> {
 
         // Add to processing queue. Blocks are processed in-order only.
         self.received.insert(height, block);
-        self.outbox.event(Event::BlockReceived { from, height });
 
         // If there are still blocks remaining to download, don't process any of the
         // received queue yet.
@@ -512,10 +435,12 @@ impl<C: Clock> InventoryManager<C> {
                         .or_default()
                         .push(transaction.clone());
 
-                    self.outbox.event(Event::Confirmed {
-                        transaction,
-                        block: hash,
-                        height,
+                    self.outbox.event(Event::TxStatusChanged {
+                        txid: transaction.txid(),
+                        status: TxStatus::Confirmed {
+                            block: hash,
+                            height,
+                        },
                     });
                 }
             }
@@ -553,7 +478,7 @@ impl<C: Clock> InventoryManager<C> {
 
     /// Attempt to get a block from the network. Retries if necessary.
     pub fn get_block(&mut self, hash: BlockHash) {
-        log::debug!("Queueing block {hash} to be requested");
+        log::debug!(target: "p2p", "Queueing block {hash} to be requested");
 
         self.remaining.entry(hash).or_insert(None);
         self.schedule_tick();
@@ -573,7 +498,6 @@ mod tests {
 
     use std::net;
 
-    use crate::fsm;
     use crate::fsm::network::Network;
     use crate::fsm::output;
 
@@ -588,7 +512,7 @@ mod tests {
 
     fn events(outputs: impl Iterator<Item = output::Io>) -> impl Iterator<Item = Event> {
         outputs.filter_map(|o| match o {
-            output::Io::Event(fsm::Event::Inventory(e)) => Some(e),
+            output::Io::Event(e) => Some(e),
             _ => None,
         })
     }
@@ -666,13 +590,19 @@ mod tests {
             }
             invmgr.received_block(&addr, block.clone(), &tree);
 
-            assert!(invmgr.remaining.is_empty(), "No more blocks to remaining");
-            events(invmgr.outbox.drain())
-                .find(|e| matches!(e, Event::BlockReceived { .. }))
-                .expect("An event is emitted when a block is received");
-
             break;
         }
+        assert!(invmgr.remaining.is_empty(), "No more blocks remaining");
+        assert!(invmgr.received.is_empty());
+        invmgr
+            .find(|io| {
+                matches!(io,
+                    Io::Event(Event::BlockProcessed { block: b, .. })
+                    if b.block_hash() == block.block_hash()
+                )
+            })
+            .unwrap();
+
         clock.elapse(REQUEST_TIMEOUT);
         invmgr.received_wake(&tree);
         assert_eq!(
@@ -754,7 +684,7 @@ mod tests {
         // The next time we time out, we disconnect the peer.
         invmgr.received_wake(&tree);
         events(invmgr.outbox.drain())
-            .find(|e| matches!(e, Event::TimedOut { peer } if peer == &remote))
+            .find(|e| matches!(e, Event::PeerTimedOut { addr } if addr == &remote))
             .expect("Peer times out");
 
         assert!(invmgr.contains(&tx.wtxid()));
@@ -795,8 +725,8 @@ mod tests {
         events(invmgr.outbox.drain())
             .find(|e| {
                 matches! {
-                    e, Event::Confirmed { transaction, .. }
-                    if transaction.txid() == tx.txid()
+                    e, Event::TxStatusChanged { txid, status: TxStatus::Confirmed { .. } }
+                    if *txid == tx.txid()
                 }
             })
             .unwrap();
@@ -813,8 +743,8 @@ mod tests {
         events(invmgr.outbox.drain())
             .find(|e| {
                 matches! {
-                    e, Event::Reverted { transaction }
-                    if transaction.txid() == tx.txid()
+                    e, Event::TxStatusChanged { txid, status: TxStatus::Reverted }
+                    if *txid == tx.txid()
                 }
             })
             .unwrap();
@@ -825,8 +755,8 @@ mod tests {
         events(invmgr.outbox.drain())
             .find(|e| {
                 matches! {
-                    e, Event::Confirmed { transaction, block: b, .. }
-                    if transaction.txid() == tx.txid() && b == &fork_block1.block_hash()
+                    e, Event::TxStatusChanged { txid, status: TxStatus::Confirmed { block, .. } }
+                    if *txid == tx.txid() && block == &fork_block1.block_hash()
                 }
             })
             .unwrap();

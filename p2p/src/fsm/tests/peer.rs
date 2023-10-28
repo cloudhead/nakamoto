@@ -299,7 +299,7 @@ impl Peer<Protocol> {
                 matches!(
                     o,
                     Io::Event(
-                        Event::Peer(peermgr::Event::Negotiated { addr, services, .. })
+                        Event::PeerNegotiated { addr, services, .. }
                     ) if addr == &remote.addr && services.has(ServiceFlags::NETWORK)
                 )
             })

@@ -134,7 +134,7 @@ impl Rescan {
         if let Some(stop) = self.end {
             if self.current == stop {
                 self.active = false;
-                events.push(Event::RescanCompleted { height: stop });
+                events.push(Event::FilterRescanStopped { height: stop });
             }
         }
 

@@ -3,6 +3,7 @@
 //!
 #![warn(missing_docs)]
 use std::net;
+use std::sync::Arc;
 
 use nakamoto_common::bitcoin::network::address::Address;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
@@ -16,7 +17,7 @@ use nakamoto_common::p2p::Domain;
 use nakamoto_net::Disconnect;
 
 use super::output::{Io, Outbox};
-use super::Link;
+use super::{Event, Link};
 
 /// Time to wait until a request times out.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -31,45 +32,6 @@ pub const SAMPLE_TIMEOUT: LocalDuration = LocalDuration::from_mins(3);
 const MAX_ADDR_ADDRESSES: usize = 1000;
 /// Maximum number of addresses we store for a given address range.
 const MAX_RANGE_SIZE: usize = 256;
-
-/// An event emitted by the address manager.
-#[derive(Debug, Clone)]
-pub enum Event {
-    /// Peer addresses have been received.
-    AddressesReceived {
-        /// Number of addresses received.
-        count: usize,
-        /// Source of addresses received.
-        source: Source,
-    },
-    /// Address book exhausted.
-    AddressBookExhausted,
-    /// An error was encountered.
-    Error(String),
-}
-
-impl std::fmt::Display for Event {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Event::AddressesReceived { count, source } => {
-                write!(
-                    fmt,
-                    "received {} addresse(s) from source `{}`",
-                    count, source
-                )
-            }
-            Event::AddressBookExhausted => {
-                write!(
-                    fmt,
-                    "Address book exhausted.. fetching new addresses from peers"
-                )
-            }
-            Event::Error(msg) => {
-                write!(fmt, "error: {}", msg)
-            }
-        }
-    }
-}
 
 /// Iterator over addresses.
 pub struct Iter<F>(F);
@@ -292,8 +254,10 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
     fn idle(&mut self) {
         // If it's been a while, save addresses to store.
         if let Err(err) = self.peers.flush() {
-            self.outbox
-                .event(Event::Error(format!("flush to disk failed: {}", err)));
+            self.outbox.event(Event::Error {
+                message: String::from("flush to disk failed"),
+                source: Arc::new(err),
+            });
         }
         self.last_idle = Some(self.clock.local_time());
         self.outbox.set_timer(IDLE_TIMEOUT);
@@ -348,13 +312,7 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
             // Peer misbehaving, got empty message or too many addresses.
             return;
         }
-        let source = Source::Peer(peer);
-
-        self.outbox.event(Event::AddressesReceived {
-            count: addrs.len(),
-            source,
-        });
-        self.insert(addrs.into_iter(), source);
+        self.insert(addrs.into_iter(), Source::Peer(peer));
     }
 
     /// Add addresses to the address manager. The input matches that of the `addr` message

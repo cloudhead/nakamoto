@@ -17,9 +17,7 @@ use nakamoto_common::block::tree::{BlockReader, ImportResult};
 use nakamoto_common::block::{self, Block, BlockHash, BlockHeader, Height, Transaction};
 use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_p2p::fsm::Link;
-use nakamoto_p2p::fsm::{self, Command, CommandError, GetFiltersError, Peer};
-
-use crate::client::Event;
+use nakamoto_p2p::fsm::{self, Command, CommandError, Event, GetFiltersError, Peer};
 
 /// An error resulting from a handle method.
 #[derive(Error, Debug)]

@@ -15,13 +15,12 @@
 //!   4. Expect `verack` message from remote.
 //!
 use std::net;
-use std::sync::Arc;
 
 use nakamoto_common::bitcoin::network::address::Address;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 
-use nakamoto_common::p2p::peer::{AddressSource, Source};
+use nakamoto_common::p2p::peer::AddressSource;
 use nakamoto_common::p2p::Domain;
 
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
@@ -32,6 +31,7 @@ use nakamoto_net as network;
 
 use crate::fsm::addrmgr;
 use crate::fsm::DisconnectReason;
+use crate::Event;
 
 use super::output::{Io, Outbox};
 use super::{Hooks, Link, PeerId, Socket, Whitelist};
@@ -53,79 +53,6 @@ const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 
 /// A time offset, in seconds.
 type TimeOffset = i64;
-
-/// An event originating in the peer manager.
-#[derive(Debug, Clone)]
-pub enum Event {
-    /// The `version` message was received from a peer.
-    VersionReceived {
-        /// The peer's id.
-        addr: PeerId,
-        /// The version message.
-        msg: VersionMessage,
-    },
-    /// A peer has successfully negotiated (handshaked).
-    Negotiated {
-        /// The peer's id.
-        addr: PeerId,
-        /// Connection link.
-        link: Link,
-        /// Services offered by negotiated peer.
-        services: ServiceFlags,
-        /// Peer user agent.
-        user_agent: String,
-        /// Peer height.
-        height: Height,
-        /// Protocol version.
-        version: u32,
-    },
-    /// Connecting to a peer found from the specified source.
-    Connecting(PeerId, Source, ServiceFlags),
-    /// Connection attempt failed.
-    ConnectionFailed(PeerId, Arc<std::io::Error>),
-    /// A new peer has connected and is ready to accept messages.
-    /// This event is triggered *before* the peer handshake
-    /// has successfully completed.
-    Connected(PeerId, Link),
-    /// A peer has been disconnected.
-    Disconnected(PeerId, network::Disconnect<DisconnectReason>),
-}
-
-impl std::fmt::Display for Event {
-    fn fmt(&self, fmt: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::VersionReceived { addr, msg } => write!(
-                fmt,
-                "Peer address = {}, version = {}, height = {}, agent = {}, services = {}, timestamp = {}",
-                addr, msg.version, msg.start_height, msg.user_agent, msg.services, msg.timestamp
-            ),
-            Self::Negotiated {
-                addr,
-                height,
-                services,
-                ..
-            } => write!(
-                fmt,
-                "{}: Peer negotiated with services {} and height {}..",
-                addr, services, height
-            ),
-            Self::Connecting(addr, source, services) => {
-                write!(
-                    fmt,
-                    "Connecting to peer {} from source `{}` with {}",
-                    addr, source, services
-                )
-            }
-            Self::Connected(addr, link) => write!(fmt, "{}: Peer connected ({:?})", &addr, link),
-            Self::ConnectionFailed(addr, err) => {
-                write!(fmt, "{}: Peer connection attempt failed: {}", &addr, err)
-            }
-            Self::Disconnected(addr, reason) => {
-                write!(fmt, "Disconnected from {} ({})", &addr, reason)
-            }
-        }
-    }
-}
 
 /// Peer manager configuration.
 #[derive(Debug, Clone)]
@@ -385,7 +312,7 @@ impl<C: Clock> PeerManager<C> {
         }
         // Set a timeout for receiving the `version` message.
         self.outbox.set_timer(HANDSHAKE_TIMEOUT);
-        self.outbox.event(Event::Connected(addr, link));
+        self.outbox.event(Event::PeerConnected { addr, link });
     }
 
     /// Called when a peer disconnected.
@@ -401,12 +328,16 @@ impl<C: Clock> PeerManager<C> {
         debug_assert!(!self.is_disconnected(addr));
 
         if self.is_disconnecting(addr) || self.is_connected(addr) {
-            self.outbox.event(Event::Disconnected(*addr, reason));
+            self.outbox.event(Event::PeerDisconnected {
+                addr: *addr,
+                reason,
+            });
         } else if self.is_connecting(addr) {
             // If we haven't yet established a connection, the disconnect reason
             // should always be a `ConnectionError`.
-            if let network::Disconnect::ConnectionError(err) = reason {
-                self.outbox.event(Event::ConnectionFailed(*addr, err));
+            if let network::Disconnect::ConnectionError(error) = reason {
+                self.outbox
+                    .event(Event::PeerConnectionFailed { addr: *addr, error });
             }
         }
         self.peers.remove(addr);
@@ -462,11 +393,6 @@ impl<C: Clock> PeerManager<C> {
         let now = self.clock.local_time();
 
         if let Some(Peer::Connected { conn, .. }) = self.peers.get(addr) {
-            self.outbox.event(Event::VersionReceived {
-                addr: *addr,
-                msg: msg.clone(),
-            });
-
             let VersionMessage {
                 // Peer's best height.
                 start_height,
@@ -596,7 +522,7 @@ impl<C: Clock> PeerManager<C> {
         }) = self.peers.get_mut(addr)
         {
             if let HandshakeState::ReceivedVersion { .. } = peer.state {
-                self.outbox.event(Event::Negotiated {
+                self.outbox.event(Event::PeerNegotiated {
                     addr: *addr,
                     link: conn.link,
                     services: peer.services,
@@ -905,8 +831,11 @@ impl<C: Clock> PeerManager<C> {
 
                     if self.connect(&sockaddr) {
                         connecting.insert(sockaddr);
-                        self.outbox
-                            .event(Event::Connecting(sockaddr, source, addr.services));
+                        self.outbox.event(Event::PeerConnecting {
+                            addr: sockaddr,
+                            source,
+                            services: addr.services,
+                        });
                     }
                 }
             } else {
@@ -939,6 +868,7 @@ mod tests {
 
     use nakamoto_common::bitcoin::network::address::Address;
     use nakamoto_common::block::time::RefClock;
+    use nakamoto_common::p2p::peer::Source;
     use nakamoto_test::assert_matches;
 
     mod util {

@@ -35,10 +35,10 @@ pub use nakamoto_common::network;
 pub use nakamoto_common::network::Network;
 pub use nakamoto_common::p2p::Domain;
 pub use nakamoto_net::event;
-pub use nakamoto_p2p::fsm::{Command, CommandError, Hooks, Limits, Link, Peer};
+pub use nakamoto_p2p::fsm::{Command, CommandError, Event, Hooks, Limits, Link, Peer};
 
 pub use crate::error::Error;
-pub use crate::event::{Event, Loading};
+pub use crate::event::Loading;
 pub use crate::handle;
 pub use crate::service::Service;
 
@@ -201,24 +201,19 @@ impl<R: Reactor> Client<R> {
         let (commands_tx, commands_rx) = chan::unbounded::<Command>();
         let (event_pub, events) = event::broadcast(|e, p| p.emit(e));
         let (blocks_pub, blocks) = event::broadcast(|e, p| {
-            if let fsm::Event::Inventory(fsm::InventoryEvent::BlockProcessed {
-                block,
-                height,
-                ..
-            }) = e
-            {
+            if let fsm::Event::BlockProcessed { block, height, .. } = e {
                 p.emit((block, height));
             }
         });
         let (filters_pub, filters) = event::broadcast(|e, p| {
-            if let fsm::Event::Filter(fsm::FilterEvent::FilterReceived {
+            if let fsm::Event::FilterReceived {
                 filter,
-                block_hash,
+                block,
                 height,
                 ..
-            }) = e
+            } = e
             {
-                p.emit((filter, block_hash, height));
+                p.emit((filter, block, height));
             }
         });
         let (publisher, subscriber) = event::broadcast({
@@ -579,7 +574,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         event::wait(
             &events,
             |e| match e {
-                fsm::Event::Peer(fsm::PeerEvent::Connected(a, link))
+                fsm::Event::PeerConnected { addr: a, link }
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(link)
@@ -598,7 +593,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         event::wait(
             &events,
             |e| match e {
-                fsm::Event::Peer(fsm::PeerEvent::Disconnected(a, _))
+                fsm::Event::PeerDisconnected { addr: a, .. }
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(())
@@ -677,12 +672,12 @@ impl<W: Waker> handle::Handle for Handle<W> {
         event::wait(
             &events,
             |e| match e {
-                fsm::Event::Peer(fsm::PeerEvent::Negotiated {
+                fsm::Event::PeerNegotiated {
                     addr,
                     height,
                     services,
                     ..
-                }) => {
+                } => {
                     if services.has(required_services) {
                         negotiated.insert(addr, (height, services));
                     }
@@ -708,9 +703,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
             None => event::wait(
                 &events,
                 |e| match e {
-                    fsm::Event::Chain(fsm::ChainEvent::Synced(hash, height)) if height == h => {
-                        Some(hash)
-                    }
+                    Event::BlockHeadersSynced { hash, height } if height == h => Some(hash),
                     _ => None,
                 },
                 self.timeout,

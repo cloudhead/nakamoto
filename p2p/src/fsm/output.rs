@@ -4,6 +4,7 @@
 use log::*;
 use std::collections::VecDeque;
 use std::net;
+use std::sync::Arc;
 
 pub use crossbeam_channel as chan;
 
@@ -240,6 +241,18 @@ impl Outbox {
     pub fn tx(&mut self, addr: PeerId, tx: Transaction) {
         self.message(addr, NetworkMessage::Tx(tx));
     }
+
+    /// Output an error.
+    pub fn error(
+        &mut self,
+        message: impl ToString,
+        source: impl std::error::Error + Send + Sync + 'static,
+    ) {
+        self.event(Event::Error {
+            message: message.to_string(),
+            source: Arc::new(source),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -294,16 +307,10 @@ pub mod test {
         })
     }
 
-    pub fn events(outbox: &mut Outbox) -> impl Iterator<Item = Event> {
-        let mut events = Vec::new();
-
-        outbox.outbound.retain(|o| match o {
-            Io::Event(e) => {
-                events.push(e.clone());
-                false
-            }
-            _ => true,
-        });
-        events.into_iter()
+    pub fn events(outbox: impl Iterator<Item = Io>) -> impl Iterator<Item = Event> {
+        outbox.filter_map(move |o| match o {
+            Io::Event(e) => Some(e),
+            _ => None,
+        })
     }
 }
