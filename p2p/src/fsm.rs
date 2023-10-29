@@ -909,23 +909,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
                 // TODO: invmgr: Update block availability for this peer.
             }
             NetworkMessage::CFHeaders(msg) => {
-                match self.cbfmgr.received_cfheaders(&addr, msg, &self.tree) {
-                    Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
-                        self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
-                    }
-                    Err(err) => {
-                        log::warn!(target: "p2p", "Error receiving filter headers: {}", err);
-                    }
-                    Ok(_) => {}
-                }
+                self.cbfmgr.received_cfheaders(&addr, msg, &self.tree);
             }
             NetworkMessage::GetCFHeaders(msg) => {
-                match self.cbfmgr.received_getcfheaders(&addr, msg, &self.tree) {
-                    Err(cbfmgr::Error::InvalidMessage { reason, .. }) => {
-                        self.disconnect(addr, DisconnectReason::PeerMisbehaving(reason))
-                    }
-                    _ => {}
-                }
+                self.cbfmgr.received_getcfheaders(&addr, msg, &self.tree);
             }
             NetworkMessage::CFilter(msg) => {
                 self.cbfmgr

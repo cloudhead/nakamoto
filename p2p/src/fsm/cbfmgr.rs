@@ -415,7 +415,153 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     /// Handle a `cfheaders` message from a peer.
     ///
     /// Returns the new filter header height, or an error.
-    pub fn received_cfheaders<T: BlockReader>(
+    pub fn received_cfheaders<T: BlockReader>(&mut self, from: &PeerId, msg: CFHeaders, tree: &T) {
+        log::debug!(
+            target: "p2p",
+            "Received {} filter header(s) from {}",
+            msg.filter_hashes.len(),
+            from
+        );
+
+        match self._received_cfheaders(from, msg, tree) {
+            Ok(_) => {}
+            Err(Error::InvalidMessage { from, .. }) => {
+                self.outbox.event(Event::PeerMisbehaved { addr: from });
+            }
+            Err(Error::Filters(e)) => {
+                self.outbox
+                    .error("error processing filter headers from {from}", e);
+            }
+            Err(Error::Ignored { from, .. }) => {
+                log::warn!(target: "p2p", "Ignored `cfheaders` message from {from}");
+            }
+        }
+    }
+
+    /// Handle a `getcfheaders` message from a peer.
+    pub fn received_getcfheaders<T: BlockReader>(
+        &mut self,
+        from: &PeerId,
+        msg: GetCFHeaders,
+        tree: &T,
+    ) {
+        match self._received_getcfheaders(from, msg, tree) {
+            Ok(_) => {}
+            Err(Error::InvalidMessage { from, .. }) => {
+                self.outbox.event(Event::PeerMisbehaved { addr: from });
+            }
+            Err(Error::Filters(e)) => {
+                self.outbox
+                    .error("error processing `getcfheaders` from {from}", e);
+            }
+            Err(Error::Ignored { from, .. }) => {
+                log::warn!(target: "p2p", "Ignored `getcfheaders` message from {from}");
+            }
+        }
+    }
+
+    /// Handle a `cfilter` message.
+    ///
+    /// Returns a list of blocks that need to be fetched from the network.
+    pub fn received_cfilter<T: BlockReader, B: BlockSource>(
+        &mut self,
+        from: &PeerId,
+        msg: CFilter,
+        tree: &T,
+        blocks: &mut B,
+    ) {
+        match self._received_cfilter(from, msg, tree, blocks) {
+            Ok(_) => {}
+            Err(Error::InvalidMessage { from, .. }) => {
+                self.outbox.event(Event::PeerMisbehaved { addr: from });
+            }
+            Err(Error::Filters(e)) => {
+                self.outbox
+                    .error("error processing `cfilter` from {from}", e);
+            }
+            Err(Error::Ignored { from, .. }) => {
+                log::warn!(target: "p2p", "Ignored `cfilter` message from {from}");
+            }
+        }
+    }
+
+    /// Called when a peer disconnected.
+    pub fn peer_disconnected(&mut self, id: &PeerId) {
+        self.peers.remove(id);
+    }
+
+    /// Called when a new peer was negotiated.
+    pub fn peer_negotiated<T: BlockReader>(
+        &mut self,
+        socket: Socket,
+        height: Height,
+        services: ServiceFlags,
+        link: Link,
+        persistent: bool,
+        tree: &T,
+    ) {
+        if !link.is_outbound() {
+            return;
+        }
+        if !services.has(REQUIRED_SERVICES) {
+            return;
+        }
+        let time = self.clock.local_time();
+
+        self.peers.insert(
+            socket.addr,
+            Peer {
+                last_active: time,
+                height,
+                socket,
+                persistent,
+            },
+        );
+        self.sync(tree);
+    }
+
+    /// Attempt to sync the filter header chain.
+    pub fn sync<T: BlockReader>(&mut self, tree: &T) {
+        let filter_height = self.filters.height();
+        let block_height = tree.height();
+
+        assert!(filter_height <= block_height);
+
+        // Don't start syncing filter headers until block headers are synced passed the last
+        // checkpoint. BIP 157 states that we should sync the full block header chain before
+        // syncing any filter headers, but this seems impractical. We choose a middle-ground.
+        if let Some(checkpoint) = tree.checkpoints().keys().next_back() {
+            if &block_height < checkpoint {
+                return;
+            }
+        }
+
+        if filter_height < block_height {
+            // We need to sync the filter header chain.
+            let start_height = self.filters.height() + 1;
+            let stop_height = tree.height();
+
+            self.send_getcfheaders(start_height..=stop_height, tree);
+        }
+
+        if self.rescan.active {
+            // TODO: Don't do this too often.
+            self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
+                .ok();
+        }
+    }
+
+    // PRIVATE METHODS /////////////////////////////////////////////////////////
+
+    /// Remove transaction from list of transactions being watch.
+    fn unwatch_transaction(&mut self, txid: &Txid) -> bool {
+        self.rescan.transactions.remove(txid).is_some()
+    }
+
+    /// Handle a `cfheaders` message from a peer.
+    ///
+    /// Returns the new filter header height, or an error.
+    fn _received_cfheaders<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: CFHeaders,
@@ -423,13 +569,6 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     ) -> Result<Height, Error> {
         let from = *from;
         let stop_hash = msg.stop_hash;
-
-        log::debug!(
-            target: "p2p",
-            "Received {} filter header(s) from {}",
-            msg.filter_hashes.len(),
-            from
-        );
 
         if self.inflight.remove(&stop_hash).is_none() {
             return Err(Error::Ignored {
@@ -534,7 +673,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     }
 
     /// Handle a `getcfheaders` message from a peer.
-    pub fn received_getcfheaders<T: BlockReader>(
+    pub fn _received_getcfheaders<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: GetCFHeaders,
@@ -584,100 +723,6 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             msg: "getcfheaders",
             from,
         })
-    }
-
-    /// Handle a `cfilter` message.
-    ///
-    /// Returns a list of blocks that need to be fetched from the network.
-    pub fn received_cfilter<T: BlockReader, B: BlockSource>(
-        &mut self,
-        from: &PeerId,
-        msg: CFilter,
-        tree: &T,
-        blocks: &mut B,
-    ) {
-        match self._received_cfilter(from, msg, tree, blocks) {
-            Ok(_) => {}
-            Err(Error::InvalidMessage { from, .. }) => {
-                self.outbox.event(Event::PeerMisbehaved { addr: from });
-            }
-            Err(e) => {
-                log::warn!(target: "p2p", "Error receiving filter headers: {e}");
-            }
-        }
-    }
-
-    /// Called when a peer disconnected.
-    pub fn peer_disconnected(&mut self, id: &PeerId) {
-        self.peers.remove(id);
-    }
-
-    /// Called when a new peer was negotiated.
-    pub fn peer_negotiated<T: BlockReader>(
-        &mut self,
-        socket: Socket,
-        height: Height,
-        services: ServiceFlags,
-        link: Link,
-        persistent: bool,
-        tree: &T,
-    ) {
-        if !link.is_outbound() {
-            return;
-        }
-        if !services.has(REQUIRED_SERVICES) {
-            return;
-        }
-        let time = self.clock.local_time();
-
-        self.peers.insert(
-            socket.addr,
-            Peer {
-                last_active: time,
-                height,
-                socket,
-                persistent,
-            },
-        );
-        self.sync(tree);
-    }
-
-    /// Attempt to sync the filter header chain.
-    pub fn sync<T: BlockReader>(&mut self, tree: &T) {
-        let filter_height = self.filters.height();
-        let block_height = tree.height();
-
-        assert!(filter_height <= block_height);
-
-        // Don't start syncing filter headers until block headers are synced passed the last
-        // checkpoint. BIP 157 states that we should sync the full block header chain before
-        // syncing any filter headers, but this seems impractical. We choose a middle-ground.
-        if let Some(checkpoint) = tree.checkpoints().keys().next_back() {
-            if &block_height < checkpoint {
-                return;
-            }
-        }
-
-        if filter_height < block_height {
-            // We need to sync the filter header chain.
-            let start_height = self.filters.height() + 1;
-            let stop_height = tree.height();
-
-            self.send_getcfheaders(start_height..=stop_height, tree);
-        }
-
-        if self.rescan.active {
-            // TODO: Don't do this too often.
-            self.get_cfilters(self.rescan.current..=self.filters.height(), tree)
-                .ok();
-        }
-    }
-
-    // PRIVATE METHODS /////////////////////////////////////////////////////////
-
-    /// Remove transaction from list of transactions being watch.
-    fn unwatch_transaction(&mut self, txid: &Txid) -> bool {
-        self.rescan.transactions.remove(txid).is_some()
     }
 
     fn _received_cfilter<T: BlockReader, B: BlockSource>(
@@ -1100,7 +1145,7 @@ mod tests {
                     .collect(),
             };
             cbfmgr.inflight.insert(msg.stop_hash, (1, *peer, time));
-            cbfmgr.received_cfheaders(peer, msg, &tree).unwrap();
+            cbfmgr._received_cfheaders(peer, msg, &tree).unwrap();
         }
 
         assert_eq!(cbfmgr.filters.height(), 15);
@@ -1228,7 +1273,7 @@ mod tests {
             .unwrap();
 
         cbfmgr
-            .received_cfheaders(
+            ._received_cfheaders(
                 &remote,
                 CFHeaders {
                     filter_type,
@@ -1284,7 +1329,7 @@ mod tests {
             &tree,
         );
         cbfmgr
-            .received_cfheaders(&remote, cfheaders, &tree)
+            ._received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
         assert_eq!(cbfmgr.filters.height(), best);
 
@@ -1464,7 +1509,7 @@ mod tests {
         let cfheaders = util::cfheaders(*parent, &suffix);
 
         cbfmgr
-            .received_cfheaders(&remote, cfheaders, &tree)
+            ._received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
         assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
@@ -1676,7 +1721,7 @@ mod tests {
         let cfheaders = util::cfheaders(*parent, &suffix);
 
         cbfmgr
-            .received_cfheaders(&remote, cfheaders, &tree)
+            ._received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
         assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
@@ -1998,7 +2043,7 @@ mod tests {
             let (_, parent) = cbfmgr.filters.tip();
             let cfheaders = util::cfheaders(*parent, &fork);
             cbfmgr
-                .received_cfheaders(&remote, cfheaders, &tree)
+                ._received_cfheaders(&remote, cfheaders, &tree)
                 .unwrap();
 
             // Check that corresponding filters are requested within the scope of the
@@ -2083,7 +2128,7 @@ mod tests {
 
         let cfheaders = util::cfheaders(FilterHeader::genesis(network), &chain.tail);
         let height = cbfmgr
-            .received_cfheaders(&remote, cfheaders, &tree)
+            ._received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
 
         assert_eq!(height, best, "The new height is the best height");
