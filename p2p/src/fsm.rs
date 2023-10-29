@@ -79,37 +79,6 @@ pub type Io = nakamoto_net::Io<RawNetworkMessage, Event, DisconnectReason>;
 /// Identifies a peer.
 pub type PeerId = net::SocketAddr;
 
-/// Reference counting virtual socket.
-/// When there are no more references held, this peer can be dropped.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Socket {
-    /// Socket address.
-    pub addr: net::SocketAddr,
-    /// Reference counter.
-    refs: Arc<()>,
-}
-
-impl Socket {
-    /// Create a new virtual socket.
-    pub fn new(addr: impl Into<net::SocketAddr>) -> Self {
-        Self {
-            addr: addr.into(),
-            refs: Arc::new(()),
-        }
-    }
-
-    /// Get the number of references to this virtual socket.
-    pub fn refs(&self) -> usize {
-        Arc::strong_count(&self.refs)
-    }
-}
-
-impl From<net::SocketAddr> for Socket {
-    fn from(addr: net::SocketAddr) -> Self {
-        Self::new(addr)
-    }
-}
-
 /// Source of blocks.
 pub trait BlockSource {
     /// Get a block by asking peers.
@@ -223,7 +192,7 @@ impl Peer {
 impl From<(&peermgr::PeerInfo, &peermgr::Connection)> for Peer {
     fn from((peer, conn): (&peermgr::PeerInfo, &peermgr::Connection)) -> Self {
         Self {
-            addr: conn.socket.addr,
+            addr: conn.addr,
             local_addr: conn.local_addr,
             link: conn.link,
             since: conn.since,
@@ -619,7 +588,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
     }
 }
 
-impl<T, F: Filters, P, C: nakamoto_common::block::time::Clock> Iterator
+impl<T: BlockTree, F: Filters, P: peer::Store, C: nakamoto_common::block::time::Clock> Iterator
     for StateMachine<T, F, P, C>
 {
     type Item = Io;
@@ -650,7 +619,11 @@ impl<T, F: Filters, P, C: nakamoto_common::block::time::Clock> Iterator
 
         match next {
             Some(Io::Event(e)) => {
-                self.cbfmgr.received_event(&e);
+                self.cbfmgr.received_event(&e, &self.tree);
+                self.pingmgr.received_event(&e, &self.tree);
+                self.invmgr.received_event(&e, &self.tree);
+                self.syncmgr.received_event(&e, &self.tree);
+                self.addrmgr.received_event(&e, &self.tree);
 
                 Some(Io::Event(e))
             }
@@ -825,34 +798,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
                     .received_version(&addr, msg, height, &mut self.addrmgr);
             }
             NetworkMessage::Verack => {
-                if let Some((peer, conn)) = self.peermgr.received_verack(&addr, now) {
-                    self.clock.record_offset(conn.socket.addr, peer.time_offset);
-                    self.addrmgr
-                        .peer_negotiated(&addr, peer.services, conn.link);
-                    self.pingmgr.peer_negotiated(conn.socket.addr);
-                    self.cbfmgr.peer_negotiated(
-                        conn.socket.clone(),
-                        peer.height,
-                        peer.services,
-                        conn.link,
-                        peer.persistent,
-                        &self.tree,
-                    );
-                    self.syncmgr.peer_negotiated(
-                        conn.socket.clone(),
-                        peer.height,
-                        peer.services,
-                        !peer.services.has(cbfmgr::REQUIRED_SERVICES),
-                        conn.link,
-                        &self.tree,
-                    );
-                    self.invmgr.peer_negotiated(
-                        conn.socket,
-                        peer.services,
-                        peer.relay,
-                        peer.wtxidrelay,
-                    );
-                }
+                self.peermgr.received_verack(&addr, now);
             }
             NetworkMessage::Ping(nonce) => {
                 if self.pingmgr.received_ping(addr, nonce) {

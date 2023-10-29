@@ -23,7 +23,7 @@ use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 use nakamoto_common::p2p::peer::AddressSource;
 use nakamoto_common::p2p::Domain;
 
-use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
+use nakamoto_common::block::time::{AdjustedClock, Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::Height;
 use nakamoto_common::collections::{HashMap, HashSet};
 use nakamoto_common::source;
@@ -34,7 +34,7 @@ use crate::fsm::DisconnectReason;
 use crate::Event;
 
 use super::output::{Io, Outbox};
-use super::{Hooks, Link, PeerId, Socket, Whitelist};
+use super::{Hooks, Link, PeerId, Whitelist};
 
 /// Time to wait for response during peer handshake before disconnecting the peer.
 pub const HANDSHAKE_TIMEOUT: LocalDuration = LocalDuration::from_secs(12);
@@ -97,8 +97,8 @@ enum HandshakeState {
 /// connections.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Connection {
-    /// Remote peer socket.
-    pub socket: Socket,
+    /// Remote peer id.
+    pub addr: PeerId,
     /// Local peer address.
     pub local_addr: net::SocketAddr,
     /// Whether this is an inbound or outbound peer connection.
@@ -186,7 +186,7 @@ impl<C> Iterator for PeerManager<C> {
     }
 }
 
-impl<C: Clock> PeerManager<C> {
+impl<C: AdjustedClock<PeerId>> PeerManager<C> {
     /// Create a new peer manager.
     pub fn new(config: Config, rng: fastrand::Rng, hooks: Hooks, clock: C) -> Self {
         let peers = HashMap::with_hasher(rng.clone().into());
@@ -280,7 +280,7 @@ impl<C: Clock> PeerManager<C> {
             addr,
             Peer::Connected {
                 conn: Connection {
-                    socket: Socket::new(addr),
+                    addr,
                     local_addr,
                     link,
                     since: local_time,
@@ -468,27 +468,27 @@ impl<C: Clock> PeerManager<C> {
                 Link::Inbound => {
                     self.outbox
                         .version(
-                            conn.socket.addr,
-                            self.version(conn.socket.addr, conn.local_addr, nonce, height, now),
+                            conn.addr,
+                            self.version(conn.addr, conn.local_addr, nonce, height, now),
                         )
-                        .wtxid_relay(conn.socket.addr)
-                        .verack(conn.socket.addr)
-                        .send_headers(conn.socket.addr)
+                        .wtxid_relay(conn.addr)
+                        .verack(conn.addr)
+                        .send_headers(conn.addr)
                         .set_timer(HANDSHAKE_TIMEOUT);
                 }
                 Link::Outbound => {
                     self.outbox
-                        .wtxid_relay(conn.socket.addr)
-                        .verack(conn.socket.addr)
-                        .send_headers(conn.socket.addr)
+                        .wtxid_relay(conn.addr)
+                        .verack(conn.addr)
+                        .send_headers(conn.addr)
                         .set_timer(HANDSHAKE_TIMEOUT);
                 }
             }
             let conn = conn.clone();
-            let persistent = self.config.persistent.contains(&conn.socket.addr);
+            let persistent = self.config.persistent.contains(&conn.addr);
 
             self.peers.insert(
-                conn.socket.addr,
+                conn.addr,
                 Peer::Connected {
                     conn,
                     peer: Some(PeerInfo {
@@ -511,11 +511,7 @@ impl<C: Clock> PeerManager<C> {
     }
 
     /// Called when a `verack` message was received.
-    pub fn received_verack(
-        &mut self,
-        addr: &PeerId,
-        local_time: LocalTime,
-    ) -> Option<(PeerInfo, Connection)> {
+    pub fn received_verack(&mut self, addr: &PeerId, local_time: LocalTime) {
         if let Some(Peer::Connected {
             peer: Some(peer),
             conn,
@@ -526,14 +522,16 @@ impl<C: Clock> PeerManager<C> {
                     addr: *addr,
                     link: conn.link,
                     services: peer.services,
+                    persistent: peer.persistent,
                     user_agent: peer.user_agent.clone(),
                     height: peer.height,
                     version: peer.version,
+                    relay: peer.relay,
+                    wtxid_relay: peer.wtxidrelay,
                 });
+                self.clock.record_offset(*addr, peer.time_offset);
 
                 peer.state = HandshakeState::ReceivedVerack { since: local_time };
-
-                return Some((peer.clone(), conn.clone()));
             } else {
                 self._disconnect(
                     *addr,
@@ -541,7 +539,6 @@ impl<C: Clock> PeerManager<C> {
                 );
             }
         }
-        None
     }
 
     /// Called when a tick was received.
@@ -558,7 +555,7 @@ impl<C: Clock> PeerManager<C> {
             match peer.state {
                 HandshakeState::ReceivedVersion { since } => {
                     if local_time - since >= HANDSHAKE_TIMEOUT {
-                        timed_out.push((conn.socket.addr, "handshake"));
+                        timed_out.push((conn.addr, "handshake"));
                     }
                 }
                 HandshakeState::ReceivedVerack { .. } => {}
@@ -570,25 +567,12 @@ impl<C: Clock> PeerManager<C> {
             _ => None,
         }) {
             if local_time - connected.since >= HANDSHAKE_TIMEOUT {
-                timed_out.push((connected.socket.addr, "handshake"));
+                timed_out.push((connected.addr, "handshake"));
             }
         }
         // Disconnect all timed out peers.
         for (addr, reason) in timed_out {
             self._disconnect(addr, DisconnectReason::PeerTimeout(reason));
-        }
-
-        // Disconnect peers that have been dropped from all other sub-protocols.
-        // Since the job of the peer manager is simply to establish connections, if a peer is
-        // dropped from all other sub-protocols and we are holding on to the last reference,
-        // there is no use in keeping this peer around.
-        let dropped = self
-            .negotiated(Link::Outbound)
-            .filter(|(_, c)| c.socket.refs() == 1)
-            .map(|(_, c)| c.socket.addr)
-            .collect::<Vec<_>>();
-        for addr in dropped {
-            self._disconnect(addr, DisconnectReason::PeerDropped);
         }
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
@@ -867,7 +851,7 @@ mod tests {
     use std::collections::VecDeque;
 
     use nakamoto_common::bitcoin::network::address::Address;
-    use nakamoto_common::block::time::RefClock;
+    use nakamoto_common::block::time::{AdjustedTime, RefClock};
     use nakamoto_common::p2p::peer::Source;
     use nakamoto_test::assert_matches;
 
@@ -895,7 +879,7 @@ mod tests {
     #[test]
     fn test_persistent_client_reconnect() {
         let rng = fastrand::Rng::with_seed(1);
-        let time = RefClock::from(LocalTime::now());
+        let time = RefClock::from(AdjustedTime::new(LocalTime::now()));
         let height = 144;
 
         let local = ([99, 99, 99, 99], 9999).into();
@@ -912,10 +896,7 @@ mod tests {
         assert_eq!(peermgr.connecting().next(), Some(&remote));
 
         peermgr.peer_connected(remote, local, Link::Outbound, height);
-        assert_eq!(
-            peermgr.connected().map(|c| &c.socket.addr).next(),
-            Some(&remote)
-        );
+        assert_eq!(peermgr.connected().map(|c| &c.addr).next(), Some(&remote));
 
         // Confirm first attempt
         peermgr.peer_disconnected(
@@ -951,17 +932,18 @@ mod tests {
     #[test]
     fn test_wtxidrelay_outbound() {
         let rng = fastrand::Rng::with_seed(1);
-        let time = LocalTime::now();
+        let time = AdjustedTime::new(LocalTime::now());
 
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), time);
+        let mut peermgr =
+            PeerManager::new(util::config(), rng.clone(), Hooks::default(), time.clone());
 
         let height = 144;
         let local = ([99, 99, 99, 99], 9999).into();
         let remote = ([124, 43, 110, 1], 8333).into();
         let version = VersionMessage {
             services: ServiceFlags::NETWORK,
-            ..peermgr.version(local, remote, rng.u64(..), height, time)
+            ..peermgr.version(local, remote, rng.u64(..), height, time.local_time())
         };
 
         peermgr.initialize(&mut addrs);
@@ -975,7 +957,7 @@ mod tests {
         );
 
         peermgr.received_wtxidrelay(&remote);
-        peermgr.received_verack(&remote, time);
+        peermgr.received_verack(&remote, time.local_time());
 
         assert_matches!(
             peermgr.peers.get(&remote),
@@ -986,24 +968,25 @@ mod tests {
     #[test]
     fn test_wtxidrelay_misbehavior() {
         let rng = fastrand::Rng::with_seed(1);
-        let time = LocalTime::now();
+        let time = AdjustedTime::new(LocalTime::now());
 
         let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), time);
+        let mut peermgr =
+            PeerManager::new(util::config(), rng.clone(), Hooks::default(), time.clone());
 
         let height = 144;
         let local = ([99, 99, 99, 99], 9999).into();
         let remote = ([124, 43, 110, 1], 8333).into();
         let version = VersionMessage {
             services: ServiceFlags::NETWORK,
-            ..peermgr.version(local, remote, rng.u64(..), height, time)
+            ..peermgr.version(local, remote, rng.u64(..), height, time.local_time())
         };
 
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
         peermgr.peer_connected(remote, local, Link::Outbound, height);
         peermgr.received_version(&remote, version, height, &mut addrs);
-        peermgr.received_verack(&remote, time);
+        peermgr.received_verack(&remote, time.local_time());
         peermgr.received_wtxidrelay(&remote);
 
         assert_matches!(peermgr.peers.get(&remote), Some(Peer::Disconnecting));
@@ -1012,7 +995,7 @@ mod tests {
     #[test]
     fn test_connect_timeout() {
         let rng = fastrand::Rng::with_seed(1);
-        let time = RefClock::from(LocalTime::now());
+        let time = RefClock::from(AdjustedTime::new(LocalTime::now()));
 
         let remote = ([124, 43, 110, 1], 8333).into();
 
@@ -1042,48 +1025,9 @@ mod tests {
     }
 
     #[test]
-    fn test_peer_dropped() {
-        let rng = fastrand::Rng::with_seed(1);
-        let time = LocalTime::now();
-        let mut addrs = VecDeque::new();
-        let mut peermgr = PeerManager::new(util::config(), rng.clone(), Hooks::default(), time);
-
-        let height = 144;
-        let local = ([99, 99, 99, 99], 9999).into();
-        let remote = ([124, 43, 110, 1], 8333).into();
-        let version = VersionMessage {
-            services: ServiceFlags::NETWORK,
-            ..peermgr.version(local, remote, rng.u64(..), height, time)
-        };
-
-        peermgr.initialize(&mut addrs);
-        peermgr.connect(&remote);
-        peermgr.peer_connected(remote, local, Link::Outbound, height);
-        peermgr.received_version(&remote, version, height, &mut addrs);
-
-        let (_, conn) = peermgr.received_verack(&remote, time).unwrap();
-        let socket = conn.socket;
-        assert_eq!(socket.refs(), 2);
-
-        peermgr
-            .negotiated(Link::Outbound)
-            .find(|(_, c)| c.socket.addr == remote)
-            .unwrap();
-
-        peermgr.received_wake(&mut addrs);
-        assert!(!peermgr.is_disconnecting(&remote));
-        assert_eq!(socket.refs(), 2);
-
-        drop(socket);
-
-        peermgr.received_wake(&mut addrs);
-        assert!(peermgr.is_disconnecting(&remote));
-    }
-
-    #[test]
     fn test_disconnects() {
         let rng = fastrand::Rng::with_seed(1);
-        let time = LocalTime::now();
+        let time = AdjustedTime::new(LocalTime::now());
         let height = 144;
 
         let services = ServiceFlags::NETWORK;
@@ -1107,10 +1051,7 @@ mod tests {
         peermgr.peer_connected(remote1, local, Link::Outbound, height);
 
         assert_eq!(peermgr.connecting().next(), None);
-        assert_eq!(
-            peermgr.connected().map(|c| &c.socket.addr).next(),
-            Some(&remote1)
-        );
+        assert_eq!(peermgr.connected().map(|c| &c.addr).next(), Some(&remote1));
 
         // Disconnect remote#1 after it has connected.
         addrs.push_back((Address::new(&remote2, services), Source::Dns));
@@ -1159,7 +1100,7 @@ mod tests {
             ..util::config()
         };
         let rng = fastrand::Rng::with_seed(1);
-        let time = LocalTime::now();
+        let time = AdjustedTime::new(LocalTime::now());
         let local = ([99, 99, 99, 99], 9999).into();
 
         let cases: Vec<((usize, usize, usize, usize), usize)> = vec![
@@ -1203,7 +1144,8 @@ mod tests {
             let (connecting, connected, required, preferred) = case;
 
             let mut addrs = VecDeque::new();
-            let mut peermgr = PeerManager::new(cfg.clone(), rng.clone(), Hooks::default(), time);
+            let mut peermgr =
+                PeerManager::new(cfg.clone(), rng.clone(), Hooks::default(), time.clone());
 
             peermgr.initialize(&mut addrs);
 
@@ -1222,7 +1164,7 @@ mod tests {
                 let remote = ([66, 66, 66, i as u8], 8333).into();
                 let version = VersionMessage {
                     services: cfg.required_services,
-                    ..peermgr.version(local, remote, rng.u64(..), height, time)
+                    ..peermgr.version(local, remote, rng.u64(..), height, time.local_time())
                 };
 
                 peermgr.connect(&remote);
@@ -1232,7 +1174,7 @@ mod tests {
                 peermgr.received_version(&remote, version, height, &mut addrs);
                 assert!(peermgr.peers.contains_key(&remote));
 
-                peermgr.received_verack(&remote, time).unwrap();
+                peermgr.received_verack(&remote, time.local_time());
                 assert_matches!(
                     peermgr.peers.get(&remote).unwrap(),
                     Peer::Connected { peer: Some(p), .. } if p.is_negotiated()
@@ -1242,7 +1184,7 @@ mod tests {
                 let remote = ([77, 77, 77, i as u8], 8333).into();
                 let version = VersionMessage {
                     services: cfg.preferred_services,
-                    ..peermgr.version(local, remote, rng.u64(..), height, time)
+                    ..peermgr.version(local, remote, rng.u64(..), height, time.local_time())
                 };
 
                 peermgr.connect(&remote);
@@ -1252,7 +1194,7 @@ mod tests {
                 peermgr.received_version(&remote, version, height, &mut addrs);
                 assert!(peermgr.peers.contains_key(&remote));
 
-                peermgr.received_verack(&remote, time).unwrap();
+                peermgr.received_verack(&remote, time.local_time());
                 assert_matches!(
                     peermgr.peers.get(&remote).unwrap(),
                     Peer::Connected { peer: Some(p), .. } if p.is_negotiated()

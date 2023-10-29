@@ -134,7 +134,7 @@ where
     }
 }
 
-impl<T, F: Filters, P, C: Clock> Iterator for Service<T, F, P, C> {
+impl<T: BlockTree, F: Filters, P: peer::Store, C: Clock> Iterator for Service<T, F, P, C> {
     type Item = Io<Vec<u8>, p2p::Event, p2p::DisconnectReason>;
 
     fn next(&mut self) -> Option<Self::Item> {

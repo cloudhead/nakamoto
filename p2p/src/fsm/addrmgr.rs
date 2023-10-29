@@ -134,6 +134,21 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
         }
     }
 
+    /// Event received.
+    pub fn received_event<T>(&mut self, event: &Event, _tree: &T) {
+        match event {
+            Event::PeerNegotiated {
+                addr,
+                link,
+                services,
+                ..
+            } => {
+                self.peer_negotiated(addr, *services, *link);
+            }
+            _ => {}
+        }
+    }
+
     /// Called when we receive a `getaddr` message.
     pub fn received_getaddr(&mut self, from: &net::SocketAddr) {
         // TODO: We should only respond with peers who were last active within

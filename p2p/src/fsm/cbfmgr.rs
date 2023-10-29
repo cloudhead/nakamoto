@@ -23,7 +23,7 @@ use nakamoto_common::source;
 use super::event::TxStatus;
 use super::filter_cache::FilterCache;
 use super::output::{Io, Outbox};
-use super::{BlockSource, DisconnectReason, Event, Link, PeerId, Socket};
+use super::{BlockSource, DisconnectReason, Event, Link, PeerId};
 
 use rescan::Rescan;
 
@@ -105,8 +105,6 @@ struct Peer {
     height: Height,
     #[allow(dead_code)]
     last_active: LocalTime,
-    #[allow(dead_code)]
-    socket: Socket,
     persistent: bool,
 }
 
@@ -167,8 +165,18 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     }
 
     /// Event received.
-    pub fn received_event(&mut self, event: &Event) {
+    pub fn received_event<T: BlockReader>(&mut self, event: &Event, tree: &T) {
         match event {
+            Event::PeerNegotiated {
+                addr,
+                link,
+                services,
+                height,
+                persistent,
+                ..
+            } => {
+                self.peer_negotiated(*addr, *height, *services, *link, *persistent, tree);
+            }
             Event::BlockProcessed { block, height, .. } => {
                 if self.pending_blocks.remove(height) {
                     self.outbox.event(Event::BlockMatched {
@@ -493,7 +501,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     /// Called when a new peer was negotiated.
     pub fn peer_negotiated<T: BlockReader>(
         &mut self,
-        socket: Socket,
+        addr: PeerId,
         height: Height,
         services: ServiceFlags,
         link: Link,
@@ -509,11 +517,10 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         let time = self.clock.local_time();
 
         self.peers.insert(
-            socket.addr,
+            addr,
             Peer {
                 last_active: time,
                 height,
-                socket,
                 persistent,
             },
         );
@@ -1199,7 +1206,7 @@ mod tests {
         );
 
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1261,7 +1268,7 @@ mod tests {
         cbfmgr.filters.clear().unwrap();
         cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1321,7 +1328,7 @@ mod tests {
         cbfmgr.filters.clear().unwrap();
         cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1425,7 +1432,7 @@ mod tests {
         cbfmgr.initialize(&tree);
 
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             header_height,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1473,7 +1480,7 @@ mod tests {
 
         cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1567,7 +1574,7 @@ mod tests {
 
         cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1685,7 +1692,7 @@ mod tests {
 
         cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1777,7 +1784,7 @@ mod tests {
 
         cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1862,7 +1869,7 @@ mod tests {
 
         cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,
@@ -1960,7 +1967,7 @@ mod tests {
 
             cbfmgr.initialize(&tree);
             cbfmgr.peer_negotiated(
-                Socket::new(remote),
+                remote,
                 best,
                 REQUIRED_SERVICES,
                 Link::Outbound,
@@ -2086,7 +2093,7 @@ mod tests {
         cbfmgr.filters.clear().unwrap();
         cbfmgr.initialize(&tree);
         cbfmgr.peer_negotiated(
-            Socket::new(remote),
+            remote,
             best,
             REQUIRED_SERVICES,
             Link::Outbound,

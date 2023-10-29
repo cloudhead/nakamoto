@@ -78,6 +78,13 @@ impl RefClock<LocalTime> {
     }
 }
 
+impl<K: Eq + Clone + Hash> RefClock<AdjustedTime<K>> {
+    /// Elapse time.
+    pub fn elapse(&self, duration: LocalDuration) {
+        self.inner.borrow_mut().elapse(duration)
+    }
+}
+
 impl<K: Eq + Clone + Hash> AdjustedClock<K> for RefClock<AdjustedTime<K>> {
     fn record_offset(&mut self, source: K, sample: TimeOffset) {
         self.inner.borrow_mut().record_offset(source, sample);
@@ -264,6 +271,20 @@ impl<K: Hash + Eq> AdjustedTime<K> {
     /// Get the last known local time.
     pub fn local_time(&self) -> LocalTime {
         self.local_time
+    }
+}
+
+impl<T> std::ops::Deref for AdjustedTime<T> {
+    type Target = LocalTime;
+
+    fn deref(&self) -> &Self::Target {
+        &self.local_time
+    }
+}
+
+impl<T> std::ops::DerefMut for AdjustedTime<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.local_time
     }
 }
 

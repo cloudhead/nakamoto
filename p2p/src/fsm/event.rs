@@ -74,12 +74,18 @@ pub enum Event {
         link: Link,
         /// Peer services.
         services: ServiceFlags,
+        /// Whether this is a persistent peer.
+        persistent: bool,
         /// Peer height.
         height: Height,
         /// Peer user agent.
         user_agent: String,
         /// Negotiated protocol version.
         version: u32,
+        /// Transaction relay.
+        relay: bool,
+        /// Support for `wtxidrelay`.
+        wtxid_relay: bool,
     },
     /// The best known height amongst connected peers has been updated.
     /// Note that there is no guarantee that this height really exists;

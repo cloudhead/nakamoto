@@ -33,7 +33,7 @@ use nakamoto_common::collections::{AddressBook, HashMap};
 
 use super::fees::FeeEstimator;
 use super::output::{Io, Outbox};
-use super::{event::TxStatus, Event, Height, PeerId, Socket};
+use super::{event::TxStatus, Event, Height, PeerId};
 
 /// Time between re-broadcasts of inventories.
 pub const REBROADCAST_TIMEOUT: LocalDuration = LocalDuration::from_mins(1);
@@ -70,9 +70,6 @@ pub struct Peer {
     /// Number of times a certain block was requested.
     #[allow(dead_code)]
     requests: HashMap<BlockHash, usize>,
-
-    /// Peer socket.
-    _socket: Socket,
 }
 
 impl Peer {
@@ -157,10 +154,26 @@ impl<C: Clock> InventoryManager<C> {
         self.mempool.contains_key(wtxid)
     }
 
+    /// Event received.
+    pub fn received_event<T: BlockReader>(&mut self, event: &Event, _tree: &T) {
+        match event {
+            Event::PeerNegotiated {
+                addr,
+                services,
+                relay,
+                wtxid_relay,
+                ..
+            } => {
+                self.peer_negotiated(*addr, *services, *relay, *wtxid_relay);
+            }
+            _ => {}
+        }
+    }
+
     /// Called when a peer is negotiated.
     pub fn peer_negotiated(
         &mut self,
-        socket: Socket,
+        addr: PeerId,
         services: ServiceFlags,
         relay: bool,
         wtxidrelay: bool,
@@ -172,7 +185,7 @@ impl<C: Clock> InventoryManager<C> {
         }
         self.schedule_tick();
         self.peers.insert(
-            socket.addr,
+            addr,
             Peer {
                 services,
                 attempts: 0,
@@ -181,7 +194,6 @@ impl<C: Clock> InventoryManager<C> {
                 outbox,
                 last_attempt: None,
                 requests: HashMap::with_hasher(self.rng.clone().into()),
-                _socket: socket,
             },
         );
     }
@@ -533,25 +545,25 @@ mod tests {
         let mut invmgr = InventoryManager::new(rng.clone(), clock.clone());
 
         invmgr.peer_negotiated(
-            Socket::new(([66, 66, 66, 66], 8333)),
+            ([66, 66, 66, 66], 8333).into(),
             ServiceFlags::NETWORK,
             true,
             true,
         );
         invmgr.peer_negotiated(
-            Socket::new(([77, 77, 77, 77], 8333)),
+            ([77, 77, 77, 77], 8333).into(),
             ServiceFlags::NETWORK,
             true,
             true,
         );
         invmgr.peer_negotiated(
-            Socket::new(([88, 88, 88, 88], 8333)),
+            ([88, 88, 88, 88], 8333).into(),
             ServiceFlags::NETWORK,
             true,
             true,
         );
         invmgr.peer_negotiated(
-            Socket::new(([99, 99, 99, 99], 8333)),
+            ([99, 99, 99, 99], 8333).into(),
             ServiceFlags::NETWORK,
             true,
             true,
@@ -623,7 +635,7 @@ mod tests {
 
         let mut invmgr = InventoryManager::new(rng, clock.clone());
 
-        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
+        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx);
         invmgr.received_wake(&tree);
 
@@ -663,7 +675,7 @@ mod tests {
 
         let mut invmgr = InventoryManager::new(rng, clock.clone());
 
-        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
+        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
 
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
@@ -710,7 +722,7 @@ mod tests {
         let mut tree = model::Cache::from(headers);
         let mut invmgr = InventoryManager::new(rng, time);
 
-        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, false);
+        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx.clone());
         invmgr.get_block(main_block1.block_hash());
         invmgr.received_block(&remote, main_block1, &tree);
@@ -771,7 +783,7 @@ mod tests {
 
         let mut invmgr = InventoryManager::new(rng, time);
 
-        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
+        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx);
 
         invmgr.received_wake(&tree);
@@ -787,7 +799,7 @@ mod tests {
             .unwrap();
         assert_matches!(invs.first(), Some(Inventory::WTx(_)));
 
-        invmgr.peer_negotiated(remote2.into(), ServiceFlags::NETWORK, true, false);
+        invmgr.peer_negotiated(remote2, ServiceFlags::NETWORK, true, false);
         invmgr.received_wake(&tree);
         let invs = output::test::messages_from(&mut invmgr.outbox, &remote2)
             .filter_map(|m| match m {
@@ -807,7 +819,7 @@ mod tests {
 
         let mut invmgr = InventoryManager::new(rng, LocalTime::now());
 
-        invmgr.peer_negotiated(remote.into(), ServiceFlags::NETWORK, true, true);
+        invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx.clone());
 
         invmgr.received_getdata(remote, &[Inventory::Transaction(tx.txid())]);

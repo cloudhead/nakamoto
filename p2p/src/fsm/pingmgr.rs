@@ -14,7 +14,7 @@ use crate::fsm::PeerId;
 
 use super::{
     output::{Io, Outbox},
-    DisconnectReason,
+    DisconnectReason, Event,
 };
 
 /// Time interval to wait between sent pings.
@@ -85,6 +85,16 @@ impl<C: Clock> PingManager<C> {
             rng,
             outbox,
             clock,
+        }
+    }
+
+    /// Event received.
+    pub fn received_event<T>(&mut self, event: &Event, _tree: &T) {
+        match event {
+            Event::PeerNegotiated { addr, .. } => {
+                self.peer_negotiated(*addr);
+            }
+            _ => {}
         }
     }
 

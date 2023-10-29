@@ -15,7 +15,7 @@ use nakamoto_common::nonempty::NonEmpty;
 
 use super::output::{Io, Outbox};
 use super::Event;
-use super::{DisconnectReason, Link, Locators, PeerId, Socket};
+use super::{DisconnectReason, Link, Locators, PeerId};
 
 /// How long to wait for a request, eg. `getheaders` to be fulfilled.
 pub const REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(30);
@@ -56,8 +56,6 @@ struct Peer {
     link: Link,
     last_active: Option<LocalTime>,
     last_asked: Option<Locators>,
-
-    _socket: Socket,
 }
 
 /// Sync manager configuration.
@@ -153,13 +151,28 @@ impl<C: Clock> SyncManager<C> {
         }
     }
 
+    /// Event received.
+    pub fn received_event<T: BlockReader>(&mut self, event: &Event, tree: &T) {
+        match event {
+            Event::PeerNegotiated {
+                addr,
+                link,
+                services,
+                height,
+                ..
+            } => {
+                self.peer_negotiated(*addr, *height, *services, *link, tree);
+            }
+            _ => {}
+        }
+    }
+
     /// Called when a new peer was negotiated.
     pub fn peer_negotiated<T: BlockReader>(
         &mut self,
-        socket: Socket,
+        addr: PeerId,
         height: Height,
         services: ServiceFlags,
-        preferred: bool,
         link: Link,
         tree: &T,
     ) {
@@ -171,7 +184,14 @@ impl<C: Clock> SyncManager<C> {
             self.outbox.event(Event::PeerHeightUpdated { height });
         }
 
-        self.register(socket, height, preferred, link);
+        self.register(
+            addr,
+            height,
+            // We prefer if the peer doesn't have compact filters support,
+            // leaving those peers free for fetching filters.
+            !services.has(ServiceFlags::COMPACT_FILTERS),
+            link,
+        );
         self.sync(tree);
     }
 
@@ -527,13 +547,13 @@ impl<C: Clock> SyncManager<C> {
     }
 
     /// Register a new peer.
-    fn register(&mut self, socket: Socket, height: Height, preferred: bool, link: Link) {
+    fn register(&mut self, addr: PeerId, height: Height, preferred: bool, link: Link) {
         let last_active = None;
         let last_asked = None;
         let tip = BlockHash::all_zeros();
 
         self.peers.insert(
-            socket.addr,
+            addr,
             Peer {
                 height,
                 tip,
@@ -541,7 +561,6 @@ impl<C: Clock> SyncManager<C> {
                 preferred,
                 last_active,
                 last_asked,
-                _socket: socket,
             },
         );
     }
