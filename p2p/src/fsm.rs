@@ -880,9 +880,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
                             self.cbfmgr.rollback(fork_height).unwrap();
 
                             for (height, _) in reverted {
-                                for tx in self.invmgr.block_reverted(height) {
-                                    self.cbfmgr.watch_transaction(&tx);
-                                }
+                                self.invmgr.block_reverted(height);
                             }
                         }
                         // Trigger a filter sync, since we're going to have to catch up on the

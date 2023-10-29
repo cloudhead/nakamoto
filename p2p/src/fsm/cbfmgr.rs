@@ -181,12 +181,15 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                 // In case of a re-org, make sure we don't accept old blocks that were requested.
                 self.pending_blocks.remove(height);
             }
-            Event::TxStatusChanged {
-                txid,
-                status: TxStatus::Confirmed { .. },
-            } => {
-                self.unwatch_transaction(txid);
-            }
+            Event::TxStatusChanged { txid, status } => match status {
+                TxStatus::Confirmed { .. } => {
+                    self.unwatch_transaction(txid);
+                }
+                TxStatus::Reverted { transaction } => {
+                    self.watch_transaction(transaction);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }

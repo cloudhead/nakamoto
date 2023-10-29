@@ -1367,7 +1367,7 @@ fn test_transaction_reverted_reconfirm() {
             .find(|e| {
                 matches!(
                     e,
-                    Event::TxStatusChanged { txid, status: TxStatus::Reverted }
+                    Event::TxStatusChanged { txid, status: TxStatus::Reverted { .. } }
                     if *txid == tx.txid()
                 )
             })

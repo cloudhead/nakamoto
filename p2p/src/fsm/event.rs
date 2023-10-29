@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::{fmt, io, net};
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-use nakamoto_common::bitcoin::Txid;
+use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height};
 use nakamoto_common::p2p::peer::Source;
@@ -366,7 +366,10 @@ pub enum TxStatus {
     /// A transaction that was previously confirmed, and is now reverted due to a
     /// re-org. Note that this event can only fire if the originally confirmed tx
     /// is still in memory.
-    Reverted,
+    Reverted {
+        /// The reverted transaction.
+        transaction: Transaction,
+    },
     /// Transaction was replaced by another transaction, and will probably never
     /// be included in a block. This can happen if an RBF transaction is replaced by one with
     /// a higher fee, or if a transaction is reverted and a conflicting transaction replaces
@@ -391,7 +394,9 @@ impl fmt::Display for TxStatus {
                 "transaction was included in block {} at height {}",
                 block, height
             ),
-            Self::Reverted => write!(fmt, "transaction has been reverted"),
+            Self::Reverted { transaction } => {
+                write!(fmt, "transaction {} has been reverted", transaction.txid())
+            }
             Self::Stale { replaced_by, block } => write!(
                 fmt,
                 "transaction was replaced by {} in block {}",
@@ -405,6 +410,7 @@ impl fmt::Display for TxStatus {
 mod test {
     use super::*;
     use nakamoto_common::bitcoin_hashes::Hash;
+    use nakamoto_test::block::gen;
 
     #[test]
     fn test_tx_status_ordering() {
@@ -426,14 +432,17 @@ mod test {
             TxStatus::Confirmed {
                 height: 0,
                 block: BlockHash::all_zeros(),
-            } < TxStatus::Reverted
+            } < TxStatus::Reverted {
+                transaction: gen::transaction(&mut fastrand::Rng::new())
+            }
         );
         assert!(
-            TxStatus::Reverted
-                < TxStatus::Stale {
-                    replaced_by: Txid::all_zeros(),
-                    block: BlockHash::all_zeros()
-                }
+            TxStatus::Reverted {
+                transaction: gen::transaction(&mut fastrand::Rng::new())
+            } < TxStatus::Stale {
+                replaced_by: Txid::all_zeros(),
+                block: BlockHash::all_zeros()
+            }
         );
     }
 }

@@ -192,22 +192,17 @@ impl<C: Clock> InventoryManager<C> {
     }
 
     /// Called when a block is reverted.
-    pub fn block_reverted(&mut self, height: Height) -> Vec<Transaction> {
+    pub fn block_reverted(&mut self, height: Height) {
         self.estimator.rollback(height - 1);
 
         if let Some(transactions) = self.confirmed.remove(&height) {
-            for tx in transactions.iter().cloned() {
-                self.announce(tx);
-            }
-            for transaction in transactions.iter() {
+            for transaction in transactions {
+                self.announce(transaction.clone());
                 self.outbox.event(Event::TxStatusChanged {
                     txid: transaction.txid(),
-                    status: TxStatus::Reverted,
+                    status: TxStatus::Reverted { transaction },
                 });
             }
-            transactions
-        } else {
-            Vec::new()
         }
     }
 
@@ -743,7 +738,7 @@ mod tests {
         events(invmgr.outbox.drain())
             .find(|e| {
                 matches! {
-                    e, Event::TxStatusChanged { txid, status: TxStatus::Reverted }
+                    e, Event::TxStatusChanged { txid, status: TxStatus::Reverted { .. } }
                     if *txid == tx.txid()
                 }
             })
