@@ -703,7 +703,10 @@ impl<W: Waker> handle::Handle for Handle<W> {
             None => event::wait(
                 &events,
                 |e| match e {
-                    Event::BlockHeadersSynced { hash, height } if height == h => Some(hash),
+                    Event::BlockHeadersImported {
+                        result: ImportResult::TipChanged { height, hash, .. },
+                        ..
+                    } if height == h => Some(hash),
                     _ => None,
                 },
                 self.timeout,

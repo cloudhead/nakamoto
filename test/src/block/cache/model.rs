@@ -140,13 +140,13 @@ impl BlockTree for Cache {
             }
             let connected = NonEmpty::from_vec(connected).unwrap();
 
-            Ok(ImportResult::TipChanged(
-                self.chain.last().to_owned(),
-                self.tip,
-                self.height(),
-                disconnected,
+            Ok(ImportResult::TipChanged {
+                header: self.chain.last().to_owned(),
+                hash: self.tip,
+                height: self.height(),
+                reverted: disconnected,
                 connected,
-            ))
+            })
         } else {
             Ok(ImportResult::TipUnchanged)
         }
@@ -160,13 +160,13 @@ impl BlockTree for Cache {
             self.chain.push(header);
             self.tip = hash;
 
-            Ok(ImportResult::TipChanged(
+            Ok(ImportResult::TipChanged {
                 header,
-                self.tip,
-                self.height(),
-                vec![],
-                NonEmpty::new((self.height(), header)),
-            ))
+                hash: self.tip,
+                height: self.height(),
+                reverted: vec![],
+                connected: NonEmpty::new((self.height(), header)),
+            })
         } else {
             Ok(ImportResult::TipUnchanged)
         }

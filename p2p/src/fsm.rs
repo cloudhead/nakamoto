@@ -811,33 +811,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
                 }
             }
             NetworkMessage::Headers(headers) => {
-                match self
-                    .syncmgr
-                    .received_headers(&addr, headers, &self.clock, &mut self.tree)
-                {
-                    Err(e) => log::error!("Error receiving headers: {}", e),
-                    Ok(ImportResult::TipChanged(_, _, _, reverted, _)) => {
-                        // Nb. the reverted blocks are ordered from the tip down to
-                        // the oldest ancestor.
-                        if let Some((height, _)) = reverted.last() {
-                            // The height we need to rollback to, ie. the tip of our new chain
-                            // and the tallest block we are keeping.
-                            let fork_height = height - 1;
-                            self.cbfmgr.rollback(fork_height).unwrap();
-
-                            for (height, _) in reverted {
-                                self.invmgr.block_reverted(height);
-                            }
-                        }
-                        // Trigger a filter sync, since we're going to have to catch up on the
-                        // new block header(s). This is not required, but reduces latency.
-                        //
-                        // In the case of a re-org, this will trigger a re-download of the
-                        // missing headers after the rollback.
-                        self.cbfmgr.sync(&self.tree);
-                    }
-                    _ => {}
-                }
+                self.syncmgr
+                    .received_headers(&addr, headers, &self.clock, &mut self.tree);
             }
             NetworkMessage::GetHeaders(GetHeadersMessage {
                 locator_hashes,

@@ -852,8 +852,14 @@ fn prop_cache_import_tree_randomized(tree: Tree) {
         match (real_result, model_result) {
             (ImportResult::TipUnchanged, ImportResult::TipUnchanged) => {}
             (
-                ImportResult::TipChanged(header, hash, height, reverted, connected),
-                ImportResult::TipChanged(_, _, _, _, _),
+                ImportResult::TipChanged {
+                    header,
+                    hash,
+                    height,
+                    reverted,
+                    connected,
+                },
+                ImportResult::TipChanged { .. },
             ) => {
                 assert_eq!(connected.last(), &(height, header));
                 assert_eq!(header.block_hash(), hash);
@@ -946,13 +952,13 @@ fn test_cache_import_height_unchanged() {
     assert_eq!(cache.tip().0, b2.hash);
     assert_eq!(
         result,
-        ImportResult::TipChanged(
-            b2.block(),
-            b2.hash,
+        ImportResult::TipChanged {
+            header: b2.block(),
+            hash: b2.hash,
             height,
-            vec![(2, a2.block())],
-            NonEmpty::new((2, b2.block()))
-        )
+            reverted: vec![(2, a2.block())],
+            connected: NonEmpty::new((2, b2.block()))
+        }
     );
 }
 

@@ -15,7 +15,7 @@ use nakamoto_common::bitcoin::{Script, Transaction, Txid};
 
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
-use nakamoto_common::block::tree::BlockReader;
+use nakamoto_common::block::tree::{BlockReader, ImportResult};
 use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
 use nakamoto_common::source;
@@ -49,10 +49,10 @@ pub const DEFAULT_REQUEST_TIMEOUT: LocalDuration = LocalDuration::from_secs(6);
 #[derive(Error, Debug)]
 pub enum Error {
     /// The request was ignored. This happens if we're not able to fulfill the request.
-    #[error("ignoring message from {from}: {msg}")]
+    #[error("ignoring message from {from}: {reason}")]
     Ignored {
-        /// Message that was ignored.
-        msg: &'static str,
+        /// Reason.
+        reason: &'static str,
         /// Message sender.
         from: PeerId,
     },
@@ -188,6 +188,28 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             Event::BlockDisconnected { height, .. } => {
                 // In case of a re-org, make sure we don't accept old blocks that were requested.
                 self.pending_blocks.remove(height);
+            }
+            Event::BlockHeadersImported {
+                result: ImportResult::TipChanged { reverted, .. },
+                ..
+            } => {
+                // Nb. the reverted blocks are ordered from the tip down to
+                // the oldest ancestor.
+                if let Some((height, _)) = reverted.last() {
+                    // The height we need to rollback to, ie. the tip of our new chain
+                    // and the tallest block we are keeping.
+                    let fork_height = height - 1;
+
+                    if let Err(e) = self.rollback(fork_height) {
+                        self.outbox.error("error rolling back filter chain", e);
+                    }
+                }
+                // Trigger a filter sync, since we're going to have to catch up on the
+                // new block header(s). This is not required, but reduces latency.
+                //
+                // In the case of a re-org, this will trigger a re-download of the
+                // missing headers after the rollback.
+                self.sync(tree);
             }
             Event::TxStatusChanged { txid, status } => match status {
                 TxStatus::Confirmed { .. } => {
@@ -440,8 +462,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                 self.outbox
                     .error("error processing filter headers from {from}", e);
             }
-            Err(Error::Ignored { from, .. }) => {
-                log::warn!(target: "p2p", "Ignored `cfheaders` message from {from}");
+            Err(e @ Error::Ignored { .. }) => {
+                log::warn!(target: "p2p", "Dropped `cfheaders` message: {e}");
             }
         }
     }
@@ -462,8 +484,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                 self.outbox
                     .error("error processing `getcfheaders` from {from}", e);
             }
-            Err(Error::Ignored { from, .. }) => {
-                log::warn!(target: "p2p", "Ignored `getcfheaders` message from {from}");
+            Err(e @ Error::Ignored { .. }) => {
+                log::warn!(target: "p2p", "Dropped `getcfheaders` message: {e}");
             }
         }
     }
@@ -487,8 +509,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                 self.outbox
                     .error("error processing `cfilter` from {from}", e);
             }
-            Err(Error::Ignored { from, .. }) => {
-                log::warn!(target: "p2p", "Ignored `cfilter` message from {from}");
+            Err(e @ Error::Ignored { .. }) => {
+                log::warn!(target: "p2p", "Dropped `cfilter` message: {e}");
             }
         }
     }
@@ -544,6 +566,11 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         }
 
         if filter_height < block_height {
+            log::debug!(
+                target: "p2p",
+                "Filter header chain is behind block header chain by {} header(s)",
+                block_height - filter_height
+            );
             // We need to sync the filter header chain.
             let start_height = self.filters.height() + 1;
             let stop_height = tree.height();
@@ -580,7 +607,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         if self.inflight.remove(&stop_hash).is_none() {
             return Err(Error::Ignored {
                 from,
-                msg: "unsolicited `cfheaders` message",
+                reason: "unsolicited `cfheaders` message",
             });
         }
 
@@ -616,7 +643,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             self.schedule_wake();
 
             return Err(Error::Ignored {
-                msg: "previous filter header does not match local tip",
+                reason: "previous filter header does not match local tip",
                 from,
             });
         }
@@ -701,7 +728,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         } else {
             // Can't handle this message, we don't have the stop block.
             return Err(Error::Ignored {
-                msg: "getcfheaders",
+                reason: "stop block missing",
                 from,
             });
         };
@@ -727,7 +754,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         // We must be syncing, since we have the block headers requested but
         // not the associated filter headers. Simply ignore the request.
         Err(Error::Ignored {
-            msg: "getcfheaders",
+            reason: "cfheaders not found",
             from,
         })
     }
@@ -743,7 +770,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
 
         if msg.filter_type != 0x0 {
             return Err(Error::Ignored {
-                msg: "cfilter",
+                reason: "wrong filter type",
                 from,
             });
         }
@@ -751,9 +778,9 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         let height = if let Some((height, _)) = tree.get_block(&msg.block_hash) {
             height
         } else {
-            // Can't handle this message, we don't have the block.
+            // Can't handle this message, we don't have the block header.
             return Err(Error::Ignored {
-                msg: "cfilter",
+                reason: "block header not found",
                 from,
             });
         };
@@ -764,7 +791,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         } else {
             // Can't handle this message, we don't have the header.
             return Err(Error::Ignored {
-                msg: "cfilter",
+                reason: "filter header not found",
                 from,
             });
         };
@@ -1065,7 +1092,7 @@ mod tests {
                 .import_blocks(suffix.iter().map(|b| b.header), time)
                 .unwrap();
 
-            if let ImportResult::TipChanged(_, hash, _, _, _) = result {
+            if let ImportResult::TipChanged { hash, .. } = result {
                 (suffix, hash)
             } else {
                 panic!("unexpected import result: {:?}", result)
@@ -2006,7 +2033,7 @@ mod tests {
 
             let (tip, reverted, connected) = assert_matches!(
                 tree.import_blocks(fork.iter().map(|b| b.header), &time).unwrap(),
-                ImportResult::TipChanged(_, tip, _, reverted, connected) => (tip, reverted, connected)
+                ImportResult::TipChanged { hash, reverted, connected, .. } => (hash, reverted, connected)
             );
 
             assert_matches!(reverted.last(), Some((height, _)) if *height == fork_height + 1);

@@ -83,13 +83,18 @@ pub enum ImportResult {
     /// 1. The imported block(s) extended the active chain, or
     /// 2. The imported block(s) caused a chain re-org.
     ///
-    TipChanged(
-        BlockHeader,
-        BlockHash,
-        Height,
-        Vec<(Height, BlockHeader)>,
-        NonEmpty<(Height, BlockHeader)>,
-    ),
+    TipChanged {
+        /// Tip header.
+        header: BlockHeader,
+        /// Tip hash.
+        hash: BlockHash,
+        /// Tip height.
+        height: Height,
+        /// Blocks reverted/disconnected.
+        reverted: Vec<(Height, BlockHeader)>,
+        /// Blocks added/connected.
+        connected: NonEmpty<(Height, BlockHeader)>,
+    },
     /// The block headers were imported successfully, but our best block hasn't changed.
     /// This will happen if we imported a duplicate, orphan or stale block.
     TipUnchanged, // TODO: We could add a parameter eg. BlockMissing or DuplicateBlock.

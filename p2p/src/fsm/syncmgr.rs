@@ -1,12 +1,13 @@
 //!
 //! Manages header synchronization with peers.
 //!
+use std::sync::Arc;
+
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
 
 use nakamoto_common::bitcoin_hashes::Hash;
-use nakamoto_common::block::store;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockReader, BlockTree, Error, ImportResult};
 use nakamoto_common::block::{BlockHash, BlockHeader, Height};
@@ -226,33 +227,33 @@ impl<C: Clock> SyncManager<C> {
         blocks: I,
         tree: &mut T,
     ) -> Result<ImportResult, Error> {
-        match tree.import_blocks(blocks, &self.clock) {
-            Ok(ImportResult::TipChanged(header, tip, height, reverted, connected)) => {
-                let result = ImportResult::TipChanged(
-                    header,
-                    tip,
-                    height,
-                    reverted.clone(),
-                    connected.clone(),
-                );
+        let result = tree.import_blocks(blocks, &self.clock);
 
-                for (height, header) in reverted {
-                    self.outbox
-                        .event(Event::BlockDisconnected { height, header });
-                }
-                for (height, header) in connected {
-                    self.outbox.event(Event::BlockConnected { height, header });
-                }
+        if let Ok(
+            result @ ImportResult::TipChanged {
+                hash,
+                reverted,
+                connected,
+                ..
+            },
+        ) = &result
+        {
+            let reorg = !reverted.is_empty();
 
+            for (height, header) in reverted.iter().cloned() {
                 self.outbox
-                    .event(Event::BlockHeadersSynced { hash: tip, height });
-                self.broadcast_tip(&tip, tree);
-
-                Ok(result)
+                    .event(Event::BlockDisconnected { height, header });
             }
-            Ok(result @ ImportResult::TipUnchanged) => Ok(result),
-            Err(err) => Err(err),
+            for (height, header) in connected.iter().cloned() {
+                self.outbox.event(Event::BlockConnected { height, header });
+            }
+            self.outbox.event(Event::BlockHeadersImported {
+                reorg,
+                result: result.clone(),
+            });
+            self.broadcast_tip(hash, tree);
         }
+        result
     }
 
     /// Called when we receive headers from a peer.
@@ -262,14 +263,11 @@ impl<C: Clock> SyncManager<C> {
         headers: Vec<BlockHeader>,
         clock: &impl Clock,
         tree: &mut T,
-    ) -> Result<ImportResult, store::Error> {
+    ) {
         let request = self.inflight.remove(from);
-        let headers = if let Some(headers) = NonEmpty::from_vec(headers) {
-            headers
-        } else {
-            return Ok(ImportResult::TipUnchanged);
+        let Some(headers) = NonEmpty::from_vec(headers) else {
+            return;
         };
-
         let length = headers.len();
 
         if length > MAX_MESSAGE_HEADERS {
@@ -279,27 +277,27 @@ impl<C: Clock> SyncManager<C> {
             self.outbox
                 .disconnect(*from, DisconnectReason::PeerMisbehaving("too many headers"));
 
-            return Ok(ImportResult::TipUnchanged);
+            return;
         }
         // When unsolicited, we don't want to process too many headers in case of a DoS.
         if length > MAX_UNSOLICITED_HEADERS && request.is_none() {
             log::debug!("Received {} unsolicited headers from {}", length, from);
 
-            return Ok(ImportResult::TipUnchanged);
+            return;
         }
 
         if let Some(peer) = self.peers.get_mut(from) {
             peer.last_active = Some(clock.local_time());
         } else {
-            return Ok(ImportResult::TipUnchanged);
+            return;
         }
-        log::debug!("[sync] Received {} block header(s) from {}", length, from);
+        log::debug!(target: "p2p", "Received {} block header(s) from {}", length, from);
 
         let root = headers.first().block_hash();
         let best = headers.last().block_hash();
 
         if tree.contains(&best) {
-            return Ok(ImportResult::TipUnchanged);
+            return;
         }
 
         match self.import_blocks(headers.into_iter(), tree) {
@@ -310,14 +308,12 @@ impl<C: Clock> SyncManager<C> {
                 let timeout = self.config.request_timeout;
 
                 self.request(*from, locators, timeout, OnTimeout::Ignore);
-
-                Ok(ImportResult::TipUnchanged)
             }
-            Ok(ImportResult::TipChanged(header, tip, height, reverted, connected)) => {
+            Ok(ImportResult::TipChanged { hash, height, .. }) => {
                 // Update peer height.
                 if let Some(peer) = self.peers.get_mut(from) {
                     if height > peer.height {
-                        peer.tip = tip;
+                        peer.tip = hash;
                         peer.height = height;
                     }
                 }
@@ -330,22 +326,37 @@ impl<C: Clock> SyncManager<C> {
                 if length < MAX_MESSAGE_HEADERS {
                     // If these headers were unsolicited, we may already be ready/synced.
                     // Otherwise, we're finally in sync.
-                    self.broadcast_tip(&tip, tree);
+                    self.broadcast_tip(&hash, tree);
                     self.sync(tree);
                 } else {
-                    let locators = (vec![tip], BlockHash::all_zeros());
+                    let locators = (vec![hash], BlockHash::all_zeros());
                     let timeout = self.config.request_timeout;
 
                     self.request(*from, locators, timeout, OnTimeout::Disconnect);
                 }
-
-                Ok(ImportResult::TipChanged(
-                    header, tip, height, reverted, connected,
-                ))
             }
-            Err(err) => self
-                .handle_error(from, err)
-                .map(|()| ImportResult::TipUnchanged),
+            // If this is an error with the underlying store, we have to propagate
+            // this up, because we can't handle it here.
+            Err(Error::Store(e)) => self.outbox.error("block header import failed", Arc::new(e)),
+            // If we got a bad block from the peer, we can handle it here.
+            Err(
+                e @ Error::InvalidBlockPoW
+                | e @ Error::InvalidBlockTarget(_, _)
+                | e @ Error::InvalidBlockHash(_, _)
+                | e @ Error::InvalidBlockHeight(_)
+                | e @ Error::InvalidBlockTime(_, _),
+            ) => {
+                log::warn!(target: "p2p", "Received invalid headers from {from}: {e}");
+
+                self.record_misbehavior(from);
+            }
+            // Harmless errors can be ignored.
+            Err(Error::DuplicateBlock(_) | Error::BlockMissing(_)) => {}
+            // TODO: This will be removed.
+            Err(Error::BlockImportAborted(_, _, _)) => {}
+            // These shouldn't happen here.
+            // TODO: Perhaps there's a better way to have this error not show up here.
+            Err(Error::Interrupted | Error::GenesisMismatch) => {}
         }
     }
 
@@ -482,39 +493,6 @@ impl<C: Clock> SyncManager<C> {
     }
 
     ///////////////////////////////////////////////////////////////////////////
-
-    fn handle_error(&mut self, from: &PeerId, err: Error) -> Result<(), store::Error> {
-        match err {
-            // If this is an error with the underlying store, we have to propagate
-            // this up, because we can't handle it here.
-            Error::Store(e) => Err(e),
-
-            // If we got a bad block from the peer, we can handle it here.
-            Error::InvalidBlockPoW
-            | Error::InvalidBlockTarget(_, _)
-            | Error::InvalidBlockHash(_, _)
-            | Error::InvalidBlockHeight(_)
-            | Error::InvalidBlockTime(_, _) => {
-                log::debug!("{}: Received invalid headers: {}", from, err);
-
-                self.record_misbehavior(from);
-                self.outbox
-                    .disconnect(*from, DisconnectReason::PeerMisbehaving("invalid headers"));
-
-                Ok(())
-            }
-
-            // Harmless errors can be ignored.
-            Error::DuplicateBlock(_) | Error::BlockMissing(_) => Ok(()),
-
-            // TODO: This will be removed.
-            Error::BlockImportAborted(_, _, _) => Ok(()),
-
-            // These shouldn't happen here.
-            // TODO: Perhaps there's a better way to have this error not show up here.
-            Error::Interrupted | Error::GenesisMismatch => Ok(()),
-        }
-    }
 
     fn record_misbehavior(&mut self, addr: &PeerId) {
         self.outbox.event(Event::PeerMisbehaved { addr: *addr });

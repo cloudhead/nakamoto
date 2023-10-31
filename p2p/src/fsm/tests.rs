@@ -10,7 +10,6 @@ use std::ops::Bound;
 use std::sync::Arc;
 
 use log::*;
-use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 
 use super::event::TxStatus;
 use super::{addrmgr, cbfmgr, peermgr, pingmgr, syncmgr};
@@ -23,6 +22,8 @@ use super::{PROTOCOL_VERSION, USER_AGENT};
 
 use peer::{Peer, PeerDummy};
 
+use nakamoto_chain::ImportResult;
+use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
 use nakamoto_common::bitcoin::network::message_filter::CFilter;
 use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, GetCFHeaders, GetCFilters};
@@ -1308,6 +1309,7 @@ fn test_transaction_reverted_reconfirm() {
 
         // Alice receives a header announcement.
         alice.received(&remote, NetworkMessage::Headers(vec![matching.header]));
+        alice.events().for_each(drop); // Drain events so that they propagate.
 
         // Alice receives the cfheaders.
         alice.received(
@@ -1470,7 +1472,7 @@ fn test_block_events() {
             event @ Event::Ready { .. } => Some(event),
             event @ Event::BlockConnected { .. } => Some(event),
             event @ Event::BlockDisconnected { .. } => Some(event),
-            event @ Event::BlockHeadersSynced { .. } => Some(event),
+            event @ Event::BlockHeadersImported { .. } => Some(event),
             _ => None,
         })
     }
@@ -1500,7 +1502,11 @@ fn test_block_events() {
             if height == height_ as Height && header.block_hash() == hash_
         );
     }
-    assert_matches!(events.next().unwrap(), Event::BlockHeadersSynced { height, .. } if height == best);
+    assert_matches!(
+        events.next().unwrap(),
+        Event::BlockHeadersImported { result: ImportResult::TipChanged { height, .. }, .. }
+        if height == best
+    );
     assert_eq!(events.count(), 0);
 
     // Receive "extra" block.
@@ -1519,7 +1525,8 @@ fn test_block_events() {
     );
     assert_matches!(
         events.next().unwrap(),
-        Event::BlockHeadersSynced { height, .. } if height == best + 1
+        Event::BlockHeadersImported { result: ImportResult::TipChanged { height, .. }, .. }
+        if height == best + 1
     );
     assert_eq!(0, events.count());
 
@@ -1559,7 +1566,7 @@ fn test_block_events() {
 
     assert_matches!(
         events.next().unwrap(),
-        Event::BlockHeadersSynced { height, .. }
+        Event::BlockHeadersImported { result: ImportResult::TipChanged { height, .. }, .. }
         if height == fork_best
     );
     assert!(events.next().is_none());

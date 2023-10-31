@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 
 use nakamoto_common::bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
 use nakamoto_common::bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
+use nakamoto_common::block::tree::ImportResult;
 
 // TODO: Timeout should be configurable
 // TODO: Add exponential back-off
@@ -165,6 +166,14 @@ impl<C: Clock> InventoryManager<C> {
                 ..
             } => {
                 self.peer_negotiated(*addr, *services, *relay, *wtxid_relay);
+            }
+            Event::BlockHeadersImported {
+                result: ImportResult::TipChanged { reverted, .. },
+                ..
+            } => {
+                for (height, _) in reverted {
+                    self.block_reverted(*height);
+                }
             }
             _ => {}
         }

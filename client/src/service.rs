@@ -140,7 +140,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: Clock> Iterator for Service<T,
     fn next(&mut self) -> Option<Self::Item> {
         match self.machine.next() {
             Some(Io::Write(addr, msg)) => {
-                log::debug!("Write {:?} to {}", &msg, addr.ip());
+                log::debug!(target: "client", "Write {:?} to {}", &msg, addr.ip());
                 let mut buf = Vec::new();
 
                 msg.consensus_encode(&mut buf)

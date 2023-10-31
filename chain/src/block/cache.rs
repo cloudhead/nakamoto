@@ -337,7 +337,7 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
 
         if let Some(branch) = best_branch {
             // Stale blocks after potential re-org.
-            let stale = self.switch_to_fork(branch)?;
+            let reverted = self.switch_to_fork(branch)?;
             let height = self.height();
             let hash = branch.tip;
             let header = *branch
@@ -356,9 +356,13 @@ impl<S: Store<Header = BlockHeader>> BlockCache<S> {
             )
             .expect("BlockCache::import_block: there is always at least one connected block");
 
-            Ok(ImportResult::TipChanged(
-                header, hash, height, stale, connected,
-            ))
+            Ok(ImportResult::TipChanged {
+                header,
+                hash,
+                height,
+                reverted,
+                connected,
+            })
         } else {
             Ok(ImportResult::TipUnchanged)
         }
@@ -570,7 +574,13 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
 
         for (i, header) in chain.enumerate() {
             match self.import_block(header, context) {
-                Ok(ImportResult::TipChanged(header, hash, height, r, c)) => {
+                Ok(ImportResult::TipChanged {
+                    header,
+                    hash,
+                    height,
+                    reverted: r,
+                    connected: c,
+                }) => {
                     seen.extend(c.iter().map(|(_, h)| h.block_hash()));
                     reverted.extend(r.into_iter().map(|(i, h)| ((i, h.block_hash()), h)));
                     connected.extend(c);
@@ -593,19 +603,19 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
             // Don't return connected blocks if they are not in the main chain.
             connected.retain(|_, h| self.contains(&h.block_hash()));
 
-            Ok(ImportResult::TipChanged(
-                best_header,
-                best_hash,
-                best_height,
-                reverted
+            Ok(ImportResult::TipChanged {
+                header: best_header,
+                hash: best_hash,
+                height: best_height,
+                reverted: reverted
                     .into_iter()
                     .rev()
                     .map(|((i, _), h)| (i, h))
                     .collect(),
-                NonEmpty::from_vec(connected.into_iter().collect()).expect(
+                connected: NonEmpty::from_vec(connected.into_iter().collect()).expect(
                     "BlockCache::import_blocks: there is always at least one connected block",
                 ),
-            ))
+            })
         } else {
             Ok(ImportResult::TipUnchanged)
         }
@@ -627,13 +637,13 @@ impl<S: Store<Header = BlockHeader>> BlockTree for BlockCache<S> {
             self.extend_chain(height, hash, header);
             self.store.put(std::iter::once(header))?;
 
-            Ok(ImportResult::TipChanged(
+            Ok(ImportResult::TipChanged {
                 header,
                 hash,
                 height,
-                vec![],
-                NonEmpty::new((height, header)),
-            ))
+                reverted: vec![],
+                connected: NonEmpty::new((height, header)),
+            })
         } else {
             Ok(ImportResult::TipUnchanged)
         }

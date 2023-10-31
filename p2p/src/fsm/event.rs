@@ -5,6 +5,7 @@ use std::{fmt, io, net};
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::filter::BlockFilter;
+use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height};
 use nakamoto_common::p2p::peer::Source;
 use nakamoto_net::Disconnect;
@@ -140,6 +141,14 @@ pub enum Event {
         /// Chain tip.
         hash: BlockHash,
     },
+    /// Block headers imported. Emitted when headers are fetched from peers,
+    /// or imported by the user.
+    BlockHeadersImported {
+        /// Import result,
+        result: ImportResult,
+        /// Set if this import triggered a chain reorganization.
+        reorg: bool,
+    },
     /// Transaction fee rate estimated for a block.
     FeeEstimated {
         /// Block hash of the estimate.
@@ -232,7 +241,25 @@ impl fmt::Display for Event {
                 write!(fmt, "ready to process events and commands")
             }
             Self::BlockHeadersSynced { height, hash } => {
-                write!(fmt, "chain tip updated to {hash} at height {height}")
+                write!(
+                    fmt,
+                    "chain in sync with network at height {height} ({hash})"
+                )
+            }
+            Self::BlockHeadersImported {
+                result: ImportResult::TipChanged { hash, height, .. },
+                reorg,
+            } => {
+                write!(
+                    fmt,
+                    "chain tip updated to {hash} at height {height} (reorg={reorg})"
+                )
+            }
+            Self::BlockHeadersImported {
+                result: ImportResult::TipUnchanged,
+                ..
+            } => {
+                write!(fmt, "chain tip unchanged during import")
             }
             Self::BlockConnected { header, height, .. } => {
                 write!(
