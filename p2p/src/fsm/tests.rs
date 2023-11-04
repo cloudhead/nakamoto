@@ -407,7 +407,7 @@ fn test_handshake_version_hook() {
     let network = Network::Mainnet;
     let rng = fastrand::Rng::new();
     let mut cfg = Config::default();
-    cfg.hooks.on_version = Arc::new(|_, version: VersionMessage| {
+    cfg.hooks.on_version = Arc::new(|_, version: &VersionMessage| {
         if version.user_agent.contains("craig") {
             return Err("craig is not satoshi");
         }

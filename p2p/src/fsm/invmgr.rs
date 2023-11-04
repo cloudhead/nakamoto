@@ -21,6 +21,7 @@
 //!
 use std::collections::BTreeMap;
 
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::{constants::ServiceFlags, message_blockdata::Inventory};
 use nakamoto_common::bitcoin::{Block, BlockHash, Transaction, Txid, Wtxid};
 use nakamoto_common::block::tree::ImportResult;
@@ -156,7 +157,7 @@ impl<C: Clock> InventoryManager<C> {
     }
 
     /// Event received.
-    pub fn received_event<T: BlockReader>(&mut self, event: &Event, _tree: &T) {
+    pub fn received_event<T: BlockReader>(&mut self, event: Event, tree: &T) {
         match event {
             Event::PeerNegotiated {
                 addr,
@@ -165,16 +166,26 @@ impl<C: Clock> InventoryManager<C> {
                 wtxid_relay,
                 ..
             } => {
-                self.peer_negotiated(*addr, *services, *relay, *wtxid_relay);
+                self.peer_negotiated(addr, services, relay, wtxid_relay);
             }
             Event::BlockHeadersImported {
                 result: ImportResult::TipChanged { reverted, .. },
                 ..
             } => {
                 for (height, _) in reverted {
-                    self.block_reverted(*height);
+                    self.block_reverted(height);
                 }
             }
+            Event::MessageReceived { from, message } => match message.as_ref() {
+                NetworkMessage::Block(block) => {
+                    self.received_block(&from, block.clone(), tree);
+                }
+                NetworkMessage::GetData(invs) => {
+                    self.received_getdata(from, invs);
+                    // TODO: (*self.hooks.on_getdata)(addr, invs, &self.outbox);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }

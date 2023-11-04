@@ -18,7 +18,9 @@ use std::net;
 
 use nakamoto_common::bitcoin::network::address::Address;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
+use nakamoto_common::block::tree::BlockReader;
 
 use nakamoto_common::p2p::peer::AddressSource;
 use nakamoto_common::p2p::Domain;
@@ -222,6 +224,35 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
         self.maintain_connections(addrs);
     }
 
+    /// Event received.
+    pub fn received_event<T: BlockReader, A: AddressSource>(
+        &mut self,
+        event: Event,
+        tree: &T,
+        addrs: &mut A,
+    ) {
+        match event {
+            Event::MessageReceived { from, message } => match message.as_ref() {
+                NetworkMessage::Version(msg) => {
+                    self.received_version(&from, msg, tree.height(), addrs);
+                }
+                NetworkMessage::Verack => {
+                    self.received_verack(&from);
+                }
+                NetworkMessage::WtxidRelay => {
+                    self.received_wtxidrelay(&from);
+                }
+                NetworkMessage::Unknown {
+                    command: ref cmd, ..
+                } => {
+                    log::warn!(target: "p2p", "Ignoring unknown message {:?} from {}", cmd, from)
+                }
+                _ => {}
+            },
+            _ => {}
+        }
+    }
+
     /// A persistent peer has been disconnected.
     fn persistent_disconnected(&mut self, addr: &net::SocketAddr, local_time: LocalTime) {
         let (retry_at, attempts) = self.disconnected.entry(*addr).or_default();
@@ -352,7 +383,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
     }
 
     /// Called when a `wtxidrelay` message was received.
-    pub fn received_wtxidrelay(&mut self, addr: &PeerId) {
+    fn received_wtxidrelay(&mut self, addr: &PeerId) {
         if let Some(Peer::Connected {
             peer: Some(peer),
             conn: _,
@@ -371,10 +402,10 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
     }
 
     /// Called when a `version` message was received.
-    pub fn received_version<A: AddressSource>(
+    fn received_version<A: AddressSource>(
         &mut self,
         addr: &PeerId,
-        msg: VersionMessage,
+        msg: &VersionMessage,
         height: Height,
         addrs: &mut A,
     ) {
@@ -386,7 +417,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
     fn handle_version<A: AddressSource>(
         &mut self,
         addr: &PeerId,
-        msg: VersionMessage,
+        msg: &VersionMessage,
         height: Height,
         addrs: &mut A,
     ) -> Result<(), DisconnectReason> {
@@ -511,7 +542,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
     }
 
     /// Called when a `verack` message was received.
-    pub fn received_verack(&mut self, addr: &PeerId, local_time: LocalTime) {
+    fn received_verack(&mut self, addr: &PeerId) {
         if let Some(Peer::Connected {
             peer: Some(peer),
             conn,
@@ -531,7 +562,9 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
                 });
                 self.clock.record_offset(*addr, peer.time_offset);
 
-                peer.state = HandshakeState::ReceivedVerack { since: local_time };
+                peer.state = HandshakeState::ReceivedVerack {
+                    since: self.clock.local_time(),
+                };
             } else {
                 self._disconnect(
                     *addr,
@@ -949,7 +982,7 @@ mod tests {
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
         peermgr.peer_connected(remote, local, Link::Outbound, height);
-        peermgr.received_version(&remote, version, height, &mut addrs);
+        peermgr.received_version(&remote, &version, height, &mut addrs);
 
         assert_matches!(
             peermgr.peers.get(&remote),
@@ -957,7 +990,7 @@ mod tests {
         );
 
         peermgr.received_wtxidrelay(&remote);
-        peermgr.received_verack(&remote, time.local_time());
+        peermgr.received_verack(&remote);
 
         assert_matches!(
             peermgr.peers.get(&remote),
@@ -985,8 +1018,8 @@ mod tests {
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
         peermgr.peer_connected(remote, local, Link::Outbound, height);
-        peermgr.received_version(&remote, version, height, &mut addrs);
-        peermgr.received_verack(&remote, time.local_time());
+        peermgr.received_version(&remote, &version, height, &mut addrs);
+        peermgr.received_verack(&remote);
         peermgr.received_wtxidrelay(&remote);
 
         assert_matches!(peermgr.peers.get(&remote), Some(Peer::Disconnecting));
@@ -1171,10 +1204,10 @@ mod tests {
                 peermgr.peer_connected(remote, local, Link::Outbound, height);
                 assert!(peermgr.peers.contains_key(&remote));
 
-                peermgr.received_version(&remote, version, height, &mut addrs);
+                peermgr.received_version(&remote, &version, height, &mut addrs);
                 assert!(peermgr.peers.contains_key(&remote));
 
-                peermgr.received_verack(&remote, time.local_time());
+                peermgr.received_verack(&remote);
                 assert_matches!(
                     peermgr.peers.get(&remote).unwrap(),
                     Peer::Connected { peer: Some(p), .. } if p.is_negotiated()
@@ -1191,10 +1224,10 @@ mod tests {
                 peermgr.peer_connected(remote, local, Link::Outbound, height);
                 assert!(peermgr.peers.contains_key(&remote));
 
-                peermgr.received_version(&remote, version, height, &mut addrs);
+                peermgr.received_version(&remote, &version, height, &mut addrs);
                 assert!(peermgr.peers.contains_key(&remote));
 
-                peermgr.received_verack(&remote, time.local_time());
+                peermgr.received_verack(&remote);
                 assert_matches!(
                     peermgr.peers.get(&remote).unwrap(),
                     Peer::Connected { peer: Some(p), .. } if p.is_negotiated()

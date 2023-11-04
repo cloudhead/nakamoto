@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use nakamoto_common::bitcoin::network::address::Address;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::block::time::Clock;
 use nakamoto_common::block::time::{LocalDuration, LocalTime};
 use nakamoto_common::block::BlockTime;
@@ -135,7 +135,7 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
     }
 
     /// Event received.
-    pub fn received_event<T>(&mut self, event: &Event, _tree: &T) {
+    pub fn received_event<T>(&mut self, event: Event, _tree: &T) {
         match event {
             Event::PeerNegotiated {
                 addr,
@@ -143,7 +143,23 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
                 services,
                 ..
             } => {
-                self.peer_negotiated(addr, *services, *link);
+                self.peer_negotiated(&addr, services, link);
+            }
+            Event::MessageReceived { from, message } => {
+                if let Some(ka) = self.peers.get_mut(&from.ip()) {
+                    ka.last_active = Some(self.clock.local_time());
+                }
+                match message.as_ref() {
+                    NetworkMessage::Addr(addrs) => {
+                        self.received_addr(from, addrs.clone());
+                        // TODO: Tick the peer manager, because we may have new addresses to connect to.
+                        // TODO: Can do this via `Event::AddressesImported`.
+                    }
+                    NetworkMessage::GetAddr => {
+                        self.received_getaddr(&from);
+                    }
+                    _ => {}
+                }
             }
             _ => {}
         }
@@ -186,14 +202,6 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
 
         if local_time - self.last_idle.unwrap_or_default() >= IDLE_TIMEOUT {
             self.idle();
-        }
-    }
-
-    /// Called when a peer signaled activity.
-    pub fn peer_active(&mut self, addr: net::SocketAddr) {
-        let time = self.clock.local_time();
-        if let Some(ka) = self.peers.get_mut(&addr.ip()) {
-            ka.last_active = Some(time);
         }
     }
 

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::{fmt, io, net};
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::filter::BlockFilter;
 use nakamoto_common::block::tree::ImportResult;
@@ -209,6 +210,13 @@ pub enum Event {
         /// The new transaction status.
         status: TxStatus,
     },
+    /// A gossip message was received from a peer.
+    MessageReceived {
+        /// Peer that sent the message.
+        from: PeerId,
+        /// Message payload.
+        message: Arc<NetworkMessage>,
+    },
     /// Address book exhausted.
     AddressBookExhausted,
     /// Compact filters have been synced and processed up to this point and matching blocks have
@@ -361,6 +369,9 @@ impl fmt::Display for Event {
                 "Peer {} negotiated with services {} and height {}..",
                 addr, services, height
             ),
+            Self::MessageReceived { from, message } => {
+                write!(fmt, "Message `{}` received from {from}", message.cmd())
+            }
             Self::AddressBookExhausted => {
                 write!(
                     fmt,

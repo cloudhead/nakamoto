@@ -7,6 +7,7 @@
 use std::collections::VecDeque;
 use std::net;
 
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::collections::HashMap;
 
@@ -89,11 +90,20 @@ impl<C: Clock> PingManager<C> {
     }
 
     /// Event received.
-    pub fn received_event<T>(&mut self, event: &Event, _tree: &T) {
+    pub fn received_event<T>(&mut self, event: Event, _tree: &T) {
         match event {
             Event::PeerNegotiated { addr, .. } => {
-                self.peer_negotiated(*addr);
+                self.peer_negotiated(addr);
             }
+            Event::MessageReceived { from, message } => match message.as_ref() {
+                NetworkMessage::Ping(nonce) => {
+                    self.received_ping(from, *nonce);
+                }
+                NetworkMessage::Pong(nonce) => {
+                    self.received_pong(from, *nonce);
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -157,7 +167,7 @@ impl<C: Clock> PingManager<C> {
     }
 
     /// Called when a `ping` is received.
-    pub fn received_ping(&mut self, addr: PeerId, nonce: u64) -> bool {
+    fn received_ping(&mut self, addr: PeerId, nonce: u64) -> bool {
         if self.peers.contains_key(&addr) {
             self.outbox.pong(addr, nonce);
 
@@ -167,8 +177,10 @@ impl<C: Clock> PingManager<C> {
     }
 
     /// Called when a `pong` is received.
-    pub fn received_pong(&mut self, addr: PeerId, nonce: u64, now: LocalTime) -> bool {
+    fn received_pong(&mut self, addr: PeerId, nonce: u64) -> bool {
         if let Some(peer) = self.peers.get_mut(&addr) {
+            let now = self.clock.local_time();
+
             match peer.state {
                 State::AwaitingPong {
                     nonce: last_nonce,

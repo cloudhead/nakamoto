@@ -9,10 +9,9 @@ use std::ops::{Bound, RangeInclusive};
 use thiserror::Error;
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, CFilter, GetCFHeaders};
-
 use nakamoto_common::bitcoin::{Script, Transaction, Txid};
-
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockReader, ImportResult};
@@ -165,7 +164,12 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     }
 
     /// Event received.
-    pub fn received_event<T: BlockReader>(&mut self, event: &Event, tree: &T) {
+    pub fn received_event<T: BlockReader, B: BlockSource>(
+        &mut self,
+        event: Event,
+        tree: &T,
+        blocks: &mut B,
+    ) {
         match event {
             Event::PeerNegotiated {
                 addr,
@@ -175,19 +179,16 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                 persistent,
                 ..
             } => {
-                self.peer_negotiated(*addr, *height, *services, *link, *persistent, tree);
+                self.peer_negotiated(addr, height, services, link, persistent, tree);
             }
             Event::BlockProcessed { block, height, .. } => {
-                if self.pending_blocks.remove(height) {
-                    self.outbox.event(Event::BlockMatched {
-                        block: block.clone(),
-                        height: *height,
-                    });
+                if self.pending_blocks.remove(&height) {
+                    self.outbox.event(Event::BlockMatched { block, height });
                 }
             }
             Event::BlockDisconnected { height, .. } => {
                 // In case of a re-org, make sure we don't accept old blocks that were requested.
-                self.pending_blocks.remove(height);
+                self.pending_blocks.remove(&height);
             }
             Event::BlockHeadersImported {
                 result: ImportResult::TipChanged { reverted, .. },
@@ -213,10 +214,65 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             }
             Event::TxStatusChanged { txid, status } => match status {
                 TxStatus::Confirmed { .. } => {
-                    self.unwatch_transaction(txid);
+                    self.unwatch_transaction(&txid);
                 }
                 TxStatus::Reverted { transaction } => {
-                    self.watch_transaction(transaction);
+                    self.watch_transaction(&transaction);
+                }
+                _ => {}
+            },
+            Event::MessageReceived { from, message } => match message.as_ref() {
+                NetworkMessage::CFHeaders(msg) => {
+                    log::debug!(
+                        target: "p2p",
+                        "Received {} filter header(s) from {}",
+                        msg.filter_hashes.len(),
+                        from
+                    );
+
+                    match self.received_cfheaders(&from, msg.clone(), tree) {
+                        Ok(_) => {}
+                        Err(Error::InvalidMessage { from, .. }) => {
+                            self.outbox.event(Event::PeerMisbehaved { addr: from });
+                        }
+                        Err(Error::Filters(e)) => {
+                            self.outbox
+                                .error("error processing filter headers from {from}", e);
+                        }
+                        Err(e @ Error::Ignored { .. }) => {
+                            log::warn!(target: "p2p", "Dropped `cfheaders` message: {e}");
+                        }
+                    }
+                }
+                NetworkMessage::GetCFHeaders(msg) => {
+                    match self.received_getcfheaders(&from, msg.clone(), tree) {
+                        Ok(_) => {}
+                        Err(Error::InvalidMessage { from, .. }) => {
+                            self.outbox.event(Event::PeerMisbehaved { addr: from });
+                        }
+                        Err(Error::Filters(e)) => {
+                            self.outbox
+                                .error("error processing `getcfheaders` from {from}", e);
+                        }
+                        Err(e @ Error::Ignored { .. }) => {
+                            log::warn!(target: "p2p", "Dropped `getcfheaders` message: {e}");
+                        }
+                    }
+                }
+                NetworkMessage::CFilter(msg) => {
+                    match self.received_cfilter(&from, msg.clone(), tree, blocks) {
+                        Ok(_) => {}
+                        Err(Error::InvalidMessage { from, .. }) => {
+                            self.outbox.event(Event::PeerMisbehaved { addr: from });
+                        }
+                        Err(Error::Filters(e)) => {
+                            self.outbox
+                                .error("error processing `cfilter` from {from}", e);
+                        }
+                        Err(e @ Error::Ignored { .. }) => {
+                            log::warn!(target: "p2p", "Dropped `cfilter` message: {e}");
+                        }
+                    }
                 }
                 _ => {}
             },
@@ -442,79 +498,6 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         Ok(())
     }
 
-    /// Handle a `cfheaders` message from a peer.
-    ///
-    /// Returns the new filter header height, or an error.
-    pub fn received_cfheaders<T: BlockReader>(&mut self, from: &PeerId, msg: CFHeaders, tree: &T) {
-        log::debug!(
-            target: "p2p",
-            "Received {} filter header(s) from {}",
-            msg.filter_hashes.len(),
-            from
-        );
-
-        match self._received_cfheaders(from, msg, tree) {
-            Ok(_) => {}
-            Err(Error::InvalidMessage { from, .. }) => {
-                self.outbox.event(Event::PeerMisbehaved { addr: from });
-            }
-            Err(Error::Filters(e)) => {
-                self.outbox
-                    .error("error processing filter headers from {from}", e);
-            }
-            Err(e @ Error::Ignored { .. }) => {
-                log::warn!(target: "p2p", "Dropped `cfheaders` message: {e}");
-            }
-        }
-    }
-
-    /// Handle a `getcfheaders` message from a peer.
-    pub fn received_getcfheaders<T: BlockReader>(
-        &mut self,
-        from: &PeerId,
-        msg: GetCFHeaders,
-        tree: &T,
-    ) {
-        match self._received_getcfheaders(from, msg, tree) {
-            Ok(_) => {}
-            Err(Error::InvalidMessage { from, .. }) => {
-                self.outbox.event(Event::PeerMisbehaved { addr: from });
-            }
-            Err(Error::Filters(e)) => {
-                self.outbox
-                    .error("error processing `getcfheaders` from {from}", e);
-            }
-            Err(e @ Error::Ignored { .. }) => {
-                log::warn!(target: "p2p", "Dropped `getcfheaders` message: {e}");
-            }
-        }
-    }
-
-    /// Handle a `cfilter` message.
-    ///
-    /// Returns a list of blocks that need to be fetched from the network.
-    pub fn received_cfilter<T: BlockReader, B: BlockSource>(
-        &mut self,
-        from: &PeerId,
-        msg: CFilter,
-        tree: &T,
-        blocks: &mut B,
-    ) {
-        match self._received_cfilter(from, msg, tree, blocks) {
-            Ok(_) => {}
-            Err(Error::InvalidMessage { from, .. }) => {
-                self.outbox.event(Event::PeerMisbehaved { addr: from });
-            }
-            Err(Error::Filters(e)) => {
-                self.outbox
-                    .error("error processing `cfilter` from {from}", e);
-            }
-            Err(e @ Error::Ignored { .. }) => {
-                log::warn!(target: "p2p", "Dropped `cfilter` message: {e}");
-            }
-        }
-    }
-
     /// Called when a peer disconnected.
     pub fn peer_disconnected(&mut self, id: &PeerId) {
         self.peers.remove(id);
@@ -595,7 +578,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     /// Handle a `cfheaders` message from a peer.
     ///
     /// Returns the new filter header height, or an error.
-    fn _received_cfheaders<T: BlockReader>(
+    fn received_cfheaders<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: CFHeaders,
@@ -707,7 +690,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     }
 
     /// Handle a `getcfheaders` message from a peer.
-    pub fn _received_getcfheaders<T: BlockReader>(
+    pub fn received_getcfheaders<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: GetCFHeaders,
@@ -759,7 +742,10 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         })
     }
 
-    fn _received_cfilter<T: BlockReader, B: BlockSource>(
+    /// Handle a `cfilter` message.
+    ///
+    /// Returns a list of blocks that need to be fetched from the network.
+    fn received_cfilter<T: BlockReader, B: BlockSource>(
         &mut self,
         from: &PeerId,
         msg: CFilter,
@@ -1179,7 +1165,7 @@ mod tests {
                     .collect(),
             };
             cbfmgr.inflight.insert(msg.stop_hash, (1, *peer, time));
-            cbfmgr._received_cfheaders(peer, msg, &tree).unwrap();
+            cbfmgr.received_cfheaders(peer, msg, &tree).unwrap();
         }
 
         assert_eq!(cbfmgr.filters.height(), 15);
@@ -1196,7 +1182,7 @@ mod tests {
 
         // Now import the filters.
         for msg in cfilters {
-            cbfmgr._received_cfilter(peer, msg, &tree, &mut ()).unwrap();
+            cbfmgr.received_cfilter(peer, msg, &tree, &mut ()).unwrap();
         }
     }
 
@@ -1307,7 +1293,7 @@ mod tests {
             .unwrap();
 
         cbfmgr
-            ._received_cfheaders(
+            .received_cfheaders(
                 &remote,
                 CFHeaders {
                     filter_type,
@@ -1363,7 +1349,7 @@ mod tests {
             &tree,
         );
         cbfmgr
-            ._received_cfheaders(&remote, cfheaders, &tree)
+            .received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
         assert_eq!(cbfmgr.filters.height(), best);
 
@@ -1383,7 +1369,7 @@ mod tests {
 
         // Receive a filter, but not one that we can process immediately.
         cbfmgr
-            ._received_cfilter(
+            .received_cfilter(
                 &remote,
                 cfilters[birth as usize + 1].clone(),
                 &tree,
@@ -1396,7 +1382,7 @@ mod tests {
 
         // Receive a filter, that we can process immediately.
         cbfmgr
-            ._received_cfilter(&remote, cfilters[birth as usize].clone(), &tree, &mut ())
+            .received_cfilter(&remote, cfilters[birth as usize].clone(), &tree, &mut ())
             .unwrap();
 
         // We should be futher along now.
@@ -1421,7 +1407,7 @@ mod tests {
             .expect("`getcfilters` sent");
 
         cbfmgr
-            ._received_cfilter(&remote, cfilters[current as usize].clone(), &tree, &mut ())
+            .received_cfilter(&remote, cfilters[current as usize].clone(), &tree, &mut ())
             .unwrap();
         assert_eq!(cbfmgr.rescan.current, current + 1);
     }
@@ -1525,7 +1511,7 @@ mod tests {
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
             cbfmgr
-                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .received_cfilter(&remote, msg, &tree, &mut ())
                 .unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
@@ -1543,7 +1529,7 @@ mod tests {
         let cfheaders = util::cfheaders(*parent, &suffix);
 
         cbfmgr
-            ._received_cfheaders(&remote, cfheaders, &tree)
+            .received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
         assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
@@ -1619,7 +1605,7 @@ mod tests {
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
             cbfmgr
-                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .received_cfilter(&remote, msg, &tree, &mut ())
                 .unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
@@ -1657,7 +1643,7 @@ mod tests {
         // 7. Receive #6.
         let msg = util::cfilters(iter::once(missing)).next().unwrap();
         cbfmgr
-            ._received_cfilter(&remote, msg, &tree, &mut ())
+            .received_cfilter(&remote, msg, &tree, &mut ())
             .unwrap();
 
         // 8. Expect that 6 to 8 are processed and 7 and 8 come from the cache.
@@ -1737,7 +1723,7 @@ mod tests {
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
             cbfmgr
-                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .received_cfilter(&remote, msg, &tree, &mut ())
                 .unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
@@ -1755,7 +1741,7 @@ mod tests {
         let cfheaders = util::cfheaders(*parent, &suffix);
 
         cbfmgr
-            ._received_cfheaders(&remote, cfheaders, &tree)
+            .received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
         assert_eq!(cbfmgr.filters.height(), *rescan_range.end());
 
@@ -1831,7 +1817,7 @@ mod tests {
                 .next()
                 .unwrap();
             cbfmgr
-                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .received_cfilter(&remote, msg, &tree, &mut ())
                 .unwrap();
         }
         // Drain the message queue so we can check what is coming from the next rescan.
@@ -1857,7 +1843,7 @@ mod tests {
         // 4. Receive some of the missing filters.
         for msg in util::cfilters([&chain[5], &chain[7], &chain[9]].into_iter()) {
             cbfmgr
-                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .received_cfilter(&remote, msg, &tree, &mut ())
                 .unwrap();
         }
 
@@ -1913,7 +1899,7 @@ mod tests {
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
             cbfmgr
-                ._received_cfilter(&remote, msg, &tree, &mut ())
+                .received_cfilter(&remote, msg, &tree, &mut ())
                 .unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.len(), (best - birth) as usize + 1);
@@ -2013,7 +1999,7 @@ mod tests {
             // First let's catch up the client with filters up to the sync height.
             for filter in util::cfilters(chain.iter().take(sync_height as usize + 1)) {
                 cbfmgr
-                    ._received_cfilter(&remote, filter, &tree, &mut ())
+                    .received_cfilter(&remote, filter, &tree, &mut ())
                     .unwrap();
             }
             assert_eq!(cbfmgr.rescan.current, sync_height + 1);
@@ -2077,7 +2063,7 @@ mod tests {
             let (_, parent) = cbfmgr.filters.tip();
             let cfheaders = util::cfheaders(*parent, &fork);
             cbfmgr
-                ._received_cfheaders(&remote, cfheaders, &tree)
+                .received_cfheaders(&remote, cfheaders, &tree)
                 .unwrap();
 
             // Check that corresponding filters are requested within the scope of the
@@ -2162,7 +2148,7 @@ mod tests {
 
         let cfheaders = util::cfheaders(FilterHeader::genesis(network), &chain.tail);
         let height = cbfmgr
-            ._received_cfheaders(&remote, cfheaders, &tree)
+            .received_cfheaders(&remote, cfheaders, &tree)
             .unwrap();
 
         assert_eq!(height, best, "The new height is the best height");
@@ -2196,7 +2182,7 @@ mod tests {
         let mut matches = Vec::new();
         for (_, filter) in filters.into_iter() {
             let hashes = cbfmgr
-                ._received_cfilter(&remote, filter, &tree, &mut ())
+                .received_cfilter(&remote, filter, &tree, &mut ())
                 .unwrap();
 
             matches.extend(

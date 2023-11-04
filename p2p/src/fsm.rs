@@ -42,7 +42,7 @@ use nakamoto_common::bitcoin::consensus::encode;
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::{NetworkMessage, RawNetworkMessage};
-use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
+use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
 use nakamoto_common::bitcoin::network::message_filter::GetCFilters;
 use nakamoto_common::bitcoin::network::message_network::VersionMessage;
 use nakamoto_common::bitcoin::network::Address;
@@ -306,7 +306,7 @@ pub struct Hooks {
         Arc<dyn Fn(PeerId, &NetworkMessage, &Outbox) -> Result<(), &'static str> + Send + Sync>,
     /// Called when a `version` message is received.
     /// If an error is returned, the peer is dropped, and the error is logged.
-    pub on_version: Arc<dyn Fn(PeerId, VersionMessage) -> Result<(), &'static str> + Send + Sync>,
+    pub on_version: Arc<dyn Fn(PeerId, &VersionMessage) -> Result<(), &'static str> + Send + Sync>,
     /// Called when a `getcfilters` message is received.
     pub on_getcfilters: Arc<dyn Fn(PeerId, GetCFilters, &Outbox) + Send + Sync>,
     /// Called when a `getdata` message is received.
@@ -588,7 +588,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
     }
 }
 
-impl<T: BlockTree, F: Filters, P: peer::Store, C: nakamoto_common::block::time::Clock> Iterator
+impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> Iterator
     for StateMachine<T, F, P, C>
 {
     type Item = Io;
@@ -619,11 +619,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: nakamoto_common::block::time::
 
         match next {
             Some(Io::Event(e)) => {
-                self.cbfmgr.received_event(&e, &self.tree);
-                self.pingmgr.received_event(&e, &self.tree);
-                self.invmgr.received_event(&e, &self.tree);
-                self.syncmgr.received_event(&e, &self.tree);
-                self.addrmgr.received_event(&e, &self.tree);
+                self.event(e.clone());
 
                 Some(Io::Event(e))
             }
@@ -633,6 +629,18 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: nakamoto_common::block::time::
 }
 
 impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMachine<T, F, P, C> {
+    /// Propagate an event internally to the sub-systems.
+    pub fn event(&mut self, e: Event) {
+        self.cbfmgr
+            .received_event(e.clone(), &self.tree, &mut self.invmgr);
+        self.pingmgr.received_event(e.clone(), &self.tree);
+        self.invmgr.received_event(e.clone(), &self.tree);
+        self.syncmgr.received_event(e.clone(), &mut self.tree);
+        self.addrmgr.received_event(e.clone(), &self.tree);
+        self.peermgr
+            .received_event(e, &self.tree, &mut self.addrmgr);
+    }
+
     /// Process a user command.
     pub fn command(&mut self, cmd: Command) {
         debug!(target: "p2p", "Received command: {:?}", cmd);
@@ -765,7 +773,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
     }
 
     fn message_received(&mut self, addr: &net::SocketAddr, msg: Cow<RawNetworkMessage>) {
-        let now = self.clock.local_time();
         let cmd = msg.cmd();
         let addr = *addr;
         let msg = msg.into_owned();
@@ -790,84 +797,10 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
             return;
         }
 
-        match msg.payload {
-            NetworkMessage::Version(msg) => {
-                let height = self.tree.height();
-
-                self.peermgr
-                    .received_version(&addr, msg, height, &mut self.addrmgr);
-            }
-            NetworkMessage::Verack => {
-                self.peermgr.received_verack(&addr, now);
-            }
-            NetworkMessage::Ping(nonce) => {
-                if self.pingmgr.received_ping(addr, nonce) {
-                    self.addrmgr.peer_active(addr);
-                }
-            }
-            NetworkMessage::Pong(nonce) => {
-                if self.pingmgr.received_pong(addr, nonce, now) {
-                    self.addrmgr.peer_active(addr);
-                }
-            }
-            NetworkMessage::Headers(headers) => {
-                self.syncmgr
-                    .received_headers(&addr, headers, &self.clock, &mut self.tree);
-            }
-            NetworkMessage::GetHeaders(GetHeadersMessage {
-                locator_hashes,
-                stop_hash,
-                ..
-            }) => {
-                self.syncmgr
-                    .received_getheaders(&addr, (locator_hashes, stop_hash), &self.tree);
-            }
-            NetworkMessage::Block(block) => {
-                self.invmgr.received_block(&addr, block, &self.tree);
-            }
-            NetworkMessage::Inv(inventory) => {
-                self.syncmgr.received_inv(addr, inventory, &self.tree);
-                // TODO: invmgr: Update block availability for this peer.
-            }
-            NetworkMessage::CFHeaders(msg) => {
-                self.cbfmgr.received_cfheaders(&addr, msg, &self.tree);
-            }
-            NetworkMessage::GetCFHeaders(msg) => {
-                self.cbfmgr.received_getcfheaders(&addr, msg, &self.tree);
-            }
-            NetworkMessage::CFilter(msg) => {
-                self.cbfmgr
-                    .received_cfilter(&addr, msg, &self.tree, &mut self.invmgr);
-            }
-            NetworkMessage::GetCFilters(msg) => {
-                (*self.hooks.on_getcfilters)(addr, msg, &self.outbox);
-            }
-            NetworkMessage::Addr(addrs) => {
-                self.addrmgr.received_addr(addr, addrs);
-                // TODO: Tick the peer manager, because we may have new addresses to connect to.
-            }
-            NetworkMessage::GetAddr => {
-                self.addrmgr.received_getaddr(&addr);
-            }
-            NetworkMessage::GetData(invs) => {
-                self.invmgr.received_getdata(addr, &invs);
-                (*self.hooks.on_getdata)(addr, invs, &self.outbox);
-            }
-            NetworkMessage::WtxidRelay => {
-                self.peermgr.received_wtxidrelay(&addr);
-            }
-            NetworkMessage::SendHeaders => {
-                // We adhere to `sendheaders` by default.
-            }
-            NetworkMessage::Unknown {
-                command: ref cmd, ..
-            } => {
-                warn!(target: "p2p", "Ignoring unknown message {:?} from {}", cmd, addr)
-            }
-            _ => {
-                warn!(target: "p2p", "Ignoring {:?} from {}", cmd, addr);
-            }
-        }
+        self.event(Event::MessageReceived {
+            from: addr,
+            message: Arc::new(msg.payload),
+        });
     }
 
     fn attempted(&mut self, addr: &net::SocketAddr) {

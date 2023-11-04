@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
-use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
-
+use nakamoto_common::bitcoin::network::message::NetworkMessage;
+use nakamoto_common::bitcoin::network::message_blockdata::{GetHeadersMessage, Inventory};
 use nakamoto_common::bitcoin_hashes::Hash;
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::tree::{BlockReader, BlockTree, Error, ImportResult};
@@ -153,7 +153,7 @@ impl<C: Clock> SyncManager<C> {
     }
 
     /// Event received.
-    pub fn received_event<T: BlockReader>(&mut self, event: &Event, tree: &T) {
+    pub fn received_event<T: BlockTree>(&mut self, event: Event, tree: &mut T) {
         match event {
             Event::PeerNegotiated {
                 addr,
@@ -162,8 +162,28 @@ impl<C: Clock> SyncManager<C> {
                 height,
                 ..
             } => {
-                self.peer_negotiated(*addr, *height, *services, *link, tree);
+                self.peer_negotiated(addr, height, services, link, tree);
             }
+            Event::MessageReceived { from, message } => match message.as_ref() {
+                NetworkMessage::Headers(headers) => {
+                    self.received_headers(&from, headers, tree);
+                }
+                NetworkMessage::SendHeaders => {
+                    // We adhere to `sendheaders` by default.
+                }
+                NetworkMessage::GetHeaders(GetHeadersMessage {
+                    locator_hashes,
+                    stop_hash,
+                    ..
+                }) => {
+                    self.received_getheaders(&from, (locator_hashes.to_vec(), *stop_hash), tree);
+                }
+                NetworkMessage::Inv(inventory) => {
+                    self.received_inv(from, inventory, tree);
+                    // TODO: invmgr: Update block availability for this peer.
+                }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -260,12 +280,11 @@ impl<C: Clock> SyncManager<C> {
     pub fn received_headers<T: BlockTree>(
         &mut self,
         from: &PeerId,
-        headers: Vec<BlockHeader>,
-        clock: &impl Clock,
+        headers: &[BlockHeader],
         tree: &mut T,
     ) {
         let request = self.inflight.remove(from);
-        let Some(headers) = NonEmpty::from_vec(headers) else {
+        let Some(headers) = NonEmpty::from_vec(headers.to_vec()) else {
             return;
         };
         let length = headers.len();
@@ -287,7 +306,7 @@ impl<C: Clock> SyncManager<C> {
         }
 
         if let Some(peer) = self.peers.get_mut(from) {
-            peer.last_active = Some(clock.local_time());
+            peer.last_active = Some(self.clock.local_time());
         } else {
             return;
         }
@@ -319,7 +338,7 @@ impl<C: Clock> SyncManager<C> {
                 }
                 // Keep track of when we last updated our tip. This is useful to check
                 // whether our tip is stale.
-                self.last_tip_update = Some(clock.local_time());
+                self.last_tip_update = Some(self.clock.local_time());
 
                 // If we received less than the maximum number of headers, we must be in sync.
                 // Otherwise, ask for the next batch of headers.
@@ -391,7 +410,7 @@ impl<C: Clock> SyncManager<C> {
 
     /// Called when we received an `inv` message. This will happen if we are out of sync with a
     /// peer, and blocks are being announced. Otherwise, we expect to receive a `headers` message.
-    pub fn received_inv<T: BlockReader>(&mut self, addr: PeerId, inv: Vec<Inventory>, tree: &T) {
+    pub fn received_inv<T: BlockReader>(&mut self, addr: PeerId, inv: &[Inventory], tree: &T) {
         // Don't try to fetch headers from `inv` message while syncing. It's not helpful.
         if self.is_syncing() {
             return;
@@ -408,7 +427,7 @@ impl<C: Clock> SyncManager<C> {
         };
         let mut best_block = None;
 
-        for i in &inv {
+        for i in inv {
             if let Inventory::Block(hash) = i {
                 peer.tip = *hash;
 
