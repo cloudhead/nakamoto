@@ -235,15 +235,15 @@ impl fmt::Display for Event {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Initializing => {
-                write!(fmt, "initializing")
+                write!(fmt, "Initializing peer-to-peer system..")
             }
             Self::Ready { .. } => {
-                write!(fmt, "ready to process events and commands")
+                write!(fmt, "Ready to process events and commands")
             }
             Self::BlockHeadersSynced { height, hash } => {
                 write!(
                     fmt,
-                    "chain in sync with network at height {height} ({hash})"
+                    "Chain in sync with network at height {height} ({hash})"
                 )
             }
             Self::BlockHeadersImported {
@@ -252,19 +252,19 @@ impl fmt::Display for Event {
             } => {
                 write!(
                     fmt,
-                    "chain tip updated to {hash} at height {height} (reorg={reorg})"
+                    "Chain tip updated to {hash} at height {height} (reorg={reorg})"
                 )
             }
             Self::BlockHeadersImported {
                 result: ImportResult::TipUnchanged,
                 ..
             } => {
-                write!(fmt, "chain tip unchanged during import")
+                write!(fmt, "Chain tip unchanged during import")
             }
             Self::BlockConnected { header, height, .. } => {
                 write!(
                     fmt,
-                    "block {} connected at height {}",
+                    "Block {} connected at height {}",
                     header.block_hash(),
                     height
                 )
@@ -272,7 +272,7 @@ impl fmt::Display for Event {
             Self::BlockDisconnected { header, height, .. } => {
                 write!(
                     fmt,
-                    "block {} disconnected at height {}",
+                    "Block {} disconnected at height {}",
                     header.block_hash(),
                     height
                 )
@@ -280,18 +280,18 @@ impl fmt::Display for Event {
             Self::BlockProcessed { block, height, .. } => {
                 write!(
                     fmt,
-                    "block {} processed at height {}",
+                    "Block {} processed at height {}",
                     block.block_hash(),
                     height
                 )
             }
             Self::BlockMatched { height, .. } => {
-                write!(fmt, "block matched at height {}", height)
+                write!(fmt, "Block matched at height {}", height)
             }
             Self::FeeEstimated { fees, height, .. } => {
                 write!(
                     fmt,
-                    "transaction median fee rate for block #{} is {} sat/vB",
+                    "Transaction median fee rate for block #{} is {} sat/vB",
                     height, fees.median,
                 )
             }
@@ -299,57 +299,57 @@ impl fmt::Display for Event {
                 start,
                 stop: Some(stop),
             } => {
-                write!(fmt, "rescan started from height {start} to {stop}")
+                write!(fmt, "Rescan started from height {start} to {stop}")
             }
             Self::FilterRescanStarted { start, stop: None } => {
-                write!(fmt, "rescan started from height {start}")
+                write!(fmt, "Rescan started from height {start}")
             }
             Self::FilterRescanStopped { height } => {
-                write!(fmt, "rescan completed at height {height}")
+                write!(fmt, "Rescan completed at height {height}")
             }
             Self::FilterHeadersSynced { height } => {
-                write!(fmt, "filter headers synced up to height {height}")
+                write!(fmt, "Filter headers synced up to height {height}")
             }
             Self::FilterReceived { from, block, .. } => {
-                write!(fmt, "filter for block {block} received from {from}")
+                write!(fmt, "Filter for block {block} received from {from}")
             }
             Self::FilterProcessed {
                 height, matched, ..
             } => {
                 write!(
                     fmt,
-                    "filter processed at height {} (match = {})",
+                    "Filter processed at height {} (match = {})",
                     height, matched
                 )
             }
             Self::TxStatusChanged { txid, status } => {
-                write!(fmt, "transaction {} status changed: {}", txid, status)
+                write!(fmt, "Transaction {} status changed: {}", txid, status)
             }
             Self::Synced { height, .. } => write!(fmt, "filters synced up to height {}", height),
             Self::PeerConnected { addr, link } => {
-                write!(fmt, "peer {} connected ({:?})", &addr, link)
+                write!(fmt, "Peer {} connected ({:?})", &addr, link)
             }
             Self::PeerConnectionFailed { addr, error } => {
                 write!(
                     fmt,
-                    "peer connection attempt to {} failed with {}",
+                    "Peer connection attempt to {} failed with {}",
                     &addr, error
                 )
             }
             Self::PeerHeightUpdated { height } => {
-                write!(fmt, "peer height updated to {}", height)
+                write!(fmt, "Peer height updated to {}", height)
             }
             Self::PeerMisbehaved { addr } => {
-                write!(fmt, "peer {addr} misbehaved")
+                write!(fmt, "Peer {addr} misbehaved")
             }
             Self::PeerDisconnected { addr, reason } => {
-                write!(fmt, "disconnected from {} ({})", &addr, reason)
+                write!(fmt, "Disconnected from {} ({})", &addr, reason)
             }
             Self::PeerTimedOut { addr } => {
-                write!(fmt, "peer {addr} timed out")
+                write!(fmt, "Peer {addr} timed out")
             }
             Self::PeerConnecting { addr, .. } => {
-                write!(fmt, "connecting to peer {addr}")
+                write!(fmt, "Connecting to peer {addr}")
             }
             Self::PeerNegotiated {
                 addr,
@@ -358,17 +358,17 @@ impl fmt::Display for Event {
                 ..
             } => write!(
                 fmt,
-                "peer {} negotiated with services {} and height {}..",
+                "Peer {} negotiated with services {} and height {}..",
                 addr, services, height
             ),
             Self::AddressBookExhausted => {
                 write!(
                     fmt,
-                    "address book exhausted.. fetching new addresses from peers"
+                    "Address book exhausted.. fetching new addresses from peers"
                 )
             }
             Self::Error { message, source } => {
-                write!(fmt, "error: {message}: {source}")
+                write!(fmt, "Error: {message}: {source}")
             }
         }
     }
