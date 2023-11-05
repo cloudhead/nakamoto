@@ -233,7 +233,10 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                     match self.received_cfheaders(&from, msg.clone(), tree) {
                         Ok(_) => {}
                         Err(Error::InvalidMessage { from, .. }) => {
-                            self.outbox.event(Event::PeerMisbehaved { addr: from });
+                            self.outbox.event(Event::PeerMisbehaved {
+                                addr: from,
+                                reason: "invalid `cfheaders` message",
+                            });
                         }
                         Err(Error::Filters(e)) => {
                             self.outbox
@@ -248,7 +251,10 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                     match self.received_getcfheaders(&from, msg.clone(), tree) {
                         Ok(_) => {}
                         Err(Error::InvalidMessage { from, .. }) => {
-                            self.outbox.event(Event::PeerMisbehaved { addr: from });
+                            self.outbox.event(Event::PeerMisbehaved {
+                                addr: from,
+                                reason: "invalid `getcfheaders` message",
+                            });
                         }
                         Err(Error::Filters(e)) => {
                             self.outbox
@@ -263,7 +269,10 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                     match self.received_cfilter(&from, msg.clone(), tree, blocks) {
                         Ok(_) => {}
                         Err(Error::InvalidMessage { from, .. }) => {
-                            self.outbox.event(Event::PeerMisbehaved { addr: from });
+                            self.outbox.event(Event::PeerMisbehaved {
+                                addr: from,
+                                reason: "invalid `cfilter` message",
+                            });
                         }
                         Err(Error::Filters(e)) => {
                             self.outbox

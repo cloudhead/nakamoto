@@ -101,6 +101,8 @@ pub enum Event {
     PeerMisbehaved {
         /// Peer address.
         addr: PeerId,
+        /// Reason of misbehavior.
+        reason: &'static str,
     },
     /// A block was added to the main chain.
     BlockConnected {
@@ -347,8 +349,8 @@ impl fmt::Display for Event {
             Self::PeerHeightUpdated { height } => {
                 write!(fmt, "Peer height updated to {}", height)
             }
-            Self::PeerMisbehaved { addr } => {
-                write!(fmt, "Peer {addr} misbehaved")
+            Self::PeerMisbehaved { addr, reason } => {
+                write!(fmt, "Peer {addr} misbehaved: {reason}")
             }
             Self::PeerDisconnected { addr, reason } => {
                 write!(fmt, "Disconnected from {} ({})", &addr, reason)

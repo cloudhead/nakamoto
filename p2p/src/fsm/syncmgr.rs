@@ -290,11 +290,8 @@ impl<C: Clock> SyncManager<C> {
         let length = headers.len();
 
         if length > MAX_MESSAGE_HEADERS {
-            log::debug!("Received more than maximum headers allowed from {}", from);
-
-            self.record_misbehavior(from);
-            self.outbox
-                .disconnect(*from, DisconnectReason::PeerMisbehaving("too many headers"));
+            log::debug!("Received more than maximum headers allowed from {from}");
+            self.record_misbehavior(from, "invalid `headers` message");
 
             return;
         }
@@ -367,7 +364,7 @@ impl<C: Clock> SyncManager<C> {
             ) => {
                 log::warn!(target: "p2p", "Received invalid headers from {from}: {e}");
 
-                self.record_misbehavior(from);
+                self.record_misbehavior(from, "invalid headers in `headers` message");
             }
             // Harmless errors can be ignored.
             Err(Error::DuplicateBlock(_) | Error::BlockMissing(_)) => {}
@@ -513,8 +510,11 @@ impl<C: Clock> SyncManager<C> {
 
     ///////////////////////////////////////////////////////////////////////////
 
-    fn record_misbehavior(&mut self, addr: &PeerId) {
-        self.outbox.event(Event::PeerMisbehaved { addr: *addr });
+    fn record_misbehavior(&mut self, addr: &PeerId, reason: &'static str) {
+        self.outbox.event(Event::PeerMisbehaved {
+            addr: *addr,
+            reason,
+        });
     }
 
     /// Check whether our current tip is stale.
