@@ -1,8 +1,6 @@
 //!
 //! Manages header synchronization with peers.
 //!
-use std::sync::Arc;
-
 use nakamoto_common::bitcoin::consensus::params::Params;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
@@ -353,7 +351,7 @@ impl<C: Clock> SyncManager<C> {
             }
             // If this is an error with the underlying store, we have to propagate
             // this up, because we can't handle it here.
-            Err(Error::Store(e)) => self.outbox.error("block header import failed", Arc::new(e)),
+            Err(Error::Store(e)) => self.outbox.error(e),
             // If we got a bad block from the peer, we can handle it here.
             Err(
                 e @ Error::InvalidBlockPoW

@@ -3,7 +3,6 @@
 //!
 #![warn(missing_docs)]
 use std::net;
-use std::sync::Arc;
 
 use nakamoto_common::bitcoin::network::address::Address;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
@@ -277,10 +276,7 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
     fn idle(&mut self) {
         // If it's been a while, save addresses to store.
         if let Err(err) = self.peers.flush() {
-            self.outbox.event(Event::Error {
-                message: String::from("flush to disk failed"),
-                source: Arc::new(err),
-            });
+            self.outbox.error(err);
         }
         self.last_idle = Some(self.clock.local_time());
         self.outbox.set_timer(IDLE_TIMEOUT);

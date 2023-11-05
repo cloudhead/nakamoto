@@ -64,8 +64,11 @@ pub enum Error {
         reason: &'static str,
     },
     /// Error with the underlying filters datastore.
-    #[error("filters error: {0}")]
-    Filters(#[from] filter::Error),
+    #[error("{message}: {error}")]
+    Filters {
+        message: &'static str,
+        error: filter::Error,
+    },
 }
 
 /// An error from attempting to get compact filters.
@@ -202,7 +205,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                     let fork_height = height - 1;
 
                     if let Err(e) = self.rollback(fork_height) {
-                        self.outbox.error("error rolling back filter chain", e);
+                        self.outbox.error(e);
                     }
                 }
                 // Trigger a filter sync, since we're going to have to catch up on the
@@ -238,9 +241,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                                 reason: "invalid `cfheaders` message",
                             });
                         }
-                        Err(Error::Filters(e)) => {
-                            self.outbox
-                                .error("error processing filter headers from {from}", e);
+                        Err(e @ Error::Filters { .. }) => {
+                            self.outbox.error(e);
                         }
                         Err(e @ Error::Ignored { .. }) => {
                             log::warn!(target: "p2p", "Dropped `cfheaders` message: {e}");
@@ -256,9 +258,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                                 reason: "invalid `getcfheaders` message",
                             });
                         }
-                        Err(Error::Filters(e)) => {
-                            self.outbox
-                                .error("error processing `getcfheaders` from {from}", e);
+                        Err(e @ Error::Filters { .. }) => {
+                            self.outbox.error(e);
                         }
                         Err(e @ Error::Ignored { .. }) => {
                             log::warn!(target: "p2p", "Dropped `getcfheaders` message: {e}");
@@ -274,9 +275,8 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                                 reason: "invalid `cfilter` message",
                             });
                         }
-                        Err(Error::Filters(e)) => {
-                            self.outbox
-                                .error("error processing `cfilter` from {from}", e);
+                        Err(e @ Error::Filters { .. }) => {
+                            self.outbox.error(e);
                         }
                         Err(e @ Error::Ignored { .. }) => {
                             log::warn!(target: "p2p", "Dropped `cfilter` message: {e}");
@@ -695,7 +695,10 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                 }
                 height
             })
-            .map_err(Error::from)
+            .map_err(|error| Error::Filters {
+                message: "error importing filter headers",
+                error,
+            })
     }
 
     /// Handle a `getcfheaders` message from a peer.

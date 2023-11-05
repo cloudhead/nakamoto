@@ -1,6 +1,6 @@
 //! State machine events.
 use std::sync::Arc;
-use std::{fmt, io, net};
+use std::{error, fmt, io, net};
 
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
@@ -234,10 +234,8 @@ pub enum Event {
     },
     /// An error occured.
     Error {
-        /// Error message.
-        message: String,
         /// Error source.
-        source: Arc<dyn std::error::Error + 'static + Sync + Send>,
+        error: Arc<dyn error::Error + 'static + Sync + Send>,
     },
 }
 
@@ -380,8 +378,8 @@ impl fmt::Display for Event {
                     "Address book exhausted.. fetching new addresses from peers"
                 )
             }
-            Self::Error { message, source } => {
-                write!(fmt, "Error: {message}: {source}")
+            Self::Error { error } => {
+                write!(fmt, "Error: {error}")
             }
         }
     }

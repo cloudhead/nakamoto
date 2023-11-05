@@ -243,14 +243,9 @@ impl Outbox {
     }
 
     /// Output an error.
-    pub fn error(
-        &mut self,
-        message: impl ToString,
-        source: impl std::error::Error + Send + Sync + 'static,
-    ) {
+    pub fn error(&mut self, error: impl std::error::Error + Send + Sync + 'static) {
         self.event(Event::Error {
-            message: message.to_string(),
-            source: Arc::new(source),
+            error: Arc::new(error),
         })
     }
 }
