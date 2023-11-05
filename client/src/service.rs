@@ -142,7 +142,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<p2p::PeerId>> It
     fn next(&mut self) -> Option<Self::Item> {
         match self.machine.next() {
             Some(Io::Write(addr, msg)) => {
-                log::debug!(target: "client", "Write {:?} to {}", &msg, addr.ip());
+                log::trace!(target: "client", "Write {:?} to {}", &msg, addr.ip());
                 let mut buf = Vec::new();
 
                 msg.consensus_encode(&mut buf)

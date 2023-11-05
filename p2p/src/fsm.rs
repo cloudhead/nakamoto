@@ -111,8 +111,6 @@ pub enum DisconnectReason {
     PeerMagic(u32),
     /// Peer timed out.
     PeerTimeout(&'static str),
-    /// Peer was dropped by all sub-protocols.
-    PeerDropped,
     /// Connection to self was detected.
     SelfConnection,
     /// Inbound connection limit reached.
@@ -151,7 +149,6 @@ impl fmt::Display for DisconnectReason {
             Self::PeerHeight(_) => write!(f, "peer is too far behind"),
             Self::PeerMagic(magic) => write!(f, "received message with invalid magic: {}", magic),
             Self::PeerTimeout(s) => write!(f, "peer timed out: {:?}", s),
-            Self::PeerDropped => write!(f, "peer dropped"),
             Self::SelfConnection => write!(f, "detected self-connection"),
             Self::ConnectionLimit => write!(f, "inbound connection limit reached"),
             Self::DecodeError(err) => write!(f, "message decode error: {}", err),
@@ -559,10 +556,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
 
     /// Disconnect a peer.
     pub fn disconnect(&mut self, addr: PeerId, reason: DisconnectReason) {
-        // TODO: Trigger disconnection everywhere, as if peer disconnected. This
-        // avoids being in a state where we know a peer is about to get disconnected,
-        // but we still process messages from it as normal.
-
         self.peermgr.disconnect(addr, reason);
     }
 
@@ -675,7 +668,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
                 self.peermgr.connect(&addr);
             }
             Command::Disconnect(addr) => {
-                self.disconnect(addr, DisconnectReason::Command);
+                self.peermgr.disconnect(addr, DisconnectReason::Command);
             }
             Command::Broadcast(msg, predicate, reply) => {
                 let peers = self.broadcast(msg, |p| predicate(p.clone()));
@@ -778,7 +771,9 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         let msg = msg.into_owned();
 
         if msg.magic != self.network.magic() {
-            return self.disconnect(addr, DisconnectReason::PeerMagic(msg.magic));
+            return self
+                .peermgr
+                .disconnect(addr, DisconnectReason::PeerMagic(msg.magic));
         }
 
         if !self.peermgr.is_connected(&addr) {

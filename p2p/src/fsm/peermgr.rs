@@ -232,6 +232,9 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
         addrs: &mut A,
     ) {
         match event {
+            Event::PeerTimedOut { addr } => {
+                self.disconnect(addr, DisconnectReason::PeerTimeout("other"));
+            }
             Event::MessageReceived { from, message } => match message.as_ref() {
                 NetworkMessage::Version(msg) => {
                     self.received_version(&from, msg, tree.height(), addrs);
