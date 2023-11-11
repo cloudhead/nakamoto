@@ -187,7 +187,7 @@ impl<C: Clock> SyncManager<C> {
     }
 
     /// Called when a new peer was negotiated.
-    pub fn peer_negotiated<T: BlockReader>(
+    fn peer_negotiated<T: BlockReader>(
         &mut self,
         addr: PeerId,
         height: Height,

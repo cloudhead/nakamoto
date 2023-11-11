@@ -2,6 +2,7 @@
 use std::sync::Arc;
 use std::{error, fmt, io, net};
 
+use nakamoto_common::bitcoin::network::address::Address;
 use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::{Transaction, Txid};
@@ -36,6 +37,8 @@ pub enum Event {
     PeerConnected {
         /// Peer address.
         addr: PeerId,
+        /// Local address.
+        local_addr: net::SocketAddr,
         /// Connection link.
         link: Link,
     },
@@ -80,6 +83,8 @@ pub enum Event {
         persistent: bool,
         /// Peer height.
         height: Height,
+        /// Address of our node, as seen by remote.
+        receiver: Address,
         /// Peer user agent.
         user_agent: String,
         /// Negotiated protocol version.
@@ -334,7 +339,7 @@ impl fmt::Display for Event {
                 write!(fmt, "Transaction {} status changed: {}", txid, status)
             }
             Self::Synced { height, .. } => write!(fmt, "filters synced up to height {}", height),
-            Self::PeerConnected { addr, link } => {
+            Self::PeerConnected { addr, link, .. } => {
                 write!(fmt, "Peer {} connected ({:?})", &addr, link)
             }
             Self::PeerConnectionFailed { addr, error } => {

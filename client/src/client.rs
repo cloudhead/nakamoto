@@ -574,7 +574,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
         event::wait(
             &events,
             |e| match e {
-                fsm::Event::PeerConnected { addr: a, link }
+                fsm::Event::PeerConnected { addr: a, link, .. }
                     if a == addr || (addr.ip().is_unspecified() && a.port() == addr.port()) =>
                 {
                     Some(link)

@@ -56,7 +56,6 @@ use nakamoto_common::block::{BlockHash, Height};
 use nakamoto_common::block::{BlockTime, Transaction};
 use nakamoto_common::network;
 use nakamoto_common::nonempty::NonEmpty;
-use nakamoto_common::p2p::peer::AddressSource;
 use nakamoto_common::p2p::{peer, Domain};
 use nakamoto_net as traits;
 
@@ -630,8 +629,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
         self.invmgr.received_event(e.clone(), &self.tree);
         self.syncmgr.received_event(e.clone(), &mut self.tree);
         self.addrmgr.received_event(e.clone(), &self.tree);
-        self.peermgr
-            .received_event(e, &self.tree, &mut self.addrmgr);
+        self.peermgr.received_event(e, &self.tree);
     }
 
     /// Process a user command.
@@ -792,6 +790,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
             return;
         }
 
+        // Nb. We only send this message internally, hence we don't
+        // push it to our outbox.
         self.event(Event::MessageReceived {
             from: addr,
             message: Arc::new(msg.payload),
@@ -804,11 +804,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
     }
 
     fn connected(&mut self, addr: net::SocketAddr, local_addr: &net::SocketAddr, link: Link) {
-        let height = self.tree.height();
-
-        self.addrmgr.record_local_address(*local_addr);
-        self.addrmgr.peer_connected(&addr);
-        self.peermgr.peer_connected(addr, *local_addr, link, height);
+        self.peermgr
+            .peer_connected(addr, *local_addr, link, self.tree.height());
     }
 
     fn disconnected(

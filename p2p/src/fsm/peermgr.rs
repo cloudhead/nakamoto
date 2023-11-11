@@ -28,7 +28,6 @@ use nakamoto_common::p2p::Domain;
 use nakamoto_common::block::time::{AdjustedClock, Clock, LocalDuration, LocalTime};
 use nakamoto_common::block::Height;
 use nakamoto_common::collections::{HashMap, HashSet};
-use nakamoto_common::source;
 use nakamoto_net as network;
 
 use crate::fsm::addrmgr;
@@ -55,6 +54,13 @@ const MAX_STALE_HEIGHT_DIFFERENCE: Height = 2016;
 
 /// A time offset, in seconds.
 type TimeOffset = i64;
+
+#[derive(thiserror::Error, Debug)]
+pub enum Error {
+    /// Connection to peer failed.
+    #[error("connection to {addr} failed")]
+    ConnectionFailed { addr: PeerId },
+}
 
 /// Peer manager configuration.
 #[derive(Debug, Clone)]
@@ -140,6 +146,8 @@ pub struct PeerInfo {
     /// An offset in seconds, between this peer's clock and ours.
     /// A positive offset means the peer's clock is ahead of ours.
     pub time_offset: TimeOffset,
+    /// Address of our node, as seen by remote.
+    pub receiver: Address,
     /// Whether this peer relays transactions.
     pub relay: bool,
     /// Whether this peer supports BIP-339.
@@ -212,12 +220,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
 
         for addr in peers {
             if !self.connect(&addr) {
-                // TODO: Return error here, or send event.
-                panic!(
-                    "{}: unable to connect to persistent peer: {}",
-                    source!(),
-                    addr
-                );
+                self.outbox.error(Error::ConnectionFailed { addr });
             }
         }
         self.outbox.set_timer(IDLE_TIMEOUT);
@@ -225,12 +228,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
     }
 
     /// Event received.
-    pub fn received_event<T: BlockReader, A: AddressSource>(
-        &mut self,
-        event: Event,
-        tree: &T,
-        addrs: &mut A,
-    ) {
+    pub fn received_event<T: BlockReader>(&mut self, event: Event, tree: &T) {
         match event {
             Event::PeerTimedOut { addr } => {
                 self.disconnect(addr, DisconnectReason::PeerTimeout("other"));
@@ -240,7 +238,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
             }
             Event::MessageReceived { from, message } => match message.as_ref() {
                 NetworkMessage::Version(msg) => {
-                    self.received_version(&from, msg, tree.height(), addrs);
+                    self.received_version(&from, msg, tree.height());
                 }
                 NetworkMessage::Verack => {
                     self.received_verack(&from);
@@ -349,7 +347,11 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
         }
         // Set a timeout for receiving the `version` message.
         self.outbox.set_timer(HANDSHAKE_TIMEOUT);
-        self.outbox.event(Event::PeerConnected { addr, link });
+        self.outbox.event(Event::PeerConnected {
+            addr,
+            local_addr,
+            link,
+        });
     }
 
     /// Called when a peer disconnected.
@@ -408,24 +410,17 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
     }
 
     /// Called when a `version` message was received.
-    fn received_version<A: AddressSource>(
-        &mut self,
-        addr: &PeerId,
-        msg: &VersionMessage,
-        height: Height,
-        addrs: &mut A,
-    ) {
-        if let Err(reason) = self.handle_version(addr, msg, height, addrs) {
+    fn received_version(&mut self, addr: &PeerId, msg: &VersionMessage, height: Height) {
+        if let Err(reason) = self.handle_version(addr, msg, height) {
             self._disconnect(*addr, reason);
         }
     }
 
-    fn handle_version<A: AddressSource>(
+    fn handle_version(
         &mut self,
         addr: &PeerId,
         msg: &VersionMessage,
         height: Height,
-        addrs: &mut A,
     ) -> Result<(), DisconnectReason> {
         let now = self.clock.local_time();
 
@@ -496,11 +491,6 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
                 return Err(DisconnectReason::Other(reason));
             }
 
-            // Record the address this peer has of us.
-            if let Ok(addr) = receiver.socket_addr() {
-                addrs.record_local_address(addr);
-            }
-
             match conn.link {
                 Link::Inbound => {
                     self.outbox
@@ -535,6 +525,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
                         services,
                         persistent,
                         user_agent,
+                        receiver,
                         state: HandshakeState::ReceivedVersion { since: now },
                         relay,
                         wtxidrelay: false,
@@ -561,6 +552,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
                     services: peer.services,
                     persistent: peer.persistent,
                     user_agent: peer.user_agent.clone(),
+                    receiver: peer.receiver.clone(),
                     height: peer.height,
                     version: peer.version,
                     relay: peer.relay,
@@ -988,7 +980,7 @@ mod tests {
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
         peermgr.peer_connected(remote, local, Link::Outbound, height);
-        peermgr.received_version(&remote, &version, height, &mut addrs);
+        peermgr.received_version(&remote, &version, height);
 
         assert_matches!(
             peermgr.peers.get(&remote),
@@ -1024,7 +1016,7 @@ mod tests {
         peermgr.initialize(&mut addrs);
         peermgr.connect(&remote);
         peermgr.peer_connected(remote, local, Link::Outbound, height);
-        peermgr.received_version(&remote, &version, height, &mut addrs);
+        peermgr.received_version(&remote, &version, height);
         peermgr.received_verack(&remote);
         peermgr.received_wtxidrelay(&remote);
 
@@ -1210,7 +1202,7 @@ mod tests {
                 peermgr.peer_connected(remote, local, Link::Outbound, height);
                 assert!(peermgr.peers.contains_key(&remote));
 
-                peermgr.received_version(&remote, &version, height, &mut addrs);
+                peermgr.received_version(&remote, &version, height);
                 assert!(peermgr.peers.contains_key(&remote));
 
                 peermgr.received_verack(&remote);
@@ -1230,7 +1222,7 @@ mod tests {
                 peermgr.peer_connected(remote, local, Link::Outbound, height);
                 assert!(peermgr.peers.contains_key(&remote));
 
-                peermgr.received_version(&remote, &version, height, &mut addrs);
+                peermgr.received_version(&remote, &version, height);
                 assert!(peermgr.peers.contains_key(&remote));
 
                 peermgr.received_verack(&remote);

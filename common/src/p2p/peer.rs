@@ -350,8 +350,6 @@ impl KnownAddress {
 pub trait AddressSource {
     /// Sample a random peer address. Returns `None` if there are no addresses left.
     fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)>;
-    /// Record an address of ours as seen by a remote peer.
-    fn record_local_address(&mut self, addr: net::SocketAddr);
     /// Return an iterator over random peer addresses.
     fn iter(&mut self, services: ServiceFlags) -> Box<dyn Iterator<Item = (Address, Source)> + '_>;
 }
@@ -363,10 +361,6 @@ pub mod test {
     impl AddressSource for std::collections::VecDeque<(Address, Source)> {
         fn sample(&mut self, _services: ServiceFlags) -> Option<(Address, Source)> {
             self.pop_front()
-        }
-
-        fn record_local_address(&mut self, _addr: net::SocketAddr) {
-            // Do nothing.
         }
 
         fn iter(

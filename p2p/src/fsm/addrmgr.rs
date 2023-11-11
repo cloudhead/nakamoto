@@ -136,12 +136,19 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
     /// Event received.
     pub fn received_event<T>(&mut self, event: Event, _tree: &T) {
         match event {
+            Event::PeerConnected { addr, .. } => {
+                self.peer_connected(&addr);
+            }
             Event::PeerNegotiated {
                 addr,
                 link,
                 services,
+                receiver,
                 ..
             } => {
+                if let Ok(addr) = receiver.socket_addr() {
+                    self.local_addrs.insert(addr);
+                }
                 self.peer_negotiated(&addr, services, link);
             }
             Event::MessageReceived { from, message } => {
@@ -214,7 +221,7 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
     }
 
     /// Called when a peer has connected.
-    pub fn peer_connected(&mut self, addr: &net::SocketAddr) {
+    fn peer_connected(&mut self, addr: &net::SocketAddr) {
         if !self::is_routable(&addr.ip()) || self::is_local(&addr.ip()) {
             return;
         }
@@ -222,7 +229,7 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
     }
 
     /// Called when a peer has handshaked.
-    pub fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags, link: Link) {
+    fn peer_negotiated(&mut self, addr: &net::SocketAddr, services: ServiceFlags, link: Link) {
         let time = self.clock.local_time();
 
         if !self.connected.contains(&addr.ip()) {
@@ -561,10 +568,6 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
 impl<P: Store, C: Clock> AddressSource for AddressManager<P, C> {
     fn sample(&mut self, services: ServiceFlags) -> Option<(Address, Source)> {
         AddressManager::sample(self, services)
-    }
-
-    fn record_local_address(&mut self, addr: net::SocketAddr) {
-        self.local_addrs.insert(addr);
     }
 
     fn iter(&mut self, services: ServiceFlags) -> Box<dyn Iterator<Item = (Address, Source)> + '_> {

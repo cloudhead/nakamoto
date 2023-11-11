@@ -343,6 +343,7 @@ mod test {
         client
             .protocol
             .connected(remote, &local_addr, Link::Inbound);
+        client.step();
         client.received(&remote, version(42));
         client.received(&remote, NetworkMessage::Verack);
         client.step();
@@ -357,6 +358,7 @@ mod test {
         client
             .protocol
             .connected(remote, &local_addr, Link::Inbound);
+        client.step();
         client.received(&remote, version(43));
         client.received(&remote, NetworkMessage::Verack);
         client.step();
