@@ -168,6 +168,9 @@ impl<C: Clock> InventoryManager<C> {
             } => {
                 self.peer_negotiated(addr, services, relay, wtxid_relay);
             }
+            Event::PeerDisconnected { addr, .. } => {
+                self.peers.remove(&addr);
+            }
             Event::BlockHeadersImported {
                 result: ImportResult::TipChanged { reverted, .. },
                 ..
@@ -191,7 +194,7 @@ impl<C: Clock> InventoryManager<C> {
     }
 
     /// Called when a peer is negotiated.
-    pub fn peer_negotiated(
+    fn peer_negotiated(
         &mut self,
         addr: PeerId,
         services: ServiceFlags,
@@ -216,11 +219,6 @@ impl<C: Clock> InventoryManager<C> {
                 requests: HashMap::with_hasher(self.rng.clone().into()),
             },
         );
-    }
-
-    /// Called when a peer disconnected.
-    pub fn peer_disconnected(&mut self, id: &PeerId) {
-        self.peers.remove(id);
     }
 
     /// Called when a block is reverted.

@@ -95,6 +95,9 @@ impl<C: Clock> PingManager<C> {
             Event::PeerNegotiated { addr, .. } => {
                 self.peer_negotiated(addr);
             }
+            Event::PeerDisconnected { addr, .. } => {
+                self.peers.remove(&addr);
+            }
             Event::MessageReceived { from, message } => match message.as_ref() {
                 NetworkMessage::Ping(nonce) => {
                     self.received_ping(from, *nonce);
@@ -109,7 +112,7 @@ impl<C: Clock> PingManager<C> {
     }
 
     /// Called when a peer is negotiated.
-    pub fn peer_negotiated(&mut self, address: PeerId) {
+    fn peer_negotiated(&mut self, address: PeerId) {
         let nonce = self.rng.u64(..);
         let now = self.clock.local_time();
 
@@ -122,11 +125,6 @@ impl<C: Clock> PingManager<C> {
                 latencies: VecDeque::new(),
             },
         );
-    }
-
-    /// Called when a peer is disconnected.
-    pub fn peer_disconnected(&mut self, addr: &PeerId) {
-        self.peers.remove(addr);
     }
 
     /// Called when a tick is received.

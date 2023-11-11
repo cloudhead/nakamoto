@@ -184,6 +184,9 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             } => {
                 self.peer_negotiated(addr, height, services, link, persistent, tree);
             }
+            Event::PeerDisconnected { addr, .. } => {
+                self.peers.remove(&addr);
+            }
             Event::BlockProcessed { block, height, .. } => {
                 if self.pending_blocks.remove(&height) {
                     self.outbox.event(Event::BlockMatched { block, height });
@@ -505,11 +508,6 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         }
 
         Ok(())
-    }
-
-    /// Called when a peer disconnected.
-    pub fn peer_disconnected(&mut self, id: &PeerId) {
-        self.peers.remove(id);
     }
 
     /// Called when a new peer was negotiated.

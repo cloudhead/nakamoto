@@ -151,6 +151,9 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
                 }
                 self.peer_negotiated(&addr, services, link);
             }
+            Event::PeerDisconnected { addr, reason } => {
+                self.peer_disconnected(&addr, reason);
+            }
             Event::MessageReceived { from, message } => {
                 if let Some(ka) = self.peers.get_mut(&from.ip()) {
                     ka.last_active = Some(self.clock.local_time());
@@ -255,7 +258,7 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
     }
 
     /// Called when a peer disconnected.
-    pub fn peer_disconnected(
+    fn peer_disconnected(
         &mut self,
         addr: &net::SocketAddr,
         reason: Disconnect<super::DisconnectReason>,

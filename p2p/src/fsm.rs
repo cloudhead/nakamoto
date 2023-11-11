@@ -813,13 +813,8 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
         addr: &net::SocketAddr,
         reason: nakamoto_net::Disconnect<DisconnectReason>,
     ) {
-        self.cbfmgr.peer_disconnected(addr);
-        self.syncmgr.peer_disconnected(addr);
-        self.addrmgr.peer_disconnected(addr, reason.clone());
-        self.pingmgr.peer_disconnected(addr);
         self.peermgr
             .peer_disconnected(addr, &mut self.addrmgr, reason);
-        self.invmgr.peer_disconnected(addr);
     }
 
     fn tick(&mut self, local_time: LocalTime) {

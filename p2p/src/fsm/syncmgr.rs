@@ -162,6 +162,9 @@ impl<C: Clock> SyncManager<C> {
             } => {
                 self.peer_negotiated(addr, height, services, link, tree);
             }
+            Event::PeerDisconnected { addr, .. } => {
+                self.unregister(&addr);
+            }
             Event::MessageReceived { from, message } => match message.as_ref() {
                 NetworkMessage::Headers(headers) => {
                     self.received_headers(&from, headers, tree);
@@ -212,11 +215,6 @@ impl<C: Clock> SyncManager<C> {
             link,
         );
         self.sync(tree);
-    }
-
-    /// Called when a peer disconnected.
-    pub fn peer_disconnected(&mut self, id: &PeerId) {
-        self.unregister(id);
     }
 
     /// Called when we received a `getheaders` message from a peer.
