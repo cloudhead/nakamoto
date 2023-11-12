@@ -268,7 +268,7 @@ enum Status {
 impl fmt::Display for Status {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fn percent(a: f64, b: f64) -> String {
-            format!("{:.2}%", a as f64 / b as f64 * 100.)
+            format!("{:.2}%", a / b * 100.)
         }
 
         match self {

@@ -4,6 +4,7 @@
 //!
 mod rescan;
 
+use std::collections::BTreeSet;
 use std::ops::{Bound, RangeInclusive};
 
 use thiserror::Error;
@@ -14,9 +15,9 @@ use nakamoto_common::bitcoin::network::message_filter::{CFHeaders, CFilter, GetC
 use nakamoto_common::bitcoin::{Script, Transaction, Txid};
 use nakamoto_common::block::filter::{self, BlockFilter, Filters};
 use nakamoto_common::block::time::{Clock, LocalDuration, LocalTime};
-use nakamoto_common::block::tree::{BlockReader, ImportResult};
+use nakamoto_common::block::tree::BlockReader;
 use nakamoto_common::block::{BlockHash, Height};
-use nakamoto_common::collections::{AddressBook, HashMap, HashSet};
+use nakamoto_common::collections::{AddressBook, HashMap};
 use nakamoto_common::source;
 
 use super::event::TxStatus;
@@ -128,7 +129,7 @@ pub struct FilterManager<F, C> {
     /// We use this to figure out when to re-issue filter requests.
     last_processed: Option<LocalTime>,
     /// Pending block requests.
-    pending_blocks: HashSet<Height>,
+    pending_blocks: BTreeSet<Height>,
     /// Inflight requests.
     inflight: HashMap<BlockHash, (Height, PeerId, LocalTime)>,
 }
@@ -154,7 +155,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             outbox: Outbox::default(),
             clock,
             filters,
-            pending_blocks: HashSet::with_hasher(rng.clone().into()),
+            pending_blocks: BTreeSet::new(),
             inflight: HashMap::with_hasher(rng.into()),
             last_idle: None,
             last_processed: None,
@@ -190,16 +191,24 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             Event::BlockProcessed { block, height, .. } => {
                 if self.pending_blocks.remove(&height) {
                     self.outbox.event(Event::BlockMatched { block, height });
+
+                    // Since blocks are processed and matched in-order, we know this is the latest
+                    // block that has matched.
+                    // If there are no pending blocks however, it means there are no other matches,
+                    // therefore we can jump to the current rescan height.
+                    let height = if self.pending_blocks.is_empty() {
+                        self.rescan.current.max(height)
+                    } else {
+                        height
+                    };
+                    self.outbox.event(Event::Scanned { height });
                 }
             }
             Event::BlockDisconnected { height, .. } => {
                 // In case of a re-org, make sure we don't accept old blocks that were requested.
                 self.pending_blocks.remove(&height);
             }
-            Event::BlockHeadersImported {
-                result: ImportResult::TipChanged { reverted, .. },
-                ..
-            } => {
+            Event::BlockHeadersImported { reverted, .. } => {
                 // Nb. the reverted blocks are ordered from the tip down to
                 // the oldest ancestor.
                 if let Some((height, _)) = reverted.last() {
@@ -270,8 +279,21 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                     }
                 }
                 NetworkMessage::CFilter(msg) => {
-                    match self.received_cfilter(&from, msg.clone(), tree, blocks) {
-                        Ok(_) => {}
+                    match self.received_cfilter(&from, msg.clone(), tree) {
+                        Ok(matches) => {
+                            for (height, hash) in matches {
+                                if self.pending_blocks.insert(height) {
+                                    blocks.get_block(hash);
+                                }
+                            }
+                            // Filters being processed only updates our progress if there are no
+                            // pending blocks. Otherwise we have to wait for the block to arrive.
+                            if self.pending_blocks.is_empty() {
+                                self.outbox.event(Event::Scanned {
+                                    height: self.rescan.current,
+                                });
+                            }
+                        }
                         Err(Error::InvalidMessage { from, .. }) => {
                             self.outbox.event(Event::PeerMisbehaved {
                                 addr: from,
@@ -755,12 +777,11 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     /// Handle a `cfilter` message.
     ///
     /// Returns a list of blocks that need to be fetched from the network.
-    fn received_cfilter<T: BlockReader, B: BlockSource>(
+    fn received_cfilter<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: CFilter,
         tree: &T,
-        blocks: &mut B,
     ) -> Result<Vec<(Height, BlockHash)>, Error> {
         let from = *from;
 
@@ -823,11 +844,6 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
             // filters.
             if processed > 0 {
                 self.last_processed = Some(self.clock.local_time());
-            }
-            for (height, hash) in &matches {
-                if self.pending_blocks.insert(*height) {
-                    blocks.get_block(*hash);
-                }
             }
             return Ok(matches);
         } else {
@@ -1192,7 +1208,7 @@ mod tests {
 
         // Now import the filters.
         for msg in cfilters {
-            cbfmgr.received_cfilter(peer, msg, &tree, &mut ()).unwrap();
+            cbfmgr.received_cfilter(peer, msg, &tree).unwrap();
         }
     }
 
@@ -1379,12 +1395,7 @@ mod tests {
 
         // Receive a filter, but not one that we can process immediately.
         cbfmgr
-            .received_cfilter(
-                &remote,
-                cfilters[birth as usize + 1].clone(),
-                &tree,
-                &mut (),
-            )
+            .received_cfilter(&remote, cfilters[birth as usize + 1].clone(), &tree)
             .unwrap();
 
         assert!(cbfmgr.last_processed.is_none());
@@ -1392,7 +1403,7 @@ mod tests {
 
         // Receive a filter, that we can process immediately.
         cbfmgr
-            .received_cfilter(&remote, cfilters[birth as usize].clone(), &tree, &mut ())
+            .received_cfilter(&remote, cfilters[birth as usize].clone(), &tree)
             .unwrap();
 
         // We should be futher along now.
@@ -1417,7 +1428,7 @@ mod tests {
             .expect("`getcfilters` sent");
 
         cbfmgr
-            .received_cfilter(&remote, cfilters[current as usize].clone(), &tree, &mut ())
+            .received_cfilter(&remote, cfilters[current as usize].clone(), &tree)
             .unwrap();
         assert_eq!(cbfmgr.rescan.current, current + 1);
     }
@@ -1520,9 +1531,7 @@ mod tests {
         );
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
-            cbfmgr
-                .received_cfilter(&remote, msg, &tree, &mut ())
-                .unwrap();
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
         assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
@@ -1614,9 +1623,7 @@ mod tests {
         );
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
-            cbfmgr
-                .received_cfilter(&remote, msg, &tree, &mut ())
-                .unwrap();
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
         assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
@@ -1652,9 +1659,7 @@ mod tests {
 
         // 7. Receive #6.
         let msg = util::cfilters(iter::once(missing)).next().unwrap();
-        cbfmgr
-            .received_cfilter(&remote, msg, &tree, &mut ())
-            .unwrap();
+        cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
 
         // 8. Expect that 6 to 8 are processed and 7 and 8 come from the cache.
         let mut events = output::test::events(cbfmgr.outbox.drain())
@@ -1732,9 +1737,7 @@ mod tests {
         );
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
-            cbfmgr
-                .received_cfilter(&remote, msg, &tree, &mut ())
-                .unwrap();
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
         assert_eq!(cbfmgr.rescan.cache.end(), Some(best));
@@ -1826,9 +1829,7 @@ mod tests {
             let msg = util::cfilters(iter::once(&chain[height as usize]))
                 .next()
                 .unwrap();
-            cbfmgr
-                .received_cfilter(&remote, msg, &tree, &mut ())
-                .unwrap();
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
         // Drain the message queue so we can check what is coming from the next rescan.
         cbfmgr.outbox.drain().for_each(drop);
@@ -1852,9 +1853,7 @@ mod tests {
 
         // 4. Receive some of the missing filters.
         for msg in util::cfilters([&chain[5], &chain[7], &chain[9]].into_iter()) {
-            cbfmgr
-                .received_cfilter(&remote, msg, &tree, &mut ())
-                .unwrap();
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
 
         let mut events = output::test::events(cbfmgr.outbox.drain())
@@ -1908,9 +1907,7 @@ mod tests {
         assert!(matched.is_empty());
 
         for msg in util::cfilters(chain.iter().take(best as usize + 1)) {
-            cbfmgr
-                .received_cfilter(&remote, msg, &tree, &mut ())
-                .unwrap();
+            cbfmgr.received_cfilter(&remote, msg, &tree).unwrap();
         }
         assert_eq!(cbfmgr.rescan.cache.len(), (best - birth) as usize + 1);
         assert_eq!(cbfmgr.rescan.cache.start(), Some(birth));
@@ -2008,9 +2005,7 @@ mod tests {
 
             // First let's catch up the client with filters up to the sync height.
             for filter in util::cfilters(chain.iter().take(sync_height as usize + 1)) {
-                cbfmgr
-                    .received_cfilter(&remote, filter, &tree, &mut ())
-                    .unwrap();
+                cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
             }
             assert_eq!(cbfmgr.rescan.current, sync_height + 1);
             cbfmgr.outbox.drain().for_each(drop);
@@ -2191,9 +2186,7 @@ mod tests {
 
         let mut matches = Vec::new();
         for (_, filter) in filters.into_iter() {
-            let hashes = cbfmgr
-                .received_cfilter(&remote, filter, &tree, &mut ())
-                .unwrap();
+            let hashes = cbfmgr.received_cfilter(&remote, filter, &tree).unwrap();
 
             matches.extend(
                 hashes
