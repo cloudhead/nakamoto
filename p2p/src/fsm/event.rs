@@ -7,8 +7,8 @@ use nakamoto_common::bitcoin::network::constants::ServiceFlags;
 use nakamoto_common::bitcoin::network::message::NetworkMessage;
 use nakamoto_common::bitcoin::{Transaction, Txid};
 use nakamoto_common::block::filter::BlockFilter;
-use nakamoto_common::block::tree::ImportResult;
 use nakamoto_common::block::{Block, BlockHash, BlockHeader, Height};
+use nakamoto_common::nonempty::NonEmpty;
 use nakamoto_common::p2p::peer::Source;
 use nakamoto_net::Disconnect;
 
@@ -152,8 +152,14 @@ pub enum Event {
     /// Block headers imported. Emitted when headers are fetched from peers,
     /// or imported by the user.
     BlockHeadersImported {
-        /// Import result,
-        result: ImportResult,
+        /// New tip hash.
+        hash: BlockHash,
+        /// New tip height.
+        height: Height,
+        /// Block headers connected to the active chain.
+        connected: NonEmpty<(Height, BlockHeader)>,
+        /// Block headers reverted from the active chain.
+        reverted: Vec<(Height, BlockHeader)>,
         /// Set if this import triggered a chain reorganization.
         reorg: bool,
     },
@@ -217,6 +223,11 @@ pub enum Event {
         /// The new transaction status.
         status: TxStatus,
     },
+    /// Scanned the chain up to a certain height.
+    Scanned {
+        /// Height up to which we've scanned and processed blocks.
+        height: Height,
+    },
     /// A gossip message was received from a peer.
     MessageReceived {
         /// Peer that sent the message.
@@ -226,17 +237,6 @@ pub enum Event {
     },
     /// Address book exhausted.
     AddressBookExhausted,
-    /// Compact filters have been synced and processed up to this point and matching blocks have
-    /// been fetched.
-    ///
-    /// If filters have been processed up to the last block in the client's header chain, `height`
-    /// and `tip` will be equal.
-    Synced {
-        /// Height up to which we are synced.
-        height: Height,
-        /// Tip of our block header chain.
-        tip: Height,
-    },
     /// An error occured.
     Error {
         /// Error source.
@@ -260,19 +260,15 @@ impl fmt::Display for Event {
                 )
             }
             Self::BlockHeadersImported {
-                result: ImportResult::TipChanged { hash, height, .. },
+                hash,
+                height,
                 reorg,
+                ..
             } => {
                 write!(
                     fmt,
                     "Chain tip updated to {hash} at height {height} (reorg={reorg})"
                 )
-            }
-            Self::BlockHeadersImported {
-                result: ImportResult::TipUnchanged,
-                ..
-            } => {
-                write!(fmt, "Chain tip unchanged during import")
             }
             Self::BlockConnected { header, height, .. } => {
                 write!(
@@ -338,7 +334,7 @@ impl fmt::Display for Event {
             Self::TxStatusChanged { txid, status } => {
                 write!(fmt, "Transaction {} status changed: {}", txid, status)
             }
-            Self::Synced { height, .. } => write!(fmt, "filters synced up to height {}", height),
+            Self::Scanned { height, .. } => write!(fmt, "Chain scanned up to height {height}"),
             Self::PeerConnected { addr, link, .. } => {
                 write!(fmt, "Peer {} connected ({:?})", &addr, link)
             }

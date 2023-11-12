@@ -26,6 +26,12 @@ pub use ui::Ui;
 
 pub type Utxos = Vec<(OutPoint, TxOut)>;
 
+#[derive(Default)]
+pub struct Tips {
+    header: Height,
+    cfilter: Height,
+}
+
 /// Wallet state.
 pub struct Wallet<H> {
     client: H,
@@ -34,6 +40,7 @@ pub struct Wallet<H> {
     hw: Hw,
     network: client::Network,
     watch: HashSet<Address>,
+    tips: Tips,
 }
 
 impl<H: Handle> Wallet<H> {
@@ -46,6 +53,7 @@ impl<H: Handle> Wallet<H> {
             network,
             watch: HashSet::new(),
             ui: Ui::default(),
+            tips: Tips::default(),
         }
     }
 
@@ -239,6 +247,10 @@ impl<H: Handle> Wallet<H> {
             }
             client::Event::FilterProcessed { height, .. } => {
                 self.ui.handle_filter_processed(height);
+                self.tips.cfilter = height;
+            }
+            client::Event::BlockHeadersImported { height, .. } => {
+                self.tips.header = height;
             }
             client::Event::BlockMatched { block, height } => {
                 for t in &block.txdata {
@@ -254,9 +266,8 @@ impl<H: Handle> Wallet<H> {
                     balance,
                 );
             }
-            // TODO: This should be called `Scanned`.
-            client::Event::Synced { height, tip } => {
-                self.ui.handle_synced(height, tip);
+            client::Event::Scanned { height, .. } => {
+                self.ui.handle_synced(height, self.tips.header);
             }
             _ => {}
         }

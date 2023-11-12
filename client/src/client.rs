@@ -42,7 +42,6 @@ pub use crate::event::Loading;
 pub use crate::handle;
 pub use crate::service::Service;
 
-use crate::event::Mapper;
 use crate::peer;
 use nakamoto_net::{Reactor, Waker};
 
@@ -216,10 +215,7 @@ impl<R: Reactor> Client<R> {
                 p.emit((filter, block, height));
             }
         });
-        let (publisher, subscriber) = event::broadcast({
-            let mut mapper = Mapper::default();
-            move |e, p| mapper.process(e, p)
-        });
+        let (publisher, subscriber) = event::broadcast(|e, p| p.emit(e));
 
         let publisher = Publisher::default()
             .register(event_pub)
@@ -703,10 +699,7 @@ impl<W: Waker> handle::Handle for Handle<W> {
             None => event::wait(
                 &events,
                 |e| match e {
-                    Event::BlockHeadersImported {
-                        result: ImportResult::TipChanged { height, hash, .. },
-                        ..
-                    } if height == h => Some(hash),
+                    Event::BlockHeadersImported { height, hash, .. } if height == h => Some(hash),
                     _ => None,
                 },
                 self.timeout,

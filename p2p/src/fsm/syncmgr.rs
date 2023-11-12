@@ -245,14 +245,13 @@ impl<C: Clock> SyncManager<C> {
     ) -> Result<ImportResult, Error> {
         let result = tree.import_blocks(blocks, &self.clock);
 
-        if let Ok(
-            result @ ImportResult::TipChanged {
-                hash,
-                reverted,
-                connected,
-                ..
-            },
-        ) = &result
+        if let Ok(ImportResult::TipChanged {
+            hash,
+            height,
+            reverted,
+            connected,
+            ..
+        }) = &result
         {
             let reorg = !reverted.is_empty();
 
@@ -265,7 +264,10 @@ impl<C: Clock> SyncManager<C> {
             }
             self.outbox.event(Event::BlockHeadersImported {
                 reorg,
-                result: result.clone(),
+                hash: *hash,
+                height: *height,
+                connected: connected.clone(),
+                reverted: reverted.clone(),
             });
             self.broadcast_tip(hash, tree);
         }

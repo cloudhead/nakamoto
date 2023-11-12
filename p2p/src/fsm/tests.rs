@@ -22,7 +22,6 @@ use super::{PROTOCOL_VERSION, USER_AGENT};
 
 use peer::{Peer, PeerDummy};
 
-use nakamoto_chain::ImportResult;
 use nakamoto_common::bitcoin::network::message_blockdata::GetHeadersMessage;
 use nakamoto_common::bitcoin::network::message_blockdata::Inventory;
 use nakamoto_common::bitcoin::network::message_filter::CFilter;
@@ -1504,7 +1503,7 @@ fn test_block_events() {
     }
     assert_matches!(
         events.next().unwrap(),
-        Event::BlockHeadersImported { result: ImportResult::TipChanged { height, .. }, .. }
+        Event::BlockHeadersImported {  height, ..  }
         if height == best
     );
     assert_eq!(events.count(), 0);
@@ -1525,7 +1524,7 @@ fn test_block_events() {
     );
     assert_matches!(
         events.next().unwrap(),
-        Event::BlockHeadersImported { result: ImportResult::TipChanged { height, .. }, .. }
+        Event::BlockHeadersImported { height, .. }
         if height == best + 1
     );
     assert_eq!(0, events.count());
@@ -1566,7 +1565,7 @@ fn test_block_events() {
 
     assert_matches!(
         events.next().unwrap(),
-        Event::BlockHeadersImported { result: ImportResult::TipChanged { height, .. }, .. }
+        Event::BlockHeadersImported { height, .. }
         if height == fork_best
     );
     assert!(events.next().is_none());
