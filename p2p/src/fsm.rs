@@ -628,7 +628,7 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> StateMa
         self.pingmgr.received_event(e.clone(), &self.tree);
         self.invmgr.received_event(e.clone(), &self.tree);
         self.syncmgr.received_event(e.clone(), &mut self.tree);
-        self.addrmgr.received_event(e.clone(), &self.tree);
+        self.addrmgr.received_event(e.clone());
         self.peermgr.received_event(e, &self.tree);
     }
 
@@ -799,7 +799,6 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
     }
 
     fn attempted(&mut self, addr: &net::SocketAddr) {
-        self.addrmgr.peer_attempted(addr);
         self.peermgr.peer_attempted(addr);
     }
 
@@ -826,12 +825,12 @@ impl<T: BlockTree, F: Filters, P: peer::Store, C: AdjustedClock<PeerId>> traits:
     fn timer_expired(&mut self) {
         trace!("Received wake");
 
-        self.invmgr.received_wake(&self.tree);
-        self.syncmgr.received_wake(&self.tree);
-        self.pingmgr.received_wake();
-        self.addrmgr.received_wake();
-        self.peermgr.received_wake(&mut self.addrmgr);
-        self.cbfmgr.received_wake(&self.tree);
+        self.invmgr.timer_expired(&self.tree);
+        self.syncmgr.timer_expired(&self.tree);
+        self.pingmgr.timer_expired();
+        self.addrmgr.timer_expired();
+        self.peermgr.timer_expired(&mut self.addrmgr);
+        self.cbfmgr.timer_expired(&self.tree);
 
         #[cfg(not(test))]
         let local_time = self.clock.local_time();

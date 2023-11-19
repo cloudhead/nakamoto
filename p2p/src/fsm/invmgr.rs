@@ -238,7 +238,7 @@ impl<C: Clock> InventoryManager<C> {
     }
 
     /// Called when we receive a tick.
-    pub fn received_wake<T: BlockReader>(&mut self, tree: &T) {
+    pub fn timer_expired<T: BlockReader>(&mut self, tree: &T) {
         let now = self.clock.local_time();
         if now - self.last_tick.unwrap_or_default() >= IDLE_TIMEOUT {
             self.last_tick = Some(now);
@@ -590,7 +590,7 @@ mod tests {
 
         loop {
             clock.elapse(LocalDuration::from_secs(rng.u64(10..30)));
-            invmgr.received_wake(&tree);
+            invmgr.timer_expired(&tree);
             assert!(!invmgr.remaining.is_empty());
 
             let Some((addr, _)) = output::test::messages(&mut invmgr)
@@ -625,7 +625,7 @@ mod tests {
             .unwrap();
 
         clock.elapse(REQUEST_TIMEOUT);
-        invmgr.received_wake(&tree);
+        invmgr.timer_expired(&tree);
         assert_eq!(
             invmgr
                 .outbox
@@ -651,7 +651,7 @@ mod tests {
 
         invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true, false);
         invmgr.announce(tx);
-        invmgr.received_wake(&tree);
+        invmgr.timer_expired(&tree);
 
         assert_eq!(
             output::test::messages_from(&mut invmgr, &remote)
@@ -661,12 +661,12 @@ mod tests {
         );
         invmgr.outbox.drain().for_each(drop);
 
-        invmgr.received_wake(&tree);
+        invmgr.timer_expired(&tree);
         assert_eq!(invmgr.outbox.drain().count(), 0, "Timeout hasn't lapsed");
 
         clock.elapse(REBROADCAST_TIMEOUT);
 
-        invmgr.received_wake(&tree);
+        invmgr.timer_expired(&tree);
         assert_eq!(
             output::test::messages_from(&mut invmgr.outbox, &remote)
                 .filter(|m| matches!(m, NetworkMessage::Inv(_)))
@@ -694,7 +694,7 @@ mod tests {
 
         // We attempt to broadcast up to `MAX_ATTEMPTS` times.
         for _ in 0..MAX_ATTEMPTS {
-            invmgr.received_wake(&tree);
+            invmgr.timer_expired(&tree);
             output::test::messages_from(&mut invmgr.outbox, &remote)
                 .find(|m| matches!(m, NetworkMessage::Inv(_),))
                 .expect("Inventory is announced");
@@ -703,7 +703,7 @@ mod tests {
         }
 
         // The next time we time out, we disconnect the peer.
-        invmgr.received_wake(&tree);
+        invmgr.timer_expired(&tree);
         events(invmgr.outbox.drain())
             .find(|e| matches!(e, Event::PeerTimedOut { addr } if addr == &remote))
             .expect("Peer times out");
@@ -800,7 +800,7 @@ mod tests {
         invmgr.peer_negotiated(remote, ServiceFlags::NETWORK, true, true);
         invmgr.announce(tx);
 
-        invmgr.received_wake(&tree);
+        invmgr.timer_expired(&tree);
         let invs = output::test::messages_from(&mut invmgr.outbox, &remote)
             .filter_map(|m| {
                 if let NetworkMessage::Inv(invs) = m {
@@ -814,7 +814,7 @@ mod tests {
         assert_matches!(invs.first(), Some(Inventory::WTx(_)));
 
         invmgr.peer_negotiated(remote2, ServiceFlags::NETWORK, true, false);
-        invmgr.received_wake(&tree);
+        invmgr.timer_expired(&tree);
         let invs = output::test::messages_from(&mut invmgr.outbox, &remote2)
             .filter_map(|m| match m {
                 NetworkMessage::Inv(invs) => Some(invs),

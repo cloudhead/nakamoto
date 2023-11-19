@@ -121,20 +121,8 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
         self.idle();
     }
 
-    /// Return an iterator over randomly sampled addresses.
-    pub fn iter(&mut self, services: ServiceFlags) -> impl Iterator<Item = (Address, Source)> + '_ {
-        Iter(move || self.sample(services))
-    }
-
-    /// Get addresses from peers.
-    pub fn get_addresses(&mut self) {
-        for peer in &self.sources {
-            self.outbox.get_addr(*peer);
-        }
-    }
-
     /// Event received.
-    pub fn received_event<T>(&mut self, event: Event, _tree: &T) {
+    pub fn received_event(&mut self, event: Event) {
         match event {
             Event::PeerConnected { addr, .. } => {
                 self.peer_connected(&addr);
@@ -150,6 +138,9 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
                     self.local_addrs.insert(addr);
                 }
                 self.peer_negotiated(&addr, services, link);
+            }
+            Event::PeerConnecting { addr, .. } => {
+                self.peer_attempted(&addr);
             }
             Event::PeerDisconnected { addr, reason } => {
                 self.peer_disconnected(&addr, reason);
@@ -174,28 +165,8 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
         }
     }
 
-    /// Called when we receive a `getaddr` message.
-    pub fn received_getaddr(&mut self, from: &net::SocketAddr) {
-        // TODO: We should only respond with peers who were last active within
-        // the last 3 hours.
-        let mut addrs = Vec::new();
-
-        // Include one random address per address range.
-        for range in self.address_ranges.values() {
-            let ix = self.rng.usize(..range.len());
-            let ip = range.iter().nth(ix).expect("index must be present");
-            let ka = self.peers.get(ip).expect("address must exist");
-
-            addrs.push((
-                ka.last_active.map(|t| t.block_time()).unwrap_or_default(),
-                ka.addr.clone(),
-            ));
-        }
-        self.outbox.addr(*from, addrs);
-    }
-
     /// Called when a tick is received.
-    pub fn received_wake(&mut self) {
+    pub fn timer_expired(&mut self) {
         let local_time = self.clock.local_time();
 
         // If we're already using all the addresses we have available, we should fetch more.
@@ -214,8 +185,42 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
         }
     }
 
+    ////////////////////////////////////////////////////////////////////////////
+
+    /// Called when we receive a `getaddr` message.
+    fn received_getaddr(&mut self, from: &net::SocketAddr) {
+        // TODO: We should only respond with peers who were last active within
+        // the last 3 hours.
+        let mut addrs = Vec::new();
+
+        // Include one random address per address range.
+        for range in self.address_ranges.values() {
+            let ix = self.rng.usize(..range.len());
+            let ip = range.iter().nth(ix).expect("index must be present");
+            let ka = self.peers.get(ip).expect("address must exist");
+
+            addrs.push((
+                ka.last_active.map(|t| t.block_time()).unwrap_or_default(),
+                ka.addr.clone(),
+            ));
+        }
+        self.outbox.addr(*from, addrs);
+    }
+
+    /// Return an iterator over randomly sampled addresses.
+    fn iter(&mut self, services: ServiceFlags) -> impl Iterator<Item = (Address, Source)> + '_ {
+        Iter(move || self.sample(services))
+    }
+
+    /// Get addresses from peers.
+    fn get_addresses(&mut self) {
+        for peer in &self.sources {
+            self.outbox.get_addr(*peer);
+        }
+    }
+
     /// Called when a peer connection is attempted.
-    pub fn peer_attempted(&mut self, addr: &net::SocketAddr) {
+    fn peer_attempted(&mut self, addr: &net::SocketAddr) {
         let time = self.clock.local_time();
         // We're only interested in connection attempts for addresses we keep track of.
         if let Some(ka) = self.peers.get_mut(&addr.ip()) {
@@ -280,8 +285,6 @@ impl<P: Store, C: Clock> AddressManager<P, C> {
             }
         }
     }
-
-    ////////////////////////////////////////////////////////////////////////////
 
     fn idle(&mut self) {
         // If it's been a while, save addresses to store.
@@ -1079,7 +1082,7 @@ mod tests {
 
             // Make sure we can re-sample the same addresses for the purpose of this example.
             clock.elapse(LocalDuration::from_mins(60));
-            addrmgr.received_wake();
+            addrmgr.timer_expired();
 
             if adversary_addrs.contains(&addr) {
                 adversary += 1;

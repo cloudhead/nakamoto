@@ -573,7 +573,7 @@ impl<C: AdjustedClock<PeerId>> PeerManager<C> {
     }
 
     /// Called when a tick was received.
-    pub fn received_wake<A: AddressSource>(&mut self, addrs: &mut A) {
+    pub fn timer_expired<A: AddressSource>(&mut self, addrs: &mut A) {
         let mut timed_out = Vec::new();
         let local_time = self.clock.local_time();
 
@@ -939,7 +939,7 @@ mod tests {
         assert_eq!(peermgr.connected().next(), None);
 
         time.elapse(LocalDuration::from_secs(1));
-        peermgr.received_wake(&mut addrs);
+        peermgr.timer_expired(&mut addrs);
         assert_eq!(peermgr.connecting().next(), Some(&remote));
 
         // Confirm exponential backoff after failed first attempt
@@ -952,11 +952,11 @@ mod tests {
         assert_eq!(peermgr.connecting().next(), None);
 
         time.elapse(LocalDuration::from_secs(1));
-        peermgr.received_wake(&mut addrs);
+        peermgr.timer_expired(&mut addrs);
         assert_eq!(peermgr.connecting().next(), None);
 
         time.elapse(LocalDuration::from_secs(1));
-        peermgr.received_wake(&mut addrs);
+        peermgr.timer_expired(&mut addrs);
         assert_eq!(peermgr.connecting().next(), Some(&remote));
     }
 
@@ -1040,13 +1040,13 @@ mod tests {
         assert_eq!(peermgr.connecting().count(), 1);
 
         time.elapse(LocalDuration::from_secs(1));
-        peermgr.received_wake(&mut addrs);
+        peermgr.timer_expired(&mut addrs);
 
         assert_eq!(peermgr.connecting().next(), Some(&remote));
 
         // After the timeout has elapsed, the peer should be disconnected.
         time.elapse(CONNECTION_TIMEOUT);
-        peermgr.received_wake(&mut addrs);
+        peermgr.timer_expired(&mut addrs);
 
         assert_eq!(peermgr.connecting().next(), None);
         assert!(matches!(

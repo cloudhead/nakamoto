@@ -128,7 +128,7 @@ impl<C: Clock> PingManager<C> {
     }
 
     /// Called when a tick is received.
-    pub fn received_wake(&mut self) {
+    pub fn timer_expired(&mut self) {
         let now = self.clock.local_time();
 
         for peer in self.peers.values_mut() {

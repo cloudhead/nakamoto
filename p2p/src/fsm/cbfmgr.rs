@@ -315,7 +315,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     }
 
     /// A tick was received.
-    pub fn received_wake<T: BlockReader>(&mut self, tree: &T) {
+    pub fn timer_expired<T: BlockReader>(&mut self, tree: &T) {
         self.idle(tree);
 
         let timeout = self.config.request_timeout;
@@ -356,60 +356,6 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                     .ok();
             }
         }
-    }
-
-    /// Rollback filters to the given height.
-    pub fn rollback(&mut self, height: Height) -> Result<(), filter::Error> {
-        // It's possible that a rollback doesn't affect the filter chain, if the filter headers
-        // haven't caught up to the block headers when the re-org happens.
-        if height >= self.filters.height() {
-            return Ok(());
-        }
-
-        // Purge stale block filters.
-        self.rescan.rollback(height);
-        // Rollback filter header chain.
-        self.filters.rollback(height)?;
-
-        // Nb. Inflight filter header requests for heights that were rolled back will be ignored
-        // when received.
-        //
-        // TODO: Inflight filter requests need to be re-issued.
-
-        if self.rescan.active {
-            // Reset "current" scanning height.
-            //
-            // We start re-scanning from either the start, or the current height, whichever
-            // is greater, while ensuring that we only reset backwards, ie. we never skip
-            // heights.
-            //
-            // For example, given we are currently at 7, if we rolled back to height 4, and our
-            // start is at 5, we restart from 5.
-            //
-            // If we rolled back to height 4 and our start is at 3, we restart at 4, because
-            // we don't need to scan blocks before our start height.
-            //
-            // If we rolled back to height 9 from height 11, we wouldn't want to re-scan any
-            // blocks, since we haven't yet gotten to that height.
-            //
-            let start = self.rescan.start;
-            let current = self.rescan.current;
-
-            if current > height + 1 {
-                self.rescan.current = Height::max(height + 1, start);
-            }
-
-            log::debug!(
-                target: "p2p",
-                "Rollback from {} to {}, start = {}, height = {}",
-                current,
-                self.rescan.current,
-                start,
-                height
-            );
-        }
-
-        Ok(())
     }
 
     /// Add scripts to the list of scripts to watch.
@@ -532,8 +478,64 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
         Ok(())
     }
 
+    // PRIVATE METHODS /////////////////////////////////////////////////////////
+
+    /// Rollback filters to the given height.
+    fn rollback(&mut self, height: Height) -> Result<(), filter::Error> {
+        // It's possible that a rollback doesn't affect the filter chain, if the filter headers
+        // haven't caught up to the block headers when the re-org happens.
+        if height >= self.filters.height() {
+            return Ok(());
+        }
+
+        // Purge stale block filters.
+        self.rescan.rollback(height);
+        // Rollback filter header chain.
+        self.filters.rollback(height)?;
+
+        // Nb. Inflight filter header requests for heights that were rolled back will be ignored
+        // when received.
+        //
+        // TODO: Inflight filter requests need to be re-issued.
+
+        if self.rescan.active {
+            // Reset "current" scanning height.
+            //
+            // We start re-scanning from either the start, or the current height, whichever
+            // is greater, while ensuring that we only reset backwards, ie. we never skip
+            // heights.
+            //
+            // For example, given we are currently at 7, if we rolled back to height 4, and our
+            // start is at 5, we restart from 5.
+            //
+            // If we rolled back to height 4 and our start is at 3, we restart at 4, because
+            // we don't need to scan blocks before our start height.
+            //
+            // If we rolled back to height 9 from height 11, we wouldn't want to re-scan any
+            // blocks, since we haven't yet gotten to that height.
+            //
+            let start = self.rescan.start;
+            let current = self.rescan.current;
+
+            if current > height + 1 {
+                self.rescan.current = Height::max(height + 1, start);
+            }
+
+            log::debug!(
+                target: "p2p",
+                "Rollback from {} to {}, start = {}, height = {}",
+                current,
+                self.rescan.current,
+                start,
+                height
+            );
+        }
+
+        Ok(())
+    }
+
     /// Called when a new peer was negotiated.
-    pub fn peer_negotiated<T: BlockReader>(
+    fn peer_negotiated<T: BlockReader>(
         &mut self,
         addr: PeerId,
         height: Height,
@@ -562,7 +564,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     }
 
     /// Attempt to sync the filter header chain.
-    pub fn sync<T: BlockReader>(&mut self, tree: &T) {
+    fn sync<T: BlockReader>(&mut self, tree: &T) {
         let filter_height = self.filters.height();
         let block_height = tree.height();
 
@@ -596,8 +598,6 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
                 .ok();
         }
     }
-
-    // PRIVATE METHODS /////////////////////////////////////////////////////////
 
     /// Remove transaction from list of transactions being watch.
     fn unwatch_transaction(&mut self, txid: &Txid) -> bool {
@@ -722,7 +722,7 @@ impl<F: Filters, C: Clock> FilterManager<F, C> {
     }
 
     /// Handle a `getcfheaders` message from a peer.
-    pub fn received_getcfheaders<T: BlockReader>(
+    fn received_getcfheaders<T: BlockReader>(
         &mut self,
         from: &PeerId,
         msg: GetCFHeaders,
@@ -1414,7 +1414,7 @@ mod tests {
 
         // We still have filters we are waiting for, but let's let some time pass.
         cbfmgr.clock.elapse(DEFAULT_REQUEST_TIMEOUT);
-        cbfmgr.received_wake(&tree);
+        cbfmgr.timer_expired(&tree);
 
         // We expect a new request to be sent from the new starting height.
         let (stop_hash, _) = tree.tip();

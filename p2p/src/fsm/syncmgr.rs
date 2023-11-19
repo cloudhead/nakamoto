@@ -447,7 +447,7 @@ impl<C: Clock> SyncManager<C> {
     }
 
     /// Called when we received a tick.
-    pub fn received_wake<T: BlockReader>(&mut self, tree: &T) {
+    pub fn timer_expired<T: BlockReader>(&mut self, tree: &T) {
         let local_time = self.clock.local_time();
         let timeout = self.config.request_timeout;
         let timed_out = self
