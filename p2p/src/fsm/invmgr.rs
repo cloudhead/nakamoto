@@ -16,7 +16,7 @@
 //! the [`InventoryManager::received_block`] event.
 //!
 //! To keep only the smallest set of confirmed transactions in memory, we prune the set every time
-//! the [`InventoryManager::received_wake`] function is called. Confirmed transactions are removed
+//! the [`InventoryManager::timer_expired`] function is called. Confirmed transactions are removed
 //! after they are burried at a certain depth.
 //!
 use std::collections::BTreeMap;
