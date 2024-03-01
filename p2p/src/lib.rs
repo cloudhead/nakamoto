@@ -1,7 +1,7 @@
 //! Nakamoto's peer-to-peer library.
 //!
 //! The `p2p` crate implements the core protocol state-machine. It can be found under the
-//! [fsm](crate::fsm) module.
+//! [fsm] module.
 //!
 //! Nakamoto's implementation of the peer-to-peer protocol(s) is *I/O-free*. The
 //! core logic is implemented as a state machine with *inputs* and *outputs* and a

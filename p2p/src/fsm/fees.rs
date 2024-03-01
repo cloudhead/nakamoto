@@ -195,7 +195,7 @@ mod tests {
             let estimate = fe.process(block, height as Height);
             estimates.insert(height, estimate);
         }
-        assert_eq!(fe.snapshots.len(), MAX_UTXO_SNAPSHOTS as usize);
+        assert_eq!(fe.snapshots.len(), { MAX_UTXO_SNAPSHOTS });
         assert_eq!(fe.height, 21);
         assert_matches!(fe.snapshots.back(), Some((20, _)));
 

@@ -1323,17 +1323,13 @@ fn test_cache_import_duplicate() {
     let a2 = a1.next(g);
     let a3 = a2.next(g);
 
-    assert!(matches! {
-        cache.import_block(a1.block(), &ctx), Ok(_)
-    });
+    assert!(cache.import_block(a1.block(), &ctx).is_ok());
     assert!(matches! {
         cache.import_block(a1.block(), &ctx),
         Err(Error::DuplicateBlock(h)) if h == a1.hash
     });
 
-    assert!(matches! {
-        cache.import_block(a2.block(), &ctx), Ok(_)
-    });
+    assert!(cache.import_block(a2.block(), &ctx).is_ok());
     assert!(matches! {
         cache.import_block(a2.block(), &ctx), Err(Error::DuplicateBlock(_))
     });
@@ -1343,9 +1339,7 @@ fn test_cache_import_duplicate() {
     //            <- b3
     let b3 = a1.next(g);
 
-    assert!(matches! {
-        cache.import_block(b3.block(), &ctx), Ok(_)
-    });
+    assert!(cache.import_block(b3.block(), &ctx).is_ok());
     assert!(matches! {
         cache.import_block(b3.block(), &ctx),
         Err(Error::DuplicateBlock(h)) if h == b3.hash

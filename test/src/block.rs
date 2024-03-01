@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 
 use nakamoto_common::bitcoin::blockdata::transaction::{OutPoint, TxOut};
-use nakamoto_common::block::BlockHeader;
 
 pub use nakamoto_common::block::*;
 

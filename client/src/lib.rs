@@ -4,6 +4,7 @@
 #![deny(missing_docs, unsafe_code)]
 mod client;
 mod error;
+#[allow(hidden_glob_reexports)]
 mod event;
 mod peer;
 mod service;

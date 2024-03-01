@@ -594,9 +594,10 @@ mod tests {
             assert!(!invmgr.remaining.is_empty());
 
             let Some((addr, _)) = output::test::messages(&mut invmgr)
-                .find(|(_, m)| matches!(m, NetworkMessage::GetData(i) if i == &inv)) else {
-                    continue;
-                };
+                .find(|(_, m)| matches!(m, NetworkMessage::GetData(i) if i == &inv))
+            else {
+                continue;
+            };
 
             assert!(
                 clock.local_time() - last_request >= REQUEST_TIMEOUT,
