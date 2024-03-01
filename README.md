@@ -46,8 +46,8 @@ protocol.
 Client side block filtering (BIP 157/158) is implemented and working. See
 `nakamoto-wallet` for an example of how to use it.
 
-Once peer-to-peer layer encryption (BIP 151) lands in Core, it will also
-be implemented in Nakamoto.
+Peer-to-peer layer encryption (BIP 324), available in Bitcoin Core since v26.0,
+will also be implemented in Nakamoto soon.
 
 Finally, a C FFI will be implemented, to make it easy to embed the client
 in mobile applications.
