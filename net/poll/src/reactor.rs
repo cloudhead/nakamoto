@@ -244,9 +244,12 @@ impl<Id: PeerId> nakamoto_net::Reactor<Id> for Reactor<net::TcpStream, Id> {
                                 }
                                 popol::Waker::reset(ev.source).ok();
 
-                                // Nb. This assert has triggered once, but I wasn't available
-                                // to reproduce it.
-                                debug_assert!(!commands.is_empty());
+                                // Nb. This should not happen, but it has been reported
+                                // a few times. So we try to log a warning message and
+                                // see how often this occurs.
+                                if commands.is_empty() {
+                                    log::warn!(target: "poll", "waken up by waker received without commands");
+                                }
 
                                 for cmd in commands.try_iter() {
                                     service.command_received(cmd);
